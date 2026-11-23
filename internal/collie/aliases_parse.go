@@ -31,9 +31,9 @@ var aliasWrappers = []string{"command", "exec", "noglob", "nocorrect", "builtin"
 var (
 	assignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	// Names whose values are credentials.
-	secretNameRe = regexp.MustCompile(`(?i)(key|token|secret|passw|credential|cookie|auth|session)`)
+	secretNameRe = regexp.MustCompile(`(?i)(key|token|secret|passw|credential|cookie|auth|session|header)`)
 	// Values that look like credentials whatever they are called.
-	secretValRe = regexp.MustCompile(`^(sk-|sk_|ghp_|gho_|github_pat_|xox[abp]-|AKIA|AIza|eyJ)|^[A-Za-z0-9_+/=.-]{32,}$`)
+	secretValRe = regexp.MustCompile(`^(sk-|sk_|ghp_|gho_|github_pat_|xox[abp]-|AKIA|AIza|eyJ)|^[A-Za-z0-9_+/=.-]{32,}$|(?i)bearer\s|api-key:`)
 	// Names whose values are settings, never credentials, however random they look.
 	plainNameRe = regexp.MustCompile(`(?i)(model|url|window|effort|dir|path|pct)`)
 	// An endpoint carrying a credential in its query.
@@ -65,7 +65,7 @@ func parseLauncher(name, value string) (LauncherAlias, bool) {
 			continue
 		}
 		i := commandAt(seg, setEnv)
-		if i < 0 || !slices.Contains(launcherCmds, path.Base(seg[i])) {
+		if i < 0 || !slices.Contains(agentKinds, path.Base(seg[i])) {
 			continue
 		}
 		kind := path.Base(seg[i])
@@ -86,6 +86,7 @@ func parseLauncher(name, value string) (LauncherAlias, bool) {
 		if !modelNameRe.MatchString(a.Effort) {
 			a.Effort = ""
 		}
+		a.raw = args
 		a.Args = redactArgs(args)
 		a.Command = redactCommand(words)
 		return a, true
@@ -203,6 +204,9 @@ func secretVal(v string) bool {
 	if v == "" || strings.HasPrefix(v, "$") {
 		return false // a reference to a variable, not the value
 	}
+	if strings.ContainsAny(v[:1], "/~.") {
+		return false // a path
+	}
 	low := strings.ToLower(v)
 	if strings.Contains(low, "://") {
 		// An endpoint: secret only when it carries credentials.
@@ -230,6 +234,15 @@ func redactWord(w string) string {
 
 // modelFlags take a model or effort, never a secret, however random it looks.
 var modelFlags = []string{"--model", "-m", "--effort"}
+
+// launchArgs: what follows the alias's command, unredacted where it was read
+// (a list from another computer only has the redacted copy).
+func (a *LauncherAlias) launchArgs() []string {
+	if a.raw != nil {
+		return a.raw
+	}
+	return a.Args
+}
 
 // redactArgs hides secret values, including the one after a --api-key style flag.
 func redactArgs(args []string) []string {
@@ -288,17 +301,20 @@ func showQuote(w string) string {
 
 // valueFlags: launch flags that take a value, by herdr kind.
 var valueFlags = map[string][]string{
-	"claude": {"--model", "--effort", "--allowedTools", "--permission-mode", "--resume"},
+	"claude": {"--model", "--effort", "--allowedTools", "--permission-mode", "--resume", "--add-dir", "--settings", "--mcp-config"},
 	"agy":    {"--model", "--effort", "--conversation"},
-	"codex":  {"-m", "--model", "-c", "--config"},
+	"codex":  {"-m", "--model", "-c", "--config", "-a", "--ask-for-approval", "-s", "--sandbox", "-p", "--profile", "-C", "--cd"},
 }
+
+// repeatFlags may be given again: their values add up or the last one wins.
+var repeatFlags = []string{"-c", "--config", "--allowedTools", "--add-dir"}
 
 // aliasArgs: what Collie adds after the alias's name. A flag the alias
 // already has stays out (codex refuses a flag given twice), and so do a
 // model or effort equal to the alias's own.
 func aliasArgs(a *LauncherAlias, args []string) []string {
 	has := map[string]bool{}
-	for _, w := range a.Args {
+	for _, w := range a.launchArgs() {
 		f, _, _ := strings.Cut(w, "=")
 		if a.Kind == "codex" && strings.HasPrefix(f, "-m") && !strings.HasPrefix(f, "--") {
 			f = "-m" // -mgpt-5
@@ -318,16 +334,13 @@ func aliasArgs(a *LauncherAlias, args []string) []string {
 		switch {
 		case !strings.HasPrefix(w, "-"):
 			// a subcommand or its argument (codex resume <id>)
-		case model != "" && (model == a.Model || (a.Kind == "codex" && (has["-m"] || has["--model"]))):
-			continue
-		case effort != "" && effort == a.Effort:
-			continue
-		case len(pair) == 1 && has[f]:
-			// The alias's own value wins; ours, if it has one, goes too.
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				i++
+		case model != "" || effort != "":
+			// claude takes the last --model; codex refuses a second -m.
+			if (model != "" && model == a.Model) || (effort != "" && effort == a.Effort) || (model != "" && a.Kind == "codex" && (has["-m"] || has["--model"])) {
+				continue
 			}
-			continue
+		case has[f] && !slices.Contains(repeatFlags, f):
+			continue // the alias's own (with its value, when it takes one) wins
 		}
 		out = append(out, pair...)
 	}

@@ -596,6 +596,14 @@ func (h *Herdr) Prompt(ctx context.Context, target, text string) error {
 	return h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"enter"}}, nil)
 }
 
+// Type types a line at a pane's prompt and presses enter.
+func (h *Herdr) Type(ctx context.Context, pane, text string) error {
+	if err := h.Call(ctx, "pane.send_text", map[string]any{"pane_id": pane, "text": text}, nil); err != nil {
+		return err
+	}
+	return h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"enter"}}, nil)
+}
+
 // ScreenAsks reports whether a pane's screen shows a question with choices.
 func (h *Herdr) ScreenAsks(ctx context.Context, pane string) bool {
 	res, err := h.Read(ctx, pane, "detection", "text", 0)

@@ -382,6 +382,15 @@ func routerPath(dir, rel string) (string, error) {
 	return filepath.Join(dir, filepath.FromSlash(clean)), nil
 }
 
+// nodeStatusError is a node's answer other than 200. An older node has no
+// such route: 404.
+type nodeStatusError struct {
+	Code int
+	msg  string
+}
+
+func (e *nodeStatusError) Error() string { return e.msg }
+
 // nodeJSON calls a node's own API through the tunnel.
 func nodeJSON(ctx context.Context, client *http.Client, method, p string, in, out any) error {
 	var body io.Reader
@@ -406,8 +415,7 @@ func nodeJSON(ctx context.Context, client *http.Client, method, p string, in, ou
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		// An older node has no such route: 404.
-		return fmt.Errorf("node %s %s: %s %s", method, p, resp.Status, strings.TrimSpace(string(b)))
+		return &nodeStatusError{Code: resp.StatusCode, msg: fmt.Sprintf("node %s %s: %s %s", method, p, resp.Status, strings.TrimSpace(string(b)))}
 	}
 	if out == nil {
 		return nil

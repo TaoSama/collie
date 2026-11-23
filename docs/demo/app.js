@@ -2211,17 +2211,17 @@
       fillEffort();
     };
   }
-  const machineOf = (form, who) => (form[who + "_machine"] ? form[who + "_machine"].value : "");
+  const formMachine = (form, who) => (form[who + "_machine"] ? form[who + "_machine"].value : "");
   async function fillAliases(form, who) {
     const sel = form[who + "_alias"];
     const want = sel.dataset.value ?? sel.value;
-    const list = await aliasesOn(machineOf(form, who));
+    const list = await aliasesOn(formMachine(form, who));
     sel.innerHTML = aliasOpts(list, want);
     delete sel.dataset.value;
   }
   // Picking an alias picks its agent, model and effort; another agent drops it.
   async function pickAlias(form, who) {
-    const a = (await aliasesOn(machineOf(form, who))).find((x) => x.name === form[who + "_alias"].value);
+    const a = (await aliasesOn(formMachine(form, who))).find((x) => x.name === form[who + "_alias"].value);
     if (!a) return;
     const k = form[who + "_kind"];
     k.value = aliasKind(a.kind);

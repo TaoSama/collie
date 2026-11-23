@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +51,7 @@ func TestParseLauncher(t *testing.T) {
 			continue
 		}
 		c.want.Name = c.name
-		got.Args, got.Env, got.Command = nil, nil, ""
+		got.Args, got.Env, got.Command, got.raw = nil, nil, "", nil
 		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
 		}
@@ -112,8 +114,12 @@ func TestShellSplit(t *testing.T) {
 }
 
 func TestShellLineRoundTrip(t *testing.T) {
-	words := []string{"ccf", "--model", "fable[1m]", "--allowedTools", "Bash(collie:*),Read(~/x/**)", "it's", ""}
-	ws, err := shellSplit(shellLine(words))
+	words := []string{"ccf", "--model", "fable[1m]", "--allowedTools", "Bash(collie:*),Read(~/x/**)", "it's", "", "=claude"}
+	line, err := shellLine(words)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := shellSplit(line)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,5 +312,109 @@ func TestSuperAliasesHub(t *testing.T) {
 	}
 	if _, err := s.aliasOn(context.Background(), "gone", "cx", "codex"); err == nil {
 		t.Error("an unknown computer answered")
+	}
+}
+
+func TestShellLineRejectsControlChars(t *testing.T) {
+	for _, w := range []string{"a\tb", "x\x15", "line\nbreak", "\x1b[2J"} {
+		if _, err := shellLine([]string{"ccf", w}); err == nil {
+			t.Errorf("%q accepted", w)
+		}
+	}
+	if q := shellQuote("=claude"); q != "'=claude'" {
+		t.Errorf("leading = not quoted: %s", q)
+	}
+}
+
+func TestAliasKeepsPathsAndRawArgs(t *testing.T) {
+	dir := "/Users/someone/Workspaces/collie/very/long/project-path"
+	a, ok := parseLauncher("ccd", `claude --add-dir `+dir+` --add-dir ~/notes/`+strings.Repeat("x", 40)+` --api-key `+fakeToken)
+	if !ok {
+		t.Fatal("not a launcher")
+	}
+	if a.Args[1] != dir || !strings.HasPrefix(a.Args[3], "~/notes/") || a.Args[5] != hiddenVal {
+		t.Errorf("display args: %q", a.Args)
+	}
+	if raw := a.launchArgs(); raw[5] != fakeToken || raw[1] != dir {
+		t.Errorf("raw args lost: %q", raw)
+	}
+	b, _ := json.Marshal(a)
+	if strings.Contains(string(b), fakeToken) {
+		t.Errorf("raw args serialized: %s", b)
+	}
+	var back LauncherAlias // what the hub holds for another computer
+	json.Unmarshal(b, &back)
+	if got := back.launchArgs(); !reflect.DeepEqual(got, a.Args) {
+		t.Errorf("remote copy: %q", got)
+	}
+}
+
+func TestRedactsHeaders(t *testing.T) {
+	for _, v := range []string{
+		`ANTHROPIC_CUSTOM_HEADERS="x-team: infra" claude`,
+		`HTTP_AUTHORIZATION=abc claude`,
+		`claude --header "Bearer abc.def"`,
+		`FOO="x-api-key: abc" codex`,
+		`FOO="Api-Key: abc" codex`,
+	} {
+		a, _ := parseLauncher("x", v)
+		if strings.Contains(a.Command, "abc") || strings.Contains(a.Command, "infra") {
+			t.Errorf("leaked: %s", a.Command)
+		}
+	}
+}
+
+func TestAliasArgsKeepsPositionals(t *testing.T) {
+	cx, _ := parseLauncher("cx", `codex --search -a never`)
+	// codex resume <id> after a repeated boolean flag: the id must stay.
+	got := aliasArgs(&cx, []string{"--search", "resume", "abc", "--config=x=1", "--search=yes", "prompt"})
+	if want := []string{"resume", "abc", "--config=x=1", "prompt"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q", got)
+	}
+	cl, _ := parseLauncher("cl", `claude --add-dir /a --model opus`)
+	got = aliasArgs(&cl, []string{"--add-dir", "/b", "--model", "sonnet", "--effort", "high"})
+	if want := []string{"--add-dir", "/b", "--model", "sonnet", "--effort", "high"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("claude: %q", got)
+	}
+}
+
+func TestAliasOnUsesListedAlias(t *testing.T) {
+	s := &Server{home: t.TempDir(), herdr: newHerdr(filepath.Join(t.TempDir(), "missing.sock"), "hub", t.TempDir())}
+	rep := aliasReport{RC: "~/.zshrc", Aliases: []LauncherAlias{{Name: "ccf", Kind: "claude"}}}
+	s.aliases.put("devos", rep, nil) // devos is offline: any read would fail
+	if a, err := s.aliasOn(context.Background(), "devos", "ccf", "claude"); err != nil || a.Name != "ccf" {
+		t.Fatalf("listed alias not used: %v %v", a, err)
+	}
+	if snap, _ := s.aliases.get("devos"); snap.err != "" {
+		t.Errorf("read again for a listed alias: %s", snap.err)
+	}
+	if _, err := s.aliasOn(context.Background(), "devos", "ccx", "claude"); err == nil {
+		t.Fatal("missing alias found")
+	}
+	snap, _ := s.aliases.get("devos")
+	if snap.err == "" || len(snap.rep.Aliases) != 1 {
+		t.Fatalf("failed read not recorded or list lost: %+v", snap)
+	}
+	s.aliases.put("devos", rep, nil)
+	s.aliases.put("devos", aliasReport{}, errors.New("offline"))
+	snap, _ = s.aliases.get("devos")
+	tried := snap.tried
+	if _, err := s.aliasOn(context.Background(), "devos", "ccx", "claude"); err == nil {
+		t.Fatal("missing alias found")
+	}
+	if snap, _ := s.aliases.get("devos"); !snap.tried.Equal(tried) {
+		t.Error("read again right after a failed read")
+	}
+}
+
+func TestNodeJSONStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	client := &http.Client{Transport: rewriteHost{u.Host}}
+	err := nodeJSON(context.Background(), client, "GET", "/api/aliases", nil, nil)
+	var se *nodeStatusError
+	if !errors.As(err, &se) || se.Code != http.StatusNotFound {
+		t.Fatalf("err = %v", err)
 	}
 }

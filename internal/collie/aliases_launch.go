@@ -16,7 +16,29 @@ const (
 	shellPromptWait = 10 * time.Second
 	aliasStartWait  = 60 * time.Second
 	aliasPoll       = 500 * time.Millisecond
+	promptLines     = 5
 )
+
+// waitPrompt waits, for shellPromptWait at most, until the pane's shell
+// shows its prompt: some output that has stopped changing. Typed while rc
+// files still run ("Last login…", plugin managers), a line can be read or
+// flushed by them.
+func (s *Server) waitPrompt(ctx context.Context, paneID string) error {
+	last := ""
+	for until := time.Now().Add(shellPromptWait); time.Now().Before(until); {
+		if rr, err := s.herdr.Read(ctx, paneID, "recent", "text", promptLines); err == nil {
+			text := strings.TrimSpace(rr.Text)
+			if text != "" && text == last {
+				return nil
+			}
+			last = text
+		}
+		if err := sleepCtx(ctx, aliasPoll); err != nil {
+			return err
+		}
+	}
+	return nil // a slow rc file: the terminal keeps what we type until the shell reads it
+}
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	select {
@@ -34,32 +56,22 @@ func (s *Server) startThroughAlias(ctx context.Context, paneID, name, herdrKind 
 	if !aliasNameRe.MatchString(a.Name) {
 		return fmt.Errorf("bad alias name %q", a.Name)
 	}
-	// Typed before the prompt, the line would sit in the terminal while rc
-	// files run, and some of them read or flush input.
-	for until := time.Now().Add(shellPromptWait); time.Now().Before(until); {
-		if rr, err := s.herdr.Read(ctx, paneID, "recent", "text", 5); err == nil && strings.TrimSpace(rr.Text) != "" {
-			break
-		}
-		if err := sleepCtx(ctx, aliasPoll); err != nil {
-			return err
-		}
-	}
-	line := shellLine(append([]string{a.Name}, aliasArgs(a, args)...))
-	if a.Via != "" {
-		line = shellLine([]string{a.Via, "-ic", line})
-	}
-	if err := s.herdr.Call(ctx, "pane.send_text", map[string]any{"pane_id": paneID, "text": line}, nil); err != nil {
+	if err := s.waitPrompt(ctx, paneID); err != nil {
 		return err
 	}
-	if err := s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": paneID, "keys": []string{"enter"}}, nil); err != nil {
+	line, err := shellLine(append([]string{a.Name}, aliasArgs(a, args)...))
+	if err == nil && a.Via != "" {
+		line, err = shellLine([]string{a.Via, "-ic", line})
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.herdr.Type(ctx, paneID, line); err != nil {
 		return err
 	}
 	named := false
 	for until := time.Now().Add(aliasStartWait); ; {
-		var p Pane
-		err := s.herdr.Call(ctx, "pane.get", map[string]any{"pane_id": paneID}, &struct {
-			Pane *Pane `json:"pane"`
-		}{&p})
+		p, err := s.herdr.Pane(ctx, paneID)
 		if err == nil && deref(p.Agent) == herdrKind {
 			if !named {
 				if err := s.herdr.Call(ctx, "agent.rename", map[string]any{"target": paneID, "name": name}, nil); err != nil {
