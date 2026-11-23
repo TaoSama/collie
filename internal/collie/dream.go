@@ -186,6 +186,7 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		}
 		_, bin := sp.routerTarget(machine)
 		alias := sp.launchAlias(bg, machine, aliasName, kinds[kind], dreamName)
+		sp.noteAliasFallback(machine, aliasName, alias)
 		if _, _, err := sp.s.startAgentAs(bg, machine, kinds[kind], dreamName, sp.routerCwd(machine), dreamLabel, alias, args); err != nil {
 			var he *HerdrError
 			if !(errors.As(err, &he) && he.Code == "agent_not_ready") {

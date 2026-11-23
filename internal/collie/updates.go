@@ -154,8 +154,9 @@ func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "这台的 collie 是从源码编译的（" + version + "），在源码里 git pull 后重新编译来更新"})
 		return
 	}
+	// The hub's tag may be up to an hour old: only take it when it is news here.
 	latest := r.URL.Query().Get("tag")
-	if parseVersion(latest) == nil {
+	if parseVersion(latest) == nil || !outdated(version, latest) {
 		latest = fetchLatestTag()
 	}
 	if latest == "" {

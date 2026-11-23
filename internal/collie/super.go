@@ -829,6 +829,7 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 		}
 		if err == nil {
 			alias := sp.launchAlias(lctx, machine, aliasName, kinds[kind], routerName)
+			sp.noteAliasFallback(machine, aliasName, alias)
 			_, _, err = sp.s.startAgentAs(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, alias, args)
 		} else {
 			err = fmt.Errorf("没能把 Collie 的目录同步到 %s：%w", machine, err)
@@ -2423,6 +2424,17 @@ func (sp *Super) routerLaunchLocked() routerLaunch {
 }
 
 func (sp *Super) routerOnLocked() string { return sp.routerLaunchLocked().Machine }
+
+// noteAliasFallback: the alias asked for could not be used and the agent
+// starts plainly; the record says so, so Collie shows as waiting for a restart.
+func (sp *Super) noteAliasFallback(machine, asked string, used *LauncherAlias) {
+	if asked == "" || used != nil {
+		return
+	}
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	sp.setRouterOn(machine, "")
+}
 
 func (sp *Super) routerRunLocked() *[2]string {
 	if sp.routerRun == nil {
