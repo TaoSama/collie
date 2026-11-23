@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -178,6 +179,63 @@ func pairNode(hub, code, name string) (nodeConfig, error) {
 
 var errRevoked = errors.New("revoked")
 
+// hubProxy picks the proxy for the hub's address; a variable for tests.
+var hubProxy = http.ProxyFromEnvironment
+
+// dialHub opens the TCP connection to the hub at addr, through the HTTP proxy
+// the environment names for it (HTTPS_PROXY / HTTP_PROXY, minus NO_PROXY),
+// for networks that only reach the internet that way.
+func dialHub(ctx context.Context, d *net.Dialer, hub *url.URL, addr string) (net.Conn, error) {
+	proxy, err := hubProxy(&http.Request{URL: hub})
+	if err != nil {
+		return nil, fmt.Errorf("proxy setting: %w", err)
+	}
+	if proxy == nil {
+		return d.DialContext(ctx, "tcp", addr)
+	}
+	paddr := proxy.Host
+	if proxy.Port() == "" {
+		port := "80"
+		if proxy.Scheme == "https" {
+			port = "443"
+		}
+		paddr = net.JoinHostPort(proxy.Hostname(), port)
+	}
+	conn, err := d.DialContext(ctx, "tcp", paddr)
+	if err != nil {
+		return nil, fmt.Errorf("proxy %s: %w", paddr, err)
+	}
+	if proxy.Scheme == "https" {
+		conn = tls.Client(conn, &tls.Config{ServerName: proxy.Hostname()})
+	}
+	conn.SetDeadline(time.Now().Add(15 * time.Second))
+	req := &http.Request{Method: "CONNECT", URL: &url.URL{Opaque: addr}, Host: addr, Header: http.Header{}}
+	if pu := proxy.User; pu != nil {
+		pw, _ := pu.Password()
+		req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(pu.Username()+":"+pw)))
+	}
+	if err := req.Write(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("proxy %s: %w", paddr, err)
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, req)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("proxy %s: %w", paddr, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		conn.Close()
+		return nil, fmt.Errorf("proxy %s: CONNECT %s: %s", paddr, addr, resp.Status)
+	}
+	conn.SetDeadline(time.Time{})
+	if br.Buffered() > 0 {
+		return &bufConn{Conn: conn, r: br}, nil
+	}
+	return conn, nil
+}
+
 func nodeSession(ctx context.Context, cfg nodeConfig, name, home, bin, sock string, api http.Handler) error {
 	u, err := url.Parse(cfg.Hub)
 	if err != nil {
@@ -191,14 +249,20 @@ func nodeSession(ctx context.Context, cfg nodeConfig, name, home, bin, sock stri
 		}
 	}
 	d := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	var conn net.Conn
-	if u.Scheme == "https" {
-		conn, err = tls.DialWithDialer(&d, "tcp", addr, &tls.Config{ServerName: u.Hostname()})
-	} else {
-		conn, err = d.DialContext(ctx, "tcp", addr)
-	}
+	conn, err := dialHub(ctx, &d, u, addr)
 	if err != nil {
 		return err
+	}
+	if u.Scheme == "https" {
+		tc := tls.Client(conn, &tls.Config{ServerName: u.Hostname()})
+		hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err = tc.HandshakeContext(hctx)
+		cancel()
+		if err != nil {
+			conn.Close()
+			return err
+		}
+		conn = tc
 	}
 	req, _ := http.NewRequest("GET", strings.TrimRight(cfg.Hub, "/")+"/api/node/connect", nil)
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)

@@ -29,7 +29,8 @@ type handover struct {
 	kind    string
 	session string
 	pct     int
-	worked  bool // the router picked up the flush prompt
+	machine string // where the router runs, "" for the hub
+	worked  bool   // the router picked up the flush prompt
 }
 
 func (sp *Super) handingOver() bool {
@@ -88,6 +89,7 @@ func (sp *Super) checkHandover(ctx context.Context, live map[string]liveAgent, q
 		return
 	}
 	window := sp.s.claudeWindow(sp.routerArgsLocked())
+	machine := sp.routerOnLocked()
 	at := sp.rotateAtLocked()
 	paused := sp.st.Settings.Paused
 	launched, asked := sp.routerLaunchAt, sp.routerAskedAt
@@ -99,9 +101,7 @@ func (sp *Super) checkHandover(ctx context.Context, live map[string]liveAgent, q
 	}
 	var u ctxUsage
 	if a.Session != "" || kind == "agy" {
-		if path, format := sp.s.findTranscript(kind, "id", a.Session, a.Pane, sp.routerDir()); path != "" {
-			u = contextUsage(path, format, window)
-		}
+		u = sp.routerContext(ctx, machine, kind, a.Session, a.Pane, window)
 	}
 	sp.mu.Lock()
 	sp.routerUsage = u
@@ -145,14 +145,14 @@ This turn is for the files alone: edit them, then stop. Your next session handle
 		return
 	}
 	sp.mu.Lock()
-	sp.handover = &handover{at: time.Now(), kind: kind, session: a.Session, pct: u.Pct()}
+	sp.handover = &handover{at: time.Now(), kind: kind, session: a.Session, pct: u.Pct(), machine: machine}
 	sp.addEntryLocked("event", mainThread, fmt.Sprintf("Collie 的上下文用了 %d%%，正在把要记住的事写进记忆，马上换一个新会话", u.Pct()), "", "info")
 	sp.mu.Unlock()
 }
 
 func (sp *Super) finishHandover(ctx context.Context, h *handover) {
 	e := &Ended{
-		Kind: h.kind, Cwd: sp.routerDir(), Name: routerName, Session: h.session, Ended: time.Now(),
+		Kind: h.kind, Machine: h.machine, Cwd: sp.routerCwd(h.machine), Name: routerName, Session: h.session, Ended: time.Now(),
 		Title: "Collie · 交接前的会话（" + h.at.Format("01-02 15:04") + "）",
 	}
 	sp.s.remember(e)

@@ -124,6 +124,8 @@ type Policy struct {
 type Settings struct {
 	RouterKind string   `json:"router_kind"`
 	RouterArgs []string `json:"router_args,omitempty"`
+	// RouterMachine: the computer Collie itself runs on, "" for the hub.
+	RouterMachine string `json:"router_machine,omitempty"`
 	// Model and thinking effort, "" for the agent's own default.
 	RouterModel   string `json:"router_model,omitempty"`
 	RouterEffort  string `json:"router_effort,omitempty"`

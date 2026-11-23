@@ -119,7 +119,7 @@ func (s *Server) superState(ctx context.Context) superView {
 	v.Router.Model, v.Router.Effort = st.RouterModel, st.RouterEffort
 	if run := sp.routerRunLocked(); run != nil && v.Router.Alive {
 		v.Router.Model, v.Router.Effort = run[0], run[1]
-		v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind]
+		v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || sp.routerOnLocked() != st.RouterMachine
 	}
 	if sp.dream != nil {
 		v.Router.Status = "dreaming"
@@ -703,11 +703,15 @@ func (s *Server) hookKey() string {
 
 func (s *Server) superSettings(w http.ResponseWriter, r *http.Request) {
 	sp := s.sup
+	dir, bin := sp.routerTarget(sp.routerOn())
+	if dir == "" {
+		dir = sp.routerDir() // that computer not synced with yet
+	}
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	writeJSON(w, 200, map[string]any{
 		"settings": sp.st.Settings, "policies": sp.st.Policies,
-		"hook_key": s.hookKey(), "router_dir": sp.routerDir(), "bin": sp.bin,
+		"hook_key": s.hookKey(), "router_dir": dir, "bin": bin,
 	})
 }
 
@@ -806,6 +810,7 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 				*p = ""
 			}
 		}
+		ns.RouterMachine = s.machineByName(ns.RouterMachine)
 		ns.migrateReply()
 		if ns.DreamAt != "off" {
 			var h, m int

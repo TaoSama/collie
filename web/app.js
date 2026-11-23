@@ -2126,7 +2126,7 @@
   // Fills a model picker and its effort picker from what that agent offers.
   async function fillModels(form, who) {
     const kindSel = form[who + "_kind"], modelSel = form[who + "_model"], effSel = form[who + "_effort"];
-    const machine = who === "worker" && form.worker_machine ? form.worker_machine.value : "";
+    const machine = form[who + "_machine"] ? form[who + "_machine"].value : "";
     const want = modelSel.dataset.value ?? modelSel.value, wantEff = effSel.dataset.value ?? effSel.value;
     modelSel.innerHTML = `<option value="">读取中…</option>`;
     const info = await modelsFor(kindSel.value, machine);
@@ -2164,6 +2164,7 @@
       form[who + "_kind"].addEventListener("change", () => { form[who + "_model"].value = ""; form[who + "_effort"].value = ""; fillModels(form, who); });
     }
     form.worker_machine?.addEventListener("change", () => fillModels(form, "worker"));
+    form.router_machine?.addEventListener("change", () => fillModels(form, "router"));
   }
 
   function settingsHTML(r) {
@@ -2173,6 +2174,7 @@
           <label>模型<select name="${who}_model" data-title="模型" data-value="${esc(model || "")}"><option value="${esc(model || "")}" selected>${esc(model || "默认")}</option></select></label>
           <label>思考强度<select name="${who}_effort" data-pick="compact" data-title="思考强度" data-value="${esc(effort || "")}"><option value="${esc(effort || "")}" selected>${esc(EFFORT_LABEL[effort] || effort || "默认")}</option></select></label>`;
     const many = (state.machines || []).length > 1;
+    const machinePick = (name, cur, title) => `<select name="${name}" data-title="${title}">${state.machines.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}" ${m.id === (cur || "") ? "selected" : ""}>${esc(m.name)}${m.local ? "（hub）" : m.online ? "" : "（离线）"}</option>`).join("")}</select>`;
     setTimeout(() => bindSettings($("#settings-form")));
     return `<form class="settings" id="settings-form">
       <section class="card set-sec">
@@ -2181,6 +2183,7 @@
           <label>Agent<select name="router_kind" data-title="Collie 自己用的 agent">${kindOpts(s.router_kind)}</select></label>
           ${modelPick("router", s.router_model, s.router_effort)}
         </div>
+        ${many || s.router_machine ? `<div class="set-grid three"><label>电脑${machinePick("router_machine", s.router_machine, "Collie 自己在哪台电脑上运行")}<small>hub 连不上模型时换一台；记忆仍存在 hub 上，自动同步过去</small></label></div>` : ""}
         <details class="set-adv" ${(s.router_args || []).length ? "open" : ""}><summary>更多启动参数</summary>
           <label><input name="router_args" class="mono" value="${esc((s.router_args || []).join(" "))}" placeholder="例如 --permission-mode plan" autocorrect="off" autocapitalize="off" spellcheck="false"><small>原样加在启动命令后面，一般不用填</small></label>
         </details>
@@ -2193,7 +2196,7 @@
           ${modelPick("worker", s.worker_model, s.worker_effort)}
         </div>
         <div class="set-grid three">
-          ${many ? `<label>电脑<select name="worker_machine" data-title="派活默认在哪台电脑">${state.machines.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}" ${m.id === (s.worker_machine || "") ? "selected" : ""}>${esc(m.name)}${m.local ? "（hub）" : m.online ? "" : "（离线）"}</option>`).join("")}</select></label>` : ""}
+          ${many ? `<label>电脑${machinePick("worker_machine", s.worker_machine, "派活默认在哪台电脑")}</label>` : ""}
           <label class="${many ? "span2" : "span3"}">目录<input name="worker_cwd" class="mono" value="${esc(tilde(s.worker_cwd))}" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
         </div>
       </section>
@@ -2249,6 +2252,7 @@
         const s = {
           ...cur,
           router_kind: f.router_kind.value, router_args: f.router_args.value.split(/\s+/).filter(Boolean),
+          router_machine: f.router_machine ? f.router_machine.value : (cur.router_machine || ""),
           router_model: f.router_model.value === "__custom" ? "" : f.router_model.value, router_effort: f.router_effort.value,
           worker_kind: f.worker_kind.value, worker_cwd: f.worker_cwd.value,
           worker_model: f.worker_model.value === "__custom" ? "" : f.worker_model.value, worker_effort: f.worker_effort.value,
@@ -2260,7 +2264,7 @@
         };
         await api("/api/super/settings", { body: { settings: s } });
         renderTarget(true);
-        const relaunch = s.router_kind !== cur.router_kind || s.router_model !== (cur.router_model || "") || s.router_effort !== (cur.router_effort || "") || s.router_args.join(" ") !== (cur.router_args || []).join(" ") || s.ask_permissions !== !!cur.ask_permissions;
+        const relaunch = s.router_kind !== cur.router_kind || s.router_machine !== (cur.router_machine || "") || s.router_model !== (cur.router_model || "") || s.router_effort !== (cur.router_effort || "") || s.router_args.join(" ") !== (cur.router_args || []).join(" ") || s.ask_permissions !== !!cur.ask_permissions;
         toast(relaunch ? "已保存。Collie 自己的启动设置在重启 Collie 后生效" : "已保存");
       }
     } catch (err) { toast(err.message, "attn"); }

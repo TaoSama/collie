@@ -50,19 +50,21 @@ type Super struct {
 	routerNudged    bool      // the watchdog interrupted this turn once already
 	routerUsage     ctxUsage
 	// The model and effort the running router was launched with (unknown after a hub restart).
-	routerRun   *[2]string
-	handover    *handover            // set while the router writes its memory before a fresh session
-	dream       *dreamRun            // set while Collie sleeps and a dream session tidies its memory
-	lastTrust   map[string]time.Time // pane → when its trust dialog was last answered
-	lastAnswer  map[string]time.Time // pane → when a dialog there was just answered
-	lastScreen  map[string]screenMark
-	transcripts map[string]*transcript
-	noAgent     map[string]time.Time // worker → since when its pane has had no agent in it
-	pinnedCache map[string]*Entry    // older pinned entries resolved from SQLite
-	notifyBuf   []notice
-	notifyAt    time.Time
-	seenAt      time.Time // when a page of Collie was last open in front of you
-	seenURL     string    // where that page was, for the link in a notification
+	routerRun       *[2]string
+	routerOnMachine *string              // the computer the running router was launched on
+	rsync           routerSync           // the router folder's mirror on that computer
+	handover        *handover            // set while the router writes its memory before a fresh session
+	dream           *dreamRun            // set while Collie sleeps and a dream session tidies its memory
+	lastTrust       map[string]time.Time // pane → when its trust dialog was last answered
+	lastAnswer      map[string]time.Time // pane → when a dialog there was just answered
+	lastScreen      map[string]screenMark
+	transcripts     map[string]*transcript
+	noAgent         map[string]time.Time // worker → since when its pane has had no agent in it
+	pinnedCache     map[string]*Entry    // older pinned entries resolved from SQLite
+	notifyBuf       []notice
+	notifyAt        time.Time
+	seenAt          time.Time // when a page of Collie was last open in front of you
+	seenURL         string    // where that page was, for the link in a notification
 }
 
 type screenMark struct {
@@ -281,6 +283,7 @@ func (sp *Super) Run(ctx context.Context) {
 					}
 				}()
 				sp.tick(ctx)
+				sp.syncRouterDue()
 			}()
 		}
 	}
@@ -803,20 +806,31 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 	}
 	sp.routerLaunching, sp.routerLaunchAt = true, time.Now()
 	kind := sp.st.Settings.RouterKind
+	machine := sp.routerMachineLocked()
 	args := sp.routerArgsLocked()
 	sp.setRouterRun([2]string{sp.st.Settings.RouterModel, sp.st.Settings.RouterEffort})
+	sp.setRouterOn(machine)
 	sp.mu.Unlock()
 
 	go func() {
 		defer func() { sp.mu.Lock(); sp.routerLaunching = false; sp.mu.Unlock() }()
 		sp.closeStaleRouterWorkspaces(context.Background())
-		if err := sp.writeRouterFiles(); err != nil {
-			log.Printf("router files: %v", err)
-		}
-		sp.routerReadsFresh()
 		lctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		_, _, err := sp.s.startAgent(lctx, "", kinds[kind], routerName, sp.routerDir(), routerLabel, args)
+		// Another computer's paths go into ROUTER.md: learn them before writing it.
+		err := sp.syncRouter(lctx)
+		if err == nil {
+			if err = sp.writeRouterFiles(); err != nil {
+				log.Printf("router files: %v", err)
+			}
+			sp.routerReadsFresh()
+			err = sp.syncRouter(lctx)
+		}
+		if err == nil {
+			_, _, err = sp.s.startAgent(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, args)
+		} else {
+			err = fmt.Errorf("没能把 Collie 的目录同步到 %s：%w", machine, err)
+		}
 		sp.mu.Lock()
 		defer sp.mu.Unlock()
 		var he *HerdrError
@@ -908,9 +922,15 @@ func (sp *Super) writeRouterFiles() error {
 	words := sp.st.Settings.ReplyChars
 	wkind := sp.st.Settings.WorkerKind
 	wcwd := sp.s.tilde(sp.st.Settings.WorkerCwd)
+	machine := sp.routerOnLocked()
 	sp.mu.Unlock()
+	tdir, tbin := sp.routerTarget(machine)
+	if tdir == "" { // that computer's folder is not known yet: the first sync writes these
+		sp.ensureMemory()
+		return nil
+	}
 	layout := "   " + strings.ReplaceAll(memoryLayout, "\n", "\n   ")
-	doc := strings.NewReplacer("{{LAYOUT}}", layout, "{{BIN}}", sp.bin, "{{WORDS}}", fmt.Sprint(words), "{{WKIND}}", wkind, "{{WCWD}}", wcwd, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10)).Replace(routerDoc)
+	doc := strings.NewReplacer("{{LAYOUT}}", layout, "{{BIN}}", tbin, "{{WORDS}}", fmt.Sprint(words), "{{WKIND}}", wkind, "{{WCWD}}", wcwd, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10)).Replace(routerDoc)
 	for _, name := range []string{"ROUTER.md", "CLAUDE.md", "AGENTS.md", "GEMINI.md"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(doc), 0o600); err != nil {
 			return err
@@ -920,7 +940,7 @@ func (sp *Super) writeRouterFiles() error {
 	// Claude Code asks before every shell command; the router's whole job is
 	// running the collie CLI and keeping memory/, so allow exactly that.
 	perms, _ := json.MarshalIndent(map[string]any{"permissions": map[string]any{
-		"allow": collieAllow(sp.bin, append(memoryRules(dir),
+		"allow": collieAllow(tbin, append(memoryRules(tdir),
 			// Read-only peeks at a worker's terminal.
 			"Bash(herdr agent read:*)", "Bash(herdr agent list:*)", "Bash(herdr agent get:*)", "Bash(herdr pane read:*)")...),
 	}}, "", "  ")
@@ -929,6 +949,7 @@ func (sp *Super) writeRouterFiles() error {
 		return err
 	}
 	sp.ensureMemory()
+	sp.syncRouterNow()
 	return nil
 }
 
@@ -1062,12 +1083,7 @@ func (sp *Super) Spawn(kind, cwd, task, thread, name, by, machine, model, effort
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		bin := sp.bin
-		if !m.Local && m.Bin != "" {
-			bin = m.Bin
-		} else if !m.Local {
-			bin = "collie"
-		}
+		bin := sp.machineBin(m)
 		// codex's resume is a subcommand: it goes first, the flags after it.
 		args := append(resumeArgs(kinds[kind], resume), wargs...)
 		if kinds[kind] == "claude" {
@@ -2066,8 +2082,8 @@ func (sp *Super) List() string {
 // it, so asking the human adds friction without adding safety. Any other
 // dialog (and any other directory) is left for the human.
 func (sp *Super) trustOwnDir(ctx context.Context, pane string) {
-	if sp.answerTrust(ctx, pane, sp.routerDir()) {
-		log.Printf("router: trusted its own directory %s", sp.routerDir())
+	if dir := sp.routerCwd(sp.routerOn()); sp.answerTrust(ctx, pane, dir) {
+		log.Printf("router: trusted its own directory %s", dir)
 	}
 }
 
@@ -2174,7 +2190,7 @@ func (sp *Super) closeStaleRouterWorkspaces(ctx context.Context) {
 		return
 	}
 	for _, ws := range wss {
-		if _, m := split(ws.ID); ws.Label == routerLabel && m == "" {
+		if ws.Label == routerLabel { // wherever it ran: there is one Collie at a time
 			sp.s.herdr.Call(ctx, "workspace.close", map[string]any{"workspace_id": ws.ID}, nil)
 		}
 	}
@@ -2361,6 +2377,30 @@ func (sp *Super) setRouterRun(run [2]string) {
 	sp.routerRun = &run
 	b, _ := json.Marshal(run)
 	sp.db.Exec(`INSERT INTO kv(k,v) VALUES('router_run',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, string(b))
+}
+
+// The computer the router was launched on, kept across hub restarts.
+func (sp *Super) setRouterOn(machine string) {
+	sp.routerOnMachine = &machine
+	if sp.db == nil {
+		return
+	}
+	if _, err := sp.db.Exec(`INSERT INTO kv(k,v) VALUES('router_on',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, machine); err != nil {
+		log.Printf("router_on: %v", err)
+	}
+}
+
+func (sp *Super) routerOnLocked() string {
+	if sp.routerOnMachine == nil {
+		var v string
+		if sp.db != nil {
+			if err := sp.db.QueryRow(`SELECT v FROM kv WHERE k='router_on'`).Scan(&v); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				log.Printf("router_on: %v", err)
+			}
+		}
+		sp.routerOnMachine = &v
+	}
+	return *sp.routerOnMachine
 }
 
 func (sp *Super) routerRunLocked() *[2]string {

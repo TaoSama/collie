@@ -136,6 +136,8 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 	}
 	sp.dream = &dreamRun{at: time.Now(), reason: reason}
 	kind := sp.st.Settings.RouterKind
+	prev, machine := sp.routerOnLocked(), sp.routerMachineLocked()
+	sp.setRouterOn(machine)
 	args := sp.dreamArgsLocked()
 	at := sp.dream.at
 	entry := sp.addEntryLocked("event", mainThread, "Collie 睡一会儿，回顾最近的对话、整理记忆（做梦）", "", "info")
@@ -158,7 +160,7 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 				if k == "antigravity" {
 					k = "agy"
 				}
-				e := &Ended{Kind: k, Cwd: sp.routerDir(), Name: routerName, Session: a.Session, Ended: time.Now(),
+				e := &Ended{Kind: k, Machine: prev, Cwd: sp.routerCwd(prev), Name: routerName, Session: a.Session, Ended: time.Now(),
 					Title: "Collie · 做梦前的会话（" + time.Now().Format("01-02 15:04") + "）"}
 				sp.s.remember(e)
 				sp.mu.Lock()
@@ -172,12 +174,17 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		if err := sp.writeRouterFiles(); err != nil {
 			log.Printf("router files: %v", err)
 		}
-		if err := sp.writeDreamInput(); err != nil {
+		if err := sp.writeDreamInput(bg); err != nil {
 			fail(err)
 			return
 		}
 		os.MkdirAll(filepath.Join(sp.routerDir(), "dreams"), 0o700)
-		if _, _, err := sp.s.startAgent(bg, "", kinds[kind], dreamName, sp.routerDir(), dreamLabel, args); err != nil {
+		if err := sp.syncRouter(bg); err != nil {
+			fail(err)
+			return
+		}
+		_, bin := sp.routerTarget(machine)
+		if _, _, err := sp.s.startAgent(bg, machine, kinds[kind], dreamName, sp.routerCwd(machine), dreamLabel, args); err != nil {
 			var he *HerdrError
 			if !(errors.As(err, &he) && he.Code == "agent_not_ready") {
 				fail(err)
@@ -185,7 +192,7 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 			}
 		}
 		prompt := strings.ReplaceAll(dreamPrompt, "{{DATE}}", journalName(at))
-		prompt = strings.ReplaceAll(prompt, "{{BIN}}", sp.bin)
+		prompt = strings.ReplaceAll(prompt, "{{BIN}}", bin)
 		prompt = strings.ReplaceAll(prompt, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10))
 		migrate := ""
 		if sp.legacyMemory() {
@@ -262,6 +269,9 @@ func (sp *Super) driveDream(ctx context.Context, d *dreamRun, live map[string]li
 func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 	sp.closeWorkspaces(ctx, dreamLabel)
 	summary, skills, fixes := "", "", ""
+	if err := sp.syncRouter(ctx); err != nil {
+		log.Printf("dream: %v", err)
+	}
 	if ok {
 		sp.setLastDream(time.Now())
 		journal := filepath.Join(sp.routerDir(), "dreams", journalName(d.at)+".md")
@@ -363,7 +373,7 @@ func (sp *Super) closeWorkspaces(ctx context.Context, label string) {
 }
 
 // writeDreamInput condenses what happened since the last dream into dream/input.md.
-func (sp *Super) writeDreamInput() error {
+func (sp *Super) writeDreamInput(ctx context.Context) error {
 	since := sp.lastDream()
 	var b strings.Builder
 	fmt.Fprintf(&b, "# What happened since the last dream (%s)\n\n", func() string {
@@ -406,15 +416,20 @@ func (sp *Super) writeDreamInput() error {
 	const budget = 240 << 10
 	var parts []string
 	for _, h := range sess {
-		path, format := sp.s.findTranscript(h.Kind, "id", h.Session, "", "")
-		if path == "" {
+		var msgs []*Message
+		if h.Machine != "" {
+			msgs = sp.remoteMessages(ctx, h)
+		} else if path, format := sp.s.findTranscript(h.Kind, "id", h.Session, "", ""); path != "" {
+			tr := newTranscript(path, format)
+			tr.update()
+			msgs = tr.msgs
+		}
+		if len(msgs) == 0 {
 			continue
 		}
-		tr := newTranscript(path, format)
-		tr.update()
 		var p strings.Builder
 		fmt.Fprintf(&p, "\n### %s (ended %s)\n\n", h.Title, h.Ended.Format("01-02 15:04"))
-		for _, m := range tr.msgs {
+		for _, m := range msgs {
 			switch m.Kind {
 			case "user":
 				fmt.Fprintf(&p, "IN: %s\n\n", clip(m.Text, 1500))
