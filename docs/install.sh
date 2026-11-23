@@ -79,10 +79,10 @@ install_binary() {
   elif src=$(checkout); then
     command -v go >/dev/null 2>&1 || die "从源码安装需要 Go 1.25+：https://go.dev/dl/"
     v=$(git -C "$src" describe --tags --always --dirty 2>/dev/null || echo dev)
-    step "从源码编译（$src，$v）"
+    step "从源码编译（${src}，${v}）"
     (cd "$src" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$v" -o "$tmp/$asset" .) || die "编译失败"
   else
-    step "下载 $asset（$VERSION）"
+    step "下载 ${asset}（${VERSION}）"
     fetch "$base/$asset" "$tmp/$asset" || die "下载失败：$base/$asset"
     if fetch "$base/checksums.txt" "$tmp/checksums.txt" 2>/dev/null; then
       want=$(grep " $asset\$" "$tmp/checksums.txt" | cut -d' ' -f1)
@@ -142,7 +142,7 @@ $args
     printf '%s\n' "$unit" > "$plist"
     launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$plist"
-    step "已作为后台服务运行（launchd: $label）"
+    step "已作为后台服务运行（launchd: ${label}）"
     say "    日志：tail -f $log"
   else
     unitdir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
@@ -187,7 +187,7 @@ WantedBy=default.target"
     systemctl --user daemon-reload
     systemctl --user enable --now "collie-$name" >/dev/null
     systemctl --user restart "collie-$name"
-    step "已作为后台服务运行（systemd --user: collie-$name）"
+    step "已作为后台服务运行（systemd --user: collie-${name}）"
     say "    日志：journalctl --user -u collie-$name -f"
     if command -v loginctl >/dev/null 2>&1 && ! loginctl show-user "$(id -un)" -p Linger 2>/dev/null | grep -q yes; then
       say "    提示：退出登录后也要继续跑的话，运行一次：loginctl enable-linger"
@@ -297,6 +297,6 @@ case "$mode" in
     check_herdr "hub 本身照常能用"
     ;;
   *)
-    die "不认识的参数：$mode（可以是 node、hub，或者不带参数）"
+    die "不认识的参数：${mode}（可以是 node、hub，或者不带参数）"
     ;;
 esac
