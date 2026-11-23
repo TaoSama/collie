@@ -525,19 +525,25 @@
     $("#nav-prefs").classList.toggle("active", view === "prefs");
   }
 
-  // A column edge dragged with mouse, finger or pen: onMove gets each x,
-  // onEnd runs once the pointer lets go (or the system takes it away).
-  function dragGrip(grip, onMove, onEnd) {
+  // A column edge dragged with mouse, finger or pen. onStart measures the
+  // layout once (reading it while the width changes would reflow on every
+  // move); onMove gets x and that, at most once a frame; onEnd runs once the
+  // pointer lets go (or the system takes it away).
+  function dragGrip(grip, { onStart, onMove, onEnd }) {
     grip.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || grip.classList.contains("on")) return;
+      const bounds = onStart();
+      if (bounds === null) return;
       e.preventDefault();
       grip.setPointerCapture(e.pointerId);
       document.body.classList.add("dragging"); grip.classList.add("on");
-      let moved = false;
-      const move = (ev) => { if (ev.pointerId === e.pointerId) { moved = true; onMove(ev.clientX); } };
+      let x = null, raf = 0, moved = false;
+      const apply = () => { raf = 0; if (x !== null) { moved = true; onMove(x, bounds); } };
+      const move = (ev) => { if (ev.pointerId !== e.pointerId) return; x = ev.clientX; raf ||= requestAnimationFrame(apply); };
       grip.addEventListener("pointermove", move);
       grip.addEventListener("lostpointercapture", () => {
         grip.removeEventListener("pointermove", move);
+        if (raf) cancelAnimationFrame(raf), apply();
         document.body.classList.remove("dragging"); grip.classList.remove("on");
         if (moved) onEnd();
       }, { once: true });
@@ -548,18 +554,22 @@
   // The sidebar's edge drags wider or narrower (not on a phone, where the
   // sidebar is the whole screen); a double-click puts it back.
   const SIDE_MIN = 220, SIDE_MAX = 520;
-  function setSideW(w) {
+  const sideMax = () => {
+    const file = $("#app").classList.contains("has-file") ? $("#file-view").offsetWidth : 0;
+    return Math.max(SIDE_MIN, Math.min(SIDE_MAX, innerWidth - MAIN_MIN - file));
+  };
+  function setSideW(w, max = sideMax()) {
     const root = document.documentElement.style;
     if (!w) return root.removeProperty("--side-w");
-    const file = $("#app").classList.contains("has-file") ? $("#file-view").offsetWidth : 0;
-    const max = Math.max(SIDE_MIN, Math.min(SIDE_MAX, innerWidth - MAIN_MIN - file));
     root.setProperty("--side-w", Math.round(Math.max(SIDE_MIN, Math.min(w, max))) + "px");
   }
   setSideW(store.get("sideW", 0));
   addEventListener("resize", () => setSideW(store.get("sideW", 0)));
-  dragGrip($("#side-grip"), (x) => { if (!narrow()) setSideW(Math.max(x, SIDE_MIN)); }, () => {
-    store.set("sideW", $(".side").offsetWidth);
-    fitTerm();
+  let sideDragW = 0;
+  dragGrip($("#side-grip"), {
+    onStart: () => narrow() ? null : sideMax(),
+    onMove: (x, max) => { sideDragW = Math.round(Math.max(SIDE_MIN, Math.min(x, max))); setSideW(sideDragW, max); },
+    onEnd: () => { store.set("sideW", sideDragW); fitTerm(); },
   });
   $("#side-grip").addEventListener("dblclick", () => { store.set("sideW", 0); setSideW(0); fitTerm(); });
 
@@ -2571,6 +2581,7 @@
   let extAll = store.get("extAll", false);
   let sideBy = store.get("sideBy", "status"), sideOnly = store.get("sideOnly", "all");
   if (!["status", "machine", "repo", "project"].includes(sideBy)) sideBy = "status";
+  if (!["all", "done", "term"].includes(sideOnly)) sideOnly = "all";
   const sideFold = store.get("sideFold", {});
   const EXT_STATE = { working: "在干活", waiting: "在等后台任务", idle: "开着，在等你", blocked: "等电脑那边确认" };
   const RANK = { working: 0, waiting: 0.5, starting: 1, blocked: 2, done: 3, unknown: 4, idle: 4 };
@@ -2656,15 +2667,13 @@
   function renderSessions() {
     const all = sideRows();
     const n = { done: all.filter((r) => r.bucket === "done").length, term: all.filter((r) => r.bucket === "term").length };
-    // A filter narrows the list; what needs you stays.
+    // A filter never hides what needs you.
     const rows = sideOnly === "all" ? all : all.filter((r) => r.bucket === sideOnly || r.bucket === "attn");
     const chips = [["all", "全部", 0], ["done", "完成未看", n.done], ["term", "终端", n.term]].filter(([v, , c]) => v === "all" || c || v === sideOnly);
     const chipsHTML = chips.length < 2 ? "" : chips.map(([v, label, c]) =>
       `<button type="button" data-only="${v}" class="${v === sideOnly ? "on" : ""}">${label}${v === "all" ? "" : ` <span class="k">${c}</span>`}</button>`).join("");
 
     const groupHTML = (g) => {
-      // Open sessions are all listed; ended ones show the latest few, the
-      // rest behind a row (and the one open now, wherever it is).
       const open = g.rows.filter((r) => r.rank < ENDED_RANK), ended = g.rows.filter((r) => r.rank >= ENDED_RANK);
       let shown = extAll ? ended : ended.slice(0, RECENT_N);
       const cur = view === "ext" && extCur && ended.find((r) => r.id === extCur && !shown.includes(r));
@@ -5108,8 +5117,12 @@
   }
   pane.addEventListener("click", (e) => { if (e.target.closest("[data-fv-close]")) closeFilePane(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pane.hidden && !document.querySelector("dialog[open]")) closeFilePane(); });
-  dragGrip($("#fv-grip"), (x) => setFileW(Math.max(Math.min(innerWidth - x, fileMax()), 360)),
-    () => store.set("fileW", parseInt(getComputedStyle(document.documentElement).getPropertyValue("--file-w")) || 520));
+  let fileDragW = 0;
+  dragGrip($("#fv-grip"), {
+    onStart: fileMax,
+    onMove: (x, max) => setFileW(fileDragW = Math.max(Math.min(innerWidth - x, max), 360)),
+    onEnd: () => store.set("fileW", Math.round(fileDragW)),
+  });
 
   // Minimal, safe Markdown: escape first, then add a little structure.
   const mdCache = new Map();
