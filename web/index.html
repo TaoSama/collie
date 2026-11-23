@@ -66,22 +66,13 @@
     </nav>
 
     <div class="side-scroll">
-      <section class="group" id="attention-group" hidden>
-        <h2>需要你</h2>
-        <ul class="list attn" id="attention"></ul>
-      </section>
-      <section class="group" id="live-group">
-        <h2>进行中 <span class="count" id="live-count"></span></h2>
-        <ul class="list" id="live-list"></ul>
-      </section>
-      <section class="group" id="recent-group" hidden>
-        <h2>最近</h2>
-        <ul class="list" id="recent-list"></ul>
-      </section>
-      <details class="group" id="shell-group">
-        <summary><h2>终端 <span class="count" id="shell-count"></span></h2></summary>
-        <ul class="list" id="shells"></ul>
-      </details>
+      <div class="side-tools">
+        <div class="seg side-seg" id="side-by" title="侧边栏分组">
+          <button type="button" data-v="machine">机器</button><button type="button" data-v="repo">仓库</button><button type="button" data-v="project">项目</button><button type="button" data-v="status">状态</button>
+        </div>
+        <div class="side-chips" id="side-only" hidden></div>
+      </div>
+      <div id="side-groups"></div>
     </div>
 
     <div class="local-app" id="local-app" hidden>
@@ -102,6 +93,7 @@
         <svg viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11"/></svg>
       </button>
     </footer>
+    <div class="side-grip" id="side-grip" title="拖动调整宽度，双击还原"></div>
   </aside>
 
   <main class="main">
