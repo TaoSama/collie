@@ -21,6 +21,7 @@
     agent({ pane_id: "w3:p1", workspace_id: "w3", name: "codex-1", kind: "codex", status: "blocked", cwd: "/home/alex/code/shop-api", topic: "修复 /orders 分页的边界问题", run: ["gpt-6.1-sol", "high"] }),
     agent({ pane_id: "w4:p1", workspace_id: "w4", name: "agy-1", kind: "agy", status: "waiting", cwd: "/home/alex/code/shop-api", topic: "整理数据库迁移脚本", run: ["", ""] }),
     agent({ pane_id: "w5:p1", workspace_id: "w5", name: "fix-flaky-test", kind: "codex", status: "working", cwd: "/home/alex/code/shop-api", run: ["gpt-6.1-sol", "medium"] }),
+    agent({ pane_id: "w8:p1", workspace_id: "w8", name: "codex-2", kind: "codex", status: "done", cwd: "/home/alex/code/shop-api/.claude/worktrees/orders-index", topic: "给订单列表加复合索引", run: ["gpt-6.1-sol", "high"] }),
     agent({ pane_id: "w6:p1@macbook", workspace_id: "w6@macbook", name: "release-notes", kind: "claude", status: "done", cwd: "/Users/alex/code/shop-web", run: ["sonnet", "low"] }),
   ];
   const shells = [
@@ -189,6 +190,7 @@
 
   const external = [
     { id: "x1", kind: "claude", pid: 4242, cwd: "/Users/alex/code/notes", app: "iTerm", started: ago(90), session: "s1", title: "周报草稿", updated: ago(20), machine: "macbook", status: "idle", can_send: false, live: true },
+    { id: "x3", kind: "codex", pid: 5120, cwd: "/home/alex/code/shop-api", app: "VS Code", started: ago(30), session: "s5", title: "排查 Redis 连接泄漏", updated: ago(1), status: "working", can_send: false, read_only: "这个 Codex 会话没有在共享后台里运行（旧版本，或用了独立的后台），只能看", live: true },
     { id: "cd-2", kind: "claude", pid: 4310, cwd: "/Users/alex/code/shop-web", app: "Claude 桌面版", started: ago(240), session: "s2", title: "重构购物车状态管理", updated: ago(55), machine: "macbook", status: "idle", can_send: true, live: true },
   ];
   const history = [

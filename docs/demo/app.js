@@ -488,16 +488,10 @@
   }
   function renderSide() {
     const blocked = state.agents.filter((a) => a.status === "blocked");
-    $("#attention-group").hidden = blocked.length === 0;
-    $("#attention").innerHTML = blocked.map(itemHTML).join("");
-
     const machines = (state.machines || [{ id: "", name: "本机", local: true, online: state.ok }]);
     const multi = machines.length > 1;
 
     renderSessions();
-    $("#shells").innerHTML = state.shells.map(itemHTML).join("");
-    $("#shell-count").textContent = state.shells.length || "";
-    $("#shell-group").hidden = state.shells.length === 0;
 
     const online = machines.filter((m) => m.local ? state.ok : m.online).length;
     $("#conn").className = "conn " + (online ? "on" : "off");
@@ -530,6 +524,44 @@
     $("#nav-devices").classList.toggle("active", view === "devices");
     $("#nav-prefs").classList.toggle("active", view === "prefs");
   }
+
+  // A column edge dragged with mouse, finger or pen: onMove gets each x,
+  // onEnd runs once the pointer lets go (or the system takes it away).
+  function dragGrip(grip, onMove, onEnd) {
+    grip.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || grip.classList.contains("on")) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      document.body.classList.add("dragging"); grip.classList.add("on");
+      let moved = false;
+      const move = (ev) => { if (ev.pointerId === e.pointerId) { moved = true; onMove(ev.clientX); } };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("lostpointercapture", () => {
+        grip.removeEventListener("pointermove", move);
+        document.body.classList.remove("dragging"); grip.classList.remove("on");
+        if (moved) onEnd();
+      }, { once: true });
+    });
+  }
+  // The conversation keeps at least this much beside the sidebar and a file.
+  const MAIN_MIN = 420;
+  // The sidebar's edge drags wider or narrower (not on a phone, where the
+  // sidebar is the whole screen); a double-click puts it back.
+  const SIDE_MIN = 220, SIDE_MAX = 520;
+  function setSideW(w) {
+    const root = document.documentElement.style;
+    if (!w) return root.removeProperty("--side-w");
+    const file = $("#app").classList.contains("has-file") ? $("#file-view").offsetWidth : 0;
+    const max = Math.max(SIDE_MIN, Math.min(SIDE_MAX, innerWidth - MAIN_MIN - file));
+    root.setProperty("--side-w", Math.round(Math.max(SIDE_MIN, Math.min(w, max))) + "px");
+  }
+  setSideW(store.get("sideW", 0));
+  addEventListener("resize", () => setSideW(store.get("sideW", 0)));
+  dragGrip($("#side-grip"), (x) => { if (!narrow()) setSideW(Math.max(x, SIDE_MIN)); }, () => {
+    store.set("sideW", $(".side").offsetWidth);
+    fitTerm();
+  });
+  $("#side-grip").addEventListener("dblclick", () => { store.set("sideW", 0); setSideW(0); fitTerm(); });
 
   // ───────────────────────────── routing & scroll restoration
   // Track in-app history depth on history.state so the header back button pops
@@ -2126,7 +2158,7 @@
   // Fills a model picker and its effort picker from what that agent offers.
   async function fillModels(form, who) {
     const kindSel = form[who + "_kind"], modelSel = form[who + "_model"], effSel = form[who + "_effort"];
-    const machine = who === "worker" && form.worker_machine ? form.worker_machine.value : "";
+    const machine = form[who + "_machine"] ? form[who + "_machine"].value : "";
     const want = modelSel.dataset.value ?? modelSel.value, wantEff = effSel.dataset.value ?? effSel.value;
     modelSel.innerHTML = `<option value="">读取中…</option>`;
     const info = await modelsFor(kindSel.value, machine);
@@ -2164,6 +2196,7 @@
       form[who + "_kind"].addEventListener("change", () => { form[who + "_model"].value = ""; form[who + "_effort"].value = ""; fillModels(form, who); });
     }
     form.worker_machine?.addEventListener("change", () => fillModels(form, "worker"));
+    form.router_machine?.addEventListener("change", () => fillModels(form, "router"));
   }
 
   function settingsHTML(r) {
@@ -2173,6 +2206,7 @@
           <label>模型<select name="${who}_model" data-title="模型" data-value="${esc(model || "")}"><option value="${esc(model || "")}" selected>${esc(model || "默认")}</option></select></label>
           <label>思考强度<select name="${who}_effort" data-pick="compact" data-title="思考强度" data-value="${esc(effort || "")}"><option value="${esc(effort || "")}" selected>${esc(EFFORT_LABEL[effort] || effort || "默认")}</option></select></label>`;
     const many = (state.machines || []).length > 1;
+    const machinePick = (name, cur, title) => `<select name="${name}" data-title="${title}">${state.machines.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}" ${m.id === (cur || "") ? "selected" : ""}>${esc(m.name)}${m.local ? "（hub）" : m.online ? "" : "（离线）"}</option>`).join("")}</select>`;
     setTimeout(() => bindSettings($("#settings-form")));
     return `<form class="settings" id="settings-form">
       <section class="card set-sec">
@@ -2181,6 +2215,7 @@
           <label>Agent<select name="router_kind" data-title="Collie 自己用的 agent">${kindOpts(s.router_kind)}</select></label>
           ${modelPick("router", s.router_model, s.router_effort)}
         </div>
+        ${many || s.router_machine ? `<div class="set-grid three"><label>电脑${machinePick("router_machine", s.router_machine, "Collie 自己在哪台电脑上运行")}<small>hub 连不上模型时换一台；记忆仍存在 hub 上，自动同步过去</small></label></div>` : ""}
         <details class="set-adv" ${(s.router_args || []).length ? "open" : ""}><summary>更多启动参数</summary>
           <label><input name="router_args" class="mono" value="${esc((s.router_args || []).join(" "))}" placeholder="例如 --permission-mode plan" autocorrect="off" autocapitalize="off" spellcheck="false"><small>原样加在启动命令后面，一般不用填</small></label>
         </details>
@@ -2193,7 +2228,7 @@
           ${modelPick("worker", s.worker_model, s.worker_effort)}
         </div>
         <div class="set-grid three">
-          ${many ? `<label>电脑<select name="worker_machine" data-title="派活默认在哪台电脑">${state.machines.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}" ${m.id === (s.worker_machine || "") ? "selected" : ""}>${esc(m.name)}${m.local ? "（hub）" : m.online ? "" : "（离线）"}</option>`).join("")}</select></label>` : ""}
+          ${many ? `<label>电脑${machinePick("worker_machine", s.worker_machine, "派活默认在哪台电脑")}</label>` : ""}
           <label class="${many ? "span2" : "span3"}">目录<input name="worker_cwd" class="mono" value="${esc(tilde(s.worker_cwd))}" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
         </div>
       </section>
@@ -2249,6 +2284,7 @@
         const s = {
           ...cur,
           router_kind: f.router_kind.value, router_args: f.router_args.value.split(/\s+/).filter(Boolean),
+          router_machine: f.router_machine ? f.router_machine.value : (cur.router_machine || ""),
           router_model: f.router_model.value === "__custom" ? "" : f.router_model.value, router_effort: f.router_effort.value,
           worker_kind: f.worker_kind.value, worker_cwd: f.worker_cwd.value,
           worker_model: f.worker_model.value === "__custom" ? "" : f.worker_model.value, worker_effort: f.worker_effort.value,
@@ -2260,7 +2296,7 @@
         };
         await api("/api/super/settings", { body: { settings: s } });
         renderTarget(true);
-        const relaunch = s.router_kind !== cur.router_kind || s.router_model !== (cur.router_model || "") || s.router_effort !== (cur.router_effort || "") || s.router_args.join(" ") !== (cur.router_args || []).join(" ") || s.ask_permissions !== !!cur.ask_permissions;
+        const relaunch = s.router_kind !== cur.router_kind || s.router_machine !== (cur.router_machine || "") || s.router_model !== (cur.router_model || "") || s.router_effort !== (cur.router_effort || "") || s.router_args.join(" ") !== (cur.router_args || []).join(" ") || s.ask_permissions !== !!cur.ask_permissions;
         toast(relaunch ? "已保存。Collie 自己的启动设置在重启 Collie 后生效" : "已保存");
       }
     } catch (err) { toast(err.message, "attn"); }
@@ -2440,16 +2476,29 @@
     goBack(true);
   });
   const extName = (e) => e.title || (e.cwd ? e.cwd.split("/").filter(Boolean).pop() : "") || KIND_LABEL[e.kind] || e.kind;
-  // The sidebar, by what you need: what is going on now (herdr agents, yours
-  // and Collie's, and other apps' running sessions), then what you did lately
-  // (other apps' resting conversations and ended herdr sessions, merged).
-  // Which computer something is on is a detail on its row.
+  // The sidebar, by what you need: what needs you, what just finished, what
+  // is going on now (herdr agents, yours and Collie's, and other apps'
+  // running sessions), what rests, then what you did lately (other apps'
+  // resting conversations and ended herdr sessions, merged). Or the same
+  // sessions by computer, repository or herdr workspace; what needs you
+  // stays on top either way.
   const RECENT_N = 8;
   let extAll = store.get("extAll", false);
+  let sideBy = store.get("sideBy", "status"), sideOnly = store.get("sideOnly", "all");
+  if (!["status", "machine", "repo", "project"].includes(sideBy)) sideBy = "status";
+  const sideFold = store.get("sideFold", {});
   const EXT_STATE = { working: "在干活", waiting: "在等后台任务", idle: "开着，在等你", blocked: "等电脑那边确认" };
   const RANK = { working: 0, waiting: 0.5, starting: 1, blocked: 2, done: 3, unknown: 4, idle: 4 };
+  const ENDED_RANK = 9; // ended and resting sessions sort after anything open
+  const STATUS_GROUPS = [["attn", "需要你"], ["done", "完成未看"], ["going", "进行中"], ["idle", "空闲"], ["recent", "最近"], ["term", "终端"]];
+  // Worktrees live inside their repository: list them under it.
+  const WORKTREE_RE = /^(.+?)\/(?:\.worktrees|\.claude\/worktrees|\.herdr\/worktrees)\/./;
+  const repoOf = (cwd) => { const p = (cwd || "").replace(/\/+$/, ""); return p.match(WORKTREE_RE)?.[1] || p; };
+  // Another app's session Collie can only read (no way to send to it). The
+  // one open now stays, so it doesn't vanish under you.
+  const readOnlyHidden = (e) => !e.can_send && !prefs.readOnly() && !(view === "ext" && extCur === e.id);
   function renderExt() { renderSessions(); }
-  function renderSessions() {
+  function sideRows() {
     const many = (state.machines || []).length > 1;
     const extRow = (e) => {
       const open = e.live && e.status === "idle";
@@ -2465,33 +2514,97 @@
         <span class="glyph">${GLYPHS[h.kind] || GLYPHS.agent}</span>
         <span class="body"><div class="name">${esc(histName(h))}</div><div class="sub">${esc(sub)}</div></span></a></li>`;
     };
-
-    // 进行中: what is running or has just finished (needs-you rows are already
-    // above). Another app's session that is only open (kept alive in the
-    // background, nothing running) is listed under 最近 by its time, its dot
-    // saying it is still open.
+    const pane = (a, term) => {
+      const rank = RANK[a.status] ?? 3;
+      const bucket = term ? "term" : a.status === "blocked" ? "attn" : a.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
+      return { id: a.pane_id, src: "pane", html: itemHTML(a), bucket, rank, t: 0, machine: a.machine || "", cwd: a.cwd, ws: a.workspace_id, wsLabel: a.workspace_label };
+    };
+    // Another app's session that is only open (kept alive in the background,
+    // nothing running) is listed under 最近 by its time, its dot saying it is
+    // still open. Collie's own ended sessions are reached from its conversation.
     const going = (e) => e.live && e.status !== "idle" && e.status !== "unknown";
-    const panes = state.agents.filter((a) => a.name !== ROUTER && a.status !== "blocked")
-      .map((a) => ({ rank: RANK[a.status] ?? 3, done: a.status === "done", html: itemHTML(a), on: view === "pane" && a.pane_id === current }));
-    const liveExt = ext.filter(going).map((e) => ({ rank: RANK[e.status] ?? 3, done: e.status === "done", html: extRow(e), on: view === "ext" && extCur === e.id }));
-    const live = [...panes, ...liveExt].sort((x, y) => x.rank - y.rank);
-    const busy = live.filter((x) => x.rank <= 1).length;
-    $("#live-count").textContent = busy ? `${busy} 个在跑` : live.length || "";
-    $("#live-list").innerHTML = live.map((x) => x.html).join("")
-      || `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Collie 派一个。</li>`;
+    const workers = new Set(sup.workers.map((w) => w.name));
+    const collieRan = (name) => name === ROUTER || workers.has(name);
+    // Another hub's own computer has no machine id: it is that hub.
+    const machineOf = (x) => x.hub ? tagged(x.machine || "", x.hub) : x.machine || "";
+    return [
+      ...state.agents.filter((a) => a.name !== ROUTER || a.status === "blocked").map((a) => pane(a, false)),
+      ...state.shells.map((a) => pane(a, true)),
+      ...ext.filter((e) => !readOnlyHidden(e)).map((e) => ({
+        id: e.id, src: "ext", html: extRow(e), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
+        t: new Date(e.updated || e.started), machine: machineOf(e), cwd: e.cwd, ws: "", wsLabel: "",
+      })),
+      ...hist.filter((h) => !collieRan(h.name)).map((h) => ({
+        id: "h:" + h.id, src: "hist", html: histRow(h), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine: machineOf(h), cwd: h.cwd, ws: "", wsLabel: "",
+      })),
+    ];
+  }
+  // [{ key, label, title, mono, rows }], in the order they are listed.
+  function sideGroups(rows) {
+    if (sideBy === "status") return STATUS_GROUPS.map(([key, label]) => ({ key, label, rows: rows.filter((r) => r.bucket === key) }));
+    const machines = (state.machines || []).map((m) => m.id);
+    const keyOf = {
+      machine: (r) => [r.machine, machineName(r.machine)],
+      repo: (r) => { const p = repoOf(r.cwd); return [p, tilde(p) || "~"]; },
+      project: (r) => r.ws ? [r.ws, r.wsLabel || r.ws] : r.src === "hist" ? ["~ended", "已结束"] : ["~ext", "其他终端"],
+    }[sideBy];
+    const by = new Map();
+    for (const r of rows) {
+      if (r.bucket === "attn") continue;
+      const [key, label] = keyOf(r);
+      if (!by.has(key)) by.set(key, { key: "g:" + key, id: key, label, rows: [], best: Infinity, last: 0 });
+      const g = by.get(key);
+      g.rows.push(r); g.best = Math.min(g.best, r.rank); g.last = Math.max(g.last, +r.t || 0);
+    }
+    const at = (g) => machines.indexOf(g.id) + 1 || machines.length + 1;
+    const groups = [...by.values()].sort(sideBy === "machine" ? (x, y) => at(x) - at(y)
+      : (x, y) => x.best - y.best || y.last - x.last || x.label.localeCompare(y.label));
+    for (const g of groups) {
+      // A repository or workspace on more than one computer says which.
+      const on = [...new Set(g.rows.map((r) => r.machine))];
+      if (sideBy !== "machine" && on.length > 1) g.title = on.map(machineName).join("、");
+      if (sideBy === "repo") g.mono = true;
+      g.rows.sort((x, y) => x.rank - y.rank || y.t - x.t);
+    }
+    return [{ key: "attn", label: "需要你", rows: rows.filter((r) => r.bucket === "attn") }, ...groups];
+  }
+  function renderSessions() {
+    const all = sideRows();
+    const n = { done: all.filter((r) => r.bucket === "done").length, term: all.filter((r) => r.bucket === "term").length };
+    // A filter narrows the list; what needs you stays.
+    const rows = sideOnly === "all" ? all : all.filter((r) => r.bucket === sideOnly || r.bucket === "attn");
+    const chips = [["all", "全部", 0], ["done", "完成未看", n.done], ["term", "终端", n.term]].filter(([v, , c]) => v === "all" || c || v === sideOnly);
+    const chipsHTML = chips.length < 2 ? "" : chips.map(([v, label, c]) =>
+      `<button type="button" data-only="${v}" class="${v === sideOnly ? "on" : ""}">${label}${v === "all" ? "" : ` <span class="k">${c}</span>`}</button>`).join("");
 
-    // 最近: newest first; Collie's own sessions are reached from its conversation.
-    const collieRan = (name) => name === ROUTER || sup.workers.some((w) => w.name === name);
-    const recent = [
-      ...ext.filter((e) => !going(e)).map((e) => ({ id: e.id, t: new Date(e.updated || e.started), html: extRow(e) })),
-      ...hist.filter((h) => !collieRan(h.name)).map((h) => ({ id: "h:" + h.id, t: new Date(h.ended), html: histRow(h) })),
-    ].sort((x, y) => y.t - x.t);
-    let shown = extAll ? recent : recent.slice(0, RECENT_N);
-    const cur = view === "ext" && extCur && !shown.some((x) => x.id === extCur) && recent.find((x) => x.id === extCur);
-    if (cur) shown = [...shown, cur];
-    $("#recent-group").hidden = !recent.length;
-    $("#recent-list").innerHTML = shown.map((x) => x.html).join("")
-      + (recent.length > RECENT_N ? `<li><button type="button" class="more-row" data-act="ext-more">${extAll ? "收起" : `还有 ${recent.length - RECENT_N} 个`}</button></li>` : "");
+    const groupHTML = (g) => {
+      // Open sessions are all listed; ended ones show the latest few, the
+      // rest behind a row (and the one open now, wherever it is).
+      const open = g.rows.filter((r) => r.rank < ENDED_RANK), ended = g.rows.filter((r) => r.rank >= ENDED_RANK);
+      let shown = extAll ? ended : ended.slice(0, RECENT_N);
+      const cur = view === "ext" && extCur && ended.find((r) => r.id === extCur && !shown.includes(r));
+      if (cur) shown = [...shown, cur];
+      const fk = sideBy + ":" + g.key;
+      const folded = sideOnly === "all" && (fk in sideFold ? sideFold[fk] : fk === "status:term");
+      const busy = g.key === "going" ? g.rows.filter((r) => r.rank <= 1).length : 0;
+      const count = busy ? `${busy} 个在跑` : g.rows.length || "";
+      const empty = g.key === "going" && !g.rows.length
+        ? `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Collie 派一个。</li>` : "";
+      return `<details class="group" data-fold="${esc(fk)}" ${folded ? "" : "open"}>
+        <summary${g.title ? ` title="${esc(g.title)}"` : ""}><h2><span class="gname ${g.mono ? "mono" : ""} ${sideBy === "status" ? "" : "named"}">${esc(g.label)}</span><span class="count">${esc(count)}</span>${g.title ? `<span class="gon">${esc(g.title)}</span>` : ""}</h2></summary>
+        <ul class="list ${g.key === "attn" ? "attn" : ""}">${[...open, ...shown].map((r) => r.html).join("")}${empty}${ended.length > RECENT_N
+          ? `<li><button type="button" class="more-row" data-act="ext-more">${extAll ? "收起" : `还有 ${ended.length - RECENT_N} 个`}</button></li>` : ""}</ul>
+      </details>`;
+    };
+    // 进行中 is always there when nothing runs, to say how to start one.
+    const groups = sideGroups(rows).filter((g) => g.rows.length || (g.key === "going" && sideOnly === "all"
+      && !rows.some((r) => ["done", "going", "idle"].includes(r.bucket))));
+    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${{ done: "没有完成未看的会话。", term: "没有开着的终端。" }[sideOnly] || "没有会话。"}</p>`;
+    const box = $("#side-groups"), bar = $("#side-only");
+    if (box._html !== html) box.innerHTML = box._html = html;
+    if (bar._html !== chipsHTML) bar.innerHTML = bar._html = chipsHTML;
+    bar.hidden = !chipsHTML;
+    $$("#side-by button").forEach((b) => b.classList.toggle("on", b.dataset.v === sideBy));
   }
   // Look up the open session again in a moment (a few times at most).
   let extSoonT = null, extSoonN = 0;
@@ -2581,11 +2694,25 @@
     return e?.hub ? tagged(e.machine || "", e.hub) : e?.machine || "";
   });
   function closeExt() { extStream?.close(); extStream = null; }
-  $("#recent-list").addEventListener("click", (ev) => {
-    if (!ev.target.closest("[data-act=ext-more]")) return;
-    ev.preventDefault();
-    extAll = !extAll; store.set("extAll", extAll);
-    renderExt();
+  $(".side-scroll").addEventListener("click", (ev) => {
+    const by = ev.target.closest("#side-by button"), only = ev.target.closest("[data-only]");
+    const fold = ev.target.closest("summary")?.parentElement.dataset.fold;
+    if (by) { sideBy = by.dataset.v; store.set("sideBy", sideBy); }
+    else if (only) { sideOnly = only.dataset.only; store.set("sideOnly", sideOnly); }
+    else if (fold) {
+      // Re-rendered on every update: the open state lives here, not in the
+      // DOM; only what differs from the default is kept. A filter shows its
+      // groups open.
+      ev.preventDefault();
+      if (sideOnly !== "all") return;
+      const folded = ev.target.closest("details").open;
+      if (folded === (fold === "status:term")) delete sideFold[fold]; else sideFold[fold] = folded;
+      store.set("sideFold", sideFold);
+    } else if (ev.target.closest("[data-act=ext-more]")) {
+      ev.preventDefault();
+      extAll = !extAll; store.set("extAll", extAll);
+    } else return;
+    renderSessions();
   });
   async function openExt(id, restore = null) {
     closeExt();
@@ -2652,6 +2779,7 @@
     sendKey: () => store.get("sendKey", "enter"),
     notify: () => store.get("notify", true),
     fold: () => store.get("fold", true),
+    readOnly: () => store.get("showReadOnly", false),
   };
   const darkMQ = matchMedia("(prefers-color-scheme: dark)");
   function applyLook() {
@@ -2688,6 +2816,9 @@
         ${row("发送消息", "另一种按法用来换行；Shift+Enter 总是换行", seg("sendKey", prefs.sendKey(), [["enter", "Enter"], ["mod", mac ? "⌘ Enter" : "Ctrl Enter"]]))}
         ${row("折叠连续的工具步骤", "超过 3 步时收成一行，只露出最后一步", sw("fold", prefs.fold()))}
       </div>
+      <div class="card"><div class="card-h">侧边栏</div>
+        ${row("显示其他终端里的只读会话", "在 iTerm、VS Code、tmux 或桌面版里开的会话，Collie 发不了消息、只能看的那些", sw("showReadOnly", prefs.readOnly()))}
+      </div>
       <div class="card"><div class="card-h">通知</div>
         ${row("浏览器通知", esc(perm), sw("notify", prefs.notify() && (!("Notification" in window) || Notification.permission !== "denied")))}
       </div>
@@ -2707,6 +2838,7 @@
         if (p !== "granted") { toast("浏览器没有允许通知", "attn"); renderPrefs(); return; }
       }
       store.set(key, on);
+      if (key === "showReadOnly") renderSessions();
     } else {
       const key = b.closest("[data-pref]").dataset.pref, v = b.dataset.v;
       if (key === "mode2") setMode(v); else store.set(key, v);
@@ -4870,8 +5002,8 @@
   // usable; its width is dragged and remembered. Narrow ones: full screen.
   const pane = $("#file-view");
   const setFileW = (w) => document.documentElement.style.setProperty("--file-w", Math.round(w) + "px");
-  // The widest the panel may be: the conversation keeps at least 420px.
-  const fileMax = () => innerWidth - $(".side").offsetWidth - 420;
+  // The widest the panel may be.
+  const fileMax = () => innerWidth - $(".side").offsetWidth - MAIN_MIN;
   let paneTimer;
   function showFilePane() {
     clearTimeout(paneTimer);
@@ -4891,21 +5023,8 @@
   }
   pane.addEventListener("click", (e) => { if (e.target.closest("[data-fv-close]")) closeFilePane(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pane.hidden && !document.querySelector("dialog[open]")) closeFilePane(); });
-  $("#fv-grip").addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    const grip = e.currentTarget;
-    grip.setPointerCapture(e.pointerId);
-    document.body.classList.add("dragging");
-    const max = fileMax();
-    const move = (ev) => setFileW(Math.max(Math.min(innerWidth - ev.clientX, max), 360));
-    const up = () => {
-      grip.removeEventListener("pointermove", move);
-      document.body.classList.remove("dragging");
-      store.set("fileW", parseInt(getComputedStyle(document.documentElement).getPropertyValue("--file-w")) || 520);
-    };
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", up, { once: true });
-  });
+  dragGrip($("#fv-grip"), (x) => setFileW(Math.max(Math.min(innerWidth - x, fileMax()), 360)),
+    () => store.set("fileW", parseInt(getComputedStyle(document.documentElement).getPropertyValue("--file-w")) || 520));
 
   // Minimal, safe Markdown: escape first, then add a little structure.
   const mdCache = new Map();
