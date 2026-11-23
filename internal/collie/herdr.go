@@ -210,6 +210,14 @@ func (h *Herdr) Agents(ctx context.Context) ([]Agent, error) {
 	return r.Agents, err
 }
 
+func (h *Herdr) Pane(ctx context.Context, id string) (Pane, error) {
+	var r struct {
+		Pane Pane `json:"pane"`
+	}
+	err := h.Call(ctx, "pane.get", map[string]any{"pane_id": id}, &r)
+	return r.Pane, err
+}
+
 func (h *Herdr) Read(ctx context.Context, paneID, source, format string, lines int) (ReadResult, error) {
 	p := map[string]any{"pane_id": paneID, "source": source, "format": format, "strip_ansi": format != "ansi"}
 	if lines > 0 {

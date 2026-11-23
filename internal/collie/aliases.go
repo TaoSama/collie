@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // Launcher aliases: the shortcuts people keep in their shell rc file to start
@@ -41,6 +42,8 @@ type LauncherAlias struct {
 	// The shell to run it through when it isn't the login shell a terminal
 	// opens (bash at login, aliases only in ~/.zshrc).
 	Via string `json:"via,omitempty"`
+
+	raw []string // Args before redaction: only for use on this computer
 }
 
 // aliasReport is what one computer has: its shell, the rc file and the aliases.
@@ -60,8 +63,6 @@ const (
 	aliasRec   = "\x1e"
 	hiddenVal  = "***"
 )
-
-var launcherCmds = []string{"claude", "codex", "agy"}
 
 // aliasNameRe: names Collie types into a shell as a command.
 var aliasNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.:+@-]{0,63}$`)
@@ -330,16 +331,22 @@ func ansiQuoted(s string, i int, cur *strings.Builder) (int, error) {
 
 // shellQuote writes one word so any POSIX shell (zsh too) reads it back as is.
 func shellQuote(w string) string {
-	if w != "" && strings.Trim(w, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.,/:=@%+") == "" {
+	// zsh expands a leading = to a command's path.
+	if w != "" && w[0] != '=' && strings.Trim(w, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.,/:=@%+") == "" {
 		return w
 	}
 	return "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
 }
 
-func shellLine(words []string) string {
+// shellLine quotes words into one line to type at a prompt. A control
+// character would act as a key there (^U clears the line, tab completes).
+func shellLine(words []string) (string, error) {
 	q := make([]string, len(words))
 	for i, w := range words {
+		if strings.ContainsFunc(w, unicode.IsControl) {
+			return "", fmt.Errorf("argument %q has a control character", w)
+		}
 		q[i] = shellQuote(w)
 	}
-	return strings.Join(q, " ")
+	return strings.Join(q, " "), nil
 }

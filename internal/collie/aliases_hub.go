@@ -88,7 +88,8 @@ func (s *Server) readAliases(ctx context.Context, machine string) (aliasReport, 
 			ctx, cancel := context.WithTimeout(ctx, aliasAskTimeout)
 			defer cancel()
 			err = nodeJSON(ctx, client, "GET", "/api/aliases", nil, &rep)
-			if err != nil && strings.Contains(err.Error(), "404") {
+			var se *nodeStatusError
+			if errors.As(err, &se) && se.Code == http.StatusNotFound {
 				err = errors.New("这台电脑上的 collie 太旧，读不了 alias")
 			}
 		}
@@ -108,9 +109,12 @@ func (s *Server) aliasOn(ctx context.Context, machine, name, herdrKind string) (
 		}
 		return nil
 	}
+	// A listed alias is used as listed: the shell resolves the name when it
+	// runs. Only a missing one is worth a read, and not again right after a
+	// read that failed.
 	snap, ok := s.aliases.get(machine)
 	a := find(snap.rep)
-	if !ok || a == nil || time.Since(snap.synced) > aliasFresh {
+	if a == nil && (!ok || snap.err == "" || time.Since(snap.tried) > aliasFresh) {
 		rep, err := s.readAliases(ctx, machine)
 		switch {
 		case err == nil:
@@ -118,6 +122,8 @@ func (s *Server) aliasOn(ctx context.Context, machine, name, herdrKind string) (
 		case snap.synced.IsZero():
 			return nil, fmt.Errorf("读不到这台电脑的 alias：%w", err)
 		}
+	} else if a == nil && snap.err != "" && snap.synced.IsZero() {
+		return nil, fmt.Errorf("读不到这台电脑的 alias：%s", snap.err)
 	}
 	if a == nil {
 		return nil, fmt.Errorf("这台电脑的 %s 里没有启动 agent 的 alias %q", snap.rep.RC, name)

@@ -693,7 +693,7 @@ func (s *Server) startAgentAs(ctx context.Context, machine, herdrKind, name, cwd
 	}
 	trustArgs := args
 	if alias != nil {
-		trustArgs = append(append([]string{}, alias.Args...), args...)
+		trustArgs = append(append([]string{}, alias.launchArgs()...), args...)
 	}
 	s.trustForStart(ctx, machine, herdrKind, cwd, trustArgs)
 	wsID, paneID, err = s.herdr.CreateWorkspace(ctx, machine, cwd, label)
