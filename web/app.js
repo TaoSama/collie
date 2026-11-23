@@ -2740,7 +2740,7 @@
   const left = (p) => { const s = Math.max(0, Math.round((p.expires - Date.now()) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
   // A newer release: the footer says so, the devices page says where and how.
-  const INSTALL = "curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s --";
+  const INSTALL = "curl -fsSL https://taosama.github.io/collie/install.sh | sh -s --";
   const isOld = (have, latest) => {
     const p = (v) => /^v\d+\.\d+\.\d+$/.test(v || "") ? v.slice(1).split(".").map(Number) : null;
     const a = p(have), b = p(latest);
@@ -2781,7 +2781,7 @@
     const phoneURL = pb ? `${devAddr}/?pair=${pb.code}` : "";
     const pm = fresh("machine") ? pairing.machine : null;
     const nodeCmd = pm ? `collie node --hub ${devAddr} --code ${pm.code}` : "";
-    const installCmd = pm ? `curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- node --hub ${devAddr} --code ${pm.code}` : "";
+    const installCmd = pm ? `curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub ${devAddr} --code ${pm.code}` : "";
     const machines = r.devices.filter((d) => d.kind === "machine");
     const browsers = r.devices.filter((d) => d.kind !== "machine");
     const addrSel = addrs.length > 1 ? `<label class="addr-pick">用这个地址<select id="dev-addr" data-pick="compact">${addrs.map((a) => `<option ${a === devAddr ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";

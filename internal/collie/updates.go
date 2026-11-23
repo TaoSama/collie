@@ -26,7 +26,7 @@ import (
 // (…/releases/latest → …/tag/vX.Y.Z) needs no API token or rate limit.
 
 const releasesLatest = "https://github.com/" + repo + "/releases/latest"
-const repo = "lihuanyu0w0/collie"
+const repo = "TaoSama/collie"
 
 var latestRel struct {
 	sync.Mutex
@@ -154,7 +154,10 @@ func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "这台的 collie 是从源码编译的（" + version + "），在源码里 git pull 后重新编译来更新"})
 		return
 	}
-	latest := fetchLatestTag()
+	latest := r.URL.Query().Get("tag")
+	if parseVersion(latest) == nil {
+		latest = fetchLatestTag()
+	}
 	if latest == "" {
 		writeJSON(w, 502, map[string]any{"error": "查不到最新版本：这台电脑连不上 github.com？"})
 		return

@@ -6,10 +6,10 @@
 Claude Code · Codex · Antigravity — 一个 hub，多台电脑，一个会自己推进的 super-agent</p>
 
 <p align="center">
-<a href="https://lihuanyu0w0.github.io/collie/demo/"><b>▶ 在线体验</b></a> ·
-<a href="https://lihuanyu0w0.github.io/collie">主页</a> ·
+<a href="https://taosama.github.io/collie/demo/"><b>▶ 在线体验</b></a> ·
+<a href="https://taosama.github.io/collie">主页</a> ·
 <a href="#安装">安装</a> ·
-<a href="https://github.com/lihuanyu0w0/collie/releases">下载</a>
+<a href="https://github.com/TaoSama/collie/releases">下载</a>
 </p>
 
 <p align="center"><img src="docs/img/demo.gif" alt="给 Collie 发一句话：它派出 worker，worker 回报，Collie 汇总；决策卡片一点就回" width="900"></p>
@@ -56,7 +56,7 @@ Claude Code · Codex · Antigravity — 一个 hub，多台电脑，一个会自
 **1. 开发机：起 hub**
 
 ```bash
-curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- hub
+curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- hub
 ```
 
 启动时打印本机内网地址和手机配对二维码；地址认不准时加 `--url http://<开发机 IP>:7788`。日志：`journalctl --user -u collie-hub -f`。要在退出登录后继续跑，运行一次 `loginctl enable-linger`。
@@ -70,7 +70,7 @@ curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- hub
 在 hub 的「设备 → 连接一台电脑」里拿配对码（或在 hub 上运行 `collie pair --computer`），然后在那台电脑上：
 
 ```bash
-curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- node --hub http://<hub>:7788 --code <配对码>
+curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub http://<hub>:7788 --code <配对码>
 ```
 
 它会配对、把 hub 地址和令牌存进 `~/.collie/node.json`，再装成后台服务。之后重跑不带参数的 `… | sh -s -- node` 就是升级。
@@ -90,8 +90,8 @@ curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- node --hub
 
 hub 每隔几小时看一次 GitHub 上的最新版本。有电脑落后时，侧栏底部会出现「有新版」，「设备」页会列出是哪台。点「更新到 vX」，那台电脑会自己下载新版、校验后原地重启（里面的 agent 不受影响）；也可以在那台电脑上手动运行：
 
-- 电脑（node）：`curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- node`（不用再配对）
-- hub：`curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- hub`，当初加过 `--url` 等参数的话照样带上
+- 电脑（node）：`curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node`（不用再配对）
+- hub：`curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- hub`，当初加过 `--url` 等参数的话照样带上
 
 从源码编译的（版本是 `dev`）和 v0.2.5 以前的电脑不会被提示。
 
@@ -106,14 +106,14 @@ hub 每隔几小时看一次 GitHub 上的最新版本。有电脑落后时，�
 **从源码安装**（需要 Go 1.25+ 和 git）：clone 下来在仓库里运行同一个脚本，它用本地源码编译、不下载，参数和上面一样：
 
 ```bash
-git clone https://github.com/lihuanyu0w0/collie.git ~/collie && cd ~/collie
+git clone https://github.com/TaoSama/collie.git ~/collie && cd ~/collie
 sh docs/install.sh hub                                          # 做 hub
 sh docs/install.sh node --hub http://<hub>:7788 --code <配对码>   # 加入电脑
 ```
 
 以后 `git pull` 再跑一次就是升级。
 
-只想装命令、不装服务：`curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh`。指定版本或目录：`COLLIE_VERSION=v0.2.0`、`COLLIE_BIN_DIR=…`。脚本在 [docs/install.sh](docs/install.sh)。
+只想装命令、不装服务：`curl -fsSL https://taosama.github.io/collie/install.sh | sh`。指定版本或目录：`COLLIE_VERSION=v0.2.0`、`COLLIE_BIN_DIR=…`。脚本在 [docs/install.sh](docs/install.sh)。
 
 ## 两种用法
 

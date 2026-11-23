@@ -1,24 +1,24 @@
 #!/bin/sh
-# Collie installer — https://lihuanyu0w0.github.io/collie
+# Collie installer — https://taosama.github.io/collie
 #
 #   安装 collie 命令：
-#     curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh
+#     curl -fsSL https://taosama.github.io/collie/install.sh | sh
 #
 #   把这台电脑加入 hub，并作为后台服务常驻（macOS: launchd，Linux: systemd --user）：
-#     curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- node --hub http://<hub>:7788 --code <配对码>
+#     curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub http://<hub>:7788 --code <配对码>
 #
 #   让这台电脑做 hub，并作为后台服务常驻：
-#     curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh -s -- hub [--url http://<本机内网 IP>:7788]
+#     curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- hub [--url http://<本机内网 IP>:7788]
 #
 #   从源码安装（需要 Go 1.25+）：在仓库里运行这个脚本，会用本地源码编译，不下载：
-#     git clone https://github.com/lihuanyu0w0/collie.git ~/collie && cd ~/collie
+#     git clone https://github.com/TaoSama/collie.git ~/collie && cd ~/collie
 #     sh docs/install.sh [hub | node …]
 #
 # 环境变量：COLLIE_BIN_DIR（默认 ~/.local/bin）、COLLIE_BINARY（直接安装这个现成的文件）、
 # COLLIE_VERSION（下载时的版本，默认 latest）。
 set -eu
 
-REPO=lihuanyu0w0/collie
+REPO=TaoSama/collie
 VERSION=${COLLIE_VERSION:-latest}
 BIN_DIR=${COLLIE_BIN_DIR:-$HOME/.local/bin}
 BIN=$BIN_DIR/collie
@@ -60,7 +60,7 @@ sha256() {
 checkout() {
   case "$0" in *install.sh) ;; *) return 1 ;; esac
   d=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd) || return 1
-  grep -q '^module github.com/lihuanyu0w0/collie$' "$d/go.mod" 2>/dev/null || return 1
+  grep -q '^module github.com/TaoSama/collie$' "$d/go.mod" 2>/dev/null || return 1
   printf '%s\n' "$d"
 }
 

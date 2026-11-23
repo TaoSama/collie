@@ -1,8 +1,11 @@
 #!/bin/sh
 # Build Collie for macOS and Linux and publish a GitHub release.
 #
-#   scripts/release.sh v0.1.0          build, then create the release
-#   scripts/release.sh v0.1.0 --dry    build only (into dist/)
+#   scripts/release.sh v2026.1123.1          build, then create the release
+#   scripts/release.sh v2026.1123.1 --dry    build only (into dist/)
+#
+# Tags are vYYYY.MMDD.N: the repository also carries upstream's v0.x tags,
+# and a date-based version is always newer than those and never collides.
 #
 # install.sh downloads releases/latest/download/collie-<os>-<arch>, so the
 # asset names below are part of the contract.
@@ -32,6 +35,6 @@ cat dist/checksums.txt
 
 git tag -a "$version" -m "Collie $version" 2>/dev/null || true
 git push origin "$version"
-gh release create "$version" dist/collie-* dist/checksums.txt \
+gh release create "$version" dist/collie-* dist/checksums.txt --repo TaoSama/collie \
   --title "Collie $version" \
-  --notes "安装：\`curl -fsSL https://lihuanyu0w0.github.io/collie/install.sh | sh\`（做 hub 加 \`-s -- hub\`，加入电脑见 README）。也可以直接下载下面对应平台的二进制。"
+  --notes "安装：\`curl -fsSL https://taosama.github.io/collie/install.sh | sh\`（做 hub 加 \`-s -- hub\`，加入电脑见 README）。也可以直接下载下面对应平台的二进制。"
