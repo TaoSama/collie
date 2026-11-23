@@ -110,7 +110,7 @@ func remoteRig(t *testing.T) (sp *Super, hubDir, nodeDir string) {
 	t.Cleanup(func() { db.Close() })
 	st := &State{Settings: Settings{RouterMachine: "mac"}}
 	sp = &Super{s: &Server{herdr: h}, db: db, dir: hub, st: st}
-	sp.setRouterOn("mac")
+	sp.setRouterOn("mac", "")
 	return sp, filepath.Join(hub, "router"), filepath.Join(nodeHome, "router")
 }
 
@@ -271,5 +271,22 @@ func TestDialHubThroughProxy(t *testing.T) {
 	hubProxy = func(*http.Request) (*url.URL, error) { return nil, nil } // NO_PROXY: straight there
 	if _, err := dialHub(context.Background(), &net.Dialer{Timeout: 5 * time.Second}, &url.URL{Scheme: "http", Host: "127.0.0.1:1"}, "127.0.0.1:1"); err == nil || strings.Contains(err.Error(), "proxy") {
 		t.Fatalf("without a proxy it should dial directly: %v", err)
+	}
+}
+
+func TestRouterLaunchRecord(t *testing.T) {
+	sp, _, _ := remoteRig(t)
+	sp.setRouterOn("mac", "ccl5")
+	sp.routerLaunched = nil // as after a hub restart
+	if got := sp.routerLaunchLocked(); got != (routerLaunch{Machine: "mac", Alias: "ccl5"}) {
+		t.Fatalf("round trip: %+v", got)
+	}
+	// What hubs before the alias stored: the bare machine id.
+	if _, err := sp.db.Exec(`UPDATE kv SET v='macmini' WHERE k='router_on'`); err != nil {
+		t.Fatal(err)
+	}
+	sp.routerLaunched = nil
+	if got := sp.routerLaunchLocked(); got != (routerLaunch{Machine: "macmini"}) {
+		t.Fatalf("legacy value: %+v", got)
 	}
 }

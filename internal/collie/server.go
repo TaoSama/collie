@@ -36,6 +36,8 @@ type Server struct {
 
 	startMu sync.Mutex
 	started map[string]time.Time // pane → when Collie started an agent there
+
+	aliases aliasBook // hub only: launcher aliases each computer has
 }
 
 func (s *Server) markStarted(pane string) {
@@ -120,6 +122,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("POST /api/uploads", wrap(s.upload))
 	mux.Handle("GET /api/titles", wrap(s.getTitles))
 	mux.Handle("GET /api/models", wrap(s.listModels))
+	mux.Handle("GET /api/aliases", wrap(s.getAliases))
 	mux.Handle("POST /api/trust", wrap(s.trustFolder))
 	mux.Handle("GET /api/router/files", wrap(s.getRouterFiles))
 	mux.Handle("POST /api/router/files", wrap(s.putRouterFiles))
@@ -575,6 +578,7 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 		Args   []string `json:"args"`
 		Model  string   `json:"model"`  // "" = the agent's own default
 		Effort string   `json:"effort"` // likewise
+		Alias  string   `json:"alias"`  // a launcher alias in this computer's shell to start through
 	}
 	if !decode(w, r, &body) {
 		return
@@ -610,8 +614,17 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 	if label == "" {
 		label = body.Name
 	}
+	var alias *LauncherAlias
+	if body.Alias != "" {
+		a, err := s.aliasOn(ctx, "", body.Alias, kind)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error()})
+			return
+		}
+		alias = a
+	}
 	args := append(modelArgs(body.Kind, body.Model, body.Effort), body.Args...)
-	paneID, wsID, err := s.startAgent(ctx, "", kind, body.Name, cwd, label, args)
+	paneID, wsID, err := s.startAgentAs(ctx, "", kind, body.Name, cwd, label, alias, args)
 	if paneID != "" {
 		s.herdr.RememberRun(paneID, body.Model, body.Effort)
 	}
@@ -669,14 +682,39 @@ func (s *Server) openShell(w http.ResponseWriter, r *http.Request, dir, label st
 // startAgent creates a workspace in cwd and starts a herdr agent in its pane.
 // An "agent_not_ready" error means the agent is up but sitting on a dialog.
 func (s *Server) startAgent(ctx context.Context, machine, herdrKind, name, cwd, label string, args []string) (paneID, wsID string, err error) {
+	return s.startAgentAs(ctx, machine, herdrKind, name, cwd, label, nil, args)
+}
+
+// startAgentAs is startAgent through a launcher alias in that computer's
+// shell (nil: the agent's own command).
+func (s *Server) startAgentAs(ctx context.Context, machine, herdrKind, name, cwd, label string, alias *LauncherAlias, args []string) (paneID, wsID string, err error) {
 	if err := s.agentMissing(machine, herdrKind); err != nil {
 		return "", "", err
 	}
-	s.trustForStart(ctx, machine, herdrKind, cwd, args)
+	trustArgs := args
+	if alias != nil {
+		trustArgs = append(append([]string{}, alias.Args...), args...)
+	}
+	s.trustForStart(ctx, machine, herdrKind, cwd, trustArgs)
 	wsID, paneID, err = s.herdr.CreateWorkspace(ctx, machine, cwd, label)
 	if err != nil {
 		return "", "", err
 	}
+	if alias != nil {
+		err = s.startThroughAlias(ctx, paneID, name, herdrKind, alias, args)
+	} else {
+		err = s.herdrStart(ctx, paneID, name, herdrKind, args)
+	}
+	var he *HerdrError
+	if err == nil || (errors.As(err, &he) && he.Code == "agent_not_ready") {
+		s.markStarted(paneID)
+		s.herdr.Remember(paneID, name)
+	}
+	return paneID, wsID, err
+}
+
+// herdrStart has herdr start the agent in paneID's shell.
+func (s *Server) herdrStart(ctx context.Context, paneID, name, herdrKind string, args []string) (err error) {
 	// A brand-new shell needs a moment to reach its prompt; retry until herdr
 	// accepts the pane or we run out of patience.
 	params := map[string]any{"name": name, "kind": herdrKind, "pane_id": paneID, "timeout_ms": 60000}
@@ -693,12 +731,7 @@ func (s *Server) startAgent(ctx context.Context, machine, herdrKind, name, cwd, 
 		}
 		time.Sleep(600 * time.Millisecond)
 	}
-	var he *HerdrError
-	if err == nil || (errors.As(err, &he) && he.Code == "agent_not_ready") {
-		s.markStarted(paneID)
-		s.herdr.Remember(paneID, name)
-	}
-	return paneID, wsID, err
+	return err
 }
 
 func (s *Server) closeWorkspace(w http.ResponseWriter, r *http.Request) {

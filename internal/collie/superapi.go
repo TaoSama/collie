@@ -40,6 +40,7 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("POST /api/super/timers/{id}/delete", s.superDeleteTimer)
 	api("GET /api/super/settings", s.superSettings)
 	api("POST /api/super/settings", s.superSaveSettings)
+	api("GET /api/super/aliases", s.superAliases)
 	api("POST /api/super/seen", s.superSeen)
 	api("GET /api/super/lark", s.superLark)
 	api("GET /api/super/earlier", s.superEarlier)
@@ -119,7 +120,7 @@ func (s *Server) superState(ctx context.Context) superView {
 	v.Router.Model, v.Router.Effort = st.RouterModel, st.RouterEffort
 	if run := sp.routerRunLocked(); run != nil && v.Router.Alive {
 		v.Router.Model, v.Router.Effort = run[0], run[1]
-		v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || sp.routerOnLocked() != st.RouterMachine
+		v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || sp.routerLaunchLocked() != routerLaunch{Machine: st.RouterMachine, Alias: st.RouterAlias}
 	}
 	if sp.dream != nil {
 		v.Router.Status = "dreaming"
@@ -807,6 +808,11 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, p := range []*string{&ns.RouterModel, &ns.RouterEffort, &ns.WorkerModel, &ns.WorkerEffort} {
 			if *p = strings.TrimSpace(*p); !modelNameRe.MatchString(*p) {
+				*p = ""
+			}
+		}
+		for _, p := range []*string{&ns.RouterAlias, &ns.WorkerAlias} {
+			if *p = strings.TrimSpace(*p); !aliasNameRe.MatchString(*p) {
 				*p = ""
 			}
 		}

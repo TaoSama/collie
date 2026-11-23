@@ -50,21 +50,21 @@ type Super struct {
 	routerNudged    bool      // the watchdog interrupted this turn once already
 	routerUsage     ctxUsage
 	// The model and effort the running router was launched with (unknown after a hub restart).
-	routerRun       *[2]string
-	routerOnMachine *string              // the computer the running router was launched on
-	rsync           routerSync           // the router folder's mirror on that computer
-	handover        *handover            // set while the router writes its memory before a fresh session
-	dream           *dreamRun            // set while Collie sleeps and a dream session tidies its memory
-	lastTrust       map[string]time.Time // pane → when its trust dialog was last answered
-	lastAnswer      map[string]time.Time // pane → when a dialog there was just answered
-	lastScreen      map[string]screenMark
-	transcripts     map[string]*transcript
-	noAgent         map[string]time.Time // worker → since when its pane has had no agent in it
-	pinnedCache     map[string]*Entry    // older pinned entries resolved from SQLite
-	notifyBuf       []notice
-	notifyAt        time.Time
-	seenAt          time.Time // when a page of Collie was last open in front of you
-	seenURL         string    // where that page was, for the link in a notification
+	routerRun      *[2]string
+	routerLaunched *routerLaunch        // where and how the running router was started
+	rsync          routerSync           // the router folder's mirror on that computer
+	handover       *handover            // set while the router writes its memory before a fresh session
+	dream          *dreamRun            // set while Collie sleeps and a dream session tidies its memory
+	lastTrust      map[string]time.Time // pane → when its trust dialog was last answered
+	lastAnswer     map[string]time.Time // pane → when a dialog there was just answered
+	lastScreen     map[string]screenMark
+	transcripts    map[string]*transcript
+	noAgent        map[string]time.Time // worker → since when its pane has had no agent in it
+	pinnedCache    map[string]*Entry    // older pinned entries resolved from SQLite
+	notifyBuf      []notice
+	notifyAt       time.Time
+	seenAt         time.Time // when a page of Collie was last open in front of you
+	seenURL        string    // where that page was, for the link in a notification
 }
 
 type screenMark struct {
@@ -808,8 +808,9 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 	kind := sp.st.Settings.RouterKind
 	machine := sp.routerMachineLocked()
 	args := sp.routerArgsLocked()
+	aliasName := sp.st.Settings.RouterAlias
 	sp.setRouterRun([2]string{sp.st.Settings.RouterModel, sp.st.Settings.RouterEffort})
-	sp.setRouterOn(machine)
+	sp.setRouterOn(machine, aliasName)
 	sp.mu.Unlock()
 
 	go func() {
@@ -827,7 +828,8 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 			err = sp.syncRouter(lctx)
 		}
 		if err == nil {
-			_, _, err = sp.s.startAgent(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, args)
+			alias := sp.launchAlias(lctx, machine, aliasName, kinds[kind], routerName)
+			_, _, err = sp.s.startAgentAs(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, alias, args)
 		} else {
 			err = fmt.Errorf("没能把 Collie 的目录同步到 %s：%w", machine, err)
 		}
@@ -1053,9 +1055,11 @@ func (sp *Super) Spawn(kind, cwd, task, thread, name, by, machine, model, effort
 	sp.addEntryLocked("event", thread, fmt.Sprintf("%s %s（%s%s）：%s", verb, name, kind, where, clip(firstLine(task), 120)), name, "spawn")
 	sp.mu.Unlock()
 
-	// The default model applies to the default kind of worker.
+	// The default model and alias apply to the default kind of worker.
 	sp.mu.Lock()
+	aliasName := ""
 	if kinds[kind] == kinds[sp.st.Settings.WorkerKind] {
+		aliasName = sp.st.Settings.WorkerAlias
 		if model == "" {
 			model = sp.st.Settings.WorkerModel
 		}
@@ -1090,7 +1094,8 @@ func (sp *Super) Spawn(kind, cwd, task, thread, name, by, machine, model, effort
 			// Reporting back is part of the job; don't make it a permission prompt.
 			args = append(args, "--allowedTools", strings.Join(collieAllow(bin), ","))
 		}
-		pane, ws, err := sp.s.startAgent(ctx, m.ID, kinds[kind], name, dir, name, args)
+		alias := sp.launchAlias(ctx, m.ID, aliasName, kinds[kind], name)
+		pane, ws, err := sp.s.startAgentAs(ctx, m.ID, kinds[kind], name, dir, name, alias, args)
 		if pane != "" {
 			sp.s.herdr.RememberRun(pane, model, effort)
 		}
@@ -2379,29 +2384,45 @@ func (sp *Super) setRouterRun(run [2]string) {
 	sp.db.Exec(`INSERT INTO kv(k,v) VALUES('router_run',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, string(b))
 }
 
-// The computer the router was launched on, kept across hub restarts.
-func (sp *Super) setRouterOn(machine string) {
-	sp.routerOnMachine = &machine
+// routerLaunch: where and through which alias the router was last started,
+// kept across hub restarts. Older hubs stored the bare machine id.
+type routerLaunch struct {
+	Machine string `json:"machine"`
+	Alias   string `json:"alias,omitempty"`
+}
+
+func (sp *Super) setRouterOn(machine, alias string) {
+	sp.routerLaunched = &routerLaunch{Machine: machine, Alias: alias}
 	if sp.db == nil {
 		return
 	}
-	if _, err := sp.db.Exec(`INSERT INTO kv(k,v) VALUES('router_on',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, machine); err != nil {
+	b, err := json.Marshal(sp.routerLaunched)
+	if err == nil {
+		_, err = sp.db.Exec(`INSERT INTO kv(k,v) VALUES('router_on',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, string(b))
+	}
+	if err != nil {
 		log.Printf("router_on: %v", err)
 	}
 }
 
-func (sp *Super) routerOnLocked() string {
-	if sp.routerOnMachine == nil {
-		var v string
+func (sp *Super) routerLaunchLocked() routerLaunch {
+	if sp.routerLaunched == nil {
+		var l routerLaunch
+		var raw string
 		if sp.db != nil {
-			if err := sp.db.QueryRow(`SELECT v FROM kv WHERE k='router_on'`).Scan(&v); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			if err := sp.db.QueryRow(`SELECT v FROM kv WHERE k='router_on'`).Scan(&raw); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				log.Printf("router_on: %v", err)
 			}
 		}
-		sp.routerOnMachine = &v
+		if json.Unmarshal([]byte(raw), &l) != nil {
+			l.Machine = raw
+		}
+		sp.routerLaunched = &l
 	}
-	return *sp.routerOnMachine
+	return *sp.routerLaunched
 }
+
+func (sp *Super) routerOnLocked() string { return sp.routerLaunchLocked().Machine }
 
 func (sp *Super) routerRunLocked() *[2]string {
 	if sp.routerRun == nil {
