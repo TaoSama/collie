@@ -1648,6 +1648,29 @@
     }
     return modelInfo[key];
   }
+  // Launcher aliases from each computer's shell rc file, as the hub last read them.
+  let aliasInfo = null;
+  function loadAliases(fresh) {
+    if (!aliasInfo || fresh) aliasInfo = api("/api/super/aliases" + (fresh ? "?refresh=1" : "")).catch(() => { aliasInfo = null; return { machines: [], aliases: [] }; });
+    return aliasInfo;
+  }
+  async function aliasesOn(machine) {
+    const info = await loadAliases();
+    return info.machines.find((m) => m.id === (machine || ""))?.aliases || [];
+  }
+  // Settings and the launcher call antigravity by its long name.
+  const aliasKind = (k) => (k === "agy" ? "antigravity" : k);
+  const aliasPins = (a) => [a.model, a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
+  const aliasSub = (a) => [...aliasPins(a), a.base_url].filter(Boolean).join(" · ");
+  // Another agent picked: an alias that starts a different one no longer applies.
+  function dropOtherAlias(sel, kind) {
+    const g = sel.selectedOptions[0]?.dataset.glyph;
+    if (g && aliasKind(g) !== kind) { sel.value = ""; syncPick(sel); }
+  }
+  // Options for an alias picker; want stays listed when that computer doesn't have it.
+  const aliasOpts = (list, want) => `<option value="" data-short="无 alias" data-sub="直接启动 agent 自己的命令">无</option>`
+    + (want && !list.some((a) => a.name === want) ? `<option value="${esc(want)}" data-sub="这台电脑上没读到" selected>${esc(want)}</option>` : "")
+    + list.map((a) => `<option value="${esc(a.name)}" data-glyph="${esc(a.kind)}" data-sub="${esc(aliasSub(a) || KIND_LABEL[a.kind] || a.kind)}" ${a.name === want ? "selected" : ""}>${esc(a.name)}</option>`).join("");
   // "派到": where this message's work runs. Shows the defaults from
   // 自动化 → 设置 (read again whenever this view opens); target holds only
   // what was picked here, so a message never carries a stale default.
@@ -2126,7 +2149,7 @@
   // Fills a model picker and its effort picker from what that agent offers.
   async function fillModels(form, who) {
     const kindSel = form[who + "_kind"], modelSel = form[who + "_model"], effSel = form[who + "_effort"];
-    const machine = who === "worker" && form.worker_machine ? form.worker_machine.value : "";
+    const machine = form[who + "_machine"] ? form[who + "_machine"].value : "";
     const want = modelSel.dataset.value ?? modelSel.value, wantEff = effSel.dataset.value ?? effSel.value;
     modelSel.innerHTML = `<option value="">读取中…</option>`;
     const info = await modelsFor(kindSel.value, machine);
@@ -2156,31 +2179,81 @@
       fillEffort();
     };
   }
+  const machineOf = (form, who) => (form[who + "_machine"] ? form[who + "_machine"].value : "");
+  async function fillAliases(form, who) {
+    const sel = form[who + "_alias"];
+    const want = sel.dataset.value ?? sel.value;
+    const list = await aliasesOn(machineOf(form, who));
+    sel.innerHTML = aliasOpts(list, want);
+    delete sel.dataset.value;
+  }
+  // Picking an alias picks its agent, model and effort; another agent drops it.
+  async function pickAlias(form, who) {
+    const a = (await aliasesOn(machineOf(form, who))).find((x) => x.name === form[who + "_alias"].value);
+    if (!a) return;
+    const k = form[who + "_kind"];
+    k.value = aliasKind(a.kind);
+    syncPick(k);
+    form[who + "_model"].dataset.value = a.model || "";
+    form[who + "_effort"].dataset.value = a.effort || "";
+    fillModels(form, who);
+  }
   function bindSettings(form) {
     if (!form || form._bound) return;
     form._bound = true;
     for (const who of ["router", "worker"]) {
       fillModels(form, who);
-      form[who + "_kind"].addEventListener("change", () => { form[who + "_model"].value = ""; form[who + "_effort"].value = ""; fillModels(form, who); });
+      fillAliases(form, who);
+      form[who + "_kind"].addEventListener("change", () => {
+        form[who + "_model"].value = ""; form[who + "_effort"].value = "";
+        dropOtherAlias(form[who + "_alias"], form[who + "_kind"].value);
+        fillModels(form, who);
+      });
+      form[who + "_alias"].addEventListener("change", () => pickAlias(form, who));
+      form[who + "_machine"]?.addEventListener("change", () => { fillModels(form, who); fillAliases(form, who); });
     }
-    form.worker_machine?.addEventListener("change", () => fillModels(form, "worker"));
+    renderAliasList();
+  }
+  // Every alias found, by the rc file it came from.
+  async function renderAliasList(fresh) {
+    const info = await loadAliases(fresh), box = $("#alias-list");
+    if (!box) return;
+    const name = (id) => info.machines.find((m) => m.id === id)?.name || id;
+    const stale = (rc) => info.machines.filter((m) => m.stale && (m.rc || "") === rc)
+      .map((m) => `<span class="tag attn" title="${esc(m.error || "")}">${esc(m.name)} 未更新</span>`).join("");
+    const groups = new Map();
+    for (const a of info.aliases) groups.set(a.rc, [...(groups.get(a.rc) || []), a]);
+    for (const m of info.machines) if (m.stale && m.rc && !groups.has(m.rc)) groups.set(m.rc, []);
+    const row = (a) => `<li class="row alias-row" title="${esc(a.command)}">
+      <span class="pi">${GLYPHS[a.kind] || ""}</span>
+      <div><div class="meta"><b>${esc(a.name)}</b><span class="mono">${esc([KIND_LABEL[a.kind] || a.kind, ...aliasPins(a)].filter(Boolean).join(" · "))}</span></div>
+        ${a.base_url ? `<div class="text mono">${esc(a.base_url)}</div>` : ""}</div>
+      <span class="right">${a.machines.map((id) => esc(name(id))).join(" · ")}</span></li>`;
+    const orphan = stale("");
+    box.innerHTML = (orphan ? `<div class="alias-stale">${orphan}</div>` : "")
+      + ([...groups].map(([rc, list]) => `<div class="alias-group"><h5>来自 ${esc(rc)} <span class="count">${list.length}</span>${stale(rc)}</h5>
+        <ul class="rows">${list.map(row).join("") || `<li class="empty-row">上次没读到</li>`}</ul></div>`).join("")
+      || `<p class="muted alias-empty">没在任何电脑的 shell 配置里找到启动 claude、codex 或 agy 的 alias。</p>`);
   }
 
   function settingsHTML(r) {
     const s = r.settings;
     const kindOpts = (v) => [["claude", "Claude", "claude"], ["codex", "Codex", "codex"], ["antigravity", "Antigravity", "agy"]].map(([k, l, g]) => `<option value="${k}" data-glyph="${g}" ${v === k ? "selected" : ""}>${l}</option>`).join("");
-    const modelPick = (who, model, effort) => `
+    const modelPick = (who, model, effort, alias) => `
+          <label>Alias<select name="${who}_alias" data-title="用哪个 alias 启动" data-value="${esc(alias || "")}"><option value="${esc(alias || "")}" selected>${esc(alias || "无")}</option></select></label>
           <label>模型<select name="${who}_model" data-title="模型" data-value="${esc(model || "")}"><option value="${esc(model || "")}" selected>${esc(model || "默认")}</option></select></label>
           <label>思考强度<select name="${who}_effort" data-pick="compact" data-title="思考强度" data-value="${esc(effort || "")}"><option value="${esc(effort || "")}" selected>${esc(EFFORT_LABEL[effort] || effort || "默认")}</option></select></label>`;
     const many = (state.machines || []).length > 1;
+    const machinePick = (name, cur, title) => `<select name="${name}" data-title="${title}">${state.machines.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}" ${m.id === (cur || "") ? "selected" : ""}>${esc(m.name)}${m.local ? "（hub）" : m.online ? "" : "（离线）"}</option>`).join("")}</select>`;
     setTimeout(() => bindSettings($("#settings-form")));
     return `<form class="settings" id="settings-form">
       <section class="card set-sec">
         <header><h4>Collie 自己</h4><p>只负责理解、分派和回复，轻量快速的模型就够。它在 <code>${esc(tilde(r.router_dir))}</code> 里工作：ROUTER.md 是操作手册，memory/ 是长期记忆。</p></header>
-        <div class="set-grid three">
+        <div class="set-grid four">
           <label>Agent<select name="router_kind" data-title="Collie 自己用的 agent">${kindOpts(s.router_kind)}</select></label>
-          ${modelPick("router", s.router_model, s.router_effort)}
+          ${modelPick("router", s.router_model, s.router_effort, s.router_alias)}
         </div>
+        ${many || s.router_machine ? `<div class="set-grid three"><label>电脑${machinePick("router_machine", s.router_machine, "Collie 自己在哪台电脑上运行")}<small>hub 连不上模型时换一台；记忆仍存在 hub 上，自动同步过去</small></label></div>` : ""}
         <details class="set-adv" ${(s.router_args || []).length ? "open" : ""}><summary>更多启动参数</summary>
           <label><input name="router_args" class="mono" value="${esc((s.router_args || []).join(" "))}" placeholder="例如 --permission-mode plan" autocorrect="off" autocapitalize="off" spellcheck="false"><small>原样加在启动命令后面，一般不用填</small></label>
         </details>
@@ -2188,14 +2261,20 @@
 
       <section class="card set-sec">
         <header><h4>派活默认</h4><p>Collie 派 agent 干活时默认这样启动；你说「用 Codex…」「在 Mac 上…」时它会自己换。</p></header>
-        <div class="set-grid three">
+        <div class="set-grid four">
           <label>Agent<select name="worker_kind" data-title="派活默认用">${kindOpts(s.worker_kind)}</select></label>
-          ${modelPick("worker", s.worker_model, s.worker_effort)}
+          ${modelPick("worker", s.worker_model, s.worker_effort, s.worker_alias)}
         </div>
         <div class="set-grid three">
-          ${many ? `<label>电脑<select name="worker_machine" data-title="派活默认在哪台电脑">${state.machines.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}" ${m.id === (s.worker_machine || "") ? "selected" : ""}>${esc(m.name)}${m.local ? "（hub）" : m.online ? "" : "（离线）"}</option>`).join("")}</select></label>` : ""}
+          ${many ? `<label>电脑${machinePick("worker_machine", s.worker_machine, "派活默认在哪台电脑")}</label>` : ""}
           <label class="${many ? "span2" : "span3"}">目录<input name="worker_cwd" class="mono" value="${esc(tilde(s.worker_cwd))}" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
         </div>
+      </section>
+
+      <section class="card set-sec">
+        <header class="set-head"><div><h4>启动 alias</h4><p>每台电脑 shell 配置里启动 claude、codex、agy 的 alias。上面选了 alias，就在那台电脑的 shell 里用它启动，带上它设的地址、密钥和模型。</p></div>
+          <button type="button" class="btn small" data-act="alias-refresh">重新读取</button></header>
+        <div id="alias-list" class="alias-list"><p class="muted alias-empty">正在读取各台电脑的 alias…</p></div>
       </section>
 
       <section class="card set-sec">
@@ -2249,7 +2328,9 @@
         const s = {
           ...cur,
           router_kind: f.router_kind.value, router_args: f.router_args.value.split(/\s+/).filter(Boolean),
+          router_machine: f.router_machine ? f.router_machine.value : (cur.router_machine || ""),
           router_model: f.router_model.value === "__custom" ? "" : f.router_model.value, router_effort: f.router_effort.value,
+          router_alias: f.router_alias.value, worker_alias: f.worker_alias.value,
           worker_kind: f.worker_kind.value, worker_cwd: f.worker_cwd.value,
           worker_model: f.worker_model.value === "__custom" ? "" : f.worker_model.value, worker_effort: f.worker_effort.value,
           worker_machine: f.worker_machine ? f.worker_machine.value : (cur.worker_machine || ""),
@@ -2260,7 +2341,7 @@
         };
         await api("/api/super/settings", { body: { settings: s } });
         renderTarget(true);
-        const relaunch = s.router_kind !== cur.router_kind || s.router_model !== (cur.router_model || "") || s.router_effort !== (cur.router_effort || "") || s.router_args.join(" ") !== (cur.router_args || []).join(" ") || s.ask_permissions !== !!cur.ask_permissions;
+        const relaunch = s.router_kind !== cur.router_kind || s.router_machine !== (cur.router_machine || "") || s.router_model !== (cur.router_model || "") || s.router_effort !== (cur.router_effort || "") || s.router_alias !== (cur.router_alias || "") || s.router_args.join(" ") !== (cur.router_args || []).join(" ") || s.ask_permissions !== !!cur.ask_permissions;
         toast(relaunch ? "已保存。Collie 自己的启动设置在重启 Collie 后生效" : "已保存");
       }
     } catch (err) { toast(err.message, "attn"); }
@@ -2277,6 +2358,14 @@
       box.querySelector(".mem-tools").hidden = memEditing;
       if (memEditing) box.querySelector("textarea").focus();
       else { $("#auto-body")._memSig = ""; loadAuto(); }
+      return;
+    }
+    if (t.dataset.act === "alias-refresh") {
+      t.disabled = true; t.textContent = "读取中…";
+      await renderAliasList(true);
+      const f = $("#settings-form");
+      if (f) for (const who of ["router", "worker"]) fillAliases(f, who);
+      t.disabled = false; t.textContent = "重新读取";
       return;
     }
     if (t.dataset.act === "dream-now") {
@@ -5297,22 +5386,43 @@
   // Model and effort for a new agent: "" leaves it to the agent's own settings
   // on that computer (what it would run if started by hand).
   let launchSeq = 0;
+  let launchWant = null; // the model and effort an alias just picked
   async function fillLaunchModels() {
     const seq = ++launchSeq, kind = $("input[name=kind]:checked")?.value;
     const mSel = $("#l-model");
     const keep = { model: mSel.value, effort: $("#l-effort").value, key: mSel._key };
     const info = await modelsFor(kind, pickMachine);
     if (seq !== launchSeq) return;
+    const want = launchWant;
+    launchWant = null;
     const same = keep.key === kind + "@" + pickMachine;
     mSel._key = kind + "@" + pickMachine;
-    const list = info.models || [];
+    const list = [...(info.models || [])];
+    if (want?.model && !list.some((m) => m.id === want.model)) list.unshift({ id: want.model });
     const def = info.default ? info.default.split("/").pop() : "";
     mSel.innerHTML = `<option value="" data-short="默认模型" data-sub="${esc(info.default ? "现在是 " + info.default : "agent 自己的设置")}">默认${def ? "（" + esc(def) + "）" : ""}</option>` +
       list.map((m) => `<option value="${esc(m.id)}" data-sub="${esc(m.label && m.label !== m.id ? m.id : "")}">${esc(m.label || m.id)}</option>`).join("");
-    mSel.value = same && list.some((m) => m.id === keep.model) ? keep.model : "";
-    fillLaunchEfforts(info, same ? keep.effort : "");
+    mSel.value = want ? want.model || "" : same && list.some((m) => m.id === keep.model) ? keep.model : "";
+    fillLaunchEfforts(info, want ? want.effort || "" : same ? keep.effort : "");
     syncPick(mSel);
   }
+  async function fillLaunchAliases() {
+    const sel = $("#l-alias"), want = sel.value, machine = pickMachine;
+    const list = await aliasesOn(machine);
+    if (machine !== pickMachine) return;
+    sel.innerHTML = aliasOpts(list, list.some((a) => a.name === want) ? want : "");
+    sel.hidden = list.length === 0;
+    syncPick(sel);
+  }
+  $("#l-alias").addEventListener("change", async () => {
+    const a = (await aliasesOn(pickMachine)).find((x) => x.name === $("#l-alias").value);
+    if (!a) return;
+    const r = $(`input[name=kind][value="${aliasKind(a.kind)}"]`);
+    if (!r || r.disabled) return;
+    r.checked = true;
+    launchWant = { model: a.model || "", effort: a.effort || "" };
+    suggestName();
+  });
   function fillLaunchEfforts(info, want) {
     const eSel = $("#l-effort");
     const cur = (info.models || []).find((m) => m.id === $("#l-model").value);
@@ -5336,6 +5446,7 @@
     $("#l-machines").innerHTML = ms.map((m) => `<button type="button" class="${m.id === pickMachine ? "on" : ""}" data-m="${esc(m.id)}">
       <span class="dot online"></span>${esc(m.name)}${m.local ? "<small>hub</small>" : ""}</button>`).join("");
     markKinds();
+    fillLaunchAliases();
   }
   // Agents the chosen computer doesn't have can't be picked.
   function markKinds() {
@@ -5388,7 +5499,10 @@
     if (prefs.notify() && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
   }
   $("#new-btn").addEventListener("click", openLauncher);
-  $$("input[name=kind]").forEach((r) => r.addEventListener("change", suggestName));
+  $$("input[name=kind]").forEach((r) => r.addEventListener("change", () => {
+    dropOtherAlias($("#l-alias"), r.value);
+    suggestName();
+  }));
   nameInput.addEventListener("input", () => { nameTouched = true; });
   $("#recent").addEventListener("click", (e) => { const d = e.target.closest("button")?.dataset.d; if (d) { cwdInput.value = d; browse(d); } });
 
@@ -5419,7 +5533,7 @@
     const shell = kind === "shell";
     const body = shell ? { kind, cwd: cwdInput.value.trim(), machine: pickMachine }
       : { kind, name: nameInput.value.trim(), cwd: cwdInput.value.trim(), prompt: $("#l-prompt").value, machine: pickMachine,
-          model: $("#l-model").value, effort: $("#l-effort").value };
+          model: $("#l-model").value, effort: $("#l-effort").value, alias: $("#l-alias").value };
     const go = $("#launch-go");
     go.disabled = true; go.textContent = shell ? "打开中…" : "启动中…";
     $("#launch-error").textContent = "";
