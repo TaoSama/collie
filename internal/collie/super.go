@@ -808,6 +808,7 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 	kind := sp.st.Settings.RouterKind
 	machine := sp.routerMachineLocked()
 	args := sp.routerArgsLocked()
+	aliasName := sp.st.Settings.RouterAlias
 	sp.setRouterRun([2]string{sp.st.Settings.RouterModel, sp.st.Settings.RouterEffort})
 	sp.setRouterOn(machine)
 	sp.mu.Unlock()
@@ -827,7 +828,8 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 			err = sp.syncRouter(lctx)
 		}
 		if err == nil {
-			_, _, err = sp.s.startAgent(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, args)
+			alias := sp.launchAlias(lctx, machine, aliasName, kinds[kind], routerName)
+			_, _, err = sp.s.startAgentAs(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, alias, args)
 		} else {
 			err = fmt.Errorf("没能把 Collie 的目录同步到 %s：%w", machine, err)
 		}
@@ -1053,9 +1055,11 @@ func (sp *Super) Spawn(kind, cwd, task, thread, name, by, machine, model, effort
 	sp.addEntryLocked("event", thread, fmt.Sprintf("%s %s（%s%s）：%s", verb, name, kind, where, clip(firstLine(task), 120)), name, "spawn")
 	sp.mu.Unlock()
 
-	// The default model applies to the default kind of worker.
+	// The default model and alias apply to the default kind of worker.
 	sp.mu.Lock()
+	aliasName := ""
 	if kinds[kind] == kinds[sp.st.Settings.WorkerKind] {
+		aliasName = sp.st.Settings.WorkerAlias
 		if model == "" {
 			model = sp.st.Settings.WorkerModel
 		}
@@ -1090,7 +1094,8 @@ func (sp *Super) Spawn(kind, cwd, task, thread, name, by, machine, model, effort
 			// Reporting back is part of the job; don't make it a permission prompt.
 			args = append(args, "--allowedTools", strings.Join(collieAllow(bin), ","))
 		}
-		pane, ws, err := sp.s.startAgent(ctx, m.ID, kinds[kind], name, dir, name, args)
+		alias := sp.launchAlias(ctx, m.ID, aliasName, kinds[kind], name)
+		pane, ws, err := sp.s.startAgentAs(ctx, m.ID, kinds[kind], name, dir, name, alias, args)
 		if pane != "" {
 			sp.s.herdr.RememberRun(pane, model, effort)
 		}

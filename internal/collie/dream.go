@@ -139,6 +139,7 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 	prev, machine := sp.routerOnLocked(), sp.routerMachineLocked()
 	sp.setRouterOn(machine)
 	args := sp.dreamArgsLocked()
+	aliasName := sp.st.Settings.RouterAlias
 	at := sp.dream.at
 	entry := sp.addEntryLocked("event", mainThread, "Collie 睡一会儿，回顾最近的对话、整理记忆（做梦）", "", "info")
 	sp.mu.Unlock()
@@ -184,7 +185,8 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 			return
 		}
 		_, bin := sp.routerTarget(machine)
-		if _, _, err := sp.s.startAgent(bg, machine, kinds[kind], dreamName, sp.routerCwd(machine), dreamLabel, args); err != nil {
+		alias := sp.launchAlias(bg, machine, aliasName, kinds[kind], dreamName)
+		if _, _, err := sp.s.startAgentAs(bg, machine, kinds[kind], dreamName, sp.routerCwd(machine), dreamLabel, alias, args); err != nil {
 			var he *HerdrError
 			if !(errors.As(err, &he) && he.Code == "agent_not_ready") {
 				fail(err)

@@ -134,6 +134,10 @@ type Settings struct {
 	WorkerKind    string `json:"worker_kind"`
 	WorkerCwd     string `json:"worker_cwd"`
 	WorkerMachine string `json:"worker_machine"`
+	// A launcher alias in the shell of the computer it runs on, "" for the
+	// agent's own command: it brings the alias's endpoint, keys and model.
+	RouterAlias   string `json:"router_alias,omitempty"`
+	WorkerAlias   string `json:"worker_alias,omitempty"`
 	NotifyWebhook string `json:"notify_webhook,omitempty"`
 	// Also send them from the hub's lark-cli (its bot, to whoever is logged in).
 	NotifyLark   bool   `json:"notify_lark,omitempty"`

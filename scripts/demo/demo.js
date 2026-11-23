@@ -235,7 +235,29 @@
   const settings = {
     bin: "collie", hook_key: "demo-key", router_dir: "~/.collie/router",
     policies: [{ source: "chat", action: "respond" }, { source: "github", action: "candidate" }, { source: "timer", action: "respond" }],
-    settings: { router_kind: "claude", router_model: "sonnet", worker_model: "", worker_effort: "", worker_kind: "codex", worker_cwd: "~/code", worker_machine: "", notify_level: "normal", stall_minutes: 20, reply_chars: 400, rotate_pct: 70, dream_at: "04:00", ask_permissions: false },
+    settings: { router_kind: "claude", router_model: "sonnet", worker_model: "gpt-6.1-sol", worker_effort: "high", worker_alias: "cx", worker_kind: "codex", worker_cwd: "~/code", worker_machine: "", notify_level: "normal", stall_minutes: 20, reply_chars: 400, rotate_pct: 70, dream_at: "04:00", ask_permissions: false },
+  };
+  // Launcher aliases from each computer's shell rc file.
+  const al = (name, kind, model, effort, base_url, command) => ({ name, kind, model, effort, base_url, command });
+  const zshrc = [
+    al("ccf", "claude", "fable[1m]", "", "https://relay.example.com", "ANTHROPIC_BASE_URL=https://relay.example.com ANTHROPIC_AUTH_TOKEN=*** claude --model 'fable[1m]'"),
+    al("ccl5", "claude", "claude-opus-5-5[1m]", "high", "$ANTHROPIC_BASE_URL", "ANTHROPIC_BASE_URL=\"$ANTHROPIC_BASE_URL\" claude --model 'claude-opus-5-5[1m]' --effort high"),
+    al("cx", "codex", "gpt-6.1-sol", "high", "", "codex -m gpt-6.1-sol -c model_reasoning_effort=high"),
+    al("cxm", "codex", "gpt-6.1-mini", "", "", "command codex -m gpt-6.1-mini"),
+    al("agp", "agy", "gemini-4-pro", "", "", "agy --model gemini-4-pro"),
+  ];
+  const aliasMachines = [
+    { id: "", name: "devbox", shell: "zsh", rc: "~/.zshrc", synced_at: ago(1), stale: false, aliases: zshrc },
+    { id: "macbook", name: "macbook", shell: "zsh", rc: "~/.zshrc", synced_at: ago(60 * 26), stale: true, error: "读取 alias 超时", aliases: zshrc.slice(0, 3) },
+    { id: "devos", name: "devos", shell: "bash", rc: "~/.bashrc", synced_at: ago(60 * 50), stale: true, aliases: [al("ccs", "claude", "seed-evolving[1m]", "", "$ANTHROPIC_BASE_URL", "ANTHROPIC_BASE_URL=\"$ANTHROPIC_BASE_URL\" ANTHROPIC_AUTH_TOKEN=*** claude --model 'seed-evolving[1m]'")] },
+  ];
+  const aliases = () => {
+    const by = new Map();
+    for (const m of aliasMachines) for (const a of m.aliases) {
+      if (!by.has(a.name)) by.set(a.name, { ...a, rc: m.rc, machines: [] });
+      by.get(a.name).machines.push(m.id);
+    }
+    return { machines: aliasMachines, aliases: [...by.values()].sort((x, y) => x.name.localeCompare(y.name)) };
   };
   const models = {
     claude: { models: [{ id: "opus", label: "Opus", efforts: ["low", "medium", "high", "max"] }, { id: "sonnet", label: "Sonnet", efforts: ["low", "medium", "high"] }, { id: "haiku", label: "Haiku" }], default: "sonnet", efforts: ["low", "medium", "high", "max"], default_effort: "" },
@@ -435,6 +457,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if (p === "/api/state") return json(state());
     if (p === "/api/super") return json(sup());
     if (p === "/api/super/settings") return json(settings);
+    if (p === "/api/super/aliases") return json(aliases());
     if (p === "/api/super/seen") return json({ ok: true });
     if (p === "/api/super/dismiss") { if (body.id) dismissed.add(body.id); pushAll(); return json({ ok: true }); }
     if (p === "/api/super/pin") {
