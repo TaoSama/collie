@@ -3394,6 +3394,7 @@
   // ───────────────────────────── preferences (per device, in localStorage)
   const prefs = {
     theme: () => store.get("theme", "system"),
+    skin: () => store.get("skin", "default"),
     text: () => store.get("text", "normal"),
     sendKey: () => store.get("sendKey", "enter"),
     notify: () => store.get("notify", true),
@@ -3401,18 +3402,21 @@
     readOnly: () => store.get("showReadOnly", false),
   };
   const darkMQ = matchMedia("(prefers-color-scheme: dark)");
+  // Skins (skins.css) restyle the whole app in both themes; 默认 sets none.
+  const skins = [["default", "默认"], ["codex", "Codex"], ["linear", "Linear"], ["kami", "Kami"]];
   function applyLook() {
     const root = document.documentElement;
-    const t = prefs.theme(), x = prefs.text();
-    if (t === "system") delete root.dataset.theme; else root.dataset.theme = t;
+    const t = prefs.theme(), x = prefs.text(), sk = prefs.skin();
+    root.dataset.theme = t === "light" || t === "dark" ? t : darkMQ.matches ? "dark" : "light";
+    if (sk === "default" || !skins.some(([v]) => v === sk)) delete root.dataset.skin; else root.dataset.skin = sk;
     if (x === "normal") delete root.dataset.text; else root.dataset.text = x;
-    const dark = t === "dark" || (t === "system" && darkMQ.matches);
-    $$('meta[name="theme-color"]').forEach((m) => { m.removeAttribute("media"); m.content = dark ? "#0b0b0c" : "#ffffff"; });
+    const bg = getComputedStyle(root).getPropertyValue("--bg").trim();
+    $$('meta[name="theme-color"]').forEach((m) => { m.removeAttribute("media"); m.content = bg; });
     dispatchEvent(new Event("collie:theme"));
   }
   darkMQ.addEventListener("change", applyLook);
   addEventListener("storage", (ev) => {
-    if (!ev.key || ev.key === "collie.theme" || ev.key === "collie.text") applyLook();
+    if (!ev.key || ["collie.theme", "collie.skin", "collie.text"].includes(ev.key)) applyLook();
   });
   applyLook();
 
@@ -3428,6 +3432,7 @@
     $("#prefs-body").innerHTML = `<div class="prefs">
       <div class="card"><div class="card-h">外观</div>
         ${row("主题", "跟随系统时，设备切到深色模式这里也跟着变", seg("theme", prefs.theme(), [["system", '<span class="theme-swatch system"></span>跟随系统'], ["light", '<span class="theme-swatch light"></span>浅色'], ["dark", '<span class="theme-swatch dark"></span>深色']]))}
+        ${row("皮肤", "整套界面的配色和形状，浅色和深色都有", seg("skin", prefs.skin(), skins.map(([v, label]) => [v, `<span class="skin-swatch ${v}"></span>${label}`])))}
         ${row("对话文字", "", seg("text", prefs.text(), [["small", "小"], ["normal", "标准"], ["large", "大"]]))}
       </div>
       <div class="card"><div class="card-h">对话</div>
@@ -3461,7 +3466,7 @@
     } else {
       const key = b.closest("[data-pref]").dataset.pref, v = b.dataset.v;
       if (key === "mode2") setMode(v); else store.set(key, v);
-      if (key === "theme" || key === "text") applyLook();
+      if (key === "theme" || key === "skin" || key === "text") applyLook();
     }
     renderPrefs();
   });
@@ -4059,8 +4064,10 @@
     term.textarea?.setAttribute("enterkeyhint", "enter");
     term.textarea?.addEventListener("focus", () => $("#viewer").classList.add("typing"));
     term.textarea?.addEventListener("blur", () => $("#viewer").classList.remove("typing"));
-    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { term.options.theme = termTheme(); });
-    addEventListener("collie:theme", () => { term.options.theme = termTheme(); });
+    addEventListener("collie:theme", () => {
+      term.options.theme = termTheme();
+      term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
+    });
   }
   function termTheme() {
     const fg = getComputedStyle(document.documentElement).getPropertyValue("--term-fg").trim();

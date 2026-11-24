@@ -202,7 +202,7 @@ var webBuildOnce struct {
 func (s *Server) webBuild() string {
 	webBuildOnce.Do(func() {
 		h := sha256.New()
-		for _, p := range []string{"index.html", "app.js", "app.css"} {
+		for _, p := range []string{"index.html", "app.js", "app.css", "skins.css"} {
 			b, _ := fs.ReadFile(s.web, p)
 			h.Write(b)
 		}

@@ -54,6 +54,6 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 | `internal/collie/` | hub（`hub.go`）、node（`node.go`）、herdr 客户端（`herdr.go`）与多机路由（`fleet.go`） |
 | `internal/collie/` 会话 | HTTP 与 SSE（`server.go`）、对话（`chat.go`、`agy.go`）、外部会话与接管（`external.go`、`desktop.go`、`handover.go`）、输入框 `/` 补全（`commands*.go`，`docs/pitfall/slash-commands.md`） |
 | `internal/collie/` 调度 | 调度（`super.go`）、API 与 Webhook（`superapi.go`）、CLI（`cli.go`）、数据与持久化（`store.go`、`db.go`） |
-| `web/` | 原生 HTML/CSS/JS，由 [embed.go](web/embed.go) 打进二进制 |
+| `web/` | 原生 HTML/CSS/JS，由 [embed.go](web/embed.go) 打进二进制；样式变量和皮肤见 `docs/design/DESIGN_SYSTEM.md` |
 | `scripts/` | `release.sh` 交叉编译和发布，`demo.sh` 用真实前端和 `scripts/demo/demo.js` 的示例数据生成在线体验 |
 | `docs/` | 项目文档（[文档索引](docs/README.md)）及 GitHub Pages 站点（`index.html`、`install.sh`、`demo/`、`img/`） |

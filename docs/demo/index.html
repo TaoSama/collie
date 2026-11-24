@@ -14,14 +14,22 @@
   <link rel="stylesheet" href="vendor/xterm.css">
   <link rel="stylesheet" href="vendor/katex/katex.min.css">
   <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="skins.css">
   <script>
-    // Apply this device's look before first paint (see 偏好设置).
-    try {
-      const g = (k) => JSON.parse(localStorage.getItem("collie." + k) || "null");
-      const t = g("theme"), x = g("text");
-      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-      if (x === "small" || x === "large") document.documentElement.dataset.text = x;
-    } catch {}
+    // Apply this device's look before first paint (see 偏好设置 and applyLook).
+    {
+      const root = document.documentElement;
+      let t, s, x;
+      try {
+        const g = (k) => JSON.parse(localStorage.getItem("collie." + k) || "null");
+        t = g("theme"); s = g("skin"); x = g("text");
+      } catch { /* storage blocked or unreadable: keep the defaults */ }
+      root.dataset.theme = t === "light" || t === "dark" ? t : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      if (typeof s === "string" && s !== "default") root.dataset.skin = s;
+      if (x === "small" || x === "large") root.dataset.text = x;
+      const bg = getComputedStyle(root).getPropertyValue("--bg").trim();
+      if (bg) document.querySelectorAll('meta[name="theme-color"]').forEach((m) => { m.removeAttribute("media"); m.content = bg; });
+    }
   </script>
 </head>
 <body>

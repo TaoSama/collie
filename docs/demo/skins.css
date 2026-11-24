@@ -1,0 +1,149 @@
+/* Skins: each one overrides the variables at the top of app.css, for both
+   themes. Mode-independent values go on :root[data-skin], colors on
+   [data-theme="light"] and [data-theme="dark"] so neither leaks into the
+   other. 默认 has no block here. */
+
+.skin-swatch.default { background: linear-gradient(135deg, #ffffff 50%, #111111 50%); }
+
+/* ─── Codex: quiet gray with ink buttons, pill controls, a floating composer
+   and soft user bubbles; color only for status. */
+:root[data-skin="codex"] {
+  --round: 1.25;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", "MesloLGS NF", "Symbols Nerd Font Mono", monospace;
+  --btn-radius: 999px;
+  --seg-radius: 999px;
+  --user-bg: color-mix(in oklab, var(--fg) 6%, transparent);
+  --user-fg: var(--fg);
+  --user-radius: 16px;
+  --composer-line: var(--line);
+  --composer-focus: var(--line);
+  --sel-bg: var(--bg-3);
+  --sel-ring: none;
+}
+:root[data-skin="codex"][data-theme="light"] {
+  --bg: #ffffff; --bg-2: #f6f6f6; --bg-3: #eaeaea;
+  --line: #ededee; --line-2: #dcdcdd;
+  --fg: #1a1c1f; --fg-2: #606163; --fg-3: #808183;
+  --accent: #1a1c1f; --on-accent: #ffffff;
+  --attn: #b9480d; --attn-soft: #fff5f0; --on-attn: #ffffff;
+  --ok: #008635; --danger: #ba2623; --pin: #0169cc;
+  --term-bg: #ffffff; --term-fg: #1a1c1f;
+  --code-bg: #f4f4f4; --code-fg: #1a1c1f; --code-ln: #8e8f90;
+  --hl-c: #4f4f4f; --hl-k: #ab4f7a; --hl-fn: #1f4e94; --hl-ty: #643cae; --hl-s: #2c6732;
+  --hl-n: #ac4f23; --hl-pr: #8f6420; --hl-m: #1f4e94; --hl-add: #008635; --hl-del: #ba2623;
+  --shadow-sm: 0 1px 2px -1px rgba(0,0,0,.08);
+  --shadow: 0 0 0 .5px rgba(26,28,31,.117), 0 3px 7.5px rgba(0,0,0,.04), 0 0 20px rgba(0,0,0,.05);
+  --shadow-pop: 0 0 0 .5px rgba(26,28,31,.117), 0 2px 8px rgba(0,0,0,.06);
+  --shadow-lg: 0 0 0 .5px rgba(26,28,31,.078), 0 8px 16px -4px rgba(0,0,0,.12);
+  --composer-shadow: 0 2px 8px rgba(0,0,0,.05), 0 4px 40px 4px rgba(0,0,0,.03);
+}
+:root[data-skin="codex"][data-theme="dark"] {
+  --bg: #181818; --bg-2: #141414; --bg-3: #262626;
+  --line: #2b2b2b; --line-2: #3c3c3c;
+  --fg: #dfdfdf; --fg-2: #bcbcbc; --fg-3: #8b8b8b;
+  --accent: #dfdfdf; --on-accent: #1d1d1d;
+  --attn: #ff8549; --attn-soft: #38271f; --on-attn: #181818;
+  --ok: #40c977; --danger: #fa423e; --pin: #83c3ff;
+  --term-bg: #181818; --term-fg: #dfdfdf;
+  --code-bg: #242424; --code-fg: #dfdfdf; --code-ln: #8b8b8b;
+  --hl-c: #9a9a9a; --hl-k: #f8a6c8; --hl-fn: #63a8f8; --hl-ty: #b897f4; --hl-s: #83d197;
+  --hl-n: #f1a275; --hl-pr: #f9dc78; --hl-m: #63a8f8; --hl-add: #40c977; --hl-del: #fa423e;
+  --shadow-sm: 0 1px 2px -1px rgba(0,0,0,.2);
+  --shadow: 0 0 0 .5px rgba(255,255,255,.156), 0 3px 7.5px rgba(0,0,0,.2), 0 0 20px rgba(0,0,0,.2);
+  --shadow-pop: 0 0 0 .5px rgba(255,255,255,.12), 0 3px 12px rgba(0,0,0,.4);
+  --shadow-lg: 0 0 0 .5px rgba(255,255,255,.084), 0 8px 16px -4px rgba(0,0,0,.36);
+  --composer-shadow: 0 3px 10px rgba(0,0,0,.3);
+}
+.skin-swatch.codex { background: linear-gradient(135deg, #f6f6f6 50%, #181818 50%); }
+
+/* ─── Linear: cool graphite with one indigo accent, tight corners, dense. */
+:root[data-skin="linear"] {
+  --round: .75;
+  --sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", Roboto, sans-serif;
+  --mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", "MesloLGS NF", "Symbols Nerd Font Mono", Menlo, Consolas, monospace;
+  --user-bg: var(--bg-3);
+  --user-fg: var(--fg);
+  --user-radius: calc(12px * var(--round));
+  --sel-bg: color-mix(in srgb, var(--accent) 12%, var(--bg-2));
+  --sel-ring: none;
+}
+:root[data-skin="linear"][data-theme="light"] {
+  --bg: #fdfdfe; --bg-2: #f2f3f8; --bg-3: #e6e8f0;
+  --line: #e2e5ec; --line-2: #ccd2de;
+  --fg: #16171a; --fg-2: #57606c; --fg-3: #80858e;
+  --accent: #5561cc; --on-accent: #ffffff;
+  --c-cpu: #5561cc; --c-mem: #19803d; --c-rx: #c2410c; --c-tx: #0e6fa8;
+  --attn: #c2410c; --attn-soft: #fdf1e7; --on-attn: #ffffff;
+  --ok: #19803d; --danger: #cd2f2f; --pin: #5a6270;
+  --term-bg: #f8f9fb; --term-fg: #1d1f23;
+  --code-bg: #f8f9fb; --code-fg: #1d1f23; --code-ln: #8f949c;
+  --hl-c: #6e737c; --hl-k: #6d28d9; --hl-fn: #4338ca; --hl-ty: #0e6fa8; --hl-s: #1a7a3c;
+  --hl-n: #b45309; --hl-pr: #3b5bdb; --hl-m: #9a5b00; --hl-add: #1a7a3c; --hl-del: #c62828;
+  --shadow-sm: 0 1px 2px rgba(16,18,24,.05);
+  --shadow: 0 0 0 1px rgba(16,18,24,.03), 0 4px 12px rgba(16,18,24,.07);
+  --shadow-pop: 0 2px 8px rgba(16,18,24,.08), 0 1px 2px rgba(16,18,24,.04);
+  --shadow-lg: 0 2px 6px rgba(16,18,24,.06), 0 16px 40px rgba(16,18,24,.12);
+}
+:root[data-skin="linear"][data-theme="dark"] {
+  --bg: #0f1014; --bg-2: #090a0d; --bg-3: #1c1d24;
+  --line: #22242c; --line-2: #343743;
+  --fg: #f7f8f8; --fg-2: #b4bcc8; --fg-3: #6a6e76;
+  --accent: #5e6ad2; --on-accent: #ffffff;
+  --c-cpu: #8b95f0; --c-mem: #4cb782; --c-rx: #f2994a; --c-tx: #7dd3fc;
+  --attn: #f2994a; --attn-soft: #22180e; --on-attn: #08090a;
+  --ok: #4cb782; --danger: #eb5757; --pin: #8a93a3;
+  --term-bg: #0c0d10; --term-fg: #e2e4e7;
+  --code-bg: #13141a; --code-fg: #e2e4e7; --code-ln: #565a61;
+  --hl-c: #7a7f88; --hl-k: #b4a0ff; --hl-fn: #82aaff; --hl-ty: #7dd3fc; --hl-s: #9ece6a;
+  --hl-n: #f2994a; --hl-pr: #a5b4fc; --hl-m: #e0af68; --hl-add: #4cb782; --hl-del: #ff8a8a;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.5);
+  --shadow: 0 0 0 1px rgba(255,255,255,.05), 0 8px 24px rgba(0,0,0,.5);
+  --shadow-pop: 0 0 0 1px rgba(255,255,255,.05), 0 3px 12px rgba(0,0,0,.5);
+  --shadow-lg: 0 0 0 1px rgba(255,255,255,.06), 0 18px 48px rgba(0,0,0,.6);
+}
+.skin-swatch.linear { background: linear-gradient(135deg, #f4f5f8 50%, #5e6ad2 50%); }
+
+/* ─── Kami: warm paper and ink blue, soft contrast, rounder; for long reading. */
+:root[data-skin="kami"] {
+  --round: 1.2;
+  --sel-bg: var(--bg-3);
+  --sel-ring: none;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Segoe UI", system-ui, sans-serif;
+}
+:root[data-skin="kami"][data-theme="light"] {
+  --bg: #faf9f5; --bg-2: #f5f4ed; --bg-3: #e8e6dc;
+  --line: #e5e3d8; --line-2: #d1cfc5;
+  --fg: #141413; --fg-2: #504e49; --fg-3: #87867f;
+  --accent: #1b365d; --on-accent: #faf9f5;
+  --c-cpu: #2d5a8a; --c-mem: #2f7d4f; --c-rx: #a84d08; --c-tx: #8c2f5b;
+  --attn: #a84d08; --attn-soft: #f8eedf; --on-attn: #faf9f5;
+  --ok: #2f7d4f; --danger: #b53333; --pin: #5e5d59;
+  --term-bg: #f3f1e9; --term-fg: #1f1e1c;
+  --code-bg: #f3f1e9; --code-fg: #1f1e1c; --code-ln: #959288;
+  --hl-c: #716e65; --hl-k: #8c2f5b; --hl-fn: #1f4e8c; --hl-ty: #2d6a6a; --hl-s: #4d6b1f;
+  --hl-n: #a4500f; --hl-pr: #2d5a8a; --hl-m: #8a5a12; --hl-add: #3b6d1f; --hl-del: #b53333;
+  --shadow-sm: 0 1px 2px rgba(20,20,19,.05);
+  --shadow: 0 0 0 1px rgba(20,20,19,.04), 0 4px 24px rgba(20,20,19,.05);
+  --shadow-pop: 0 2px 10px rgba(20,20,19,.07), 0 1px 2px rgba(20,20,19,.04);
+  --shadow-lg: 0 2px 6px rgba(20,20,19,.05), 0 18px 48px rgba(20,20,19,.10);
+}
+:root[data-skin="kami"][data-theme="dark"] {
+  --bg: #1b1a17; --bg-2: #22201c; --bg-3: #36332d;
+  --line: #312e28; --line-2: #45413a;
+  --fg: #ede9df; --fg-2: #b5b0a4; --fg-3: #8e897e;
+  --accent: #3a6ea5; --on-accent: #faf9f5;
+  --user-bg: #2c3e57; --user-fg: #ede9df;
+  --c-cpu: #7fa7d6; --c-mem: #7fb77e; --c-rx: #e39b4b; --c-tx: #d98aa6;
+  --attn: #e39b4b; --attn-soft: #2a2114; --on-attn: #141413;
+  --ok: #7fb77e; --danger: #e06c5e; --pin: #a8a69d;
+  --term-bg: #161512; --term-fg: #e8e6dc;
+  --code-bg: #22201c; --code-fg: #e8e6dc; --code-ln: #6b675f;
+  --hl-c: #87867f; --hl-k: #d98aa6; --hl-fn: #9fbbe0; --hl-ty: #8cc5c0; --hl-s: #a9c58a;
+  --hl-n: #e0a96d; --hl-pr: #a9c1dd; --hl-m: #d8b56a; --hl-add: #a9c58a; --hl-del: #ef8b80;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
+  --shadow: 0 0 0 1px rgba(250,249,245,.04), 0 12px 32px rgba(0,0,0,.45);
+  --shadow-pop: 0 3px 12px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.35);
+  --shadow-lg: 0 2px 6px rgba(0,0,0,.4), 0 18px 48px rgba(0,0,0,.55);
+}
+.skin-swatch.kami { background: linear-gradient(135deg, #f5f4ed 50%, #1b365d 50%); }
