@@ -233,6 +233,8 @@ func cliSpawn(args []string) error {
 	machine := fs.String("machine", "", "which computer (see `collie list`; default from settings)")
 	model := fs.String("model", "", "model to launch with (default from settings for the default kind)")
 	effort := fs.String("effort", "", "thinking effort: low | medium | high | xhigh | max ...")
+	alias := fs.String("alias", "", "start it through this shell alias on that computer (default from settings for the default kind)")
+	noAlias := fs.Bool("no-alias", false, "start the agent's own command, not the default alias")
 	sub := fs.Bool("subscribe", false, "route later events of --thread straight to this worker")
 	resume := fs.String("resume", "", "a stopped worker to carry on from: its computer, directory and conversation")
 	fs.Parse(args)
@@ -251,7 +253,16 @@ func cliSpawn(args []string) error {
 		if f.Name == "thread" {
 			body["thread"] = *thread
 		}
+		if f.Name == "alias" {
+			body["alias"] = *alias
+		}
 	})
+	if *noAlias {
+		if _, ok := body["alias"]; ok {
+			return fmt.Errorf("--alias and --no-alias don't go together")
+		}
+		body["alias"] = ""
+	}
 	b, err := cliCall("POST", "/api/super/spawn", body)
 	if err == nil {
 		printResult(b)
@@ -477,7 +488,7 @@ tidies memory/. Its journal is in dreams/.
   When a reply has no ` + "`--opt`" + ` buttons yet still needs the human to handle, review or answer
   (a todo for them, an open question, a report or issue awaiting sign-off), add ` + "`--check`" + `
   so it stays in their pending reminder; leave ` + "`--check`" + ` off for plain updates or closed items.
-- ` + "`{{BIN}} spawn [--cwd DIR] [--machine M] [--kind K] [--model ID] [--effort E] [--thread T] [--name N] \"task brief\"`" + `
+- ` + "`{{BIN}} spawn [--cwd DIR] [--machine M] [--kind K] [--model ID] [--effort E] [--alias A | --no-alias] [--thread T] [--name N] \"task brief\"`" + `
   starts a worker in the background and returns at once. Defaults: kind {{WKIND}}, cwd {{WCWD}}.
   ` + "`{{BIN}} list`" + ` shows the connected computers. Use --machine when the human names a
   computer or the code lives there (cwd is then a path on that computer; "~" is its home).
@@ -487,6 +498,8 @@ tidies memory/. Its journal is in dreams/.
   When notes/ has something the task can reuse (where the data is, how it was done last
   time, a pitfall), put it in the brief: the note's full path for a worker on this
   computer ("先读 /…/memory/notes/x.md"), the relevant lines themselves for one on another.
+  --alias starts it through one of that computer's shell aliases (its own model, gateway
+  and flags); --no-alias skips the default one. Pass them only when the human picked so.
   Leaving out --kind/--model/--effort uses the human's current default, set in settings
   ({{WKIND}} when this session began). Pass one when what they want is clear from the
   conversation, said outright or not: they asked for Codex earlier in this job, a retry

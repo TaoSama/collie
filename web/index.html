@@ -101,7 +101,7 @@
       <header class="d-head">
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
         <div class="d-title">
-          <div class="d-name">Collie <span class="kind" id="router-kind"></span></div>
+          <div class="d-name">Collie <span class="kind" id="router-kind"></span><span class="router-where" id="router-where" hidden></span></div>
           <div class="d-meta"><span class="status" id="router-status"></span><span class="muted" id="router-model"></span><span class="muted" id="router-queue"></span><span class="muted ctx" id="router-ctx"></span></div>
         </div>
         <button type="button" class="icon-btn" id="super-search-btn" aria-label="搜索对话" aria-expanded="false" aria-controls="super-search" title="搜索对话">
@@ -167,6 +167,7 @@
             <span class="cbar-label" title="Collie 把这条消息里的活派给谁：哪台电脑、哪个 agent、什么模型。Collie 自己用的模型显示在页面顶部">派活</span>
             <select id="t-machine" data-pick="chip" data-title="这次在哪台电脑上做" title="这次在哪台电脑上做"></select>
             <select id="t-kind" data-pick="chip" data-title="这次派哪个 agent" title="这次派哪个 agent"></select>
+            <select id="t-alias" data-pick="chip" data-title="这次用哪个 alias 启动" title="这次用哪个 alias 启动" hidden></select>
             <select id="t-model" data-pick="chip" data-title="这次用哪个模型" title="这次用哪个模型"></select>
             <select id="t-effort" data-pick="chip" data-title="思考强度" title="思考强度"></select>
             </div>

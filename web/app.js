@@ -826,14 +826,14 @@
   // Which model Collie itself runs with, next to its status.
   async function renderRouterModel(r) {
     const el = $("#router-model");
-    const key = [r.kind, r.model, r.effort, r.pending].join("|");
+    const key = [r.kind, r.model, r.effort, r.pending, r.machine, r.alias].join("|");
     if (el._key === key) return;
     el._key = key;
     let model = r.model;
-    if (!model && r.kind) model = (await modelsFor(shortKind(r.kind), "")).default || "";
+    if (!model && r.kind) model = (await modelsFor(shortKind(r.kind), r.machine || "")).default || "";
     if (el._key !== key) return;
     const parts = [];
-    if (model) parts.push(esc(model.split("/").pop()) + (r.model ? "" : "（默认）"));
+    if (model) parts.push(esc(shortModel(model)) + (r.model ? "" : "（默认）"));
     if (r.effort) parts.push("思考 " + esc(EFFORT_LABEL[r.effort] || r.effort));
     el.innerHTML = parts.join(" · ") + (r.pending ? ` <button type="button" class="pending" data-act="router-restart" title="Collie 的模型设置改过了，点这里重启 Collie">重启后生效</button>` : "");
     el.title = `Collie 自己用的模型${model ? "：" + model : ""}${r.effort ? "，思考强度 " + r.effort : ""}（自动化 → 设置 → Collie 自己）`;
@@ -1383,6 +1383,15 @@
     const wasWorking = !wk.hidden, prevBusy = wasWorking ? wk.textContent : "", prevCrew = crew.innerHTML;
     const r = sup.router || {};
     $("#router-kind").textContent = KIND_LABEL[r.kind] || r.kind || "";
+    // Where it runs, once there is more than one computer to run on.
+    const where = $("#router-where"), on = (state.machines || []).length > 1 ? machineName(r.machine) : "";
+    const whereText = [on && "在 " + on, r.alias && "alias " + r.alias].filter(Boolean).join(" · ");
+    if (where._key !== whereText) {
+      where._key = whereText;
+      where.hidden = !whereText;
+      where.textContent = whereText;
+      where.title = whereText ? `Collie 自己${[on && "跑在 " + on + " 上", r.alias && "用 alias " + r.alias + " 启动"].filter(Boolean).join("，")}（自动化 → 设置 → Collie 自己）` : "";
+    }
     const st = $("#router-status");
     st.className = "status " + collieDot(r.status);
     st.innerHTML = `<span class="dot ${esc(collieDot(r.status))}"></span>${esc(r.replied ? "在收尾" : collieStatus(r.status))}`;
@@ -1706,6 +1715,8 @@
   }
   // Settings and the launcher call antigravity by its long name.
   const aliasKind = (k) => (k === "agy" ? "antigravity" : k);
+  // A model id without its provider ("openrouter/x" → "x").
+  const shortModel = (id) => id.split("/").pop();
   const aliasPins = (a) => [a.model, a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
   const aliasSub = (a) => [...aliasPins(a), a.base_url].filter(Boolean).join(" · ");
   const aliasesOfKind = (list, kind) => list.filter((a) => aliasKind(a.kind) === kind);
@@ -1724,8 +1735,8 @@
     if (!targetDefault || fresh) {
       try {
         const s = (await api("/api/super/settings")).settings;
-        targetDefault = { machine: s.worker_machine || "", kind: shortKind(s.worker_kind) || "claude", model: s.worker_model || "", effort: s.worker_effort || "" };
-      } catch { targetDefault ||= { machine: "", kind: "claude", model: "", effort: "" }; }
+        targetDefault = { machine: s.worker_machine || "", kind: shortKind(s.worker_kind) || "claude", model: s.worker_model || "", effort: s.worker_effort || "", alias: s.worker_alias || "" };
+      } catch { targetDefault ||= { machine: "", kind: "claude", model: "", effort: "", alias: "" }; }
     }
     // What was picked here over the defaults: picking only an agent leaves the
     // computer at its default, not unset.
@@ -1746,7 +1757,27 @@
     syncPick(mSel); syncPick(kSel);
     mSel._pick?.classList.toggle("changed", t.machine !== targetDefault.machine);
     kSel._pick?.classList.toggle("changed", t.kind !== targetDefault.kind);
+    renderAliasChip();
     renderModelChips();
+  }
+  // This computer's aliases for this agent; none listed, no chip. The default
+  // alias goes with the default kind, as the model does.
+  let aliasSeq = 0;
+  async function renderAliasChip() {
+    const seq = ++aliasSeq, t = targetNow(), sel = $("#t-alias");
+    const all = await aliasesOn(t.machine);
+    if (seq !== aliasSeq) return;
+    const list = aliasesOfKind(all, aliasKind(t.kind)), want = keptAlias(all, list, t.alias);
+    // What is sent is what shows: an alias this agent doesn't have is dropped.
+    if (target?.alias !== undefined && target.alias !== want) target.alias = want;
+    sel._list = list;
+    const html = aliasOpts(list, want);
+    if (sel._html !== html) { sel._html = html; sel.innerHTML = html; }
+    sel.value = want;
+    sel.hidden = !list.length && !want;
+    syncPick(sel);
+    const def = keptAlias(all, list, t.kind === targetDefault.kind ? targetDefault.alias : "");
+    sel._pick?.classList.toggle("changed", want !== def);
   }
   // The default model and effort belong to the default kind of agent; any
   // other kind starts from that agent's own settings.
@@ -1760,10 +1791,9 @@
     if (seq !== chipSeq) return;
     const list = [...(info.models || [])];
     if (model && !list.some((m) => m.id === model)) list.unshift({ id: model });
-    const short = (id) => id.split("/").pop();
     const mark = (v, dv) => (v === dv ? " · 默认" : "");
-    let html = d.model ? "" : `<option value="" data-short="默认模型" data-sub="${esc(info.default ? "现在是 " + info.default + " · 默认" : "agent 自己的设置 · 默认")}">默认</option>`;
-    html += list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(m.label && m.label.length <= 24 ? m.label : short(m.id))}" data-sub="${esc((m.label && m.label !== m.id ? m.id : "") + mark(m.id, d.model))}" ${m.id === model ? "selected" : ""}>${esc(m.label || m.id)}</option>`).join("");
+    let html = d.model ? "" : `<option value="" data-short="${esc(info.default ? shortModel(info.default) : "默认模型")}" data-sub="agent 自己的设置 · 默认">${esc(info.default ? "默认（" + shortModel(info.default) + "）" : "默认")}</option>`;
+    html += list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(m.label && m.label.length <= 24 ? m.label : shortModel(m.id))}" data-sub="${esc((m.label && m.label !== m.id ? m.id : "") + mark(m.id, d.model))}" ${m.id === model ? "selected" : ""}>${esc(m.label || m.id)}</option>`).join("");
     if (mSel._html !== html) { mSel._html = html; mSel.innerHTML = html; }
     mSel.value = model;
     const cur = list.find((m) => m.id === model);
@@ -1781,14 +1811,21 @@
   }
   const pick = (o) => { target = { ...(target || {}), ...o }; };
   $("#t-machine").addEventListener("change", (e) => { pick({ machine: e.target.value }); renderTarget(); });
-  $("#t-kind").addEventListener("change", (e) => { pick({ kind: e.target.value, model: undefined, effort: undefined }); renderTarget(); });
+  $("#t-kind").addEventListener("change", (e) => { pick({ kind: e.target.value, model: undefined, effort: undefined, alias: undefined }); renderTarget(); });
+  // An alias brings the model and effort it pins; one that pins none (or
+  // none at all) goes back to the defaults.
+  $("#t-alias").addEventListener("change", (e) => {
+    const name = e.target.value, a = (e.target._list || []).find((x) => x.name === name);
+    pick({ alias: name, model: a?.model || undefined, effort: a?.effort || undefined });
+    renderAliasChip(); renderModelChips();
+  });
   $("#t-model").addEventListener("change", (e) => { pick({ model: e.target.value }); renderModelChips(); });
   $("#t-effort").addEventListener("change", (e) => { pick({ effort: e.target.value || modelDefaults(targetNow()).effort }); renderModelChips(); });
   const targetNow = () => {
-    const d = targetDefault || { machine: "", kind: "claude", model: "", effort: "" };
+    const d = targetDefault || { machine: "", kind: "claude", model: "", effort: "", alias: "" };
     const t = { ...d };
     for (const [k, v] of Object.entries(target || {})) if (v !== undefined) t[k] = v;
-    if (target && "kind" in target && t.kind !== d.kind) { t.model = target.model; t.effort = target.effort; }
+    if (target && "kind" in target && t.kind !== d.kind) { t.model = target.model; t.effort = target.effort; t.alias = target.alias ?? ""; }
     return t;
   };
 
@@ -1825,7 +1862,8 @@
       machine: "machine" in p ? (t.machine || "local") : "",
       kind: "kind" in p ? t.kind : "",
       model: "model" in p || "kind" in p ? model : "",
-      effort: "effort" in p || "kind" in p ? effort : "" } });
+      effort: "effort" in p || "kind" in p ? effort : "",
+      ...("alias" in p || "kind" in p ? { alias: t.alias || "" } : {}) } });
     } catch (err) {
       const idx = pendingSays.indexOf(mine);
       if (idx >= 0) pendingSays.splice(idx, 1);
@@ -3420,7 +3458,7 @@
     if (el._key !== key) return;
     // The model list's own name ("Gemini 4 Neon (XHigh)"), its bracket read
     // as the thinking level when the id carries one, as Antigravity's do.
-    let name = (info.models || []).find((m) => m.id === model)?.label || model.split("/").pop();
+    let name = (info.models || []).find((m) => m.id === model)?.label || shortModel(model);
     const b = name.match(/^(.*\S)\s*\(([^)]+)\)$/);
     if (b && EFFORT_LABEL[b[2].toLowerCase()]) { name = b[1]; effort ||= b[2].toLowerCase(); }
     const parts = [model ? name + (own ? "（默认）" : "") : "默认模型"];
@@ -5758,7 +5796,7 @@
     mSel._key = kind + "@" + pickMachine;
     const list = [...(info.models || [])];
     if (want?.model && !list.some((m) => m.id === want.model)) list.unshift({ id: want.model });
-    const def = info.default ? info.default.split("/").pop() : "";
+    const def = info.default ? shortModel(info.default) : "";
     mSel.innerHTML = `<option value="" data-short="默认模型" data-sub="${esc(info.default ? "现在是 " + info.default : "agent 自己的设置")}">默认${def ? "（" + esc(def) + "）" : ""}</option>` +
       list.map((m) => `<option value="${esc(m.id)}" data-sub="${esc(m.label && m.label !== m.id ? m.id : "")}">${esc(m.label || m.id)}</option>`).join("");
     mSel.value = want ? want.model || "" : same && list.some((m) => m.id === keep.model) ? keep.model : "";

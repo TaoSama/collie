@@ -71,6 +71,10 @@ type routerView struct {
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
 	Pending bool   `json:"pending,omitempty"`
+	// The computer it runs on ("" for the hub's own) and the alias it was
+	// started through; while asleep, where and how it will start.
+	Machine string `json:"machine"`
+	Alias   string `json:"alias,omitempty"`
 }
 
 type superView struct {
@@ -118,9 +122,14 @@ func (s *Server) superState(ctx context.Context) superView {
 	v.Router.Dreaming = sp.dream != nil
 	st := sp.st.Settings
 	v.Router.Model, v.Router.Effort = st.RouterModel, st.RouterEffort
-	if run := sp.routerRunLocked(); run != nil && v.Router.Alive {
-		v.Router.Model, v.Router.Effort = run[0], run[1]
-		v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || sp.routerLaunchLocked() != routerLaunch{Machine: st.RouterMachine, Alias: st.RouterAlias}
+	v.Router.Machine, v.Router.Alias = st.RouterMachine, st.RouterAlias
+	if v.Router.Alive {
+		l := sp.routerLaunchLocked()
+		v.Router.Machine, v.Router.Alias = l.Machine, l.Alias
+		if run := sp.routerRunLocked(); run != nil {
+			v.Router.Model, v.Router.Effort = run[0], run[1]
+			v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || l != routerLaunch{Machine: st.RouterMachine, Alias: st.RouterAlias}
+		}
 	}
 	if sp.dream != nil {
 		v.Router.Status = "dreaming"
@@ -199,12 +208,13 @@ func (s *Server) superEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text    string `json:"text"`
-		Machine string `json:"machine"` // where to dispatch this time, "" = the default
-		Kind    string `json:"kind"`
-		Model   string `json:"model"`
-		Effort  string `json:"effort"`
-		Re      string `json:"re"` // a message of Collie's this answers
+		Text    string  `json:"text"`
+		Machine string  `json:"machine"` // where to dispatch this time, "" = the default
+		Kind    string  `json:"kind"`
+		Model   string  `json:"model"`
+		Effort  string  `json:"effort"`
+		Alias   *string `json:"alias"` // absent: the default; "": none
+		Re      string  `json:"re"`    // a message of Collie's this answers
 	}
 	if !decode(w, r, &body) || strings.TrimSpace(body.Text) == "" {
 		if strings.TrimSpace(body.Text) == "" {
@@ -239,16 +249,23 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 	if known && kinds[body.Kind] != kinds[st.WorkerKind] {
 		hint = append(hint, "--kind "+body.Kind)
 	}
-	// Model choices only differ from the defaults for the default kind.
-	defModel, defEffort := "", ""
+	// Model and alias choices only differ from the defaults for the default kind.
+	defModel, defEffort, defAlias := "", "", ""
 	if !known || kinds[body.Kind] == kinds[st.WorkerKind] {
-		defModel, defEffort = st.WorkerModel, st.WorkerEffort
+		defModel, defEffort, defAlias = st.WorkerModel, st.WorkerEffort, st.WorkerAlias
 	}
 	if m := strings.TrimSpace(body.Model); m != "" && m != defModel && modelNameRe.MatchString(m) {
 		hint = append(hint, "--model "+m)
 	}
 	if e := strings.TrimSpace(body.Effort); e != "" && e != defEffort && modelNameRe.MatchString(e) {
 		hint = append(hint, "--effort "+e)
+	}
+	if a := body.Alias; a != nil && *a != defAlias && (*a == "" || aliasNameRe.MatchString(*a)) {
+		if *a == "" {
+			hint = append(hint, "--no-alias")
+		} else {
+			hint = append(hint, "--alias "+*a)
+		}
 	}
 	if len(hint) > 0 {
 		text += "\n\n[The human picked where this runs: spawn with " + strings.Join(hint, " ") + "]"
@@ -349,6 +366,7 @@ func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
 		Machine   *string `json:"machine"`
 		Model     string  `json:"model"`
 		Effort    string  `json:"effort"`
+		Alias     *string `json:"alias"` // absent: the default; "": none
 		Subscribe *bool   `json:"subscribe"`
 		Resume    string  `json:"resume"` // a stopped worker to carry on from
 	}
@@ -384,6 +402,10 @@ func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "invalid model or effort"})
 		return
 	}
+	if body.Alias != nil && *body.Alias != "" && !aliasNameRe.MatchString(*body.Alias) {
+		writeJSON(w, 400, map[string]any{"error": "invalid alias"})
+		return
+	}
 	if body.By == "" {
 		body.By = routerName
 	}
@@ -402,7 +424,8 @@ func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
 	} else if body.Machine != nil {
 		machine = s.machineByName(*body.Machine)
 	}
-	wk, started, err := s.sup.Spawn(body.Kind, body.Cwd, body.Task, body.Thread, body.Name, body.By, machine, body.Model, body.Effort, sub, session)
+	wk, started, err := s.sup.Spawn(SpawnSpec{Kind: body.Kind, Cwd: body.Cwd, Task: body.Task, Thread: body.Thread, Name: body.Name, By: body.By,
+		Machine: machine, Model: body.Model, Effort: body.Effort, Alias: body.Alias, Subscribe: sub, Resume: session})
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return

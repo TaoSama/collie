@@ -125,7 +125,7 @@
     return out;
   }
   const sup = () => ({
-    router: { alive: true, status: routerStatus, pane_id: "w1:p1", kind: "claude", context: 23, rotate_at: 70, model: "sonnet" },
+    router: { alive: true, status: routerStatus, pane_id: "w1:p1", kind: "claude", context: 23, rotate_at: 70, machine: "macbook", alias: "ccl5" },
     entries, pending: computePending(), pinned: computePinned(), workers, queued: 0, queued_router: 0, paused: false, earlier: true,
     follow: { next: new Date(new Date().setHours(33, 0, 0, 0)).toISOString(), next_text: "复查首页暗色模式的回归测试" }, // a check-again tomorrow 09:00
   });

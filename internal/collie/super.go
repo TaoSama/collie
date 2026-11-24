@@ -982,7 +982,19 @@ func (sp *Super) resumeFrom(name string) (*Worker, error) {
 	return &c, nil
 }
 
-func (sp *Super) Spawn(kind, cwd, task, thread, name, by, machine, model, effort string, subscribe bool, resume string) (*Worker, <-chan error, error) {
+// SpawnSpec is what a worker starts with; "" takes the settings' default.
+type SpawnSpec struct {
+	Kind, Cwd, Task, Thread, Name, By, Machine, Model, Effort string
+	// Alias launches it through one of the computer's shell aliases: nil for
+	// the default worker alias (which goes with the default kind), "" for none.
+	Alias     *string
+	Subscribe bool
+	Resume    string
+}
+
+func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
+	kind, cwd, task, thread, name, by, machine, model, effort := spec.Kind, spec.Cwd, spec.Task, spec.Thread, spec.Name, spec.By, spec.Machine, spec.Model, spec.Effort
+	subscribe, resume := spec.Subscribe, spec.Resume
 	m, err := sp.s.herdr.machine(machine)
 	if err != nil {
 		return nil, nil, fmt.Errorf("machine %q is not connected", machine)
@@ -1056,11 +1068,18 @@ func (sp *Super) Spawn(kind, cwd, task, thread, name, by, machine, model, effort
 	sp.addEntryLocked("event", thread, fmt.Sprintf("%s %s（%s%s）：%s", verb, name, kind, where, clip(firstLine(task), 120)), name, "spawn")
 	sp.mu.Unlock()
 
-	// The default model and alias apply to the default kind of worker.
+	// The default alias, model and effort go with the default kind. The
+	// default model only with the default alias: settings take it from that
+	// alias, and another one (or none) brings (or leaves) its own.
 	sp.mu.Lock()
-	aliasName := ""
-	if kinds[kind] == kinds[sp.st.Settings.WorkerKind] {
+	def, aliasName := kinds[kind] == kinds[sp.st.Settings.WorkerKind], ""
+	if def {
 		aliasName = sp.st.Settings.WorkerAlias
+	}
+	if spec.Alias != nil {
+		aliasName = *spec.Alias
+	}
+	if def && aliasName == sp.st.Settings.WorkerAlias {
 		if model == "" {
 			model = sp.st.Settings.WorkerModel
 		}
