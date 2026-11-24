@@ -89,7 +89,7 @@ const stripTags = (h) => h.replace(/<[^>]+>/g, "");
   assert.ok(html.includes('class="katex-display"'), "KaTeX display markup should render");
   assert.ok(html.includes("小时"), "CJK text inside \\text{} should render");
   assert.ok(!html.includes("$$\\frac"), "raw LaTeX delimiters/source must not leak as text");
-  assert.ok(html.includes("<code>colab usage</code>"), "inline code preserved");
+  assert.ok(html.includes("<code data-chip>colab usage</code>"), "inline code preserved");
   assert.ok(html.includes("<blockquote>"), "blockquote preserved");
   assert.equal(warnings.length, 0, "expected zero KaTeX console warnings for CJK \\text{}, got: " + warnings.join("; "));
 }
@@ -203,12 +203,16 @@ const stripTags = (h) => h.replace(/<[^>]+>/g, "");
   // Inline code protects $, $$, \ escapes, and preserves clickable paths/URLs
   const inlineCode = mdRender("查看 \x60$HOME\x60、\x60\\$250\x60、\x60$$x^2$$\x60、\x60\\\x60、\x60/tmp/demo.go\x60、\x60https://example.com\x60。");
   assert.ok(!inlineCode.includes("katex"), "inline code must never trigger KaTeX");
-  assert.ok(inlineCode.includes("<code>$HOME</code>"), "$HOME in code preserved");
-  assert.ok(inlineCode.includes("<code>\\$250</code>"), "\\$250 in code preserved");
-  assert.ok(inlineCode.includes("<code>$$x^2$$</code>"), "$$x^2$$ in code preserved");
-  assert.ok(inlineCode.includes("<code>\\</code>"), "single backslash in code preserved");
+  assert.ok(inlineCode.includes("<code data-chip>$HOME</code>"), "$HOME in code preserved");
+  assert.ok(inlineCode.includes("<code data-chip>\\$250</code>"), "\\$250 in code preserved");
+  assert.ok(inlineCode.includes("<code data-chip>$$x^2$$</code>"), "$$x^2$$ in code preserved");
+  assert.ok(inlineCode.includes("<code data-chip>\\</code>"), "single backslash in code preserved");
   assert.ok(inlineCode.includes('data-path="/tmp/demo.go"') && inlineCode.includes('class="code-link"'), "clickable code path preserved");
   assert.ok(inlineCode.includes('href="https://example.com"') && inlineCode.includes('class="code-link"'), "clickable code URL preserved");
+
+  // Short inline code is kept whole in a table cell; long code may wrap
+  const longCode = mdRender("\x60P:docs/assistant/{knowledge,day-recap,meeting-minutes}\x60");
+  assert.ok(longCode.includes("<code>P:docs/assistant/"), "long inline code is not a chip: " + longCode);
 }
 
 // 5. Existing mdRender features & XSS safety

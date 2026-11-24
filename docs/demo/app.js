@@ -6411,6 +6411,7 @@
 
   // Minimal, safe Markdown: escape first, then add a little structure.
   const mdCache = new Map();
+  const CODE_CHIP_MAX = 24; // inline code up to this many characters is kept on one line in a table cell
   function md(src) {
     const key = String(src || "");
     let out = mdCache.get(key);
@@ -6654,14 +6655,15 @@
             }
             const raw = unesc(c).trim();
             const cleanP = parseInlineCodePath(raw);
+            const chip = raw.length <= CODE_CHIP_MAX ? " data-chip" : "";
             if (cleanP) {
               const ep = esc(cleanP);
-              scanned += keep(`<a ${fileLinkAttrs(cleanP, ep, "打开这个文件")}><code class="code-link">${c}</code></a>`);
+              scanned += keep(`<a ${fileLinkAttrs(cleanP, ep, "打开这个文件")}><code class="code-link"${chip}>${c}</code></a>`);
             } else if (isPureHttpUrl(raw)) {
               const eu = esc(raw);
-              scanned += keep(`<a class="url" href="${eu}" target="_blank" rel="noopener noreferrer" title="${eu}"><code class="code-link">${c}</code></a>`);
+              scanned += keep(`<a class="url" href="${eu}" target="_blank" rel="noopener noreferrer" title="${eu}"><code class="code-link"${chip}>${c}</code></a>`);
             } else {
-              scanned += keep(`<code>${c}</code>`);
+              scanned += keep(`<code${chip}>${c}</code>`);
             }
             i = close + ticks;
             continue;
