@@ -1704,11 +1704,10 @@
   const aliasKind = (k) => (k === "agy" ? "antigravity" : k);
   const aliasPins = (a) => [a.model, a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
   const aliasSub = (a) => [...aliasPins(a), a.base_url].filter(Boolean).join(" · ");
-  // Another agent picked: an alias that starts a different one no longer applies.
-  function dropOtherAlias(sel, kind) {
-    const g = sel.selectedOptions[0]?.dataset.glyph;
-    if (g && aliasKind(g) !== kind) { sel.value = ""; syncPick(sel); }
-  }
+  const aliasesOfKind = (list, kind) => list.filter((a) => aliasKind(a.kind) === kind);
+  // The alias to keep selected: one of this agent's, or one this computer
+  // didn't report (still shown as such); another agent's alias no longer applies.
+  const keptAlias = (all, list, want) => (want && (list.some((a) => a.name === want) || !all.some((a) => a.name === want)) ? want : "");
   // Options for an alias picker; want stays listed when that computer doesn't have it.
   const aliasOpts = (list, want) => `<option value="" data-short="无 alias" data-sub="直接启动 agent 自己的命令">无</option>`
     + (want && !list.some((a) => a.name === want) ? `<option value="${esc(want)}" data-sub="这台电脑上没读到" selected>${esc(want)}</option>` : "")
@@ -2225,9 +2224,11 @@
   async function fillAliases(form, who) {
     const sel = form[who + "_alias"];
     const want = sel.dataset.value ?? sel.value;
-    const list = await aliasesOn(formMachine(form, who));
-    sel.innerHTML = aliasOpts(list, want);
+    const all = await aliasesOn(formMachine(form, who));
+    const list = aliasesOfKind(all, form[who + "_kind"].value);
+    sel.innerHTML = aliasOpts(list, keptAlias(all, list, want));
     delete sel.dataset.value;
+    syncPick(sel);
   }
   // Picking an alias picks its agent, model and effort; another agent drops it.
   async function pickAlias(form, who) {
@@ -2248,7 +2249,7 @@
       fillAliases(form, who);
       form[who + "_kind"].addEventListener("change", () => {
         form[who + "_model"].value = ""; form[who + "_effort"].value = "";
-        dropOtherAlias(form[who + "_alias"], form[who + "_kind"].value);
+        fillAliases(form, who);
         fillModels(form, who);
       });
       form[who + "_alias"].addEventListener("change", () => pickAlias(form, who));
@@ -5536,8 +5537,9 @@
   }
   async function fillLaunchAliases() {
     const sel = $("#l-alias"), want = sel.value, machine = pickMachine;
-    const list = await aliasesOn(machine);
-    if (machine !== pickMachine) return;
+    const kind = $("input[name=kind]:checked")?.value;
+    const list = aliasesOfKind(await aliasesOn(machine), kind);
+    if (machine !== pickMachine || kind !== $("input[name=kind]:checked")?.value) return;
     sel.innerHTML = aliasOpts(list, list.some((a) => a.name === want) ? want : "");
     sel.hidden = list.length === 0;
     syncPick(sel);
@@ -5628,7 +5630,7 @@
   }
   $("#new-btn").addEventListener("click", openLauncher);
   $$("input[name=kind]").forEach((r) => r.addEventListener("change", () => {
-    dropOtherAlias($("#l-alias"), r.value);
+    fillLaunchAliases();
     suggestName();
   }));
   nameInput.addEventListener("input", () => { nameTouched = true; });
