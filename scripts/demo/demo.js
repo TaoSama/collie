@@ -9,6 +9,33 @@
   const ago = (min) => new Date(now - min * 60000).toISOString();
   const later = (min) => new Date(Date.now() + min * 60000).toISOString();
 
+  // A computer's last hour, the same every time for the same computer.
+  function demoSysmon(machine, since) {
+    const mac = machine === "macbook";
+    let seed = mac ? 7 : 3;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const end = Math.floor(Date.now() / 10000) * 10, samples = [];
+    const memTotal = mac ? 48 * 2 ** 30 : 124 * 2 ** 30, diskTotal = mac ? 494e9 : 5.5e12;
+    for (let t = end - 3590; t <= end; t += 10) {
+      const spike = rnd() < 0.08 ? 20 + rnd() * 25 : 0;
+      samples.push({
+        t, cpu: 3 + rnd() * 4 + spike, load: (mac ? 4 : 1) + rnd() * 2, mem_used: memTotal * ((mac ? 0.62 : 0.07) + rnd() * 0.02), mem_total: memTotal,
+        rx: 20e3 + rnd() * 60e3 + (rnd() < 0.1 ? 400e3 * rnd() : 0), tx: 40e3 + rnd() * 50e3 + (rnd() < 0.1 ? 300e3 * rnd() : 0),
+        disk_used: diskTotal * (mac ? 0.86 : 0.14), disk_total: diskTotal,
+      });
+    }
+    const minute = Math.floor(end / 60) * 60, recent = Array.from({ length: 60 }, (_, i) => i > 54 ? 0 : Math.round(rnd() * 600e3 + 300e3));
+    return {
+      system: mac ? { os: "macOS 26.4.1", kernel: "Darwin 25.4.0", model: "Mac16,8", cpu: "Apple M4 Pro", cores: 14, boot: end - 86400 * 19 }
+        : { os: "Debian GNU/Linux 12 (bookworm)", kernel: "6.1.0-28-amd64", model: "QEMU Standard PC", cpu: "AMD EPYC 9654", cores: 32, boot: end - 86400 * 41 },
+      samples: samples.filter((x) => x.t > since),
+      disks: mac ? [{ mount: "/", used: diskTotal * 0.86, total: diskTotal }] : [{ mount: "/", used: 14e9, total: 135e9 }, { mount: "/data00", used: diskTotal * 0.14 - 14e9, total: diskTotal - 135e9 }],
+      tokens: { per_minute: mac ? 0 : 412e3, today: mac ? 31e6 : 139e6, recent: mac ? recent.map(() => 0) : recent, minute },
+      versions: mac ? { claude: "2.1.306", codex: "0.167.0", herdr: "0.9.5" } : { claude: "2.1.302", codex: "0.167.0", agy: "1.5.16", herdr: "0.9.5" },
+      every: 10,
+    };
+  }
+
   // ───────────────────────────── the scene
   const machines = [
     { id: "", name: "devbox", os: "linux/amd64", home: "/home/alex", local: true, online: true, agents: ["claude", "codex", "agy"] },
@@ -563,9 +590,11 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       return json({ error: "找不到这个文件" }, 404);
     }
     if (p === "/api/dirs") return json({ dirs: ["~/code/shop-api", "~/code/shop-web", "~/code/notes"] });
+    if (p === "/api/sysmon") return json(demoSysmon(q.get("machine") || "", Number(q.get("since") || 0)));
     if (p === "/api/devices") return json({
       devices: [
         { id: "macbook", kind: "machine", name: "macbook", os: "darwin/arm64", online: true, home: "/Users/alex", version: "v0.2.41", agents: ["claude", "codex"], created_at: ago(60 * 24 * 3), last_seen: ago(0) },
+        { id: "studio", kind: "machine", name: "studio", os: "darwin/arm64", online: false, home: "/Users/alex", version: "v0.2.41", agents: ["claude"], created_at: ago(60 * 24 * 9), last_seen: ago(60 * 26) },
         { id: "iphone", kind: "browser", name: "iPhone · Safari", current: false, created_at: ago(60 * 24 * 3), last_seen: ago(12) },
         { id: "chrome", kind: "browser", name: "Mac · Chrome", current: true, created_at: ago(60 * 24 * 2), last_seen: ago(0) },
       ],

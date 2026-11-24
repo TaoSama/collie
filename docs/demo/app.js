@@ -102,7 +102,7 @@
     if (r.hub) headers.Authorization = "Bearer " + r.hub.token;
     const res = await fetch(r.url, {
       method: opts.body ? "POST" : (opts.method || "GET"),
-      headers, body: r.body,
+      headers, body: r.body, signal: opts.signal,
       credentials: r.hub ? "omit" : "same-origin",
     });
     if (!r.hub) noteBuild(res.headers.get("X-Collie-Web"));
@@ -3019,14 +3019,167 @@
   }
   checkUpdates();
   setInterval(checkUpdates, 30 * 60 * 1000);
-  // Which agents a computer has: nothing when not known (an older node).
-  const agentsTag = (list) => !Array.isArray(list) ? ""
-    : list.length ? `<span title="这台电脑上装了的 agent">${list.map((k) => esc(AGENT_LABEL[k] || k)).join(" · ")}</span>`
-    : `<span class="tag attn" title="找不到 claude、codex、agy 命令：装一个，再重连这台电脑">没装 agent</span>`;
   const verTag = (have, latest, cmd) => !have ? "" : isOld(have, latest)
     ? `<span class="tag attn" title="${esc("更新：" + cmd)}">${esc(have)} → ${esc(latest)}</span>` : `<span>${esc(have)}</span>`;
   const updateRow = (have, latest, cmd, note, id, name) => isOld(have, latest)
     ? `<div class="update-cmd"><p class="pair-hint">有新版本 ${esc(latest)}。<button class="btn small primary" data-update="${esc(id)}" data-name="${esc(name)}">更新到 ${esc(latest)}</button></p><p class="pair-hint muted">点了没反应的话，在这台电脑上运行${note ? "（" + esc(note) + "）" : ""}：</p><div class="code"><span>${esc(cmd)}</span><button class="icon-btn" data-copy="${esc(cmd)}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></div>` : "";
+
+  // ───────────────────────────── computer cards
+  // Each computer's CPU, memory, network, tokens and disk over the last hour,
+  // as its collie samples them (GET /api/sysmon, routed to the computer).
+  // Only the samples after the last one held are asked for again.
+  const SYS_SPAN = 3600; // seconds a card draws
+  const SYS_ASK_MS = 8000; // a computer slower than this keeps its last report
+  const sysm = new Map(); // machine id ("" for the hub's own) → { r, samples, key, html }
+  const mcOpen = new Set(); // cards with their details open
+  let sysmAt = 0, lastDevices = null;
+  const MACHINE_ICON = '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>';
+  const num = (v, d) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(Math.min(d, 1)) : v.toFixed(d));
+  const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const unitOf = (n) => Math.max(0, Math.min(UNITS.length - 1, Math.floor(Math.log(Math.max(n, 1)) / Math.log(1024))));
+  const inUnit = (n, u) => num(n / 1024 ** u, 2);
+  const bytesText = (n) => n == null ? "—" : `${inUnit(n, unitOf(n))} ${UNITS[unitOf(n)]}`;
+  // "8.48 / 124 GB"; units apart when they differ ("757 GB / 5.04 TB").
+  const ofText = (used, total) => {
+    if (!total) return "";
+    const u = unitOf(total);
+    return unitOf(used) === u ? `${inUnit(used, u)} / ${inUnit(total, u)} ${UNITS[u]}` : `${bytesText(used)} / ${bytesText(total)}`;
+  };
+  const rateText = (n) => n == null ? "—" : bytesText(n) + "/s";
+  const pctText = (v) => v == null ? "—" : v.toFixed(1) + "%";
+  const tokText = (n) => n < 1e3 ? String(Math.round(n)) : n < 1e6 ? num(n / 1e3, 1) + "K" : n < 1e9 ? num(n / 1e6, 1) + "M" : num(n / 1e9, 2) + "B";
+  const level = (v, warn, bad) => v == null ? "" : v >= bad ? "bad" : v >= warn ? "warn" : "";
+
+  // A line per series over the last hour; a gap in the samples breaks it.
+  let sparkSeq = 0;
+  function spark(points, series, top, end, every) {
+    const W = 160, H = 40;
+    const runs = series.map((sr) => {
+      const out = []; let run = [], prev = null;
+      for (const p of points) {
+        const v = sr.read(p);
+        if (v == null || (prev != null && p.t - prev > every * 2.5)) { if (run.length) out.push(run); run = []; }
+        if (v != null) run.push({ t: p.t, v });
+        prev = v == null ? null : p.t;
+      }
+      if (run.length) out.push(run);
+      return out.filter((r) => r.length > 1);
+    });
+    if (!runs.some((r) => r.length)) return `<div class="mc-wait">采样中…</div>`;
+    const max = Math.max(top, ...runs.flat(2).map((p) => p.v));
+    const x = (t) => (((t - (end - SYS_SPAN)) / SYS_SPAN) * W).toFixed(1);
+    const y = (v) => (H - 2 - (Math.max(0, v) / max) * (H - 4)).toFixed(1);
+    const id = "mcf" + ++sparkSeq, wash = series.length === 1;
+    const defs = wash ? `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${series[0].color}" stop-opacity=".14"/><stop offset="1" stop-color="${series[0].color}" stop-opacity="0"/></linearGradient></defs>` : "";
+    const body = runs.map((rs, i) => rs.map((r) => {
+      const line = r.map((p) => `${x(p.t)},${y(p.v)}`).join(" ");
+      return (wash ? `<polygon points="${x(r[0].t)},${H} ${line} ${x(r[r.length - 1].t)},${H}" fill="url(#${id})"/>` : "")
+        + `<polyline points="${line}" fill="none" stroke="${series[i].color}"/>`;
+    }).join("")).join("");
+    return `<svg class="mc-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${defs}${body}</svg>`;
+  }
+
+  // Asked at most every 9 s (each ask ends within SYS_ASK_MS, so they never
+  // pile up); a computer that doesn't answer keeps what it said last, and one
+  // whose collie is too old to say anything shows no figures.
+  async function pollSysmon(ids) {
+    sysmAt = Date.now();
+    for (const id of sysm.keys()) if (!ids.includes(id)) sysm.delete(id);
+    await Promise.all(ids.map(async (id) => {
+      const cur = sysm.get(id) || { samples: [] };
+      sysm.set(id, cur);
+      try {
+        const r = await api(`/api/sysmon?machine=${encodeURIComponent(id)}&since=${cur.samples.at(-1)?.t || 0}`, { signal: AbortSignal.timeout(SYS_ASK_MS) });
+        const end = r.samples.at(-1)?.t || cur.samples.at(-1)?.t || 0;
+        cur.samples = [...cur.samples, ...r.samples].filter((p) => p.t > end - SYS_SPAN);
+        cur.r = r;
+      } catch (err) {
+        if (err.name !== "TimeoutError") cur.r = null;
+      }
+    }));
+    const box = $("#dev-machines");
+    if (box && lastDevices && view === "devices") box.innerHTML = machineCards(lastDevices);
+  }
+
+  // Drawn again only when a new sample or minute of tokens came.
+  function metricsHTML(m) {
+    const st = sysm.get(m.id), r = st?.r;
+    if (!r) return "";
+    const key = `${st.samples.at(-1)?.t}:${r.tokens?.minute}:${r.tokens?.today}`;
+    if (st.key !== key) st.key = key, st.html = drawMetrics(st, r);
+    return st.html;
+  }
+  function drawMetrics(st, r) {
+    const pts = st.samples, last = pts.at(-1) || {}, end = last.t || Date.now() / 1000, every = r.every || 10;
+    const mem = last.mem_total ? (last.mem_used / last.mem_total) * 100 : null;
+    const disk = last.disk_total ? (last.disk_used / last.disk_total) * 100 : null;
+    const memPct = (p) => (p.mem_total ? (p.mem_used / p.mem_total) * 100 : null);
+    const tk = r.tokens || { recent: [] };
+    const tokPts = (tk.recent || []).map((v, i, a) => ({ t: tk.minute - (a.length - 1 - i) * 60, v }));
+    const cell = (label, value, detail, chart, cls = "") => `<div class="mc-cell"><div class="mc-l">${label}</div>
+      <div class="mc-v ${cls}">${value}</div><div class="mc-d">${detail}</div>${chart}</div>`;
+    const disks = (r.disks || []).map((d) => `${d.mount} ${ofText(d.used, d.total)}`).join("\n");
+    return `<div class="mc-grid">
+      ${cell("CPU", pctText(last.cpu), last.load == null ? "" : "负载 " + num(last.load, 2), spark(pts, [{ color: "var(--c-cpu)", read: (p) => p.cpu }], 100, end, every), level(last.cpu, 75, 90))}
+      ${cell("内存", pctText(mem), ofText(last.mem_used, last.mem_total), spark(pts, [{ color: "var(--c-mem)", read: memPct }], 100, end, every), level(mem, 80, 90))}
+      ${cell("网络", `<span class="c-rx">↓</span> ${rateText(last.rx)}`, `<span class="c-tx">↑</span> ${rateText(last.tx)}`,
+        spark(pts, [{ color: "var(--c-rx)", read: (p) => p.rx }, { color: "var(--c-tx)", read: (p) => p.tx }], 1, end, every))}
+      ${cell("Token", `${tokText(tk.per_minute || 0)}/分`, `今天 ${tokText(tk.today || 0)}`, spark(tokPts, [{ color: "var(--c-cpu)", read: (p) => p.v }], 1, tk.minute + 60, 60))}
+    </div>
+    ${disk == null ? "" : `<div class="mc-disk" title="${esc(disks)}"><span class="mc-l">磁盘</span>
+      <span class="mc-bar"><i class="${level(disk, 80, 90)}" style="width:${disk.toFixed(1)}%"></i></span>
+      <span class="mc-dv ${level(disk, 80, 90)}">${pctText(disk)}</span><span class="mc-d">${ofText(last.disk_used, last.disk_total)}</span></div>`}`;
+  }
+
+  // What a computer is and has: the details under its card.
+  function detailsHTML(m, latest) {
+    const r = sysm.get(m.id)?.r, sys = r?.system || {}, ver = r?.versions || {};
+    const row = (k, v) => v ? `<div class="mc-kv"><span>${k}</span><span>${v}</span></div>` : "";
+    const up = sys.boot ? Math.floor((Date.now() / 1000 - sys.boot) / 86400) : null;
+    const agents = AGENT_KINDS.map(([k, label]) => !Array.isArray(m.agents) ? "" : m.agents.includes(k)
+      ? `<span>${esc(label)} ${esc(ver[k] || "")}</span>` : `<span class="tag attn" title="找不到 ${k} 命令：装一个，再重连这台电脑">没装 ${esc(label)}</span>`).join("");
+    const cmd = INSTALL + (m.hub ? " hub" : " node");
+    return `<div class="mc-more">
+      ${row("系统", esc([sys.os || m.os, sys.kernel].filter(Boolean).join(" · ")))}
+      ${row("型号", esc(sys.model || ""))}
+      ${row("CPU", esc([sys.cpu, sys.cores ? sys.cores + " 核" : ""].filter(Boolean).join(" · ")))}
+      ${row("开机", up == null ? "" : `${when(sys.boot * 1000)}（已运行 ${up} 天）`)}
+      ${row("磁盘", (r?.disks || []).map((d) => `<span class="mono">${esc(d.mount)}</span> ${ofText(d.used, d.total)}`).join("<br>"))}
+      ${row("Agent", `<span class="mc-tags">${agents}</span>`)}
+      ${row("herdr", m.online ? esc(ver.herdr || "没检测到") : "")}
+      ${row("Collie", `<span class="mc-tags">${verTag(m.version, latest, cmd)}</span>`)}
+      ${row("目录", m.home ? `<span class="mono">${esc(tilde(m.home))}</span>` : "")}
+      ${updateRow(m.version, latest, cmd, m.hub ? "装 hub 时加过 --url 等参数的话照样带上" : "", m.id, m.name)}
+      ${m.hub ? "" : `<div class="mc-acts"><button class="btn ghost small" data-del-dev="${esc(m.id)}" data-name="${esc(m.name)}">移除这台电脑</button></div>`}
+    </div>`;
+  }
+
+  function machineCard(m, latest) {
+    const r = sysm.get(m.id)?.r, sys = r?.system || {}, ver = r?.versions || {};
+    const sub = [sys.os || m.os, sys.cpu].filter(Boolean).join(" · ");
+    const mine = state.agents.filter((a) => (a.machine || "") === m.id && a.name !== ROUTER);
+    const busy = mine.filter((a) => (RANK[a.status] ?? 3) <= 1).length;
+    const said = !m.online ? `离线 · 上次 ${when(m.last_seen)}` : mine.length ? `${mine.length} 个 Agent${busy ? `，${busy} 个在工作` : ""}` : "没有 Agent";
+    const vers = ["claude", "herdr"].filter((k) => ver[k]).map((k) => `<span>${k} ${esc(ver[k])}</span>`).join("");
+    const open = mcOpen.has(m.id);
+    return `<section class="mc ${m.online ? "" : "off"}">
+      <header class="mc-h"><span class="mc-ic">${MACHINE_ICON}</span><div class="mc-t">
+        <div class="mc-n"><b>${esc(m.name)}</b>${m.hub ? '<span class="tag">hub</span>' : ""}<span class="mc-on"><i></i>${m.online ? "在线" : "离线"}</span>${isOld(m.version, latest) ? '<span class="tag attn">可更新</span>' : ""}</div>
+        <p class="mc-sub" title="${esc(sub)}">${esc(sub)}</p></div></header>
+      ${m.online ? metricsHTML(m) : ""}
+      ${open ? detailsHTML(m, latest) : ""}
+      <footer class="mc-f"><span>${said}</span><span class="mc-ver">${vers}</span>
+        <button type="button" class="mc-tg" data-mc="${esc(m.id)}" aria-expanded="${open}">${open ? "收起" : "详情"}<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></footer>
+    </section>`;
+  }
+
+  // The hub's own computer first, then the paired ones.
+  function machineCards(r) {
+    for (const id of mcOpen) if (id && !r.devices.some((d) => d.id === id)) mcOpen.delete(id);
+    const list = [{ id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home },
+      ...r.devices.filter((d) => d.kind === "machine")];
+    return list.map((m) => machineCard(m, r.latest)).join("");
+  }
 
   async function loadDevices(restore = null) {
     const body = $("#devices-body");
@@ -3043,7 +3196,8 @@
     const pm = fresh("machine") ? pairing.machine : null;
     const nodeCmd = pm ? `collie node --hub ${devAddr} --code ${pm.code}` : "";
     const installCmd = pm ? `curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub ${devAddr} --code ${pm.code}` : "";
-    const machines = r.devices.filter((d) => d.kind === "machine");
+    lastDevices = r;
+    if (Date.now() - sysmAt > 9000) pollSysmon(["", ...r.devices.filter((d) => d.kind === "machine" && d.online).map((d) => d.id)]);
     const browsers = r.devices.filter((d) => d.kind !== "machine");
     const addrSel = addrs.length > 1 ? `<label class="addr-pick">用这个地址<select id="dev-addr" data-pick="compact">${addrs.map((a) => `<option ${a === devAddr ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";
     const keepOpen = (pickOpen && pickOpen.id === "dev-addr") || document.activeElement?.id === "dev-addr" || document.activeElement?.closest?.("#add-hub");
@@ -3074,16 +3228,7 @@
         </div>
       </div>
 
-      <div class="card"><div class="card-h">电脑</div><ul class="rows">
-        <li class="row dev-row">
-          <span class="dot ${r.hub.herdr ? "online" : "offline"}"></span>
-          <div><div class="meta"><b>${esc(r.hub.name)}</b><span class="tag">hub</span>${verTag(r.hub.version, r.latest, INSTALL + " hub")}${agentsTag(r.hub.agents)}${r.hub.herdr ? "" : "<span>没检测到 herdr，这台只当 hub 用</span>"}</div><div class="text mono">${esc(tilde(r.hub.home))}</div>${updateRow(r.hub.version, r.latest, INSTALL + " hub", "装 hub 时加过 --url 等参数的话照样带上", "", r.hub.name)}</div>
-          <span class="right">${r.hub.herdr ? "在线" : ""}</span></li>
-        ${machines.map((d) => `<li class="row dev-row">
-          <span class="dot ${d.online ? "online" : "offline"}"></span>
-          <div><div class="meta"><b>${esc(d.name)}</b><span>${esc(d.os || "")}</span>${verTag(d.version, r.latest, INSTALL + " node")}${d.online ? agentsTag(d.agents) : ""}<span>${d.online ? "在线" : "离线 · 上次 " + when(d.last_seen)}</span></div><div class="text mono">${esc(d.home ? tilde(d.home) : "")}</div>${updateRow(d.version, r.latest, INSTALL + " node", "", d.id, d.name)}</div>
-          <button class="btn ghost small" data-del-dev="${esc(d.id)}" data-name="${esc(d.name)}">移除</button></li>`).join("")}
-      </ul></div>
+      <div class="mc-sec"><div class="mc-sec-h">电脑</div><div class="mc-list" id="dev-machines">${machineCards(r)}</div></div>
 
       <div class="card"><div class="card-h">其他 hub</div>
         <p class="pair-hint">别的网络里的 Collie hub（云电脑、家里的电脑）。和这台 hub 不通也没关系：只要这个浏览器能打开它，它的会话就会出现在侧栏里。</p>
@@ -3155,7 +3300,11 @@
     if (!b) return;
     try {
       if (b.dataset.copy) { await copy(b.dataset.copy); toast("已复制"); }
-      else if (b.id === "new-node-code") { await newCode("machine"); loadDevices(); }
+      else if (b.dataset.mc !== undefined) {
+        const id = b.dataset.mc;
+        if (!mcOpen.delete(id)) mcOpen.add(id);
+        if (lastDevices) $("#dev-machines").innerHTML = machineCards(lastDevices);
+      } else if (b.id === "new-node-code") { await newCode("machine"); loadDevices(); }
       else if (b.dataset.update !== undefined) {
         const id = b.dataset.update;
         if (!confirm(`更新「${b.dataset.name}」上的 Collie？它会下载新版并重启，大约十几秒连不上${id ? "" : "（这是 hub，页面会短暂断开）"}；里面的 agent 不受影响。`)) return;

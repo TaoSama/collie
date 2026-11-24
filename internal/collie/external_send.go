@@ -258,7 +258,13 @@ func jsonInner(s string) string {
 
 // ---------------------------------------------------------------- Codex
 
-func (s *Server) codexHome() string { return envOr("CODEX_HOME", filepath.Join(s.home, ".codex")) }
+func (s *Server) codexHome() string { return codexRoot(s.home) }
+
+// claudeRoot and codexRoot: where Claude Code and Codex keep their files.
+func claudeRoot(home string) string {
+	return envOr("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+}
+func codexRoot(home string) string { return envOr("CODEX_HOME", filepath.Join(home, ".codex")) }
 
 func (s *Server) codexDaemonSock() string {
 	p := filepath.Join(s.codexHome(), "app-server-control", "app-server-control.sock")

@@ -99,6 +99,7 @@ func serve() {
 	defer stop()
 	go sup.Run(ctx)
 	go srv.watchEndings(ctx)
+	srv.sysmon = startSysmon(ctx, home)
 
 	hs := &http.Server{Handler: srv.Routes(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

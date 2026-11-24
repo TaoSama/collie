@@ -37,7 +37,8 @@ type Server struct {
 	startMu sync.Mutex
 	started map[string]time.Time // pane → when Collie started an agent there
 
-	aliases aliasBook // hub only: launcher aliases each computer has
+	aliases aliasBook   // hub only: launcher aliases each computer has
+	sysmon  *sysMonitor // this computer's load and tokens; nil in tests
 }
 
 func (s *Server) markStarted(pane string) {
@@ -123,6 +124,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("GET /api/titles", wrap(s.getTitles))
 	mux.Handle("GET /api/models", wrap(s.listModels))
 	mux.Handle("GET /api/aliases", wrap(s.getAliases))
+	mux.Handle("GET /api/sysmon", wrap(s.getSysmon))
 	mux.Handle("POST /api/trust", wrap(s.trustFolder))
 	mux.Handle("GET /api/router/files", wrap(s.getRouterFiles))
 	mux.Handle("POST /api/router/files", wrap(s.putRouterFiles))
