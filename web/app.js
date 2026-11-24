@@ -3429,8 +3429,9 @@
   // The hub's own computer first, then the paired ones.
   function machineCards(r) {
     for (const id of mcOpen) if (id && !r.devices.some((d) => d.id === id)) mcOpen.delete(id);
-    const list = [{ id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home },
-      ...r.devices.filter((d) => d.kind === "machine")];
+    // The computers by name, the hub after them.
+    const list = [...r.devices.filter((d) => d.kind === "machine").sort((a, b) => a.name.localeCompare(b.name)),
+      { id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home }];
     return list.map((m) => machineCard(m, r.latest)).join("");
   }
 
