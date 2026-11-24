@@ -34,6 +34,7 @@ type LauncherAlias struct {
 	Kind    string   `json:"kind"`             // herdr kind: claude | codex | agy
 	Model   string   `json:"model,omitempty"`  // "" when the alias leaves it to the agent
 	Effort  string   `json:"effort,omitempty"` // likewise
+	Runs    string   `json:"runs,omitempty"`   // the model it runs when not Model: its config's (aliasRuns)
 	BaseURL string   `json:"base_url,omitempty"`
 	Env     []string `json:"env,omitempty"`  // names of the variables it sets
 	Args    []string `json:"args,omitempty"` // what follows the command
@@ -174,6 +175,9 @@ func discoverAliases(ctx context.Context, home string) (aliasReport, error) {
 		if a, ok := parseLauncher(d[0], d[1]); ok {
 			if bin != login {
 				a.Via = bin
+			}
+			if r := aliasRuns(home, &a); r != a.Model {
+				a.Runs = r
 			}
 			rep.Aliases = append(rep.Aliases, a)
 		}

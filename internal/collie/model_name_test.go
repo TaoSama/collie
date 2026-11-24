@@ -6,7 +6,7 @@ import "testing"
 // model lists; an id no list names shows as it is.
 func TestWebModelNames(t *testing.T) {
 	runAppJS(t, `
-const { modelName, learnModels, aliasPins } = loadApp("modelName, learnModels, aliasPins");
+const { modelName, learnModels, aliasPins, followAlias } = loadApp("modelName, learnModels, aliasPins, followAlias");
 const eq = (id, want) => assert.equal(modelName(id), want, id);
 
 eq("claude-opus-5-5[1m]", "Opus 5.5");
@@ -44,6 +44,27 @@ eq("seed-unknown[1m]", "seed-unknown[1m]");
 
 assert.equal(JSON.stringify(aliasPins({ model: "fable[1m]", effort: "high" })), JSON.stringify(["Fable 5.1", "高"]));
 assert.equal(JSON.stringify(aliasPins({ model: "", effort: "" })), JSON.stringify(["", ""]));
+assert.equal(JSON.stringify(aliasPins({ model: "", runs: "claude-opus-5-5[1m]", effort: "" })), JSON.stringify(["Opus 5.5", ""]));
+
+// An alias's model picker shows the model it runs and can't be changed.
+const sel = () => ({ disabled: false, title: "", value: "x" });
+const shown = (s) => /data-short="([^"]*)"/.exec(s.innerHTML)[1];
+let s = sel();
+assert.equal(followAlias(s, { name: "ccx", model: "sonnet", runs: "claude-opus-5-5[1m]" }), true);
+assert.equal(shown(s), "Opus 5.5");
+assert.ok(s.disabled && s.value === "" && !s.innerHTML.includes("跟随"), s.innerHTML);
+s = sel();
+followAlias(s, { name: "ccf", model: "fable[1m]" }); // an older computer: what it pins
+assert.equal(shown(s), "Fable 5.1");
+s = sel();
+followAlias(s, { name: "ag" }, { default: "gemini-4-neon" }); // nothing known: the agent's default
+assert.equal(shown(s), "Gemini 4 Neon");
+s = sel();
+followAlias(s, { name: "gone" }, {});
+assert.equal(shown(s), "默认模型");
+s = sel();
+assert.equal(followAlias(s, null), false);
+assert.equal(s.disabled, false);
 console.log("MODEL_NAMES_OK");
 `, "MODEL_NAMES_OK")
 }

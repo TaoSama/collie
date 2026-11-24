@@ -138,14 +138,7 @@ type claudeSettings struct {
 	Env    map[string]string `json:"env"`
 }
 
-func (s *Server) readClaudeSettings() claudeSettings {
-	var c claudeSettings
-	root := envOr("CLAUDE_CONFIG_DIR", filepath.Join(s.home, ".claude"))
-	if b, err := os.ReadFile(filepath.Join(root, "settings.json")); err == nil {
-		json.Unmarshal(b, &c)
-	}
-	return c
-}
+func (s *Server) readClaudeSettings() claudeSettings { return claudeSettingsAt(claudeRoot(s.home)) }
 
 // claudeEnv is a variable from Claude's settings, else the process environment.
 func (c claudeSettings) env(k string) string {

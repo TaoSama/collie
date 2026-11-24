@@ -352,7 +352,7 @@ func aliasArgs(a *LauncherAlias, args []string) []string {
 // Collie knows; without an alias, model.
 func aliasModel(a *LauncherAlias, model string) string {
 	if a != nil {
-		return a.Model
+		return cmp.Or(a.Runs, a.Model)
 	}
 	return model
 }

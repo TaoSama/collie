@@ -1979,7 +1979,10 @@
     }
     return best ? best[0] : "";
   }
-  const aliasPins = (a) => [a.model && modelName(a.model), a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
+  // The model an alias runs: what it pins, else what its config says (from
+  // the computer that read it; an older one only tells what is pinned).
+  const aliasRuns = (a) => a?.runs || a?.model || "";
+  const aliasPins = (a) => [aliasRuns(a) && modelName(aliasRuns(a)), a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
   const aliasSub = (a) => [...aliasPins(a), a.base_url].filter(Boolean).join(" · ");
   const aliasesOfKind = (list, kind) => list.filter((a) => aliasKind(a.kind) === kind);
   // The alias to keep selected: one of this agent's, or one this computer
@@ -1987,18 +1990,19 @@
   const keptAlias = (all, list, want) => (want && (list.some((a) => a.name === want) || !all.some((a) => a.name === want)) ? want : "");
   // The alias named on that computer; one it didn't report still counts, by name.
   const aliasNamed = async (machine, name) => (name ? (await aliasesOn(machine)).find((x) => x.name === name) || { name } : null);
-  // With an alias picked, the model is the alias's: its picker shows so and
-  // can't be changed (no --model goes along; the effort still does). Without
-  // one (a null), the picker is free again for its caller to fill.
-  const FOLLOW_ALIAS = "跟随 alias";
-  function followAlias(sel, a) {
+  // With an alias picked, the model is the alias's: its picker shows that
+  // model and can't be changed (no --model goes along; the effort still
+  // does). One whose model isn't known runs the agent's default (info's).
+  // Without an alias (a null), the picker is free again for its caller to fill.
+  function followAlias(sel, a, info) {
     sel.disabled = !!a;
     if (!a) { sel.title = ""; return false; }
-    const name = a.model ? modelName(a.model) : "agent 自己的设置";
-    const html = `<option value="" data-short="${FOLLOW_ALIAS}" data-sub="${esc(name)}" selected>${FOLLOW_ALIAS}（${esc(name)}）</option>`;
+    const id = aliasRuns(a) || info?.default || "";
+    const name = id ? modelName(id) : "默认模型";
+    const html = `<option value="" data-short="${esc(name)}" data-sub="${esc(id)}" selected>${esc(name)}</option>`;
     if (sel._html !== html) { sel._html = html; sel.innerHTML = html; }
     sel.value = "";
-    sel.title = `模型跟随 alias ${a.name}：${name}`;
+    sel.title = `alias ${a.name} 用的模型${id ? "：" + id : ""}，在 alias 里改`;
     syncPick(sel);
     return true;
   }
@@ -2205,13 +2209,13 @@
     const list = [...(info.models || [])];
     if (model && !list.some((m) => m.id === model)) list.unshift({ id: model });
     const mark = (v, dv) => (v === dv ? " · 默认" : "");
-    if (!followAlias(mSel, a)) {
+    if (!followAlias(mSel, a, info)) {
       let html = d.model ? "" : `<option value="" data-short="${esc(info.default ? modelName(info.default) : "默认模型")}" data-sub="agent 自己的设置 · 默认">${esc(info.default ? "默认（" + modelName(info.default) + "）" : "默认")}</option>`;
       html += list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(modelName(m.id))}" data-sub="${esc((modelName(m.id) !== m.id ? m.id : "") + mark(m.id, d.model))}" ${m.id === model ? "selected" : ""}>${esc(modelName(m.id))}</option>`).join("");
       if (mSel._html !== html) { mSel._html = html; mSel.innerHTML = html; }
       mSel.value = model;
     }
-    const cur = list.find((m) => m.id === (a ? a.model : model));
+    const cur = list.find((m) => m.id === (a ? aliasRuns(a) : model));
     const effs = effortsOf(info, cur);
     const eff = effs.includes(effort) ? effort : "";
     const defE = d.effort || info.default_effort || "";
@@ -2689,7 +2693,7 @@
     if (want && !list.some((m) => m.id === want)) list.unshift({ id: want });
     const sub = (m) => [modelName(m.id) !== m.id ? m.id : "", m.note && m.note !== m.id && !(m.label && m.note.startsWith(m.label)) ? m.note : ""].filter(Boolean).join(" · ");
     delete modelSel.dataset.value;
-    if (!followAlias(modelSel, a)) {
+    if (!followAlias(modelSel, a, info)) {
       const html = `<option value="" data-sub="${esc(info.default ? "现在是 " + modelName(info.default) : "用 agent 自己的设置")}">默认</option>`
         + list.map((m) => `<option value="${esc(m.id)}" data-sub="${esc(sub(m))}" ${m.id === want ? "selected" : ""}>${esc(modelName(m.id))}</option>`).join("")
         + `<option value="__custom" data-sub="输入列表里没有的模型名">其他…</option>`;
@@ -2698,7 +2702,7 @@
       syncPick(modelSel);
     }
     const fillEffort = () => {
-      const m = list.find((x) => x.id === (a ? a.model : modelSel.value));
+      const m = list.find((x) => x.id === (a ? aliasRuns(a) : modelSel.value));
       const effs = effortsOf(info, m);
       const cur = effSel.dataset.value ?? effSel.value;
       effSel.innerHTML = `<option value="" data-sub="${esc(info.default_effort ? "现在是 " + (EFFORT_LABEL[info.default_effort] || info.default_effort) : "用 agent 自己的设置")}">默认</option>`
@@ -7010,8 +7014,8 @@
     const list = [...(info.models || [])];
     const a = await aliasNamed(pickMachine, $("#l-alias").value);
     if (seq !== launchSeq) return;
-    if (followAlias(mSel, a)) {
-      fillLaunchEfforts(info, want ? want.effort || "" : same ? keep.effort : "", a.model);
+    if (followAlias(mSel, a, info)) {
+      fillLaunchEfforts(info, want ? want.effort || "" : same ? keep.effort : "", aliasRuns(a));
       return;
     }
     const def = info.default ? modelName(info.default) : "";
