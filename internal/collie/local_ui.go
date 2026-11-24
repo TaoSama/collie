@@ -23,7 +23,10 @@ var nodeUI string
 // treat 127.0.0.1 as a secure origin, so Chrome offers "Install Collie" (a
 // Dock app) and notifications work, which they don't on the hub's plain-HTTP
 // LAN address. Each browser still signs in on its own; this only forwards.
-func startLocalUI(ctx context.Context, addr, hub string) string {
+//
+// /direct/… is not forwarded: it is this node's own terminal routes, for a
+// browser on this computer (see direct.go).
+func startLocalUI(ctx context.Context, addr, hub string, srv *Server, api http.Handler) string {
 	if addr == "" || addr == "off" {
 		return ""
 	}
@@ -55,7 +58,10 @@ func startLocalUI(ctx context.Context, addr, hub string) string {
 	port := ln.Addr().(*net.TCPAddr).Port
 	local := fmt.Sprintf("http://127.0.0.1:%d", port)
 	log.Printf("本机界面：%s （转发到 %s；在 Chrome 里可以安装成 app）", local, hub)
-	hs := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
+	mux := http.NewServeMux()
+	mux.Handle("/", proxy)
+	mux.Handle("/direct/", srv.directHandler(hub, local, api))
+	hs := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sc, cancel := context.WithTimeout(context.Background(), 2*time.Second)

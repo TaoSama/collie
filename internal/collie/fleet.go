@@ -32,6 +32,7 @@ type Machine struct {
 
 	conn   *herdrConn
 	client *http.Client // remote only: the node's own API, through the tunnel
+	snap   *listSnap    // remote only: the lists the node last sent (node_watch.go)
 	ip     string       // remote only: where it connects from
 	ui     string       // remote only: its local web UI (http://127.0.0.1:port), if any
 	close  func()
@@ -67,6 +68,8 @@ type Herdr struct {
 
 	asks     map[string]askCheck  // pane → recent look at an "idle" screen
 	unfolded map[string]time.Time // pane → when Codex's queued question was last opened
+
+	listWake paneWake // the state streams, woken when a node's lists change
 }
 
 func newHerdr(socket, hostname, home string) *Herdr {
@@ -425,17 +428,32 @@ func (h *Herdr) fanOut(ctx context.Context, method string) (json.RawMessage, err
 				ch <- res{id: m.ID, err: err}
 				return
 			}
-			raw, err := mc.conn.call(ctx, method, nil)
-			if err != nil {
-				ch <- res{id: m.ID, err: err}
-				return
+			// A node's own lists already carry the corrected statuses.
+			raw, fresh := json.RawMessage(nil), false
+			if cachedLists(ctx) {
+				raw, fresh = mc.snap.get(method)
 			}
-			if m.ID != "" {
-				raw = suffixIDs(raw, m.ID)
+			if !fresh {
+				if raw, err = mc.conn.call(ctx, method, nil); err != nil {
+					ch <- res{id: m.ID, err: err}
+					return
+				}
+				if m.ID != "" {
+					raw = suffixIDs(raw, m.ID)
+				}
 			}
 			var body map[string][]json.RawMessage
 			json.Unmarshal(raw, &body)
-			ch <- res{id: m.ID, items: body[key]}
+			items := body[key]
+			if !fresh && (method == "agent.list" || method == "pane.list") {
+				for i, it := range items {
+					var a map[string]any
+					if json.Unmarshal(it, &a) == nil && h.fixStatus(ctx, a) {
+						items[i], _ = json.Marshal(a)
+					}
+				}
+			}
+			ch <- res{id: m.ID, items: items}
 		}(m)
 	}
 	merged := []json.RawMessage{}
@@ -461,14 +479,6 @@ func (h *Herdr) fanOut(ctx context.Context, method string) (json.RawMessage, err
 	}
 	for _, m := range ms { // stable order: hub machine first
 		merged = append(merged, byMachine[m.ID]...)
-	}
-	if method == "agent.list" || method == "pane.list" {
-		for i, it := range merged {
-			var a map[string]any
-			if json.Unmarshal(it, &a) == nil && h.fixStatus(ctx, a) {
-				merged[i], _ = json.Marshal(a)
-			}
-		}
 	}
 	if method == "agent.list" {
 		names := map[string]string{}

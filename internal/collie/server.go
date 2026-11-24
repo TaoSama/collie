@@ -38,9 +38,10 @@ type Server struct {
 	startMu sync.Mutex
 	started map[string]time.Time // pane → when Collie started an agent there
 
-	aliases aliasBook   // hub only: launcher aliases each computer has
-	sysmon  *sysMonitor // this computer's load and tokens; nil in tests
-	wakes   paneWake    // streams to nudge when input reaches a pane
+	aliases aliasBook    // hub only: launcher aliases each computer has
+	sysmon  *sysMonitor  // this computer's load and tokens; nil in tests
+	wakes   paneWake     // streams to nudge when input reaches a pane
+	direct  directTokens // node only: tokens for a browser on this computer
 }
 
 func (s *Server) markStarted(pane string) {
@@ -154,6 +155,8 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 func (s *Server) NodeRoutes() http.Handler {
 	mux := http.NewServeMux()
 	s.machineRoutes(mux, func(h http.HandlerFunc) http.Handler { return h })
+	mux.HandleFunc("POST /api/direct/token", s.mintDirect)
+	mux.HandleFunc("GET /api/watch", s.watchLists)
 	return mux
 }
 
@@ -264,7 +267,7 @@ func deref(p *string) string {
 }
 
 func (s *Server) state(ctx context.Context) PaneState {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(withCachedLists(ctx), 5*time.Second)
 	defer cancel()
 	machines := s.herdr.Machines()
 	ws, err := s.herdr.Workspaces(ctx)
@@ -386,6 +389,8 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 		ch = c
 	}
 	var lastState, lastSuper string
+	listsChanged, stopLists := s.herdr.listsUpdates()
+	defer stopLists()
 	tick := time.NewTicker(1 * time.Second)
 	defer tick.Stop()
 	beat := time.NewTicker(15 * time.Second)
@@ -415,6 +420,7 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 		case <-beat.C:
 			sse.comment()
 		case <-ch:
+		case <-listsChanged:
 		case <-tick.C:
 		}
 	}
@@ -433,11 +439,13 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	interval, quick := 200*time.Millisecond, 50*time.Millisecond
+	rates := pollRates{normal: 200 * time.Millisecond, quick: 50 * time.Millisecond, burst: 10 * time.Millisecond}
 	if mode == "log" {
-		interval, quick = 700*time.Millisecond, 100*time.Millisecond
+		rates = pollRates{normal: 700 * time.Millisecond, quick: 100 * time.Millisecond}
 	}
-	var fastUntil time.Time
+	var woke time.Time
+	wake, unsubscribe := s.wakes.subscribe(id)
+	defer unsubscribe()
 	var lastText string
 	var lastSize Rect
 	var sizeAt time.Time
@@ -488,7 +496,7 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 			sse.comment()
 			beat = time.Now()
 		}
-		if !s.pollAfter(r.Context().Done(), id, interval, quick, &fastUntil) {
+		if !pollAfter(r.Context().Done(), wake, rates, &woke) {
 			return
 		}
 	}

@@ -8,64 +8,77 @@ import (
 // paneWake lets the streams following a pane look again as soon as input
 // reaches it, instead of on their next poll: what you typed echoes, and the
 // message you sent shows, one network trip sooner. For a moment after, they
-// also look more often, while the agent writes it down.
+// also look more often, while the program answers and the agent writes it
+// down. Each stream subscribes once; a wake while it is busy reading waits
+// in its channel.
 type paneWake struct {
-	mu sync.Mutex
-	ch map[string]chan struct{}
+	mu   sync.Mutex
+	subs map[string]map[chan struct{}]bool
 }
 
-// wakeFast is how long a stream keeps polling at its quick rate after input.
-const wakeFast = 3 * time.Second
+const (
+	wakeBurst = 150 * time.Millisecond // right after input: the burst rate, if any
+	wakeFast  = 3 * time.Second        // then the quick rate until this
+)
 
-// wait returns a channel closed at the pane's next input.
-func (w *paneWake) wait(id string) <-chan struct{} {
+// pollRates: how often a stream looks normally, for a while after input,
+// and right after it (0: no burst; a screen echoes in milliseconds, a
+// transcript takes longer to be written).
+type pollRates struct{ normal, quick, burst time.Duration }
+
+// subscribe returns a channel that gets a value at the pane's input, and
+// the function to call when the stream ends.
+func (w *paneWake) subscribe(id string) (<-chan struct{}, func()) {
+	c := make(chan struct{}, 1)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.ch == nil {
-		w.ch = map[string]chan struct{}{}
+	if w.subs == nil {
+		w.subs = map[string]map[chan struct{}]bool{}
 	}
-	c, ok := w.ch[id]
-	if !ok {
-		c = make(chan struct{})
-		w.ch[id] = c
+	if w.subs[id] == nil {
+		w.subs[id] = map[chan struct{}]bool{}
 	}
-	return c
+	w.subs[id][c] = true
+	return c, func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		delete(w.subs[id], c)
+		if len(w.subs[id]) == 0 {
+			delete(w.subs, id)
+		}
+	}
 }
 
-// wake tells every stream waiting on the pane that input just reached it.
+// wake tells every stream on the pane that input just reached it.
 func (w *paneWake) wake(id string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if c, ok := w.ch[id]; ok {
-		close(c)
-		delete(w.ch, id)
+	for c := range w.subs[id] {
+		select {
+		case c <- struct{}{}:
+		default: // one is already waiting to be noticed
+		}
 	}
 }
 
-// forget drops a pane's entry when a stream on it ends. Another stream still
-// waiting on it misses at most one early wake and polls as usual.
-func (w *paneWake) forget(id string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	delete(w.ch, id)
-}
-
-// pollAfter waits one polling interval: normal, or quick until fastUntil.
-// It returns early when the pane gets input (moving fastUntil) and reports
+// pollAfter waits one polling interval, quicker for a while after input
+// (woke is when that last came). It returns early on input and reports
 // false once the request is gone.
-func (s *Server) pollAfter(done <-chan struct{}, id string, normal, quick time.Duration, fastUntil *time.Time) bool {
-	d := normal
-	if time.Now().Before(*fastUntil) {
-		d = quick
+func pollAfter(done <-chan struct{}, wake <-chan struct{}, r pollRates, woke *time.Time) bool {
+	d := r.normal
+	switch since := time.Since(*woke); {
+	case since < wakeBurst && r.burst > 0:
+		d = r.burst
+	case since < wakeFast:
+		d = r.quick
 	}
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
 	case <-done:
-		s.wakes.forget(id)
 		return false
-	case <-s.wakes.wait(id):
-		*fastUntil = time.Now().Add(wakeFast)
+	case <-wake:
+		*woke = time.Now()
 	case <-t.C:
 	}
 	return true

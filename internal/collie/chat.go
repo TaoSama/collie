@@ -1040,8 +1040,10 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		lastMeta          string
 		beat              = time.Now()
 		ms                msgSync
-		fastUntil         time.Time
+		woke              time.Time
 	)
+	wake, unsubscribe := s.wakes.subscribe(id)
+	defer unsubscribe()
 	send := func(ev string, v any) bool {
 		b, _ := json.Marshal(v)
 		beat = time.Now()
@@ -1132,7 +1134,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 			sse.comment()
 			beat = time.Now()
 		}
-		if !s.pollAfter(r.Context().Done(), id, 700*time.Millisecond, 100*time.Millisecond, &fastUntil) {
+		if !pollAfter(r.Context().Done(), wake, pollRates{normal: 700 * time.Millisecond, quick: 100 * time.Millisecond}, &woke) {
 			return
 		}
 	}

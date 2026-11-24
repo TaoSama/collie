@@ -3945,7 +3945,12 @@
     if (m === "chat") return openChat(id, restore);
     if (m === "screen") ensureTerm();
     let pendingRestore = restore && !restore.atBottom ? restore : null;
-    stream = openES(paneURL(id, "stream") + "?mode=" + m);
+    const d = directOf(id), es = stream = d ? new EventSource(directURL(d, id, "stream?mode=" + m)) : openES(paneURL(id, "stream") + "?mode=" + m);
+    // Straight from this computer when it can be (the hub's way meanwhile);
+    // back through the hub when that stops working.
+    const again = () => { if (stream === es && id === current && curMode() === m) { es.close(); openStream(); } };
+    if (d) es.addEventListener("error", () => { dropDirect(id); again(); });
+    else probeDirect(id).then((got) => got && again());
     stream.addEventListener("frame", (e) => {
       if (id !== current) return;
       const f = JSON.parse(e.data);
@@ -4057,6 +4062,59 @@
       hideJump();
     }
   });
+
+  // ───────────────────────────── terminals straight from this computer
+  // A pane on the computer this browser runs on can be reached at that
+  // node's local port (direct.go) instead of through the hub: a keystroke
+  // and its echo then stay on the machine. The hub offers it only to a
+  // browser at the node's address; whatever fails goes through the hub.
+  const DIRECT_RETRY_MS = 5 * 60e3, DIRECT_TIMEOUT_MS = 3000;
+  const directs = new Map(); // machine → { base, token, until } | { until } (none for now) | a probe
+  const paneMachine = (id) => !id || hubOf(id) || !id.includes("@") ? "" : id.slice(id.lastIndexOf("@") + 1);
+  function directOf(id) {
+    const d = directs.get(paneMachine(id));
+    return d?.base && Date.now() < d.until ? d : null;
+  }
+  const directURL = (d, id, rest) => `${d.base}/api/panes/${encodeURIComponent(id.slice(0, id.lastIndexOf("@")))}/${rest}${rest.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(d.token)}`;
+  function probeDirect(id) {
+    const m = paneMachine(id), d = directs.get(m);
+    if (!m) return Promise.resolve(null);
+    if (d instanceof Promise) return d;
+    if (d && Date.now() < d.until) return Promise.resolve(directOf(id));
+    const probe = (async () => {
+      let got = null;
+      try {
+        const r = await api("/api/direct", { body: { machine: m } });
+        if (r.url && r.token && (await fetch(`${r.url}/api/hello?access_token=${encodeURIComponent(r.token)}`)).ok) {
+          got = { base: r.url, token: r.token, until: Date.now() + Math.max(60, (r.ttl || 0) - 600) * 1000 };
+        }
+      } catch {} // not this computer, an older hub or node, or the browser won't: the hub's way
+      directs.set(m, got || { until: Date.now() + DIRECT_RETRY_MS });
+      return got;
+    })();
+    directs.set(m, probe);
+    return probe;
+  }
+  // The node restarted (its tokens with it) or stopped: ask again soon.
+  function dropDirect(id) {
+    const m = paneMachine(id);
+    if (m && directs.get(m)?.base) directs.set(m, { until: Date.now() + 5000 });
+  }
+  async function postPane(id, kind, body) {
+    const d = directOf(id);
+    if (d) {
+      try {
+        const res = await fetch(directURL(d, id, kind), { method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(DIRECT_TIMEOUT_MS) });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) return data;
+        if (res.status !== 401) throw new Error(data.error || res.statusText);
+      } catch (err) {
+        if (!(err instanceof TypeError) && err.name !== "TimeoutError") throw err; // the node answered: a real error
+      }
+      dropDirect(id);
+    }
+    return api(paneURL(id, kind), { body });
+  }
 
   // ───────────────────────────── one agent: conversation
   let showRaw = false;
@@ -6259,11 +6317,11 @@
       if (kind === "text") { sendTail.body.text += body.text; return sendTail.done; }
       if (sendTail.body.keys.length + body.keys.length <= MAX_KEYS) { sendTail.body.keys.push(...body.keys); return sendTail.done; }
     }
-    const op = { url, body, started: false };
+    const op = { url, body, started: false }, id = current;
     op.done = sendChain = sendChain.then(() => {
       op.started = true;
       if (sendTail === op) sendTail = null;
-      return api(url, { body: op.body });
+      return postPane(id, kind, op.body);
     }).catch((e) => toast(e.message));
     sendTail = op;
     return op.done;

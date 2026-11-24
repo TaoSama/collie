@@ -361,6 +361,7 @@ func (s *Server) hubRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/node/connect", s.nodeConnect)
 	api("POST /api/pair/new", s.pairNew)
 	api("GET /api/local-app", s.localApp)
+	api("POST /api/direct", s.offerDirect)
 	api("GET /api/qr", s.qr)
 	api("GET /api/devices", s.listDevices)
 	api("GET /api/version", s.getVersion)
@@ -555,6 +556,7 @@ func (s *Server) nodeConnect(w http.ResponseWriter, r *http.Request) {
 		ID: d.ID, Name: d.Name, OS: r.Header.Get("X-Collie-OS"), Home: r.Header.Get("X-Collie-Home"),
 		Bin: r.Header.Get("X-Collie-Bin"), Version: r.Header.Get("X-Collie-Version"), Agents: parseAgentsHeader(r.Header.Get("X-Collie-Agents")), Online: true, Since: time.Now(),
 		conn: &herdrConn{dial: streamDialer(open, "herdr")},
+		snap: &listSnap{},
 		client: &http.Client{Transport: &http.Transport{
 			DialContext:         func(ctx context.Context, _, _ string) (net.Conn, error) { return httpDial(ctx) },
 			MaxIdleConnsPerHost: 8, IdleConnTimeout: 60 * time.Second, ResponseHeaderTimeout: 0,
@@ -564,13 +566,16 @@ func (s *Server) nodeConnect(w http.ResponseWriter, r *http.Request) {
 	if n := strings.TrimSpace(r.Header.Get("X-Collie-Name")); n != "" {
 		m.Name = n
 	}
-	m.ip, _, _ = net.SplitHostPort(r.RemoteAddr)
+	m.ip = clientIP(r)
 	if u := r.Header.Get("X-Collie-UI"); strings.HasPrefix(u, "http://127.0.0.1:") || strings.HasPrefix(u, "http://localhost:") {
 		m.ui = u
 	}
 	s.herdr.attach(m)
-	log.Printf("node %s (%s) connected from %s", m.ID, m.Name, r.RemoteAddr)
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	go s.herdr.watch(watchCtx, m)
+	log.Printf("node %s (%s) connected from %s", m.ID, m.Name, m.ip)
 	<-sess.CloseChan()
+	stopWatch()
 	s.herdr.detach(m.ID, m)
 	log.Printf("node %s disconnected", m.ID)
 }

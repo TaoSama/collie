@@ -104,7 +104,7 @@ type followView struct {
 
 func (s *Server) superState(ctx context.Context) superView {
 	sp := s.sup
-	live, _ := sp.liveAgents(ctx)
+	live, _ := sp.liveAgents(withCachedLists(ctx))
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	v := superView{Router: routerView{Kind: sp.st.Settings.RouterKind, Status: "asleep"}, Paused: sp.st.Settings.Paused}

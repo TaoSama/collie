@@ -147,6 +147,30 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 	return nil, &HerdrError{Code: "unexpected_method", Message: method}
 }
 
+// dial answers one herdr request over a pipe, as the socket does.
+func (f *fakeHerdr) dial(context.Context) (net.Conn, error) {
+	client, server := net.Pipe()
+	go func() {
+		defer server.Close()
+		var req struct {
+			ID     string         `json:"id"`
+			Method string         `json:"method"`
+			Params map[string]any `json:"params"`
+		}
+		if err := json.NewDecoder(server).Decode(&req); err != nil {
+			return
+		}
+		resp := map[string]any{"id": req.ID}
+		if out, err := f.handle(req.Method, req.Params); err != nil {
+			resp["error"] = err
+		} else {
+			resp["result"] = out
+		}
+		json.NewEncoder(server).Encode(resp)
+	}()
+	return client, nil
+}
+
 func (f *fakeHerdr) count(method string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -163,28 +187,7 @@ func newRouterTestSuper(t *testing.T, f *fakeHerdr) *Super {
 	t.Helper()
 	dir := t.TempDir()
 	h := newHerdr("", "test", dir)
-	h.local.conn.dial = func(context.Context) (net.Conn, error) {
-		client, server := net.Pipe()
-		go func() {
-			defer server.Close()
-			var req struct {
-				ID     string         `json:"id"`
-				Method string         `json:"method"`
-				Params map[string]any `json:"params"`
-			}
-			if err := json.NewDecoder(server).Decode(&req); err != nil {
-				return
-			}
-			resp := map[string]any{"id": req.ID}
-			if out, err := f.handle(req.Method, req.Params); err != nil {
-				resp["error"] = err
-			} else {
-				resp["result"] = out
-			}
-			json.NewEncoder(server).Encode(resp)
-		}()
-		return client, nil
-	}
+	h.local.conn.dial = f.dial
 	db, err := openDB(filepath.Join(dir, "herd.db"))
 	if err != nil {
 		t.Fatal(err)
