@@ -310,8 +310,8 @@ var valueFlags = map[string][]string{
 var repeatFlags = []string{"-c", "--config", "--allowedTools", "--add-dir"}
 
 // aliasArgs: what Collie adds after the alias's name. A flag the alias
-// already has stays out (codex refuses a flag given twice), and so do a
-// model or effort equal to the alias's own.
+// already has stays out (codex refuses a flag given twice), and so do any
+// model (the alias runs its own) and an effort equal to the alias's.
 func aliasArgs(a *LauncherAlias, args []string) []string {
 	has := map[string]bool{}
 	for _, w := range a.launchArgs() {
@@ -334,9 +334,10 @@ func aliasArgs(a *LauncherAlias, args []string) []string {
 		switch {
 		case !strings.HasPrefix(w, "-"):
 			// a subcommand or its argument (codex resume <id>)
-		case model != "" || effort != "":
-			// claude takes the last --model; codex refuses a second -m.
-			if (model != "" && model == a.Model) || (effort != "" && effort == a.Effort) || (model != "" && a.Kind == "codex" && (has["-m"] || has["--model"])) {
+		case model != "":
+			continue // an alias runs its own model (or the agent's default), never another
+		case effort != "":
+			if effort == a.Effort {
 				continue
 			}
 		case has[f] && !slices.Contains(repeatFlags, f):
@@ -345,4 +346,13 @@ func aliasArgs(a *LauncherAlias, args []string) []string {
 		out = append(out, pair...)
 	}
 	return out
+}
+
+// aliasModel: the model an agent started through alias a runs, as far as
+// Collie knows; without an alias, model.
+func aliasModel(a *LauncherAlias, model string) string {
+	if a != nil {
+		return a.Model
+	}
+	return model
 }

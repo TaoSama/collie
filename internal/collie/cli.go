@@ -504,7 +504,9 @@ sessions and tidies memory/. Its journal is in dreams/.
   time, a pitfall), put it in the brief: the note's full path for a worker on this
   computer ("先读 /…/memory/notes/x.md"), the relevant lines themselves for one on another.
   --alias starts it through one of that computer's shell aliases (its own model, gateway
-  and flags); --no-alias skips the default one. Pass them only when the human picked so.
+  and flags: --model is ignored with one, --effort still applies); --no-alias skips the
+  default one, as when the human wants a model of their own. Pass them only when the human
+  picked so.
   Leaving out --kind/--model/--effort uses the human's current default, set in settings
   ({{WKIND}} when this session began). Pass one when what they want is clear from the
   conversation, said outright or not: they asked for Codex earlier in this job, a retry

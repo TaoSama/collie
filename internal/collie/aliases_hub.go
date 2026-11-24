@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -187,6 +186,7 @@ func (s *Server) refreshAliases(ctx context.Context, machines []Machine, force b
 }
 
 func (s *Server) aliasViews(machines []Machine) map[string]any {
+	// Aliases come in the order of the computers, each in its rc files' order.
 	ms := []aliasMachineView{}
 	all := []*aliasView{}
 	byName := map[string]*aliasView{}
@@ -216,7 +216,6 @@ func (s *Server) aliasViews(machines []Machine) map[string]any {
 			}
 		}
 	}
-	slices.SortStableFunc(all, func(a, b *aliasView) int { return strings.Compare(a.Name, b.Name) })
 	return map[string]any{"machines": ms, "aliases": all}
 }
 

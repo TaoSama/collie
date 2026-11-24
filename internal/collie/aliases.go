@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -179,7 +178,7 @@ func discoverAliases(ctx context.Context, home string) (aliasReport, error) {
 			rep.Aliases = append(rep.Aliases, a)
 		}
 	}
-	slices.SortFunc(rep.Aliases, func(a, b LauncherAlias) int { return strings.Compare(a.Name, b.Name) })
+	sortAliasesByRC(rep.Aliases, rcAliasOrder(home, name))
 	return rep, nil
 }
 

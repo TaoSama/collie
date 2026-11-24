@@ -666,12 +666,12 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]any{"error": err.Error()})
 			return
 		}
-		alias = a
+		alias = a // it runs its own model: aliasArgs drops --model
 	}
 	args := append(modelArgs(body.Kind, body.Model, body.Effort), body.Args...)
 	paneID, wsID, err := s.startAgentAs(ctx, "", kind, body.Name, cwd, label, alias, args)
 	if paneID != "" {
-		s.herdr.RememberRun(paneID, body.Model, body.Effort)
+		s.herdr.RememberRun(paneID, aliasModel(alias, body.Model), body.Effort)
 	}
 	if err != nil {
 		var he *HerdrError

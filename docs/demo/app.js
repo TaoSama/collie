@@ -865,11 +865,12 @@
   addEventListener("resize", () => { if (booted && !view && !narrow()) route(); });
 
   // ───────────────────────────── Collie (super-agent) view
-  let superSig = "";
+  let superSig = "", lastRouter = null;
   // Which model Collie itself runs with, next to its status.
   async function renderRouterModel(r) {
     const el = $("#router-model");
-    const key = [r.kind, r.model, r.effort, r.pending, r.machine, r.alias].join("|");
+    lastRouter = r;
+    const key = [r.kind, r.model, r.effort, r.pending, r.machine, r.alias, modelGen].join("|");
     if (el._key === key) return;
     el._key = key;
     let model = r.model, effort = r.effort;
@@ -880,7 +881,7 @@
     }
     if (el._key !== key) return;
     const parts = [];
-    if (model) parts.push(esc(shortModel(model)) + (r.model ? "" : "（默认）"));
+    if (model) parts.push(esc(modelName(model)) + (r.model ? "" : "（默认）"));
     if (effort) parts.push("思考 " + esc(EFFORT_LABEL[effort] || effort) + (r.effort ? "" : "（默认）"));
     el.innerHTML = parts.join(" · ") + (r.pending ? ` <button type="button" class="pending" data-act="router-restart" title="Collie 的模型设置改过了，点这里重启 Collie">重启后生效</button>` : "");
     el.title = `Collie 自己用的模型${model ? "：" + model : ""}${effort ? "，思考强度 " + effort : ""}（自动化 → 设置 → Collie 自己）`;
@@ -1753,13 +1754,31 @@
   const EFFORT_LABEL = { none: "关闭", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "很高", max: "最高", ultra: "极致" };
   const modelInfo = {};
   async function modelsFor(kind, machine) {
+    kind = shortKind(kind);
     const key = kind + "@" + (machine || "");
     if (!modelInfo[key]) {
       const q = new URLSearchParams({ kind });
       if (machine) q.set("machine", machine);
-      modelInfo[key] = api("/api/models?" + q).catch(() => ({ models: [], efforts: ["low", "medium", "high", "xhigh", "max"] }));
+      modelInfo[key] = api("/api/models?" + q).catch(() => ({ models: [], efforts: ["low", "medium", "high", "xhigh", "max"] })).then(learnModels);
+      // Another agent's list may name this one's models (a gateway's, a Claude alias's family).
+      for (const [k] of AGENT_KINDS) modelsFor(k, machine);
     }
     return modelInfo[key];
+  }
+  // Model display names from every list asked for, any agent, any computer.
+  const CLAUDE_MODEL = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/, BARE_ALIAS = /^[a-z]+$/;
+  const modelLabels = new Map();
+  let modelGen = 0, renaming = false;
+  function learnModels(info) {
+    let fresh = false;
+    for (const m of info.models || []) {
+      if (!m.id || modelLabels.has(m.id) || (!m.label && !CLAUDE_MODEL.test(m.id))) continue;
+      modelLabels.set(m.id, m.label || m.id);
+      fresh = true;
+    }
+    if (fresh) modelGen++;
+    if (fresh && !renaming) { renaming = true; setTimeout(() => { renaming = false; renamedModels(); }); } // once for a burst of lists
+    return info;
   }
   // The levels a model offers, else the agent's.
   const effortsOf = (info, m) => m?.efforts?.length ? m.efforts : (info.efforts || []);
@@ -1775,18 +1794,53 @@
   }
   // Settings and the launcher call antigravity by its long name.
   const aliasKind = (k) => (k === "agy" ? "antigravity" : k);
-  // A model id without its provider ("openrouter/x" → "x").
-  // "claude-opus-5-5[1m]" reads as "Opus 5.5"; other ids lose their provider prefix.
-  const shortModel = (id) => {
-    const m = /^claude-([a-z]+)-(\d+)-(\d+)(?:-\d{8})?(?:\[1m\])?$/.exec(id);
-    return m ? `${m[1][0].toUpperCase() + m[1].slice(1)} ${m[2]}.${m[3]}` : id.split("/").pop();
+  // What a model is called wherever it shows: "claude-opus-5-5[1m]" reads as
+  // "Opus 5.5", a Claude alias as the newest of its family ("fable" → "Fable
+  // 5.1"), any other id as its agent's list names it ("gpt-6.2-sol" → "GPT-6.2
+  // Sol"). Unknown ids show as they are.
+  const modelName = (id) => {
+    if (!id) return "";
+    const base = id.replace(/\[1m\]$/i, "");
+    const c = CLAUDE_MODEL.exec(base);
+    if (c) return `${c[1][0].toUpperCase() + c[1].slice(1)} ${c[2]}${c[3] ? "." + c[3] : ""}`;
+    const newest = BARE_ALIAS.test(base) && claudeNewest(base);
+    if (newest) return modelName(newest);
+    if (modelLabels.has(base)) return modelLabels.get(base);
+    return BARE_ALIAS.test(base) ? base[0].toUpperCase() + base.slice(1) : id;
   };
-  const aliasPins = (a) => [a.model, a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
+  // The newest "claude-<family>-…" id some list has, or "".
+  function claudeNewest(family) {
+    let best = null;
+    const ver = (m) => +m[2] * 100 + +(m[3] || 0);
+    for (const k of modelLabels.keys()) {
+      const m = CLAUDE_MODEL.exec(k);
+      if (m && m[1] === family && (!best || ver(m) > ver(best))) best = m;
+    }
+    return best ? best[0] : "";
+  }
+  const aliasPins = (a) => [a.model && modelName(a.model), a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
   const aliasSub = (a) => [...aliasPins(a), a.base_url].filter(Boolean).join(" · ");
   const aliasesOfKind = (list, kind) => list.filter((a) => aliasKind(a.kind) === kind);
   // The alias to keep selected: one of this agent's, or one this computer
   // didn't report (still shown as such); another agent's alias no longer applies.
   const keptAlias = (all, list, want) => (want && (list.some((a) => a.name === want) || !all.some((a) => a.name === want)) ? want : "");
+  // The alias named on that computer; one it didn't report still counts, by name.
+  const aliasNamed = async (machine, name) => (name ? (await aliasesOn(machine)).find((x) => x.name === name) || { name } : null);
+  // With an alias picked, the model is the alias's: its picker shows so and
+  // can't be changed (no --model goes along; the effort still does). Without
+  // one (a null), the picker is free again for its caller to fill.
+  const FOLLOW_ALIAS = "跟随 alias";
+  function followAlias(sel, a) {
+    sel.disabled = !!a;
+    if (!a) { sel.title = ""; return false; }
+    const name = a.model ? modelName(a.model) : "agent 自己的设置";
+    const html = `<option value="" data-short="${FOLLOW_ALIAS}" data-sub="${esc(name)}" selected>${FOLLOW_ALIAS}（${esc(name)}）</option>`;
+    if (sel._html !== html) { sel._html = html; sel.innerHTML = html; }
+    sel.value = "";
+    sel.title = `模型跟随 alias ${a.name}：${name}`;
+    syncPick(sel);
+    return true;
+  }
   // Options for an alias picker; want stays listed when that computer doesn't have it.
   const aliasOpts = (list, want) => `<option value="">-</option>`
     + (want && !list.some((a) => a.name === want) ? `<option value="${esc(want)}" data-sub="这台电脑上没读到" selected>${esc(want)}</option>` : "")
@@ -1967,7 +2021,7 @@
     if (seq !== aliasSeq) return;
     const list = aliasesOfKind(all, aliasKind(t.kind)), want = keptAlias(all, list, t.alias);
     // What is sent is what shows: an alias this agent doesn't have is dropped.
-    if (target?.alias !== undefined && target.alias !== want) target.alias = want;
+    if (target?.alias !== undefined && target.alias !== want) { target.alias = want; renderModelChips(); }
     sel._list = list;
     const html = aliasOpts(list, want);
     if (sel._html !== html) { sel._html = html; sel.innerHTML = html; }
@@ -1980,21 +2034,23 @@
   // The default model and effort belong to the default kind of agent; any
   // other kind starts from that agent's own settings.
   const modelDefaults = (t) => t.kind === targetDefault.kind ? { model: targetDefault.model, effort: targetDefault.effort } : { model: "", effort: "" };
-  const modelNow = (t) => { const d = modelDefaults(t); return { model: t.model ?? d.model, effort: t.effort ?? d.effort, d }; };
+  const modelNow = (t) => { const d = modelDefaults(t); return { model: t.alias ? "" : t.model ?? d.model, effort: t.effort ?? d.effort, d }; };
   let chipSeq = 0;
   async function renderModelChips() {
     const seq = ++chipSeq, t = targetNow(), { model, effort, d } = modelNow(t);
     const mSel = $("#t-model"), eSel = $("#t-effort");
-    const info = await modelsFor(t.kind, t.machine);
+    const [info, a] = await Promise.all([modelsFor(t.kind, t.machine), aliasNamed(t.machine, t.alias)]);
     if (seq !== chipSeq) return;
     const list = [...(info.models || [])];
     if (model && !list.some((m) => m.id === model)) list.unshift({ id: model });
     const mark = (v, dv) => (v === dv ? " · 默认" : "");
-    let html = d.model ? "" : `<option value="" data-short="${esc(info.default ? shortModel(info.default) : "默认模型")}" data-sub="agent 自己的设置 · 默认">${esc(info.default ? "默认（" + shortModel(info.default) + "）" : "默认")}</option>`;
-    html += list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(m.label && m.label.length <= 24 ? m.label : shortModel(m.id))}" data-sub="${esc((m.label && m.label !== m.id ? m.id : "") + mark(m.id, d.model))}" ${m.id === model ? "selected" : ""}>${esc(m.label || m.id)}</option>`).join("");
-    if (mSel._html !== html) { mSel._html = html; mSel.innerHTML = html; }
-    mSel.value = model;
-    const cur = list.find((m) => m.id === model);
+    if (!followAlias(mSel, a)) {
+      let html = d.model ? "" : `<option value="" data-short="${esc(info.default ? modelName(info.default) : "默认模型")}" data-sub="agent 自己的设置 · 默认">${esc(info.default ? "默认（" + modelName(info.default) + "）" : "默认")}</option>`;
+      html += list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(modelName(m.id))}" data-sub="${esc((modelName(m.id) !== m.id ? m.id : "") + mark(m.id, d.model))}" ${m.id === model ? "selected" : ""}>${esc(modelName(m.id))}</option>`).join("");
+      if (mSel._html !== html) { mSel._html = html; mSel.innerHTML = html; }
+      mSel.value = model;
+    }
+    const cur = list.find((m) => m.id === (a ? a.model : model));
     const effs = effortsOf(info, cur);
     const eff = effs.includes(effort) ? effort : "";
     const defE = d.effort || info.default_effort || "";
@@ -2004,8 +2060,20 @@
     eSel.value = eff === d.effort ? "" : eff;
     eSel.hidden = effs.length === 0;
     syncPick(mSel); syncPick(eSel);
-    mSel._pick?.classList.toggle("changed", model !== d.model);
+    mSel._pick?.classList.toggle("changed", !a && model !== d.model);
     eSel._pick?.classList.toggle("changed", eff !== d.effort && eff !== "");
+  }
+  // More model names known (another list came in): redraw where they show.
+  function renamedModels() {
+    if (targetDefault) { renderAliasChip(); renderModelChips(); }
+    if (lastRouter) renderRouterModel(lastRouter);
+    const v = view === "pane" && find(current);
+    if (v) renderSessionChips(v);
+    const f = $("#settings-form");
+    if (f?._bound) {
+      for (const who of ["router", "worker"]) if (!f[who + "_model"]._pick?.classList.contains("editing")) fillModels(f, who);
+      renderAliasList();
+    }
   }
   const pick = (o) => { target = { ...(target || {}), ...o }; };
   $("#t-machine").addEventListener("change", (e) => { pick({ machine: e.target.value }); renderTarget(); });
@@ -2014,7 +2082,7 @@
   // none at all) goes back to the defaults.
   $("#t-alias").addEventListener("change", (e) => {
     const name = e.target.value, a = (e.target._list || []).find((x) => x.name === name);
-    pick({ alias: name, model: a?.model || undefined, effort: a?.effort || undefined });
+    pick({ alias: name, model: undefined, effort: a?.effort || undefined });
     renderAliasChip(); renderModelChips();
   });
   $("#t-model").addEventListener("change", (e) => { pick({ model: e.target.value }); renderModelChips(); });
@@ -2453,17 +2521,23 @@
     const kindSel = form[who + "_kind"], modelSel = form[who + "_model"], effSel = form[who + "_effort"];
     const machine = form[who + "_machine"] ? form[who + "_machine"].value : "";
     const want = modelSel.dataset.value ?? modelSel.value, wantEff = effSel.dataset.value ?? effSel.value;
-    modelSel.innerHTML = `<option value="">读取中…</option>`;
-    const info = await modelsFor(kindSel.value, machine);
+    const seq = modelSel._seq = (modelSel._seq || 0) + 1;
+    const [info, a] = await Promise.all([modelsFor(kindSel.value, machine), aliasNamed(machine, form[who + "_alias"]?.value)]);
+    if (seq !== modelSel._seq) return; // filled again meanwhile
     const list = [...(info.models || [])];
     if (want && !list.some((m) => m.id === want)) list.unshift({ id: want });
-    const sub = (m) => [m.label && m.label !== m.id ? m.id : "", m.note && m.note !== m.id && !(m.label && m.note.startsWith(m.label)) ? m.note : ""].filter(Boolean).join(" · ");
-    modelSel.innerHTML = `<option value="" data-sub="${esc(info.default ? "现在是 " + info.default : "用 agent 自己的设置")}">默认</option>`
-      + list.map((m) => `<option value="${esc(m.id)}" data-sub="${esc(sub(m))}" ${m.id === want ? "selected" : ""}>${esc(m.label || m.id)}</option>`).join("")
-      + `<option value="__custom" data-sub="输入列表里没有的模型名">其他…</option>`;
+    const sub = (m) => [modelName(m.id) !== m.id ? m.id : "", m.note && m.note !== m.id && !(m.label && m.note.startsWith(m.label)) ? m.note : ""].filter(Boolean).join(" · ");
     delete modelSel.dataset.value;
+    if (!followAlias(modelSel, a)) {
+      const html = `<option value="" data-sub="${esc(info.default ? "现在是 " + modelName(info.default) : "用 agent 自己的设置")}">默认</option>`
+        + list.map((m) => `<option value="${esc(m.id)}" data-sub="${esc(sub(m))}" ${m.id === want ? "selected" : ""}>${esc(modelName(m.id))}</option>`).join("")
+        + `<option value="__custom" data-sub="输入列表里没有的模型名">其他…</option>`;
+      if (modelSel._html !== html) { modelSel._html = modelSel.innerHTML = html; }
+      modelSel.value = want;
+      syncPick(modelSel);
+    }
     const fillEffort = () => {
-      const m = list.find((x) => x.id === modelSel.value);
+      const m = list.find((x) => x.id === (a ? a.model : modelSel.value));
       const effs = effortsOf(info, m);
       const cur = effSel.dataset.value ?? effSel.value;
       effSel.innerHTML = `<option value="" data-sub="${esc(info.default_effort ? "现在是 " + (EFFORT_LABEL[info.default_effort] || info.default_effort) : "用 agent 自己的设置")}">默认</option>`
@@ -2520,17 +2594,18 @@
     delete sel.dataset.value;
     syncPick(sel);
     showRouterArgs(form);
+    if (sel.value !== want) fillModels(form, who); // the model no longer follows that alias
   }
   // An alias brings its own arguments: Collie's extra ones apply only without one.
   const showRouterArgs = (form) => { const adv = form.querySelector(".set-adv"); if (adv) adv.hidden = !!form.router_alias.value; };
   // Picking an alias picks its agent, model and effort; another agent drops it.
   async function pickAlias(form, who) {
     const a = (await aliasesOn(formMachine(form, who))).find((x) => x.name === form[who + "_alias"].value);
-    if (!a) return;
+    if (!a) { fillModels(form, who); return; }
     const k = form[who + "_kind"];
     k.value = aliasKind(a.kind);
     syncPick(k);
-    form[who + "_model"].dataset.value = a.model || "";
+    form[who + "_model"].dataset.value = "";
     form[who + "_effort"].dataset.value = a.effort || "";
     fillModels(form, who);
   }
@@ -3945,7 +4020,7 @@
     const kind = shortKind(v.kind), machine = v.machine || "", remote = !!hubOf(v.pane_id);
     const show = v.is_agent && !isLocalRouter(v) && AGENT_KINDS.some(([k]) => k === kind);
     const alias = show ? w?.alias || "" : ""; // a task Collie started through an alias
-    const key = show ? [v.pane_id, kind, machine, alias, ...run].join("|") : "";
+    const key = show ? [v.pane_id, kind, machine, alias, ...run, modelGen].join("|") : "";
     if (sess?.key === key) return lockSession();
     const seq = ++sessSeq;
     sess = { key };
@@ -3961,15 +4036,14 @@
     const own = !run[0], model = run[0] || info.default || "", effort = run[1] || info.default_effort || "";
     const list = [...(info.models || [])];
     if (model && !list.some((m) => m.id === model)) list.unshift({ id: model });
-    const label = (m) => m.label && m.label.length <= 24 ? m.label : shortModel(m.id);
     mSel.innerHTML = (model ? "" : `<option value="" data-short="默认模型" disabled>agent 自己的设置</option>`)
-      + list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(label(m))}" data-sub="${esc([m.label && m.label !== m.id ? m.id : "", m.id === model && own ? "agent 自己的设置" : ""].filter(Boolean).join(" · "))}">${esc(m.label || m.id)}</option>`).join("");
+      + list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(modelName(m.id))}" data-sub="${esc([modelName(m.id) !== m.id ? m.id : "", m.id === model && own ? "agent 自己的设置" : ""].filter(Boolean).join(" · "))}">${esc(modelName(m.id))}</option>`).join("");
     const effs = effortsOf(info, list.find((m) => m.id === model));
     const effOpt = (e, extra = "") => `<option value="${esc(e)}" data-short="思考 · ${esc(EFFORT_LABEL[e] || e || "默认")}" ${extra}>${esc(EFFORT_LABEL[e] || e || "agent 自己定")}</option>`;
     eSel.innerHTML = (effs.includes(effort) ? "" : effOpt(effort, effort ? "" : "disabled")) + effs.map((e) => effOpt(e, `data-sub="${esc(e)}"`)).join("");
     mSel.value = model; eSel.value = effort;
     eSel.hidden = !effs.length;
-    sess = { key, pane: v.pane_id, kind, machine, model, effort: run[1], tip: own ? "agent 自己的设置" : shortModel(run[0]) + (run[1] ? "，思考 " + (EFFORT_LABEL[run[1]] || run[1]) : ""),
+    sess = { key, pane: v.pane_id, kind, machine, model, effort: run[1], tip: own ? "agent 自己的设置" : modelName(run[0]) + (run[1] ? "，思考 " + (EFFORT_LABEL[run[1]] || run[1]) : ""),
       fixed: kind === "claude" ? "Claude Code 在会话里换模型会顺带改掉以后所有新会话的默认，这里只显示"
         : remote ? "另一个 hub 上的会话，到那边去换"
         : !list.length ? "没读到这台电脑上这个 agent 的模型列表"
@@ -4003,7 +4077,7 @@
       await api(paneURL(s.pane, "model"), { body: { kind: s.kind, ...to, from: [s.model, s.effort || ""] } });
       const v = find(s.pane);
       if (v) v.run = [to.model, to.effort];
-      toast(`已在会话里切到 ${shortModel(to.model)}${to.effort ? " · 思考 " + (EFFORT_LABEL[to.effort] || to.effort) : ""}`);
+      toast(`已在会话里切到 ${modelName(to.model)}${to.effort ? " · 思考 " + (EFFORT_LABEL[to.effort] || to.effort) : ""}`);
     } catch (err) {
       toast(err.message, "attn");
       if (sess === s) sess = { key: "" }; // show what it was again
@@ -6769,11 +6843,16 @@
     const same = keep.key === kind + "@" + pickMachine;
     mSel._key = kind + "@" + pickMachine;
     const list = [...(info.models || [])];
-    if (want?.model && !list.some((m) => m.id === want.model)) list.unshift({ id: want.model });
-    const def = info.default ? shortModel(info.default) : "";
-    mSel.innerHTML = `<option value="" data-short="默认模型" data-sub="${esc(info.default ? "现在是 " + info.default : "agent 自己的设置")}">默认${def ? "（" + esc(def) + "）" : ""}</option>` +
-      list.map((m) => `<option value="${esc(m.id)}" data-sub="${esc(m.label && m.label !== m.id ? m.id : "")}">${esc(m.label || m.id)}</option>`).join("");
-    mSel.value = want ? want.model || "" : same && list.some((m) => m.id === keep.model) ? keep.model : "";
+    const a = await aliasNamed(pickMachine, $("#l-alias").value);
+    if (seq !== launchSeq) return;
+    if (followAlias(mSel, a)) {
+      fillLaunchEfforts(info, want ? want.effort || "" : same ? keep.effort : "", a.model);
+      return;
+    }
+    const def = info.default ? modelName(info.default) : "";
+    mSel._html = mSel.innerHTML = `<option value="" data-short="默认模型" data-sub="${esc(info.default ? "现在是 " + info.default : "agent 自己的设置")}">默认${def ? "（" + esc(def) + "）" : ""}</option>` +
+      list.map((m) => `<option value="${esc(m.id)}" data-sub="${esc(modelName(m.id) !== m.id ? m.id : "")}">${esc(modelName(m.id))}</option>`).join("");
+    mSel.value = same && list.some((m) => m.id === keep.model) ? keep.model : "";
     fillLaunchEfforts(info, want ? want.effort || "" : same ? keep.effort : "");
     syncPick(mSel);
   }
@@ -6785,19 +6864,20 @@
     sel.innerHTML = aliasOpts(list, list.some((a) => a.name === want) ? want : "");
     sel.hidden = list.length === 0;
     syncPick(sel);
+    if (sel.value !== want) fillLaunchModels(); // another agent's alias no longer applies
   }
   $("#l-alias").addEventListener("change", async () => {
     const a = (await aliasesOn(pickMachine)).find((x) => x.name === $("#l-alias").value);
-    if (!a) return;
+    if (!a) return fillLaunchModels();
     const r = $(`input[name=kind][value="${aliasKind(a.kind)}"]`);
     if (!r || r.disabled) return;
     r.checked = true;
-    launchWant = { model: a.model || "", effort: a.effort || "" };
+    launchWant = { effort: a.effort || "" };
     suggestName();
   });
-  function fillLaunchEfforts(info, want) {
+  function fillLaunchEfforts(info, want, model = $("#l-model").value) {
     const eSel = $("#l-effort");
-    const cur = (info.models || []).find((m) => m.id === $("#l-model").value);
+    const cur = (info.models || []).find((m) => m.id === model);
     const effs = effortsOf(info, cur);
     const defE = info.default_effort || "";
     eSel.innerHTML = `<option value="" data-short="思考 · ${esc(EFFORT_LABEL[defE] || defE || "默认")}">默认（${esc(EFFORT_LABEL[defE] || defE || "agent 自己定")}）</option>` +

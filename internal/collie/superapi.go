@@ -264,7 +264,12 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 	if !known || kinds[body.Kind] == kinds[st.WorkerKind] {
 		defModel, defEffort, defAlias = st.WorkerModel, st.WorkerEffort, st.WorkerAlias
 	}
-	if m := strings.TrimSpace(body.Model); m != "" && m != defModel && modelNameRe.MatchString(m) {
+	alias := defAlias
+	if body.Alias != nil {
+		alias = *body.Alias
+	}
+	// An alias runs its own model: only the effort goes with one.
+	if m := strings.TrimSpace(body.Model); m != "" && m != defModel && alias == "" && modelNameRe.MatchString(m) {
 		hint = append(hint, "--model "+m)
 	}
 	if e := strings.TrimSpace(body.Effort); e != "" && e != defEffort && modelNameRe.MatchString(e) {
@@ -467,6 +472,9 @@ func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
 	}
 	res := map[string]any{"worker": wk.Name, "kind": wk.Kind, "status": status, "thread": wk.Thread,
 		"note": "its agent is starting; you will get a [collie] event when it reports, finishes, gets blocked or fails. Tell the human it is on its way, not that it is done"}
+	if body.Model != "" && wk.Alias != nil && *wk.Alias != "" {
+		res["model_ignored"] = fmt.Sprintf("alias %s starts it with the alias's own model, so --model %s was ignored; spawn with --no-alias to pick a model", *wk.Alias, body.Model)
+	}
 	if body.Name != "" && wk.Name != cleanWorkerName(body.Name) {
 		res["renamed"] = fmt.Sprintf("%q was taken, so this worker is %s: use that name to send to it, stop it or resume it", body.Name, wk.Name)
 	}
@@ -865,9 +873,7 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 				*p = ""
 			}
 		}
-		if ns.RouterAlias != "" {
-			ns.RouterArgs = nil // an alias brings its own
-		}
+		ns.aliasesOwnModels()
 		ns.RouterMachine = s.machineByName(ns.RouterMachine)
 		ns.migrateReply()
 		if ns.DreamAt != "off" {
@@ -1100,6 +1106,17 @@ func (s *Server) machineByName(n string) string {
 		}
 	}
 	return n
+}
+
+// aliasesOwnModels: an alias brings its own model (the Router's, its own
+// arguments too); the effort is still chosen with one.
+func (ns *Settings) aliasesOwnModels() {
+	if ns.RouterAlias != "" {
+		ns.RouterArgs, ns.RouterModel = nil, ""
+	}
+	if ns.WorkerAlias != "" {
+		ns.WorkerModel = ""
+	}
 }
 
 // modelNameRe: model ids and effort names go onto a command line as one argument.

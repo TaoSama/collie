@@ -1163,7 +1163,11 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 			effort = sp.st.Settings.WorkerEffort
 		}
 	}
-	w.Run, w.Alias = &[2]string{model, effort}, &aliasName
+	runModel := model
+	if aliasName != "" {
+		runModel = "" // the alias's own (aliasArgs drops --model); a plain fallback keeps it
+	}
+	w.Run, w.Alias = &[2]string{runModel, effort}, &aliasName
 	ask := sp.st.Settings.AskPermissions
 	sp.mu.Unlock()
 	wargs := withBypass(modelArgs(kind, model, effort), kind, ask)
@@ -1193,7 +1197,7 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		alias := sp.launchAlias(ctx, m.ID, aliasName, kinds[kind], name)
 		pane, ws, err := sp.s.startAgentAs(ctx, m.ID, kinds[kind], name, dir, name, alias, args)
 		if pane != "" {
-			sp.s.herdr.RememberRun(pane, model, effort)
+			sp.s.herdr.RememberRun(pane, aliasModel(alias, model), effort)
 		}
 		var he *HerdrError
 		blocked := err != nil && errors.As(err, &he) && he.Code == "agent_not_ready"

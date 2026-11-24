@@ -55,99 +55,9 @@ func TestWebEmbeddedKaTeXOffline(t *testing.T) {
 }
 
 func TestMarkdownEscapingAndMathRender(t *testing.T) {
-	nodeBin, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not installed; skipping JS mdRender tests")
-	}
-	root := filepath.Join("..", "..")
-	jsTest := `
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
-
-const root = process.argv[1];
-const appSrc = fs.readFileSync(path.join(root, "web/app.js"), "utf8");
+	runAppJS(t, `
 const katex = require(path.join(root, "web/vendor/katex/katex.min.js"));
-
-function loadRenderer(withKatex) {
-  const noop = () => {};
-  const stubEl = () => ({
-    hidden: false,
-    className: "",
-    dataset: {},
-    style: { setProperty: noop, removeProperty: noop },
-    classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
-    setAttribute: noop,
-    getAttribute: () => "",
-    addEventListener: noop,
-    removeEventListener: noop,
-    querySelector: () => stubEl(),
-    querySelectorAll: () => [],
-    append: noop,
-    after: noop,
-    closest: () => null,
-    contains: () => false,
-    getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }),
-    focus: noop,
-    scrollIntoView: noop,
-    options: [],
-    selectedOptions: [],
-    children: [],
-  });
-  const doc = {
-    documentElement: stubEl(),
-    body: stubEl(),
-    hidden: false,
-    createElement: () => stubEl(),
-    getElementById: () => stubEl(),
-    querySelector: () => stubEl(),
-    querySelectorAll: () => [],
-    addEventListener: noop,
-    hasFocus: () => false,
-  };
-  const warnings = [];
-  const ctx = {
-    console: { log: noop, info: noop, warn: (...a) => warnings.push(a.join(" ")), error: (...a) => warnings.push(a.join(" ")) },
-    document: doc,
-    window: null,
-    location: { hash: "", search: "", pathname: "/", origin: "http://127.0.0.1", hostname: "127.0.0.1" },
-    history: { state: {}, replaceState: noop, back: noop },
-    navigator: { userAgent: "NodeTest" },
-    localStorage: { getItem: () => null, setItem: noop },
-    matchMedia: () => ({ matches: false, addEventListener: noop }),
-    MutationObserver: class { observe() {} },
-    ResizeObserver: class { observe() {} },
-    EventSource: class { addEventListener() {} close() {} },
-    CSS: { escape: (s) => String(s) },
-    URL,
-    URLSearchParams,
-    performance: { now: () => 0 },
-    requestAnimationFrame: () => 0,
-    setTimeout: () => 0,
-    clearTimeout: noop,
-    setInterval: () => 0,
-    clearInterval: noop,
-    addEventListener: noop,
-    removeEventListener: noop,
-    dispatchEvent: noop,
-    Event,
-    HTMLDialogElement: { prototype: {} },
-    getComputedStyle: () => ({ getPropertyValue: () => "" }),
-    fetch: () => Promise.reject(new Error("no network")),
-    innerWidth: 1440,
-    innerHeight: 900,
-  };
-  ctx.window = ctx;
-  ctx.globalThis = ctx;
-  if (withKatex) ctx.katex = katex;
-
-  const marker = "  boot();\n})();";
-  assert.ok(appSrc.includes(marker), "expected boot() tail in web/app.js");
-  const instrumented = appSrc.replace(marker, "  globalThis.__collieMd = { mdRender, plainLine };\n})();");
-  vm.runInNewContext(instrumented, ctx, { filename: "web/app.js" });
-  return { ...ctx.__collieMd, warnings };
-}
+const loadRenderer = (withKatex) => loadApp("mdRender, plainLine", withKatex ? { katex } : {});
 
 const { mdRender, plainLine, warnings } = loadRenderer(true);
 const stripTags = (h) => h.replace(/<[^>]+>/g, "");
@@ -328,14 +238,113 @@ const stripTags = (h) => h.replace(/<[^>]+>/g, "");
   assert.ok(html.includes("$9.99") && !html.includes("\\$9.99"), "escaping still works without KaTeX");
 }
 
-console.log("ALL_MD_MATH_TESTS_PASSED");
+console.log("ALL_MD_MATH_TESTS_PASSED");`, "ALL_MD_MATH_TESTS_PASSED")
+}
+
+// appJSHarness runs web/app.js in a stubbed page: loadApp(expose) returns the
+// functions named in expose (a comma-separated list of its locals).
+const appJSHarness = `
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const root = process.argv[1];
+const appSrc = fs.readFileSync(path.join(root, "web/app.js"), "utf8");
+
+function loadApp(expose, extra = {}) {
+  const noop = () => {};
+  const stubEl = () => ({
+    hidden: false,
+    className: "",
+    dataset: {},
+    style: { setProperty: noop, removeProperty: noop },
+    classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
+    setAttribute: noop,
+    getAttribute: () => "",
+    addEventListener: noop,
+    removeEventListener: noop,
+    querySelector: () => stubEl(),
+    querySelectorAll: () => [],
+    append: noop,
+    after: noop,
+    closest: () => null,
+    contains: () => false,
+    getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }),
+    focus: noop,
+    scrollIntoView: noop,
+    options: [],
+    selectedOptions: [],
+    children: [],
+  });
+  const doc = {
+    documentElement: stubEl(),
+    body: stubEl(),
+    hidden: false,
+    createElement: () => stubEl(),
+    getElementById: () => stubEl(),
+    querySelector: () => stubEl(),
+    querySelectorAll: () => [],
+    addEventListener: noop,
+    hasFocus: () => false,
+  };
+  const warnings = [];
+  const ctx = {
+    console: { log: noop, info: noop, warn: (...a) => warnings.push(a.join(" ")), error: (...a) => warnings.push(a.join(" ")) },
+    document: doc,
+    window: null,
+    location: { hash: "", search: "", pathname: "/", origin: "http://127.0.0.1", hostname: "127.0.0.1" },
+    history: { state: {}, replaceState: noop, back: noop },
+    navigator: { userAgent: "NodeTest" },
+    localStorage: { getItem: () => null, setItem: noop },
+    matchMedia: () => ({ matches: false, addEventListener: noop }),
+    MutationObserver: class { observe() {} },
+    ResizeObserver: class { observe() {} },
+    EventSource: class { addEventListener() {} close() {} },
+    CSS: { escape: (s) => String(s) },
+    URL,
+    URLSearchParams,
+    performance: { now: () => 0 },
+    requestAnimationFrame: () => 0,
+    setTimeout: () => 0,
+    clearTimeout: noop,
+    setInterval: () => 0,
+    clearInterval: noop,
+    addEventListener: noop,
+    removeEventListener: noop,
+    dispatchEvent: noop,
+    Event,
+    HTMLDialogElement: { prototype: {} },
+    getComputedStyle: () => ({ getPropertyValue: () => "" }),
+    fetch: () => Promise.reject(new Error("no network")),
+    innerWidth: 1440,
+    innerHeight: 900,
+  };
+  ctx.window = ctx;
+  ctx.globalThis = ctx;
+  Object.assign(ctx, extra);
+
+  const marker = "  boot();\n})();";
+  assert.ok(appSrc.includes(marker), "expected boot() tail in web/app.js");
+  const instrumented = appSrc.replace(marker, "  globalThis.__collieTest = { " + expose + " };\n})();");
+  vm.runInNewContext(instrumented, ctx, { filename: "web/app.js" });
+  return { ...ctx.__collieTest, ctx, warnings };
+}
+
 `
-	cmd := exec.Command(nodeBin, "-e", jsTest, root)
-	out, err := cmd.CombinedOutput()
+
+// runAppJS runs a node script after appJSHarness; it passes when it prints done.
+func runAppJS(t *testing.T, script, done string) {
+	t.Helper()
+	nodeBin, err := exec.LookPath("node")
 	if err != nil {
-		t.Fatalf("node mdRender test failed: %v\n%s", err, string(out))
+		t.Skip("node not installed; skipping web/app.js tests")
 	}
-	if !strings.Contains(string(out), "ALL_MD_MATH_TESTS_PASSED") {
-		t.Fatalf("unexpected node test output:\n%s", string(out))
+	out, err := exec.Command(nodeBin, "-e", appJSHarness+script, filepath.Join("..", "..")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node test failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), done) {
+		t.Fatalf("unexpected node test output:\n%s", out)
 	}
 }

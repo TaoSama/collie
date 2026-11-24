@@ -213,9 +213,17 @@ func TestAliasArgs(t *testing.T) {
 	if want := []string{"--effort", "high", "--allowedTools", "Bash(collie:*)"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("claude: %q", got)
 	}
-	got = aliasArgs(&cl, []string{"--model", "sonnet"}) // a later --model wins in claude
-	if want := []string{"--model", "sonnet"}; !reflect.DeepEqual(got, want) {
+	got = aliasArgs(&cl, []string{"--model", "sonnet", "--effort", "low"}) // the alias's model, the effort chosen
+	if want := []string{"--effort", "low"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("claude other model: %q", got)
+	}
+	plain, _ := parseLauncher("cc", `claude`)
+	if got = aliasArgs(&plain, []string{"--model=fable", "--effort", "max"}); !reflect.DeepEqual(got, []string{"--effort", "max"}) {
+		t.Errorf("alias pinning no model: %q", got) // it leaves the model to the agent
+	}
+	cxc, _ := parseLauncher("cxc", `codex`)
+	if got = aliasArgs(&cxc, []string{"-c", `model="gpt-6"`, "-c", `model_reasoning_effort="high"`}); !reflect.DeepEqual(got, []string{"-c", `model_reasoning_effort="high"`}) {
+		t.Errorf("codex -c model: %q", got)
 	}
 	cxm, _ := parseLauncher("cxm", `codex -mgpt-5 -a never`)
 	got = aliasArgs(&cxm, []string{"-m", "gpt-6", "-a", "on-request", "--search"})
@@ -252,10 +260,11 @@ func TestAliasViewsMergeAndStale(t *testing.T) {
 	if len(v.Machines) != 3 || v.Machines[0].Stale || !v.Machines[1].Stale || v.Machines[1].Error != "timeout" || len(v.Machines[1].Aliases) != 2 || !v.Machines[2].Stale {
 		t.Fatalf("machines: %s", b)
 	}
-	if len(v.Aliases) != 3 || v.Aliases[0].Name != "ccd" || v.Aliases[1].Name != "ccf" {
+	// Each computer's own order (its rc files'), the computers in turn.
+	if len(v.Aliases) != 3 || v.Aliases[0].Name != "ccf" || v.Aliases[1].Name != "ccx" || v.Aliases[2].Name != "ccd" {
 		t.Fatalf("aliases: %s", b)
 	}
-	ccf := v.Aliases[1]
+	ccf := v.Aliases[0]
 	if ccf.Model != "ccf-model" || ccf.RC != "~/.zshrc" || !reflect.DeepEqual(ccf.Machines, []string{"", "devos", "mac"}) {
 		t.Errorf("ccf: %+v", ccf)
 	}
@@ -374,7 +383,7 @@ func TestAliasArgsKeepsPositionals(t *testing.T) {
 	}
 	cl, _ := parseLauncher("cl", `claude --add-dir /a --model opus`)
 	got = aliasArgs(&cl, []string{"--add-dir", "/b", "--model", "sonnet", "--effort", "high"})
-	if want := []string{"--add-dir", "/b", "--model", "sonnet", "--effort", "high"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"--add-dir", "/b", "--effort", "high"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("claude: %q", got)
 	}
 }
