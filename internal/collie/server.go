@@ -440,7 +440,8 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 
 // streamPane mirrors one pane over SSE.
 //
-//	mode=screen: recent output with ANSI styling, for a scrollable terminal render.
+//	mode=screen: recent output with ANSI styling, for a scrollable terminal render,
+//	             the cursor marked in it (markScreenCursor).
 //	mode=log:    recent output with soft wraps joined, for reading on narrow screens.
 const screenLines = 500
 
@@ -487,15 +488,16 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			text := res.Text
-			if mode != "log" {
-				text = trimScreenBlankTail(text)
-			}
-			if text != lastText {
-				lastText = text
+			if res.Text != lastText {
+				lastText = res.Text
+				text, cursor := res.Text, false
+				if mode != "log" {
+					text, cursor = markScreenCursor(text, lastSize.Height)
+					text = trimScreenBlankTail(text)
+				}
 				b, _ := json.Marshal(map[string]any{
 					"text": text, "revision": res.Revision, "truncated": res.Truncated,
-					"cols": lastSize.Width, "rows": lastSize.Height,
+					"cols": lastSize.Width, "rows": lastSize.Height, "cursor": cursor,
 				})
 				if sse.send("frame", b) != nil {
 					return

@@ -207,8 +207,8 @@
     return `12:${mm}:${ss} \x1b[32mINFO\x1b[0m  GET /orders?page=${(i % 6) + 1} 200 ${12 + (i % 19)}ms`;
   }).join("\n");
   const screens = {
-    "w2:p1@macbook": "╭───────────────────────────────────────────────╮\n│ ✻ Claude Code                                 │\n│   ~/code/shop-web                             │\n╰───────────────────────────────────────────────╯\n\n> 首页加一个暗色模式：跟随系统，右上角可以手动切换，记住用户的选择。\n\n● 先看看现在的样式是怎么组织的。\n\n● Read(src/styles/theme.css)\n  ⎿  Read 48 lines\n\n● Grep(color: #)\n  ⎿  src/components/Header.tsx:12\n     src/components/Card.tsx:31\n     src/pages/Home.tsx:77\n\n● Read(src/components/Header.tsx)\n  ⎿  Read 64 lines\n\n● 颜色大多已经走 CSS 变量，只有三处写死了。计划：\n  1. theme.css 里补一套 [data-theme=dark] 变量，默认跟随系统\n  2. 三处硬编码颜色改成变量\n  3. Header 加切换按钮，选择存进 localStorage\n\n● Update(src/styles/theme.css)\n  ⎿  Updated with 31 additions and 2 removals\n     + :root[data-theme=\"dark\"] {\n     +   --surface: #111214;\n     +   --ink: #ededeb;\n     + }\n\n● Update(src/components/Card.tsx)\n  ⎿  Updated with 1 addition and 1 removal\n\n● Update(src/pages/Home.tsx)\n  ⎿  Updated with 2 additions and 2 removals\n\n✻ Editing src/components/Header.tsx… (42s · ↓ 1.8k tokens)\n\n╭───────────────────────────────────────────────╮\n│ >                                             │\n╰───────────────────────────────────────────────╯\n  ? for shortcuts                    opus · high",
-    "w7:p1": "alex@devbox:~/code/shop-api$ tail -n 60 -f logs/api.log\n" + demoLogLines + "\nalex@devbox:~/code/shop-api$ ",
+    "w2:p1@macbook": "╭───────────────────────────────────────────────╮\n│ ✻ Claude Code                                 │\n│   ~/code/shop-web                             │\n╰───────────────────────────────────────────────╯\n\n> 首页加一个暗色模式：跟随系统，右上角可以手动切换，记住用户的选择。\n\n● 先看看现在的样式是怎么组织的。\n\n● Read(src/styles/theme.css)\n  ⎿  Read 48 lines\n\n● Grep(color: #)\n  ⎿  src/components/Header.tsx:12\n     src/components/Card.tsx:31\n     src/pages/Home.tsx:77\n\n● Read(src/components/Header.tsx)\n  ⎿  Read 64 lines\n\n● 颜色大多已经走 CSS 变量，只有三处写死了。计划：\n  1. theme.css 里补一套 [data-theme=dark] 变量，默认跟随系统\n  2. 三处硬编码颜色改成变量\n  3. Header 加切换按钮，选择存进 localStorage\n\n● Update(src/styles/theme.css)\n  ⎿  Updated with 31 additions and 2 removals\n     + :root[data-theme=\"dark\"] {\n     +   --surface: #111214;\n     +   --ink: #ededeb;\n     + }\n\n● Update(src/components/Card.tsx)\n  ⎿  Updated with 1 addition and 1 removal\n\n● Update(src/pages/Home.tsx)\n  ⎿  Updated with 2 additions and 2 removals\n\n✻ Editing src/components/Header.tsx… (42s · ↓ 1.8k tokens)\n\n╭───────────────────────────────────────────────╮\n│ > \x1b7                                            │\n╰───────────────────────────────────────────────╯\n  ? for shortcuts                    opus · high",
+    "w7:p1": "alex@devbox:~/code/shop-api$ tail -n 60 -f logs/api.log\n" + demoLogLines + "\nalex@devbox:~/code/shop-api$ \x1b7",
   };
   const wrapCols = (s, max = 88) => s.split("\n").flatMap((line) => {
     const out = [];
@@ -321,7 +321,8 @@
       const id = decodeURIComponent(m[2]);
       if (m[1] === "external") { this.emit("patch", { base: 0, from: 0, msgs: extChats[id] || [] }); return; }
       if (m[3] === "chat") { this.emit("patch", { base: 0, from: 0, msgs: chats[id] || [] }); this.emit("live", liveOf(id)); return; }
-      this.emit("frame", { cols: 96, rows: 30, text: screenOf(id) });
+      const text = screenOf(id); // the cursor marked (ESC 7) as the hub does
+      this.emit("frame", { cols: 96, rows: 30, text, cursor: text.includes("\x1b7") });
     }
   }
   FakeES.CONNECTING = 0; FakeES.OPEN = 1; FakeES.CLOSED = 2;

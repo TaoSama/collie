@@ -4326,7 +4326,10 @@
     const css = getComputedStyle(document.documentElement);
     term = new Terminal({
       cols: 120, rows: 40, fontFamily: css.getPropertyValue("--mono"), fontSize: 13, lineHeight: 1.15,
-      cursorBlink: false, scrollback: 0, allowTransparency: true, theme: termTheme(),
+      // The pane's cursor (marked in the frame): blinking while you type
+      // into it, an outline otherwise.
+      cursorBlink: true, cursorStyle: "block", cursorInactiveStyle: "outline",
+      scrollback: 0, allowTransparency: true, theme: termTheme(),
     });
     // Native #screen handles 2D scrolling: never translate wheel into Up/Down
     // arrow keys (\x1b[A/\x1b[B) or let xterm cancel horizontal touch pans.
@@ -4353,8 +4356,9 @@
     });
   }
   function termTheme() {
-    const fg = getComputedStyle(document.documentElement).getPropertyValue("--term-fg").trim();
-    return { background: "rgba(0,0,0,0)", foreground: fg, cursor: fg, selectionBackground: "rgba(127,127,127,.3)" };
+    const css = getComputedStyle(document.documentElement);
+    const fg = css.getPropertyValue("--term-fg").trim(), bg = css.getPropertyValue("--term-bg").trim();
+    return { background: "rgba(0,0,0,0)", foreground: fg, cursor: fg, cursorAccent: bg, selectionBackground: "rgba(127,127,127,.3)" };
   }
   // The pane keeps its own width (herdr can't resize it for us), so a phone
   // can't fit 120 columns legibly: there it shows the screen at a readable
@@ -4436,14 +4440,13 @@
       term.resize(cols, rows);
     }
     if (dimChanged) fitTerm();
-    let out = "\x1b[?25l\x1b[?7l";
-    if (full) {
-      for (let r = 0; r < rows; r++) out += `\x1b[${r + 1};1H\x1b[0m\x1b[2K${lines[r]}`;
-    } else {
-      for (let r = 0; r < rows; r++) {
-        if (prevScreenLines[r] !== lines[r]) out += `\x1b[${r + 1};1H\x1b[0m\x1b[2K${lines[r]}`;
-      }
+    let out = "";
+    for (let r = 0; r < rows; r++) {
+      if (full || prevScreenLines[r] !== lines[r]) out += `\x1b[${r + 1};1H\x1b[0m\x1b[2K${lines[r]}`;
     }
+    // The frame saved the cursor (ESC 7) where the pane's is; an unchanged
+    // row keeps what it saved last time.
+    if (out) out = "\x1b[?25l\x1b[?7l" + out + (f.cursor ? "\x1b8\x1b[0m\x1b[?25h" : "");
     prevScreenLines = lines;
     screenFresh = false;
     const finishScroll = () => {
@@ -4455,7 +4458,7 @@
         if (screenNearBottom()) hideJump(); else $("#jump").hidden = false;
       }
     };
-    if (out === "\x1b[?25l\x1b[?7l") { finishScroll(); return; }
+    if (!out) { finishScroll(); return; }
     term.write(out, () => {
       finishScroll();
       requestAnimationFrame(finishScroll);
