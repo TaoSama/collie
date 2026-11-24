@@ -7,7 +7,7 @@
 <meta name="description" content="在手机上养边牧，放牧一群 Agent。电脑上开着的 Claude Code、Codex、Antigravity 会话，手机上直接接着聊。活多了就交给 Collie 这个 super agent：它派给各台电脑并行去做，盯进度、处理卡点，需要你拍板时点一下就回。">
 <meta property="og:title" content="Collie · 在手机上养边牧，放牧一群 Agent">
 <meta property="og:description" content="和 Collie 说一句，它把活拆给 Claude、Codex、Antigravity 在你的电脑上并行去做；确认框变成手机上一点就回的卡片。">
-<meta property="og:image" content="https://collie.taoai.site/img/hero-light.png">
+<meta property="og:image" content="https://collie.taoai.site/img/hero-light.webp">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <script>window.onerror = () => document.documentElement.classList.remove("js"); // a broken script must not hide the page</script>
 <style>
@@ -207,12 +207,12 @@ footer a { color: var(--fg-2); }
     <div class="stage reveal">
       <div class="frame">
         <div class="bar"><i></i><i></i><i></i><span>collie · 和 Collie 对话</span></div>
-        <video id="hero-video" autoplay muted loop playsinline preload="metadata" poster="img/hero-light.png">
+        <video id="hero-video" autoplay muted loop playsinline preload="metadata" poster="img/hero-light.webp">
           <source src="img/demo.mp4" type="video/mp4">
-          <img src="img/hero-light.png" alt="Collie 的对话界面">
+          <img src="img/hero-light.webp" alt="Collie 的对话界面">
         </video>
       </div>
-      <div class="phone"><img src="img/phone-ask.png" alt="手机上的决策卡片" loading="lazy"></div>
+      <div class="phone"><img src="img/phone-ask.webp" alt="手机上的决策卡片" loading="lazy"></div>
     </div>
   </div>
 
@@ -242,14 +242,14 @@ footer a { color: var(--fg-2); }
         <div class="text">
           <p class="kicker">Super-agent</p>
           <h3>说一句话，Collie 去组织</h3>
-          <p>你只和 Collie 对话。它常驻在 hub 上，把事情拆成任务交给 worker，worker 做完、卡住都会回报，Collie 再决定下一步。</p>
+          <p>你可以直接和 Collie 对话。它把事情拆成任务交给 worker，worker 做完或卡住时会回报，Collie 再决定下一步。</p>
           <ul>
-            <li>选哪个 agent、哪台电脑、哪个模型，它根据上下文自己定</li>
+            <li>在输入框的「派活」为这条消息指定电脑、Agent、模型和思考强度</li>
             <li>GitHub 评论、飞书消息、定时器都能变成任务</li>
             <li>越用越会派活：记住你的偏好和每次干活的经验，下次派活直接带上</li>
           </ul>
         </div>
-        <div class="shot"><picture><img src="img/hero-light.png" alt="和 Collie 对话：派出两个 worker，一个已经回报" loading="lazy"></picture></div>
+        <div class="shot"><picture><img src="img/hero-light.webp" alt="Collie 对话、按项目分组的侧栏与派活设置" loading="lazy"></picture></div>
       </div>
 
       <div class="feature flip reveal">
@@ -263,8 +263,8 @@ footer a { color: var(--fg-2); }
           </ul>
         </div>
         <div class="duo">
-          <div class="phone"><img src="img/phone-list.png" alt="手机上的 agent 列表" loading="lazy"></div>
-          <div class="phone"><img src="img/phone-ask.png" alt="手机上的决策卡片" loading="lazy"></div>
+          <div class="phone"><img src="img/phone-list.webp" alt="手机会话列表中的「需要你」分组" loading="lazy"></div>
+          <div class="phone"><img src="img/phone-ask.webp" alt="手机上的决策卡片" loading="lazy"></div>
         </div>
       </div>
 
@@ -272,13 +272,13 @@ footer a { color: var(--fg-2); }
         <div class="text">
           <p class="kicker">直接管 agent</p>
           <h3>每个 agent 都能接手</h3>
-          <p>在任意一台电脑上新建 agent：选类型、目录、模型，顺手给它第一个任务。对话视图里看它的思路和每一步工具调用，标题栏写着它用的模型。</p>
+          <p>在任意一台电脑上新建 agent：选类型、目录、模型，顺手给它第一个任务。对话视图可查看工具步骤和上下文用量，输入框旁显示模型和思考强度。</p>
           <ul>
             <li>iTerm、VS Code、tmux 里直接跑的会话也能看到，一键在 herdr 里接管</li>
             <li>屏幕视图用 xterm.js 原样呈现，日志视图在窄屏上自动换行</li>
           </ul>
         </div>
-        <div class="shot"><img src="img/agent.png" alt="Claude 的对话视图：读文件、计划、编辑" loading="lazy"></div>
+        <div class="shot"><img src="img/agent.webp" alt="Codex 对话中的工具步骤、模型和上下文用量" loading="lazy"></div>
       </div>
 
       <div class="feature flip reveal">
@@ -291,7 +291,7 @@ footer a { color: var(--fg-2); }
             <li>所有状态都在 SQLite，Collie 随时可以重启，事件不会丢</li>
           </ul>
         </div>
-        <div class="shot"><img src="img/memory.png" alt="自动化 · 记忆" loading="lazy"></div>
+        <div class="shot"><img src="img/memory.webp" alt="自动化 · 记忆" loading="lazy"></div>
       </div>
     </div>
   </section>

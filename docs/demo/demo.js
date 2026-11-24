@@ -585,18 +585,20 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       const fp = q.get("path") || "", mach = q.get("machine") || "", dl = q.get("download") === "1";
       const dlHead = (name) => dl ? { "Content-Disposition": `attachment; filename="${name}"` } : {};
       const demoImgs = [
-        [/a1b2c3-ci-failure\.png$/i, "../img/screen.png", ""],
-        [/d4e5f6-query-plan\.png$/i, "../img/agent.png", ""],
-        [/images\/0d3a9e5c71b2f4e8a6c1\.png$/i, "../img/hero-dark.png", "macbook"],
-        [/preview-dark\.png$/i, "../img/hero-dark.png", "macbook"],
-        [/preview-light\.png$/i, "../img/hero-light.png", "macbook"],
+        [/a1b2c3-ci-failure\.png$/i, "../img/screen.webp", ""],
+        [/d4e5f6-query-plan\.png$/i, "../img/agent.webp", ""],
+        [/images\/0d3a9e5c71b2f4e8a6c1\.png$/i, "../img/hero-dark.webp", "macbook"],
+        [/preview-dark\.png$/i, "../img/hero-dark.webp", "macbook"],
+        [/preview-light\.png$/i, "../img/hero-light.webp", "macbook"],
         [/architecture\.svg$/i, "../img/architecture-light.svg", "macbook"],
-        [/uploads\/.*\.png$/i, "../img/hero-dark.png", ""],
+        [/uploads\/.*\.png$/i, "../img/hero-dark.webp", ""],
       ];
       const hitImg = demoImgs.find(([re, , wantM]) => re.test(fp) && (!wantM || mach === wantM));
       if (hitImg) {
         const b = await (await realFetch(new URL(hitImg[1], location.href))).blob();
-        return new Response(b, { headers: { "X-File-Kind": dl ? "download" : "image", "X-File-Size": String(b.size), "X-File-Path": encodeURIComponent(fp), ...dlHead(fp.split("/").pop() || "image.png") } });
+        const baseName = fp.split("/").pop() || "image";
+        const downloadName = b.type === "image/webp" ? baseName.replace(/\.[^.]+$/, "") + ".webp" : baseName;
+        return new Response(b, { headers: { "X-File-Kind": dl ? "download" : "image", "X-File-Size": String(b.size), "X-File-Path": encodeURIComponent(fp), ...dlHead(downloadName) } });
       }
       if (/bench-pagination\.html$/i.test(fp)) {
         const html = await (await realFetch(new URL("bench-pagination.html", location.href))).text();

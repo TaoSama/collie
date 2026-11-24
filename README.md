@@ -14,7 +14,7 @@ Claude Code · Codex · Antigravity</p>
 
 电脑上开着的 Claude Code、Codex 和 Antigravity 会话，可以在手机上接着聊、看进度、处理确认。也可以直接把任务交给 Collie，让它选电脑和 Agent、并行派活，再把结果和需要你决定的事汇总到同一个对话里。
 
-<p align="center"><img src="docs/img/demo.gif" alt="给 Collie 派活、查看 worker 的回报并回复决策卡片" width="900"></p>
+<p align="center"><img src="docs/img/demo.webp" alt="在 Collie 里选择派活电脑和思考强度，发送任务，查看 worker 回报并点选回复" width="900"></p>
 
 ## 日常使用
 
@@ -25,20 +25,20 @@ Claude Code · Codex · Antigravity</p>
 - **接续其他终端里的会话**。支持的外部会话也能在侧栏打开。纯只读会话默认隐藏，可在「偏好设置」中开启「显示其他终端里的只读会话」。若看到「在 herdr 里接管」，点它会结束原终端的 Agent 进程，并在 herdr 里恢复同一会话。
 - **查看电脑状态**。打开「设备 → 电脑」，可查看在线状态、Agent 数量，以及可获取的 CPU、内存、网络、Token 和磁盘指标。展开电脑卡片的「详情」可查看版本和更新选项。
 
-下面的截图记录了派活回报、手机确认和 Agent 对话。当前侧栏、会话菜单和设备页可在 [在线体验](https://collie.taoai.site/demo/) 里查看。
+下面的桌面和手机截图来自 [在线体验](https://collie.taoai.site/demo/) 的模拟会话。
 
 <table>
 <tr>
-<td width="62%"><img src="docs/img/hero-light.png" alt="Collie 对话中的 worker 派发和回报"><br><sub><b>和 Collie 对话</b>，在一处看派活进度和 worker 回报。</sub></td>
-<td width="19%"><img src="docs/img/phone-list.png" alt="手机列表里的待确认会话"><br><sub><b>手机列表</b>，从「需要你」找到待确认的会话。</sub></td>
-<td width="19%"><img src="docs/img/phone-ask.png" alt="手机上的决策卡片"><br><sub><b>决策卡片</b>，点选一项即可回复。</sub></td>
+<td width="62%"><img src="docs/img/hero-light.webp" alt="按项目分组的侧栏、Collie 的派活设置与 worker 回报"><br><sub><b>和 Collie 对话</b>，按项目找会话，在输入框配置派活并查看 worker 回报。</sub></td>
+<td width="19%"><img src="docs/img/phone-list.webp" alt="手机列表里的待确认会话"><br><sub><b>手机列表</b>，从「需要你」找到待确认的会话，也可按电脑和 Agent 筛选。</sub></td>
+<td width="19%"><img src="docs/img/phone-ask.webp" alt="手机上的决策卡片"><br><sub><b>决策卡片</b>，查看待执行的命令，点选一项即可回复。</sub></td>
 </tr>
 <tr>
-<td colspan="3"><img src="docs/img/agent.png" alt="Agent 对话中的工具步骤"><br><sub><b>Agent 对话</b>，展开工具步骤查看任务细节。</sub></td>
+<td colspan="3"><img src="docs/img/agent.webp" alt="Codex 对话中的模型、上下文用量和工具步骤"><br><sub><b>Agent 对话</b>，查看 Codex 的模型、思考强度、上下文用量和工具步骤。</sub></td>
 </tr>
 </table>
 
-更多截图可查看 [屏幕视图](docs/img/screen.png)、[自动化与记忆](docs/img/memory.png) 和 [深色主题](docs/img/hero-dark.png)。
+更多截图可查看 [会话菜单](docs/img/hero-dark.webp)、[设备监控](docs/img/devices.webp)、[屏幕视图](docs/img/screen.webp) 和 [自动化与记忆](docs/img/memory.webp)。
 
 ## 安装
 
