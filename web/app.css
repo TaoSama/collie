@@ -648,6 +648,8 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
   background: var(--bg); border: 1px solid var(--line); border-radius: calc(16px * var(--round)); box-shadow: var(--shadow-lg);
   overflow: hidden; animation: rise .22s ease-out;
 }
+/* redrawn in place: only a card's first appearance rises */
+.ask.still { animation: none; }
 .ask-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 0; font-size: 12px; color: var(--fg-3); }
 .ask-head > * { white-space: nowrap; flex: none; }
 .ask-head > .who { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

@@ -1038,6 +1038,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		tr                *transcript
 		lastLive, lastLog string
 		lastMeta          string
+		lastAsk           *Approval
 		beat              = time.Now()
 		ms                msgSync
 		woke              time.Time
@@ -1113,12 +1114,21 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		// Live card: progress while working, the question while blocked.
 		live := map[string]any{"status": status}
 		if status == "blocked" {
+			// A read that fails (a slow link to the node) keeps the card on
+			// screen: dropping it would take it away and bring it back.
 			if text, e := s.herdr.ReadAsk(ctx, id); e == nil {
-				live["approval"] = parseApproval(text)
+				a := parseApproval(text)
+				lastAsk = &a
 			}
-		} else if status == "working" {
-			if res, e := s.herdr.Read(ctx, id, "detection", "text", 0); e == nil {
-				live["tail"], live["meta"] = activityLine(res.Text)
+			if lastAsk != nil {
+				live["approval"] = lastAsk
+			}
+		} else {
+			lastAsk = nil
+			if status == "working" {
+				if res, e := s.herdr.Read(ctx, id, "detection", "text", 0); e == nil {
+					live["tail"], live["meta"] = activityLine(res.Text)
+				}
 			}
 		}
 		cancel()

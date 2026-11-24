@@ -1579,22 +1579,29 @@
     // Everything waiting on the human, in one place, answerable right here.
     const needs = state.agents.filter((a) => a.status === "blocked");
     if (needs.length) {
-      html += `<div class="needs">` + needs.map((a) => {
+      const items = needs.map((a) => {
         const got = superAsks.get(a.pane_id);
         if (!got || Date.now() - got.at > 4000) loadSuperAsk(a.pane_id);
         if (got?.a) return superAskHTML(got.a, a);
+        // Its dialog is still being read: a stand-in now would be swapped for the card a moment later.
+        if (got?.a === undefined) return "";
         return `<a class="need" href="#/p/${encodeURIComponent(a.pane_id)}">
         <span class="dot blocked"></span>
         <span class="body"><div class="name">${esc(title(a))} 等你确认</div><div class="sub">${esc(isLocalRouter(a) ? "它停在一个对话框上，处理后才能继续" : (KIND_LABEL[a.kind] || a.kind) + " · " + tilde(a.cwd))}</div></span>
         <span class="go">处理 →</span></a>`;
-      }).join("") + `</div>`;
+      }).join("");
+      if (items) html += `<div class="needs">${items}</div>`;
     }
     renderPendingBar();
     if (olderBusy) html = `<div class="earlier-row">加载中…</div>` + html;
     const busyChanged = (busy || "") !== prevBusy, crewChanged = crewHTML !== prevCrew;
     if (html !== superSig || force) {
       superSig = html;
+      // The thread is redrawn whole: a card already on screen must not rise
+      // again, or every new line in the thread would flash it.
+      const had = new Set([...box.querySelectorAll(".ask[data-pane]")].map((x) => x.dataset.pane));
       box.innerHTML = html;
+      for (const x of box.querySelectorAll(".ask[data-pane]")) if (had.has(x.dataset.pane)) x.classList.add("still");
       if (flashEntry.until > Date.now() && flashEntry.id) {
         box.querySelector(`.msg[data-id="${CSS.escape(flashEntry.id)}"]`)?.classList.add("flash");
       }
@@ -1683,10 +1690,13 @@
     const prev = superAsks.get(pane);
     if ((prev?.loading || prev?.sending) && !force) return;
     superAsks.set(pane, { ...prev, at: Date.now(), loading: true, sending: false });
-    let a = null;
-    try { const r = await api(paneURL(pane, "ask")); a = r.asking ? r.approval : null; } catch { a = prev?.a || null; }
+    let a = null, missed = false;
+    try { const r = await api(paneURL(pane, "ask")); a = r.asking ? r.approval : null; } catch { a = prev?.a || null; missed = !!prev?.missed; }
     if (superAsks.get(pane)?.sending && !force) return;
-    superAsks.set(pane, { at: Date.now(), a });
+    // One read that finds no dialog while the agent still waits (its screen
+    // mid-redraw) keeps the card; it goes once a second read agrees.
+    if (!a && !force && prev?.a && !prev.missed) { a = prev.a; missed = true; }
+    superAsks.set(pane, { at: Date.now(), a, missed });
     if ((force || JSON.stringify(a) !== JSON.stringify(prev?.a ?? null)) && view === "collie") renderSuper(force ? { force: true } : undefined);
   }
   setInterval(() => { if (view === "collie" && state.agents.some((x) => x.status === "blocked")) renderSuper(); }, 4000);
@@ -4606,10 +4616,13 @@
       html = askHTML(l.approval, v ? title(v) : "agent");
     }
     // Live updates arrive every second (the agent's clock ticks); redrawing
-    // an unchanged card would replay its entrance and make it jump.
+    // an unchanged card would make it jump. One that changes (the cursor
+    // moved, the next question) is redrawn "still", without a second entrance.
     if (html !== box._html) {
       box._html = html;
+      const had = !!box.querySelector(".ask");
       box.innerHTML = html;
+      if (had) box.querySelector(".ask")?.classList.add("still");
     }
     // The counters tick every second: only their text changes.
     const meta = box.querySelector(".live-working .meta");
