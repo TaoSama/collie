@@ -280,9 +280,13 @@ func (s *Server) state(ctx context.Context) PaneState {
 	}
 	names := map[string]string{}
 	var routerPane string
+	router := routerName
+	if s.sup != nil {
+		router = s.sup.routerAgent()
+	}
 	for _, a := range agents {
 		names[a.PaneID] = deref(a.Name)
-		if names[a.PaneID] == routerName {
+		if names[a.PaneID] == router {
 			routerPane = a.PaneID
 		}
 	}
@@ -719,12 +723,18 @@ func (s *Server) startAgentAs(ctx context.Context, machine, herdrKind, name, cwd
 	} else {
 		err = s.herdrStart(ctx, paneID, name, herdrKind, args)
 	}
+	s.noteStarted(paneID, name, err)
+	return paneID, wsID, err
+}
+
+// noteStarted records an agent that came up in paneID as name (err nil or
+// "agent_not_ready": up, on a dialog).
+func (s *Server) noteStarted(paneID, name string, err error) {
 	var he *HerdrError
 	if err == nil || (errors.As(err, &he) && he.Code == "agent_not_ready") {
 		s.markStarted(paneID)
 		s.herdr.Remember(paneID, name)
 	}
-	return paneID, wsID, err
 }
 
 // herdrStart has herdr start the agent in paneID's shell.

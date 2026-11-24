@@ -321,14 +321,23 @@ func (sp *Super) liveAgents(ctx context.Context) (map[string]liveAgent, bool) {
 		return nil, false
 	}
 	m := map[string]liveAgent{}
+	router := sp.routerAgent()
 	for _, a := range list {
-		if a.Name != nil {
-			la := liveAgent{Pane: a.PaneID, Status: a.AgentStatus, Ready: a.Ready, Kind: deref(a.Agent)}
-			if a.Session != nil {
-				la.Session = sessionID(a.Session.Kind, a.Session.Value)
-			}
-			m[*a.Name] = la
+		if a.Name == nil {
+			continue
 		}
+		name := *a.Name
+		switch name {
+		case router:
+			name = routerName
+		case routerName:
+			continue // another agent took the name the Router could not have
+		}
+		la := liveAgent{Pane: a.PaneID, Status: a.AgentStatus, Ready: a.Ready, Kind: deref(a.Agent)}
+		if a.Session != nil {
+			la.Session = sessionID(a.Session.Kind, a.Session.Value)
+		}
+		m[name] = la
 	}
 	return m, true
 }
@@ -586,7 +595,7 @@ func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 		fmt.Fprintf(&b, "\nReply with `collie reply`, usually ≤%d characters.", words)
 	}
 
-	err := sp.s.herdr.Prompt(ctx, target, b.String())
+	err := sp.s.herdr.Prompt(ctx, sp.herdrTarget(target), b.String())
 	var he *HerdrError
 	if err != nil && errors.As(err, &he) && (he.Code == "agent_blocked" || he.Code == "agent_not_ready") {
 		return
@@ -809,13 +818,23 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 	machine := sp.routerMachineLocked()
 	args := sp.routerArgsLocked()
 	aliasName := sp.st.Settings.RouterAlias
+	prevRun, prevLaunch := sp.routerRunLocked(), sp.routerLaunchLocked()
 	sp.setRouterRun([2]string{sp.st.Settings.RouterModel, sp.st.Settings.RouterEffort})
 	sp.setRouterOn(machine, aliasName)
 	sp.mu.Unlock()
+	// keep: no new Router started; the record goes back to the running one's.
+	keep := func(name string) {
+		sp.mu.Lock()
+		defer sp.mu.Unlock()
+		if prevRun != nil {
+			sp.setRouterRun(*prevRun)
+		}
+		prevLaunch.Name = name
+		sp.saveRouterLaunchLocked(prevLaunch)
+	}
 
 	go func() {
 		defer func() { sp.mu.Lock(); sp.routerLaunching = false; sp.mu.Unlock() }()
-		sp.closeStaleRouterWorkspaces(context.Background())
 		lctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		// Another computer's paths go into ROUTER.md: learn them before writing it.
@@ -827,15 +846,44 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 			sp.routerReadsFresh()
 			err = sp.syncRouter(lctx)
 		}
+		// The tick that sent us here may have listed agents while the Router's
+		// computer was still reconnecting (a hub restart, a node update): a
+		// sync went through, so it answers now. Is the Router there after all?
 		if err == nil {
+			if live, ok := sp.liveAgents(lctx); ok {
+				if a, alive := live[routerName]; alive {
+					log.Printf("router: %s is running after all; keeping it", a.Pane)
+					keep(prevLaunch.Name)
+					return
+				}
+			}
+		}
+		var name string // the herdr name the new Router got, if it started
+		kept := false
+		if err == nil {
+			sp.closeStaleRouterWorkspaces(lctx)
 			alias := sp.launchAlias(lctx, machine, aliasName, kinds[kind], routerName)
 			sp.noteAliasFallback(machine, aliasName, alias)
-			_, _, err = sp.s.startAgentAs(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, alias, args)
+			var pane, ws string
+			pane, ws, err = sp.s.startAgentAs(lctx, machine, kinds[kind], routerName, sp.routerCwd(machine), routerLabel, alias, args)
+			switch {
+			case nameTaken(err) && pane != "":
+				name, kept, err = sp.settleNameTaken(lctx, machine, pane, ws, kinds[kind], args)
+			case pane != "":
+				name = routerName
+			}
 		} else {
 			err = fmt.Errorf("没能把 Collie 的目录同步到 %s：%w", machine, err)
 		}
+		if kept {
+			keep("") // the Router that had the name all along carries on
+			return
+		}
 		sp.mu.Lock()
 		defer sp.mu.Unlock()
+		if name != "" {
+			sp.setRouterNameLocked(name)
+		}
 		var he *HerdrError
 		if err != nil && !(errors.As(err, &he) && he.Code == "agent_not_ready") {
 			msg := "Collie 启动失败：" + err.Error()
@@ -1291,7 +1339,7 @@ func (sp *Super) watchRouter(ctx context.Context, live map[string]liveAgent, sta
 		defer cancel()
 		sp.s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": a.Pane, "keys": []string{"esc"}}, nil)
 		time.Sleep(2 * time.Second)
-		if err := sp.s.herdr.Prompt(ctx, routerName, fmt.Sprintf("%s: nothing on your screen changed for %d min, so Collie interrupted it. Carry on with what you were doing; the events you had are still yours to handle. A command that hangs is a job for a worker: hand it over.", routerRetryMark, mins)); err != nil {
+		if err := sp.s.herdr.Prompt(ctx, sp.routerAgent(), fmt.Sprintf("%s: nothing on your screen changed for %d min, so Collie interrupted it. Carry on with what you were doing; the events you had are still yours to handle. A command that hangs is a job for a worker: hand it over.", routerRetryMark, mins)); err != nil {
 			log.Printf("router nudge: %v", err)
 			return
 		}
@@ -2334,7 +2382,7 @@ func (sp *Super) retryRouter(wait time.Duration, msg string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := sp.s.herdr.Prompt(ctx, routerName, routerRetryMark+" on an error from your model's API ("+msg+"). It may have passed: carry on with what you were doing; the events you had are still yours to handle."); err != nil {
+	if err := sp.s.herdr.Prompt(ctx, sp.routerAgent(), routerRetryMark+" on an error from your model's API ("+msg+"). It may have passed: carry on with what you were doing; the events you had are still yours to handle."); err != nil {
 		log.Printf("router retry: %v", err)
 		return
 	}
@@ -2409,10 +2457,17 @@ func (sp *Super) setRouterRun(run [2]string) {
 type routerLaunch struct {
 	Machine string `json:"machine"`
 	Alias   string `json:"alias,omitempty"`
+	Name    string `json:"name,omitempty"` // its herdr name when not routerName
 }
 
+// setRouterOn keeps the Router's herdr name: the running one is still known
+// by it until a new launch has named its own.
 func (sp *Super) setRouterOn(machine, alias string) {
-	sp.routerLaunched = &routerLaunch{Machine: machine, Alias: alias}
+	sp.saveRouterLaunchLocked(routerLaunch{Machine: machine, Alias: alias, Name: sp.routerLaunchLocked().Name})
+}
+
+func (sp *Super) saveRouterLaunchLocked(l routerLaunch) {
+	sp.routerLaunched = &l
 	if sp.db == nil {
 		return
 	}

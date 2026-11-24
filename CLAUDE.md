@@ -23,6 +23,8 @@
 
 坑按主题记录在 `docs/pitfall/`，动某个模块前先读对应的文件。
 
+- Router 的 herdr 名字不一定是 `collie`，发消息用 `routerAgent()`；看不到 Router 不代表它退出了（`docs/pitfall/router.md`）
+
 ## 目录结构
 
 | 路径 | 内容 |

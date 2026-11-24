@@ -139,7 +139,7 @@ This turn is for the files alone: edit them, then stop. Your next session handle
 	if err := sp.writeRouterFiles(); err != nil {
 		log.Printf("router files: %v", err)
 	}
-	if err := sp.s.herdr.Prompt(ctx, routerName, prompt); err != nil {
+	if err := sp.s.herdr.Prompt(ctx, sp.routerAgent(), prompt); err != nil {
 		log.Printf("handover prompt: %v", err)
 		return
 	}

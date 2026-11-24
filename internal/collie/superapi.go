@@ -133,7 +133,7 @@ func (s *Server) superState(ctx context.Context) superView {
 		v.Router.Machine, v.Router.Alias = l.Machine, l.Alias
 		if run := sp.routerRunLocked(); run != nil {
 			v.Router.Model, v.Router.Effort = run[0], run[1]
-			v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || l != routerLaunch{Machine: st.RouterMachine, Alias: st.RouterAlias}
+			v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || l.Machine != st.RouterMachine || l.Alias != st.RouterAlias
 		}
 		// What its latest reply used, when it says: an alias or the agent's
 		// own default may pick what the settings leave open.
