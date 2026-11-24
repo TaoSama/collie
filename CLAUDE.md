@@ -1,6 +1,6 @@
 # collie
 
-在手机上管理多台电脑上的 Claude Code、Codex、Antigravity 会话：一个 Go 单文件 hub 加上内嵌的网页前端，各台电脑作为 node 主动连到 hub。面向同时开着多台电脑、跑多个 agent 的开发者。对外介绍见 `README.md`。
+面向使用者的介绍、安装和用法写在 `README.md`，本文件只写给 agent 和开发者。
 
 本仓库 fork 自 [lihuanyu0w0/collie](https://github.com/lihuanyu0w0/collie)，remote `upstream` 指向它（只拉不推）。同步：`git fetch upstream && git merge upstream/main`，解决冲突后照常验证。
 
