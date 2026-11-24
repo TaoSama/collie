@@ -39,11 +39,39 @@ var (
 	}
 	execUpdated = func(exe string) {
 		time.Sleep(800 * time.Millisecond)
-		err := syscall.Exec(exe, os.Args, os.Environ())
+		err := syscall.Exec(exe, os.Args, append(os.Environ(), updatedEnv+"=1"))
 		log.Printf("restart after update: %v", err) // only reached if exec failed
 		os.Exit(1)
 	}
 )
+
+// updatedEnv marks a collie an update exec'd into its old process.
+const updatedEnv = "COLLIE_UPDATED"
+
+// reapInherited waits for the children the collie before an update left this
+// process (sampling programs, herdr): nothing here knows them, so each would
+// stay a zombie once it ends. Run first, while no child is this collie's.
+func reapInherited() {
+	if os.Getenv(updatedEnv) == "" {
+		return
+	}
+	os.Unsetenv(updatedEnv)
+	ps, err := listProcs()
+	if err != nil {
+		log.Printf("children before update: %v", err)
+		return
+	}
+	for pid, p := range ps {
+		if p.ppid == os.Getpid() {
+			go func() {
+				// ECHILD: ps itself, already waited for
+				if _, err := syscall.Wait4(pid, nil, 0, nil); err != nil && err != syscall.ECHILD {
+					log.Printf("child %d before update: %v", pid, err)
+				}
+			}()
+		}
+	}
+}
 
 var latestRel struct {
 	sync.Mutex

@@ -26,6 +26,7 @@ var version = "dev"
 // Main runs the collie command with os.Args.
 func Main(v string) {
 	version = v
+	reapInherited()
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "version", "--version", "-v":

@@ -8,12 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestOutdated(t *testing.T) {
@@ -189,5 +193,48 @@ func TestSelfUpdateConcurrencyMutexAndTempCleanup(t *testing.T) {
 	fi, err := os.Stat(exe)
 	if err != nil || fi.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("updated binary mode = %v, want executable", fi.Mode())
+	}
+}
+
+// The collie an update execs into reaps the children the old one left: here
+// a sleep that ends after the exec.
+func TestReapInherited(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestReapHelper$")
+	cmd.Env = append(os.Environ(), "COLLIE_REAP_HELPER=exec")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "reaped") {
+		t.Fatalf("helper: %s", out)
+	}
+}
+
+func TestReapHelper(t *testing.T) {
+	switch os.Getenv("COLLIE_REAP_HELPER") {
+	case "exec": // the old collie: a child, then the update's exec
+		child := exec.Command("sleep", "0.3")
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		os.Setenv("COLLIE_REAP_HELPER", "updated")
+		env := append(os.Environ(), "COLLIE_REAP_CHILD="+strconv.Itoa(child.Process.Pid), updatedEnv+"=1")
+		t.Fatal(syscall.Exec(os.Args[0], os.Args, env))
+	case "updated":
+		if os.Getenv(updatedEnv) == "" {
+			t.Fatal("no update mark")
+		}
+		reapInherited()
+		if os.Getenv(updatedEnv) != "" {
+			t.Fatal("the mark passes on to children")
+		}
+		time.Sleep(time.Second)
+		stat, _ := exec.Command("ps", "-o", "stat=", "-p", os.Getenv("COLLIE_REAP_CHILD")).Output()
+		if s := strings.TrimSpace(string(stat)); s != "" {
+			t.Fatalf("the old child is %q", s)
+		}
+		fmt.Println("reaped")
+	default:
+		t.Skip("run by TestReapInherited")
 	}
 }

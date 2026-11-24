@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,14 +20,22 @@ import (
 // top or vm_stat every sample costs more than the reading. So iostat and
 // vm_stat run alongside, each printing a line per sysEvery, and the latest
 // line is what a sample takes; one that exits starts again, a minute later
-// after the first time; nettop the same, for the network. A reading none of
-// them renewed lately is left out, as when one stalls. Disk is read each
-// sample.
+// after the first time. A reading neither renewed lately is left out, as when
+// one stalls. Both go when collie does, however it ends: their next line
+// finds the pipe closed. Network and disk are read each sample, the network
+// by one nettop snapshot: kept running, nettop has to write through a
+// terminal (script's) to write each snapshot as it comes, burns most of a
+// core doing it, and outlives a collie killed with SIGHUP ignored.
 
-const darwinRestart = time.Minute
+const (
+	darwinRestart = time.Minute
+	nettopTimeout = 5 * time.Second
+)
 
 type darwinProbe struct {
+	ctx      context.Context
 	memTotal uint64
+	net      counterPair // only sample touches it: no mu
 
 	mu        sync.Mutex
 	cpu, load *float64
@@ -34,10 +43,7 @@ type darwinProbe struct {
 	cpuPrimed bool // past iostat's first line, which is since boot
 	memUsed   uint64
 	memAt     time.Time
-	rx, tx    *float64
-	netAt     time.Time
 	vm        vmstatReader
-	net       nettopReader
 }
 
 // A resident program's output: line takes each line, reset its end.
@@ -47,16 +53,13 @@ type residentReader interface {
 }
 
 func newSysProbe(ctx context.Context) sysProbe {
-	p := &darwinProbe{vm: vmstatReader{page: 4096}, net: nettopReader{every: sysEvery}}
-	p.vm.p, p.net.p = p, p
+	go endStaleNettops()
+	p := &darwinProbe{ctx: ctx, vm: vmstatReader{page: 4096}}
+	p.vm.p = p
 	p.memTotal, _ = strconv.ParseUint(sysctl("hw.memsize"), 10, 64)
 	every := strconv.Itoa(int(sysEvery / time.Second))
 	go resident(ctx, "iostat", []string{"-n", "0", "-w", every}, (*iostatReader)(p))
 	go resident(ctx, "vm_stat", []string{every}, &p.vm)
-	// Into a pipe nettop writes in blocks, three snapshots at a time; on a
-	// terminal (script's) it writes each as it comes. Its lines then end in
-	// "\r", after the last comma, where nothing is read.
-	go resident(ctx, "script", []string{"-q", "/dev/null", "nettop", "-P", "-n", "-L", "0", "-s", every, "-m", "route", "-J", "bytes_in,bytes_out"}, &p.net)
 	return p
 }
 
@@ -200,15 +203,13 @@ func vmCount(s string) uint64 {
 }
 
 func (p *darwinProbe) sample(s *sysSample) []sysDisk {
+	s.RX, s.TX = p.network()
 	p.mu.Lock()
 	if fresh(p.cpuAt) {
 		s.CPU, s.Load = p.cpu, p.load
 	}
 	if p.memUsed > 0 && p.memTotal > 0 && fresh(p.memAt) {
 		s.MemUsed, s.MemTotal = min(p.memUsed, p.memTotal), p.memTotal
-	}
-	if fresh(p.netAt) {
-		s.RX, s.TX = p.rx, p.tx
 	}
 	p.mu.Unlock()
 	// The data volume shares its APFS container with the system: the
@@ -223,51 +224,73 @@ func (p *darwinProbe) sample(s *sysSample) []sysDisk {
 	return disks
 }
 
-// nettopReader sums each snapshot of `nettop -m route`: the bytes every
-// route through a physical interface (en*: Wi-Fi, Ethernet, Thunderbolt; not
-// utun VPNs or bridges) carried. Interface counters can't do: a Wi-Fi
-// interface doing channel I/O counts no input at all. A snapshot is whole
-// when the next one's header comes; they are every apart. The terminal
-// echoes script's end of input (^D) before the first header, so a header is
-// found anywhere in its line.
-type nettopReader struct {
-	p      *darwinProbe
-	every  time.Duration
-	rx, tx uint64
-	inSnap bool
-	clock  time.Time // advances every per snapshot
-	sums   counterPair
-}
-
-func (r *nettopReader) line(line string) {
-	if strings.Contains(line, ",bytes_in,") {
-		if r.inSnap {
-			r.clock = r.clock.Add(r.every)
-			rx, tx := r.sums.next(r.clock, r.rx, r.tx, "")
-			r.p.mu.Lock()
-			r.p.rx, r.p.tx, r.p.netAt = rx, tx, time.Now()
-			r.p.mu.Unlock()
+// network: the bytes per second since the last sample that every route
+// through a physical interface (en*: Wi-Fi, Ethernet, Thunderbolt; not utun
+// VPNs or bridges) carried, from `nettop -m route`'s counts. Interface
+// counters can't do: a Wi-Fi interface doing channel I/O counts no input at
+// all.
+func (p *darwinProbe) network() (rx, tx *float64) {
+	ctx, cancel := context.WithTimeout(p.ctx, nettopTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "nettop", "-P", "-n", "-L", "1", "-m", "route", "-J", "bytes_in,bytes_out").Output()
+	if err != nil {
+		if p.ctx.Err() == nil {
+			log.Printf("sysmon: nettop: %v", err)
 		}
-		r.rx, r.tx, r.inSnap = 0, 0, true
-		return
+		p.net.reset()
+		return nil, nil
 	}
-	f := strings.Split(line, ",")
-	if len(f) < 3 || !physicalRoute.MatchString(f[0]) {
-		return
-	}
-	rx, err1 := strconv.ParseUint(f[1], 10, 64)
-	tx, err2 := strconv.ParseUint(f[2], 10, 64)
-	if err1 == nil && err2 == nil {
-		r.rx, r.tx = r.rx+rx, r.tx+tx
-	}
+	in, sent := routeBytes(string(out))
+	return p.net.next(time.Now(), in, sent, "")
 }
 
-func (r *nettopReader) reset() {
-	r.inSnap = false
-	r.sums.reset()
-	r.p.mu.Lock()
-	r.p.rx, r.p.tx = nil, nil
-	r.p.mu.Unlock()
+// routeBytes sums the physical routes' "route,bytes_in,bytes_out," lines.
+func routeBytes(out string) (rx, tx uint64) {
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(line, ",")
+		if len(f) < 3 || !physicalRoute.MatchString(f[0]) {
+			continue
+		}
+		in, err1 := strconv.ParseUint(f[1], 10, 64)
+		sent, err2 := strconv.ParseUint(f[2], 10, 64)
+		if err1 == nil && err2 == nil {
+			rx, tx = rx+in, tx+sent
+		}
+	}
+	return rx, tx
 }
 
 var physicalRoute = regexp.MustCompile(`-> en\d+(?:\s|$)`)
+
+// Collie used to keep nettop running under script. One whose collie was
+// killed with SIGHUP ignored lived on with launchd as its parent, spinning on
+// the closed terminal. Each start ends those left: launchd's nettop children
+// with that command line (nettop cuts it at the -J list's comma). Drop this
+// once no computer runs a collie from before 2026-11-25.
+var staleNettop = regexp.MustCompile(`^nettop -P -n -L 0 -s \d+ -m route -J bytes_in(?:,bytes_out)?$`)
+
+func endStaleNettops() {
+	ps, err := listProcs()
+	if err != nil {
+		log.Printf("sysmon: ps: %v", err)
+		return
+	}
+	for _, pid := range staleNettops(ps) {
+		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			log.Printf("sysmon: ending stale nettop %d: %v", pid, err)
+			continue
+		}
+		log.Printf("sysmon: ended stale nettop %d", pid)
+	}
+}
+
+func staleNettops(ps map[int]*proc) []int {
+	var pids []int
+	for _, p := range ps {
+		if p.ppid == 1 && staleNettop.MatchString(strings.Join(p.args, " ")) {
+			pids = append(pids, p.pid)
+		}
+	}
+	slices.Sort(pids)
+	return pids
+}

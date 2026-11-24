@@ -1,38 +1,51 @@
 package collie
 
 import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"slices"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
-func TestNettopLines(t *testing.T) {
-	p := &darwinProbe{}
-	n := &nettopReader{p: p, every: 10 * time.Second}
-	read := n.line
-	snap := func(in, out string) {
-		read(",bytes_in,bytes_out,")
-		read("default -> en0 -> 100.72.232.1," + in + "," + out + ",")
-		read("100.72.232/21 -> en0,1000,1000,")
-		read("default -> utun4,999999,999999,")
-		read("1/8 -> utun4,5,5,")
+func TestRouteBytes(t *testing.T) {
+	rx, tx := routeBytes(strings.Join([]string{
+		",bytes_in,bytes_out,",
+		"default -> en0 -> 100.72.232.1,5000,7000,",
+		"100.72.232/21 -> en0,1000,1000,",
+		"default -> utun4,999999,999999,",
+		"1/8 -> utun4,5,5,",
+		"3.68.81.44 -> en10,1,2,",
+	}, "\n"))
+	if rx != 6001 || tx != 8002 {
+		t.Fatalf("rx %d tx %d", rx, tx)
 	}
-	read("^D\b\b,bytes_in,bytes_out,\r") // the first, after the terminal's echo
-	read("default -> en0 -> 100.72.232.1,4000,6000,\r")
-	snap("5000", "7000") // ends the first: no rate from one snapshot
-	if p.rx != nil {
-		t.Fatalf("a rate from one snapshot: %v", *p.rx)
+}
+
+func TestStaleNettops(t *testing.T) {
+	ps := map[int]*proc{}
+	for _, l := range []string{
+		"32165 1 nettop -P -n -L 0 -s 10 -m route -J bytes_in",                // left by a killed collie
+		"401 1 nettop -P -n -L 0 -s 10 -m route -J bytes_in,bytes_out",        // the same, uncut
+		"36535 36530 nettop -P -n -L 0 -s 10 -m route -J bytes_in",            // a running collie's
+		"402 1 nettop -P -L 0 -s 10",                                          // someone else's
+		"403 1 nettop -P -n -L 1 -m route -J bytes_in",                        // this collie's snapshot
+		"404 1 /usr/bin/script -q /dev/null nettop -P -n -L 0 -s 10 -m route", // not nettop
+	} {
+		f := strings.Fields(l)
+		pid, _ := strconv.Atoi(f[0])
+		ppid, _ := strconv.Atoi(f[1])
+		ps[pid] = &proc{pid: pid, ppid: ppid, args: f[2:]}
 	}
-	snap("6000", "9000") // ends the second, (6000 − 4000) / 10 s: the first wasn't lost
-	if p.rx == nil || *p.rx != 200 {
-		t.Fatalf("rx %v", p.rx)
-	}
-	snap("7000", "9500")
-	if p.rx == nil || p.tx == nil || *p.rx != 100 || *p.tx != 200 {
-		t.Fatalf("rx %v tx %v", p.rx, p.tx)
-	}
-	n.reset()
-	if p.rx != nil {
-		t.Fatal("kept a rate after nettop ended")
+	if got := staleNettops(ps); !slices.Equal(got, []int{401, 32165}) {
+		t.Fatalf("stale %v", got)
 	}
 }
 
@@ -59,4 +72,82 @@ func TestDarwinReadings(t *testing.T) {
 	if p.cpu != nil {
 		t.Fatalf("cpu from a since-boot line: %v", *p.cpu)
 	}
+}
+
+// A collie killed outright, with SIGHUP ignored as nohup leaves it, leaves
+// none of its sampling programs behind: they go when their pipe does, within
+// one of their intervals.
+func TestSysmonKilledLeavesNothing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out a sampling interval")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSysmonHelper$")
+	cmd.Env = append(os.Environ(), "COLLIE_SYSMON_HELPER=1")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if !bufio.NewScanner(out).Scan() {
+		cmd.Process.Kill()
+		t.Fatal("the helper didn't start sampling")
+	}
+	kids := descendants(t, cmd.Process.Pid)
+	if len(kids) < 2 {
+		t.Fatalf("sampling programs %v, want iostat and vm_stat", kids)
+	}
+	cmd.Process.Kill()
+	cmd.Wait()
+	deadline := time.Now().Add(sysEvery + 5*time.Second)
+	for {
+		var left []string
+		for pid, args := range kids {
+			if alive(pid) {
+				left = append(left, strconv.Itoa(pid)+" "+args)
+			}
+		}
+		if len(left) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			for pid := range kids {
+				syscall.Kill(pid, syscall.SIGKILL)
+			}
+			t.Fatalf("left behind: %v", left)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// TestSysmonHelper is the collie that TestSysmonKilledLeavesNothing kills.
+func TestSysmonHelper(t *testing.T) {
+	if os.Getenv("COLLIE_SYSMON_HELPER") == "" {
+		t.Skip("run by TestSysmonKilledLeavesNothing")
+	}
+	signal.Ignore(syscall.SIGHUP)
+	p := newSysProbe(context.Background())
+	p.sample(&sysSample{})
+	time.Sleep(time.Second) // the residents are started
+	fmt.Println("sampling")
+	select {}
+}
+
+// descendants: pid's children, theirs and so on, with their command lines.
+func descendants(t *testing.T, pid int) map[int]string {
+	ps, err := listProcs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[int]string{}
+	for todo := []int{pid}; len(todo) > 0; todo = todo[1:] {
+		for _, p := range ps {
+			if p.ppid == todo[0] {
+				found[p.pid] = strings.Join(p.args, " ")
+				todo = append(todo, p.pid)
+			}
+		}
+	}
+	return found
 }
