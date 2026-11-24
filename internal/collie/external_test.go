@@ -1,7 +1,10 @@
 package collie
 
 import (
+	"context"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,9 +41,27 @@ func TestExternalLive(t *testing.T) {
 	}
 	home, _ := os.UserHomeDir()
 	s := &Server{home: home}
+	s.localAliases(context.Background(), true)
 	for _, e := range s.externalSessions() {
-		t.Logf("%s app=%q cwd=%s session=%s title=%q path=%s", e.ID, e.App, e.Cwd, e.Session, e.Title, e.path)
+		t.Logf("%s app=%q cwd=%s start=%s session=%s alias=%q %v title=%q path=%s", e.ID, e.App, e.Cwd, e.startDir, e.Session, e.Alias, e.AliasChoices, e.Title, e.path)
 	}
+}
+
+// COLLIE_TAKEOVER=<id> go test -run TestTakeOverLive -v takes that session
+// over into this machine's herdr: it stops the process.
+func TestTakeOverLive(t *testing.T) {
+	id := os.Getenv("COLLIE_TAKEOVER")
+	if id == "" {
+		t.Skip("set COLLIE_TAKEOVER to an external session's id")
+	}
+	home, _ := os.UserHomeDir()
+	host, _ := os.Hostname()
+	s := &Server{home: home, herdr: newHerdr(filepath.Join(home, ".config/herdr/herdr.sock"), host, home)}
+	r := httptest.NewRequest("POST", "/api/external/"+id+"/takeover", strings.NewReader("{}"))
+	r.SetPathValue("id", id)
+	w := httptest.NewRecorder()
+	s.takeOverExternal(w, r)
+	t.Logf("%d %s", w.Code, w.Body)
 }
 
 func TestLaunchShell(t *testing.T) {

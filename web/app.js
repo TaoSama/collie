@@ -2961,7 +2961,7 @@
     $("#x-takeover").hidden = !e.can_take_over;
     $("#x-note").textContent = gone ? "这个进程已经退出了。"
       : !e.session ? `它跑在 ${app} 里，还没有会话记录，所以没法接管。`
-      : `它跑在 ${app} 里，Collie 只能看，不能往里面打字。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里接着同一个会话继续，之后就能在这里和它对话。`;
+      : `它跑在 ${app} 里，Collie 只能看，不能往里面打字。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里${e.alias ? `用 alias ${e.alias} ` : ""}接着同一个会话继续，之后就能在这里和它对话。`;
     $("#x-takeover").disabled = !!gone || !e.session;
     if (e.status && !gone) {
       $("#x-status").textContent = `${{ working: "正在跑", waiting: "在等后台任务", idle: "空闲，等你发话", blocked: "等电脑那边确认" }[e.status] || "正在运行"} · ${app}`;
@@ -3226,12 +3226,22 @@
     const e = ext.find((x) => x.id === extCur);
     if (!e) return;
     const app = e.app || "另一个终端";
-    if (e.live && !(await ask({ title: `接管「${extName(e)}」？`, ok: "接管", text: `会先结束 ${app} 里的这个 ${KIND_LABEL[e.kind] || e.kind} 进程（相当于按 Ctrl-C），然后在 herdr 里用同一个会话继续。${app} 那边会回到命令行。` }))) return;
+    const kind = KIND_LABEL[e.kind] || e.kind, via = e.alias ? `用 alias ${e.alias} ` : "";
+    const body = {};
+    if (e.live) {
+      // Started through one of several aliases that fit it equally: which one.
+      const pick = e.alias_choices?.length > 1;
+      const text = `会先结束 ${app} 里的这个 ${kind} 进程（相当于按 Ctrl-C），然后在 herdr 里${pick ? "" : via}用同一个会话继续。${app} 那边会回到命令行。`
+        + (pick ? `\n\n它可能是用 ${e.alias_choices.join("、")} 中的一个 alias 启动的，填要用的那个（留空就直接用 ${e.kind}）：` : "");
+      const ok = await ask({ title: `接管「${extName(e)}」？`, ok: "接管", text, value: pick ? e.alias : undefined });
+      if (ok === null) return;
+      if (pick) body.alias = ok.trim();
+    }
     const b = $("#x-takeover");
     b.disabled = true; b.textContent = "接管中…";
     try {
-      const r = await api(`/api/external/${encodeURIComponent(e.id)}/takeover`, { body: {} });
-      toast("已在 herdr 里接管");
+      const r = await api(`/api/external/${encodeURIComponent(e.id)}/takeover`, { body });
+      toast(r.alias ? `已在 herdr 里用 ${r.alias} 接管` : "已在 herdr 里接管");
       ext = ext.filter((x) => x.id !== e.id);
       renderExt();
       replaceHash("#/p/" + encodeURIComponent(r.pane_id));

@@ -43,7 +43,8 @@ type LauncherAlias struct {
 	// opens (bash at login, aliases only in ~/.zshrc).
 	Via string `json:"via,omitempty"`
 
-	raw []string // Args before redaction: only for use on this computer
+	raw    []string          // Args before redaction: only for use on this computer
+	rawEnv map[string]string // what it sets, as written: likewise
 }
 
 // aliasReport is what one computer has: its shell, the rc file and the aliases.

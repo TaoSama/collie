@@ -52,7 +52,7 @@ func TestParseLauncher(t *testing.T) {
 			continue
 		}
 		c.want.Name = c.name
-		got.Args, got.Env, got.Command, got.raw = nil, nil, "", nil
+		got.Args, got.Env, got.Command, got.raw, got.rawEnv = nil, nil, "", nil, nil
 		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
 		}

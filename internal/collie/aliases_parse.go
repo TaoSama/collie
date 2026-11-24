@@ -86,7 +86,7 @@ func parseLauncher(name, value string) (LauncherAlias, bool) {
 		if !modelNameRe.MatchString(a.Effort) {
 			a.Effort = ""
 		}
-		a.raw = args
+		a.raw, a.rawEnv = args, env
 		a.Args = redactArgs(args)
 		a.Command = redactCommand(words)
 		return a, true

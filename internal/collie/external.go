@@ -49,13 +49,18 @@ type External struct {
 	Live bool `json:"live"`
 	// CanTakeOver: it can be continued in a herdr pane from here.
 	CanTakeOver bool `json:"can_take_over,omitempty"`
+	// Alias: the launcher alias it was started through, to take it over
+	// through; AliasChoices: the aliases that fit as well, when they differ.
+	Alias        string   `json:"alias,omitempty"`
+	AliasChoices []string `json:"alias_choices,omitempty"`
 
 	path, format string
 	// startDir: where it was started, to resume it there (empty: Cwd).
 	startDir string
 	reg      *claudeReg
-	desktop  bool   // listed from a desktop app's index (desktop.go)
-	via      string // "app": a message goes through the Codex App's message bus
+	launch   *procLaunch // how its process was started; nil if unknown
+	desktop  bool        // listed from a desktop app's index (desktop.go)
+	via      string      // "app": a message goes through the Codex App's message bus
 }
 
 type proc struct {
@@ -94,11 +99,16 @@ func listProcs() (map[int]*proc, error) {
 // progName is the program a command line runs; for "node …/codex.js" it is
 // the script.
 func progName(args []string) string {
-	n := strings.TrimPrefix(filepath.Base(args[0]), "-")
-	if (n == "node" || n == "bun") && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-		n = filepath.Base(args[1])
-	}
+	n := strings.TrimPrefix(filepath.Base(args[progIndex(args)]), "-")
 	return strings.TrimSuffix(strings.TrimSuffix(n, ".js"), ".mjs")
+}
+
+// progIndex: where the program is in a command line, past node or bun.
+func progIndex(args []string) int {
+	if n := filepath.Base(args[0]); (n == "node" || n == "bun") && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+		return 1
+	}
+	return 0
 }
 
 // parseEtime reads ps's [[dd-]hh:]mm:ss.
@@ -254,6 +264,9 @@ func (s *Server) externalSessions() []*External {
 		if q := launchShell(ps, p); q != nil && kind == "claude" {
 			e.startDir = cwds[q.pid]
 		}
+		if kind != "agy" {
+			e.launch = memoFor(p.pid, e.Started).launch
+		}
 		s.locateExternal(e, p)
 		e.reg = regOf[p.pid]
 		s.reachable(e)
@@ -276,12 +289,21 @@ func (s *Server) externalSessions() []*External {
 			}
 		}
 	}
+	aliases, aliasesAt := s.localAliasesAt()
 	for _, e := range list {
 		e.CanTakeOver = e.Session != ""
 		if e.Session != "" {
 			listed[e.Session] = true
 		}
+		if m := launchMemos[e.PID]; m != nil && e.Session != "" {
+			if !m.aliasesAt.Equal(aliasesAt) {
+				m.alias, m.choices = guessAlias(e, aliases, s.home)
+				m.aliasesAt = aliasesAt
+			}
+			e.Alias, e.AliasChoices = m.alias, m.choices
+		}
 	}
+	forgetLaunches(ps)
 	list = append(list, s.desktopSessions(regs, listed, now)...)
 	// Collie's own workers (a herdr pane while they run, its history after)
 	// are listed as Collie's, not as the computer's other sessions.
@@ -336,7 +358,7 @@ func (s *Server) locateExternal(e *External, p *proc) {
 	since := e.Started.Add(-5 * time.Second)
 	switch e.Kind {
 	case "claude":
-		root := envOr("CLAUDE_CONFIG_DIR", filepath.Join(s.home, ".claude"))
+		root := cmp.Or(e.launchEnv("CLAUDE_CONFIG_DIR"), claudeRoot(s.home))
 		// Claude Code registers each interactive process with its session id.
 		var reg struct {
 			SessionID string `json:"sessionId"`
@@ -356,7 +378,7 @@ func (s *Server) locateExternal(e *External, p *proc) {
 			}
 		}
 	case "codex":
-		root := envOr("CODEX_HOME", filepath.Join(s.home, ".codex"))
+		root := cmp.Or(e.launchEnv("CODEX_HOME"), codexRoot(s.home))
 		files, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*.jsonl"))
 		var best string
 		var bestAt time.Time
@@ -406,6 +428,15 @@ func (s *Server) locateExternal(e *External, p *proc) {
 			e.Session, e.path, e.format, bestAt = id, f, "agy", fi.ModTime()
 		}
 	}
+}
+
+// launchEnv: a variable as the agent was started with it; an alias may point
+// it at another config directory.
+func (e *External) launchEnv(name string) string {
+	if e.launch == nil {
+		return ""
+	}
+	return e.launch.env[name]
 }
 
 func newestSince(glob string, since time.Time) string {
@@ -663,6 +694,29 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"error": "这个会话要在 " + e.App + " 里继续"})
 		return
 	}
+	var body struct {
+		Alias *string `json:"alias"` // nil: the one it was started through
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	herdrKind := kinds[e.Kind]
+	if body.Alias == nil {
+		// Read the aliases again if the list is old: the guess was made with it.
+		guess, _ := guessAlias(e, s.localAliases(ctx, true), s.home)
+		body.Alias = &guess
+	}
+	var alias *LauncherAlias
+	if *body.Alias != "" {
+		a, err := s.aliasOn(ctx, "", *body.Alias, herdrKind)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error()})
+			return
+		}
+		alias = a
+	}
 	args := resumeArgs(e.Kind, e.Session)
 	// Two processes writing one conversation would garble it: stop the
 	// original first, the way Ctrl-C would, and give it a moment to save.
@@ -686,15 +740,13 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 	if e.PID == 0 {
 		name = e.Kind + "-" + strings.SplitN(e.Session, "-", 2)[0]
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-	defer cancel()
-	pane, ws, err := s.startAgent(ctx, "", kinds[e.Kind], name, cmp.Or(e.startDir, e.Cwd), name, args)
+	pane, ws, err := s.startAgentAs(ctx, "", herdrKind, name, cmp.Or(e.startDir, e.Cwd), name, alias, args)
 	var he *HerdrError
 	if err != nil && !(errors.As(err, &he) && he.Code == "agent_not_ready") {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"pane_id": pane, "workspace_id": ws, "name": name})
+	writeJSON(w, 200, map[string]any{"pane_id": pane, "workspace_id": ws, "name": name, "alias": *body.Alias})
 }
 
 // sortSessions puts running sessions first, then the most recently active.

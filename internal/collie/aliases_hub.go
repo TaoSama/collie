@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,9 +30,10 @@ type aliasSnap struct {
 }
 
 type aliasBook struct {
-	run sync.Mutex // one refresh at a time
-	mu  sync.Mutex // by; never held across I/O
-	by  map[string]*aliasSnap
+	run     sync.Mutex // one refresh at a time
+	mu      sync.Mutex // by; never held across I/O
+	by      map[string]*aliasSnap
+	reading atomic.Bool // one background read of this computer's at a time (localAliases)
 }
 
 func (b *aliasBook) get(machine string) (aliasSnap, bool) {
