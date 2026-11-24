@@ -37,4 +37,4 @@ git tag -a "$version" -m "Collie $version" 2>/dev/null || true
 git push origin "$version"
 gh release create "$version" dist/collie-* dist/checksums.txt --repo TaoSama/collie \
   --title "Collie $version" \
-  --notes "安装：\`curl -fsSL https://taosama.github.io/collie/install.sh | sh\`（做 hub 加 \`-s -- hub\`，加入电脑见 README）。也可以直接下载下面对应平台的二进制。"
+  --notes "安装：\`curl -fsSL https://collie.taoai.site/install.sh | sh\`（做 hub 加 \`-s -- hub\`，加入电脑见 README）。也可以直接下载下面对应平台的二进制。"

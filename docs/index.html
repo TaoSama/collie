@@ -7,7 +7,7 @@
 <meta name="description" content="在手机上养边牧，放牧一群 Agent。电脑上开着的 Claude Code、Codex、Antigravity 会话，手机上直接接着聊。活多了就交给 Collie 这个 super agent：它派给各台电脑并行去做，盯进度、处理卡点，需要你拍板时点一下就回。">
 <meta property="og:title" content="Collie · 在手机上养边牧，放牧一群 Agent">
 <meta property="og:description" content="和 Collie 说一句，它把活拆给 Claude、Codex、Antigravity 在你的电脑上并行去做；确认框变成手机上一点就回的卡片。">
-<meta property="og:image" content="https://taosama.github.io/collie/img/hero-light.png">
+<meta property="og:image" content="https://collie.taoai.site/img/hero-light.png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <script>window.onerror = () => document.documentElement.classList.remove("js"); // a broken script must not hide the page</script>
 <style>
@@ -326,16 +326,16 @@ footer a { color: var(--fg-2); }
           <button role="tab" aria-selected="false" data-tab="src">从源码</button>
         </div>
         <div class="panel" data-panel="hub">
-          <p>在一台常开的开发机上运行。之后用手机扫终端里的二维码就能登录。</p>
-          <div class="cmd"><pre>curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- hub</pre><button class="copy">复制</button></div>
+          <p>在一台常开的开发机上运行。安装后用 <code>collie pair</code> 生成手机配对二维码。</p>
+          <div class="cmd"><pre>curl -fsSL https://collie.taoai.site/install.sh | sh -s -- hub</pre><button class="copy">复制</button></div>
         </div>
         <div class="panel" data-panel="node" hidden>
           <p>在其他电脑上运行。hub 地址和配对码在 hub 的「设备 → 连接」里拿；电脑主动连 hub，不用开端口。</p>
-          <div class="cmd"><pre>curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub http://&lt;hub&gt;:7788 --code &lt;配对码&gt;</pre><button class="copy">复制</button></div>
+          <div class="cmd"><pre>curl -fsSL https://collie.taoai.site/install.sh | sh -s -- node --hub http://&lt;hub&gt;:7788 --code &lt;配对码&gt;</pre><button class="copy">复制</button></div>
         </div>
         <div class="panel" data-panel="bin" hidden>
           <p>只把 <code>collie</code> 装到 <code>~/.local/bin</code>，不装服务。</p>
-          <div class="cmd"><pre>curl -fsSL https://taosama.github.io/collie/install.sh | sh</pre><button class="copy">复制</button></div>
+          <div class="cmd"><pre>curl -fsSL https://collie.taoai.site/install.sh | sh</pre><button class="copy">复制</button></div>
         </div>
         <div class="panel" data-panel="src" hidden>
           <p>需要 Go 1.25+。在仓库里运行同一个脚本，会用本地源码编译；后面可以接 <code>hub</code> 或 <code>node --hub … --code …</code>。</p>

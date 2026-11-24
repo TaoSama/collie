@@ -3346,7 +3346,7 @@
   const left = (p) => { const s = Math.max(0, Math.round((p.expires - Date.now()) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
   // A newer release: the footer says so, the devices page says where and how.
-  const INSTALL = "curl -fsSL https://taosama.github.io/collie/install.sh | sh -s --";
+  const INSTALL = "curl -fsSL https://collie.taoai.site/install.sh | sh -s --";
   // cmpVer orders dotted version numbers: <0, 0 or >0.
   const cmpVer = (x, y) => {
     const a = String(x).split(".").map(Number), b = String(y).split(".").map(Number);
@@ -3567,7 +3567,7 @@
       const phoneURL = pb ? `${devAddr}/?pair=${pb.code}` : "";
       const pm = fresh("machine") ? pairing.machine : null;
       const nodeCmd = pm ? `collie node --hub ${devAddr} --code ${pm.code}` : "";
-      const installCmd = pm ? `curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub ${devAddr} --code ${pm.code}` : "";
+      const installCmd = pm ? `${INSTALL} node --hub ${devAddr} --code ${pm.code}` : "";
       const addrSel = addrs.length > 1 ? `<label class="addr-pick">用这个地址<select id="dev-addr" data-pick="compact">${addrs.map((a) => `<option ${a === devAddr ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";
       return `
       <p class="panel-intro">Collie 适合放在一台常开的开发机上当 hub：手机、平板和浏览器只连 hub；你的 Mac 等电脑运行 <code>collie node</code> 主动连上来，hub 就能在上面开 agent、看对话、处理确认。不用开端口，也不需要 SSH。</p>
@@ -3583,7 +3583,7 @@
 
         <div class="card pair-card">
           <div class="card-h">连接一台电脑</div>
-          <p class="pair-hint">在那台电脑上装好 herdr、git 和 Go 1.25+，然后运行（从源码编译 Collie，并作为后台服务常驻）：</p>
+          <p class="pair-hint">在要加入的电脑上运行以下命令。脚本会安装 Collie 发布版并启动后台服务。</p>
           ${pm ? `<div class="code big"><span>${esc(installCmd)}</span><button class="icon-btn" data-copy="${esc(installCmd)}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
                <p class="pair-hint">已经装了 collie 的话：</p>
                <div class="code"><span>${esc(nodeCmd)}</span><button class="icon-btn" data-copy="${esc(nodeCmd)}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>

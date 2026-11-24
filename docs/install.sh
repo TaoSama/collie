@@ -1,14 +1,14 @@
 #!/bin/sh
-# Collie installer — https://taosama.github.io/collie
+# Collie installer — https://collie.taoai.site
 #
 #   安装 collie 命令：
-#     curl -fsSL https://taosama.github.io/collie/install.sh | sh
+#     curl -fsSL https://collie.taoai.site/install.sh | sh
 #
 #   把这台电脑加入 hub，并作为后台服务常驻（macOS: launchd，Linux: systemd --user）：
-#     curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub http://<hub>:7788 --code <配对码>
+#     curl -fsSL https://collie.taoai.site/install.sh | sh -s -- node --hub http://<hub>:7788 --code <配对码>
 #
 #   让这台电脑做 hub，并作为后台服务常驻：
-#     curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- hub [--url http://<本机内网 IP>:7788]
+#     curl -fsSL https://collie.taoai.site/install.sh | sh -s -- hub [--url http://<本机内网 IP>:7788]
 #
 #   从源码安装（需要 Go 1.25+）：在仓库里运行这个脚本，会用本地源码编译，不下载：
 #     git clone https://github.com/TaoSama/collie.git ~/collie && cd ~/collie
