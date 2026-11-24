@@ -170,8 +170,10 @@
     // to live inside it to show.
     const host = sel.closest("dialog[open]") || document.body;
     if (pickPop.parentNode !== host) host.append(pickBack, pickPop);
+    // Options without an icon keep its place when others have one, so the names line up.
+    const iconGap = [...sel.options].some((o) => o.dataset.glyph || o.dataset.dot) ? `<span class="pi"></span>` : "";
     const row = (o) => `<button type="button" class="po${o.selected ? " on" : ""}" role="option" aria-selected="${o.selected}" data-v="${esc(o.value)}" ${o.disabled ? "disabled" : ""}>
-      ${optIcon(o)}<span class="pl"><span>${esc(o.textContent)}</span>${o.dataset.sub ? `<small>${esc(o.dataset.sub)}</small>` : ""}</span>
+      ${optIcon(o) || iconGap}<span class="pl"><span>${esc(o.textContent)}</span>${o.dataset.sub ? `<small>${esc(o.dataset.sub)}</small>` : ""}</span>
       <svg class="ck" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`;
     let html = sel.dataset.title ? `<div class="ph">${esc(sel.dataset.title)}</div>` : "";
     for (const c of sel.children) {
@@ -1724,7 +1726,7 @@
   // didn't report (still shown as such); another agent's alias no longer applies.
   const keptAlias = (all, list, want) => (want && (list.some((a) => a.name === want) || !all.some((a) => a.name === want)) ? want : "");
   // Options for an alias picker; want stays listed when that computer doesn't have it.
-  const aliasOpts = (list, want) => `<option value="" data-short="无 alias" data-sub="直接启动 agent 自己的命令">无</option>`
+  const aliasOpts = (list, want) => `<option value="">-</option>`
     + (want && !list.some((a) => a.name === want) ? `<option value="${esc(want)}" data-sub="这台电脑上没读到" selected>${esc(want)}</option>` : "")
     + list.map((a) => `<option value="${esc(a.name)}" data-glyph="${esc(a.kind)}" data-sub="${esc(aliasSub(a) || KIND_LABEL[a.kind] || a.kind)}" ${a.name === want ? "selected" : ""}>${esc(a.name)}</option>`).join("");
   // "派到": where this message's work runs. Shows the defaults from
@@ -2362,7 +2364,7 @@
     const s = r.settings;
     const kindOpts = (v) => [["claude", "Claude", "claude"], ["codex", "Codex", "codex"], ["antigravity", "Antigravity", "agy"]].map(([k, l, g]) => `<option value="${k}" data-glyph="${g}" ${v === k ? "selected" : ""}>${l}</option>`).join("");
     const modelPick = (who, model, effort, alias) => `
-          <label>Alias<select name="${who}_alias" data-title="用哪个 alias 启动" data-value="${esc(alias || "")}"><option value="${esc(alias || "")}" selected>${esc(alias || "无")}</option></select></label>
+          <label>Alias<select name="${who}_alias" data-title="用哪个 alias 启动" data-value="${esc(alias || "")}"><option value="${esc(alias || "")}" selected>${esc(alias || "-")}</option></select></label>
           <label>模型<select name="${who}_model" data-title="模型" data-value="${esc(model || "")}"><option value="${esc(model || "")}" selected>${esc(model || "默认")}</option></select></label>
           <label>思考强度<select name="${who}_effort" data-pick="compact" data-title="思考强度" data-value="${esc(effort || "")}"><option value="${esc(effort || "")}" selected>${esc(EFFORT_LABEL[effort] || effort || "默认")}</option></select></label>`;
     const many = (state.machines || []).length > 1;
