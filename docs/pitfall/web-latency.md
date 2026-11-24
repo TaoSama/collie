@@ -10,6 +10,17 @@
 
 node 收到输入后用 `paneWake` 叫醒这个 pane 的流，马上再读一次。之后 150ms 内每 10ms 读一次，3 秒内加快轮询：屏幕 50ms，对话 100ms。这样回显和消息不用等下一个轮询周期。每个流单独订阅：一个流关掉，不会让同一个 pane 上的其他流收不到叫醒。
 
+## 启动不等网络
+
+2026-11 实测（Pixel 7 仿真、Fast 4G 带宽、CPU 4 倍降速，到香港 hub 真实往返约 330ms），已安装的 app 冷启动要 4.4 秒才出侧栏：HTML 首字节约 1 秒（DNS、TCP、TLS），8 个静态文件逐个 304 重验证约 0.65 秒，`/api/session`、`super`、`state`、`hubs` 串行约 2.7 秒。nginx 只压缩 `text/html`，130KB 的 `/api/super` 在冷 TCP 窗口下要 1.6 秒。hub 本机处理这些请求都不到 10ms，时间全花在路上。现在的做法：
+
+- **service worker**（`web/sw.js`）。缓存启动要的文件，页面和这些文件不再走网络。文件清单是 `server.go` 的 `shellFiles`，hub 发 `sw.js` 时写入清单和版本号（`webBuild`，涵盖清单里所有文件和 `sw.js`）。发新版后浏览器发现 `sw.js` 变了，装上新的缓存并删掉旧的。页面还是旧代码时弹出「有新版本」，下次启动就是新版。`/api/` 和 `/direct/` 永远不经过它。往 `index.html` 加启动必需的文件时同步改 `shellFiles`，`compress_test.go` 会检查两边一致。
+- **启动快照**（`app.js` 的 `saveSnap` / `loadSnap`）。页面切到后台、关闭时，以及启动 5 秒后，把侧栏、Collie 对话最近 80 条、外部会话和历史存到 localStorage 的 `collie.snap`。启动时先画快照，再并行请求 `session`、`super`、`state`、`hubs`，回来后补齐。其他 hub 的令牌不存，它们的会话等 `/api/hubs` 回来后才能点开。
+- **退出和失效**。点退出先清快照和 `collie-*` 缓存再刷新。任何 401（`showLogin`）都会清快照。设备被移除后，下次启动会先画出上次的快照，hub 拒绝后才回到登录页，这段时间约一次往返。
+- **压缩**（`compress.go`）。hub 自己 gzip 文本响应（JSON、JS、CSS、HTML、SVG），不依赖 nginx 配置。事件流（SSE）不压缩，保证每条事件立刻送到。压缩后 ETag 变成弱标签 `W/"…"`，`static` 比较时去掉 `W/`，304 照常生效。
+
+效果（同样仿真，本机 hub 加 330ms 延迟，中位数）：手机冷启动 2512ms → 162ms，热启动 2456ms → 140ms；桌面 2442ms → 64ms。剩下的时间主要是解析和执行 `app.js`、排版整页。测量脚本做法：Playwright 持久化配置模拟冷/热启动，MutationObserver 记下 `#app` 显示且 `#side-groups` 有内容的时刻。
+
 ## 终端直连本机 node
 
 浏览器和 node 在同一台电脑上时，终端（屏幕流、文字和按键）不经过 hub，直接走 node 本机界面端口下的 `/direct/`（`http://127.0.0.1:17788/direct/…`），回显从两次公网往返降到本机。

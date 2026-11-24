@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -106,7 +107,7 @@ func (s *Server) Routes() http.Handler {
 	s.machineRoutes(mux, func(h http.HandlerFunc) http.Handler { return s.auth(s.routed(h)) })
 	s.superRoutes(mux)
 	s.hubRoutes(mux)
-	return securityHeaders(cors(mux))
+	return securityHeaders(compress(cors(mux)))
 }
 
 // machineRoutes are the endpoints about one machine's panes. The hub serves
@@ -198,12 +199,22 @@ var webBuildOnce struct {
 	v string
 }
 
-// webBuild fingerprints the web app's files.
+// shellFiles are what a launch needs before it can draw anything. The
+// service worker keeps them, so an installed app starts without the network.
+var shellFiles = []string{
+	"/", "/app.js", "/app.css", "/skins.css", "/icon.svg", "/manifest.webmanifest",
+	"/vendor/xterm.css", "/vendor/xterm.js", "/vendor/katex/katex.min.css", "/vendor/katex/katex.min.js",
+}
+
+// webBuild fingerprints the web app's files, the service worker's included.
 func (s *Server) webBuild() string {
 	webBuildOnce.Do(func() {
 		h := sha256.New()
-		for _, p := range []string{"index.html", "app.js", "app.css", "skins.css"} {
-			b, _ := fs.ReadFile(s.web, p)
+		for _, p := range append([]string{"/sw.js"}, shellFiles...) {
+			if p == "/" {
+				p = "/index.html"
+			}
+			b, _ := fs.ReadFile(s.web, p[1:])
 			h.Write(b)
 		}
 		webBuildOnce.v = hex.EncodeToString(h.Sum(nil)[:6])
@@ -873,16 +884,42 @@ func (s *Server) static() http.Handler {
 		if p == "" {
 			p = "index.html"
 		}
+		if p == "sw.js" {
+			s.serviceWorker(w, r)
+			return
+		}
 		if tag := etag(p); tag != "" {
 			w.Header().Set("ETag", tag)
 			w.Header().Set("Cache-Control", "no-cache")
-			if r.Header.Get("If-None-Match") == tag {
+			// Compressed responses carry the tag as weak (W/"…").
+			if strings.TrimPrefix(r.Header.Get("If-None-Match"), "W/") == tag {
 				w.WriteHeader(http.StatusNotModified)
 				return
 			}
 		}
 		files.ServeHTTP(w, r)
 	})
+}
+
+// serviceWorker serves web/sw.js stamped with this build and its file list.
+// A new build changes the script's bytes, which is how the browser learns to
+// fetch the new app shell.
+func (s *Server) serviceWorker(w http.ResponseWriter, r *http.Request) {
+	b, err := fs.ReadFile(s.web, "sw.js")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	list, err := json.Marshal(shellFiles)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	b = bytes.Replace(b, []byte(`"__BUILD__"`), []byte(`"`+s.webBuild()+`"`), 1)
+	b = bytes.Replace(b, []byte(`["__SHELL__"]`), list, 1)
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(b)
 }
 
 // crossSite reports a request made by a page from another origin: another

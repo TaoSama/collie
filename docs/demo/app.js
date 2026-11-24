@@ -7,6 +7,7 @@
   const store = {
     get(k, d) { try { const v = localStorage.getItem("collie." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem("collie." + k, JSON.stringify(v)); } catch {} },
+    del(k) { try { localStorage.removeItem("collie." + k); } catch {} },
   };
   const narrow = () => matchMedia("(max-width: 760px)").matches;
   const AGENT_LABEL = { claude: "Claude Code", codex: "Codex", agy: "Antigravity" };
@@ -73,7 +74,10 @@
   function noteBuild(v) {
     if (!v) return;
     if (webBuild === null) { webBuild = v; return; }
-    if (v === webBuild || document.getElementById("update-bar")) return;
+    if (v !== webBuild) offerReload();
+  }
+  function offerReload() {
+    if (document.getElementById("update-bar")) return;
     const bar = document.createElement("button");
     bar.id = "update-bar"; bar.type = "button";
     bar.textContent = "Collie 有新版本，点这里刷新";
@@ -272,6 +276,7 @@
 
   // ───────────────────────────── auth
   function showLogin() {
+    dropSnap();
     $("#app").hidden = true;
     $("#login").hidden = false;
     setTimeout(() => $("#login-token").focus(), 50);
@@ -302,7 +307,12 @@
       boot();
     } catch (err) { $("#login-error").textContent = /^[A-Z2-7]{8}$/i.test(v) ? err.message : "令牌不对"; }
   });
-  $("#logout").addEventListener("click", async () => { await fetch("/api/logout", { method: "POST" }); location.reload(); });
+  $("#logout").addEventListener("click", async () => {
+    await fetch("/api/logout", { method: "POST" });
+    $("#app").hidden = true; // nothing left for pagehide to save
+    await dropSnap(true);
+    location.reload();
+  });
 
   // ───────────────────────────── live state
   let state = { ok: false, agents: [], shells: [] };
@@ -6912,6 +6922,59 @@
     const rest = q.toString();
     history.replaceState(history.state, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
   }
+  // ───────────────────────────── launch snapshot
+  // What this device showed last (sidebar, the Collie conversation), so a
+  // launch draws it at once while the hub, a few hundred milliseconds away,
+  // fills in what changed. Only a signed-in page writes it; signing out or
+  // being turned away drops it, along with the service worker's copy of the
+  // app (sw.js) on sign-out. Other hubs' tokens are not kept.
+  // Bump SNAP_VERSION when what saveSnap stores changes shape.
+  const SNAP_KEY = "snap", SNAP_VERSION = 1, SNAP_ENTRIES = 80;
+  function saveSnap() {
+    if (!booted || $("#app").hidden) return;
+    const entries = sup.entries.slice(-SNAP_ENTRIES);
+    store.set(SNAP_KEY, { v: SNAP_VERSION,
+      sup: { ...sup, entries, earlier: sup.earlier || entries.length < sup.entries.length },
+      local: localState, remote: [...remote].map(([k, r]) => [k, r.state]), ext, hist, marks });
+  }
+  function loadSnap() {
+    const v = store.get(SNAP_KEY, null);
+    if (v?.v !== SNAP_VERSION) return false;
+    sup = normSup(v.sup);
+    for (const [k, st] of v.remote || []) remote.set(k, { state: st });
+    setLocalState(v.local);
+    ext = v.ext || []; hist = v.hist || []; marks = v.marks || {};
+    return true;
+  }
+  async function dropSnap(all) {
+    store.del(SNAP_KEY);
+    if (!all || !("caches" in window)) return;
+    try {
+      for (const k of await caches.keys()) if (k.startsWith("collie-")) await caches.delete(k);
+    } catch (err) { console.warn("clearing the app cache:", err); }
+  }
+  document.addEventListener("visibilitychange", () => { if (document.hidden) saveSnap(); });
+  addEventListener("pagehide", saveSnap);
+  function showApp() {
+    $("#login").hidden = true;
+    $("#app").hidden = false;
+    setMode(mode);
+    booted = false;
+    view = undefined;
+    route();
+    booted = true;
+  }
+  // The installed app (index.html links the manifest; the demo doesn't).
+  let swRegistered = false;
+  function registerSW() {
+    if (swRegistered || !("serviceWorker" in navigator) || !isSecureContext || !$('link[rel="manifest"]')) return;
+    swRegistered = true;
+    // This page came from the old copy when a new release takes over.
+    const had = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (had) offerReload(); });
+    navigator.serviceWorker.register("/sw.js").catch((err) => console.warn("service worker:", err));
+  }
+
   async function boot() {
     stripLarkJumpParams();
     const q = new URLSearchParams(location.search);
@@ -6923,18 +6986,28 @@
       const rest = q.toString();
       history.replaceState(history.state, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
     }
-    try { await api("/api/session"); } catch { return; }
-    try { sup = normSup(await api("/api/super")); } catch {}
-    try { setLocalState(await api("/api/state")); } catch {}
-    await loadHubs();
-    $("#login").hidden = true;
-    $("#app").hidden = false;
-    setMode(mode);
+    const fromSnap = !t && !code && loadSnap();
+    if (fromSnap) showApp();
+    const hubsLoaded = loadHubs();
+    const [ses, su, st] = await Promise.allSettled([api("/api/session"), api("/api/super"), api("/api/state")]);
+    // Turned away (the login form is up), or no hub and nothing to show yet.
+    if (ses.status === "rejected" && (ses.reason?.message === "unauthorized" || !fromSnap)) return;
+    if (su.status === "fulfilled") sup = normSup(su.value);
+    if (st.status === "fulfilled") setLocalState(st.value);
+    if (fromSnap) {
+      renderSide();
+      if (view === "collie") renderSuper();
+      if (view === "pane") renderHead();
+      // A session on another hub opened before that hub's address was known.
+      hubsLoaded.then(() => {
+        if (view === "pane" && hubOf(current || "")) { current = null; route(); }
+        else if (view === "ext" && hubOf(extCur || "")) { extCur = null; route(); }
+      });
+    } else {
+      await hubsLoaded;
+      showApp();
+    }
     connect();
-    booted = false;
-    view = undefined;
-    route();
-    booted = true;
     loadExternal();
     clearInterval(extTimer);
     loadHistory();
@@ -6942,6 +7015,8 @@
     let tick = 0;
     extTimer = setInterval(() => { loadExternal(); if (++tick % 3 === 0) loadHistory(); }, 3000);
     offerLocalApp();
+    registerSW();
+    setTimeout(saveSnap, 5000);
   }
 
   // On a computer that serves Collie at 127.0.0.1 (a node, or the hub's own
