@@ -172,7 +172,7 @@ type State struct {
 	Settings  Settings           `json:"settings"`
 }
 
-func defaultState(home string) *State {
+func defaultState() *State {
 	return &State{
 		Threads:   map[string]*Thread{},
 		Workers:   map[string]*Worker{},
@@ -183,7 +183,7 @@ func defaultState(home string) *State {
 			{Source: "webhook:*", Action: "candidate"},
 		},
 		Settings: Settings{
-			RouterKind: "claude", WorkerKind: "claude", WorkerCwd: home,
+			RouterKind: "claude", WorkerKind: "claude", WorkerCwd: "~",
 			NotifyLevel: "quiet", StallMinutes: 12, ReplyChars: 200,
 		},
 	}

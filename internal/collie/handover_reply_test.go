@@ -42,7 +42,7 @@ func TestFinishHandoverLinksHistory(t *testing.T) {
 		s:    srv,
 		db:   db,
 		dir:  dir,
-		st:   defaultState(dir),
+		st:   defaultState(),
 		subs: map[chan struct{}]bool{},
 		handover: &handover{
 			at:      time.Date(2026, 11, 23, 16, 20, 0, 0, time.Local),
@@ -106,7 +106,7 @@ func TestReplyOptionsStoreDBAndAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := loadState(db, dir)
+	st, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestReplyOptionsStoreDBAndAPI(t *testing.T) {
 
 	// Flush to SQLite, reload fresh state, and verify round-trip persistence.
 	sp.flush()
-	reloaded, err := loadState(db, dir)
+	reloaded, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestReplyOptionsStoreDBAndAPI(t *testing.T) {
 func TestLarkNotifyOptionsInQuietMode(t *testing.T) {
 	sent := fakeLark(t)
 	sp := &Super{
-		st:   defaultState("/home/x"),
+		st:   defaultState(),
 		subs: map[chan struct{}]bool{},
 	}
 	sp.st.Settings.NotifyLark = true
@@ -322,7 +322,7 @@ func TestCLIReplyOptParsingAndCall(t *testing.T) {
 func TestLarkNotifyCheckInQuietMode(t *testing.T) {
 	sent := fakeLark(t)
 	sp := &Super{
-		st:   defaultState("/home/x"),
+		st:   defaultState(),
 		subs: map[chan struct{}]bool{},
 	}
 	sp.st.Settings.NotifyLark = true

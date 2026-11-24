@@ -23,7 +23,7 @@ func newPendingTestEnv(t *testing.T) (*Super, *sql.DB, func(method, path string,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	st, err := loadState(db, dir)
+	st, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestPendingDismissPersistenceAgeAndTrimmedQuote(t *testing.T) {
 	}
 	defer db.Close()
 
-	st, err := loadState(db, dir)
+	st, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestPendingDismissPersistenceAgeAndTrimmedQuote(t *testing.T) {
 
 	// Reload from SQLite (simulating hub restart) without an extra periodic tick:
 	// Dismiss flushes immediately, so eDismiss stays dismissed after restart.
-	reloaded, err := loadState(db, dir)
+	reloaded, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestReplyCheckPersistencePendingAndFourResolutions(t *testing.T) {
 	sp.Dismiss(cIgnore.ID)
 	sp.flush()
 
-	reloaded, err := loadState(db, sp.dir)
+	reloaded, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestPinPersistenceIdempotencyBeyondWindowAndCap(t *testing.T) {
 	}
 	sp.flush()
 
-	reloaded, err := loadState(db, sp.dir)
+	reloaded, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}

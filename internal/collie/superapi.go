@@ -839,6 +839,9 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 				*p = ""
 			}
 		}
+		if ns.RouterAlias != "" {
+			ns.RouterArgs = nil // an alias brings its own
+		}
 		ns.RouterMachine = s.machineByName(ns.RouterMachine)
 		ns.migrateReply()
 		if ns.DreamAt != "off" {
@@ -855,10 +858,13 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 			ns.RotatePct = -1
 		}
 		ns.WorkerMachine = s.machineByName(ns.WorkerMachine)
-		if ns.WorkerMachine == "" {
-			// Paths on other computers are resolved there, against their home.
-			ns.WorkerCwd = s.expand(ns.WorkerCwd)
-		} else if ns.WorkerCwd == "" {
+		// Kept as written, "~" unless given: it is resolved on the computer
+		// the work runs on, against that computer's home, so it still fits
+		// when the work moves to another computer.
+		if ns.WorkerCwd = strings.TrimSpace(ns.WorkerCwd); ns.WorkerMachine == "" {
+			ns.WorkerCwd = s.tilde(ns.WorkerCwd)
+		}
+		if ns.WorkerCwd == "" {
 			ns.WorkerCwd = "~"
 		}
 		sp.st.Settings = ns

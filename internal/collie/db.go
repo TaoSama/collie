@@ -66,8 +66,8 @@ func loadRows[T any](db *sql.DB, q string, into func(*T), args ...any) error {
 	return rows.Err()
 }
 
-func loadState(db *sql.DB, home string) (*State, error) {
-	st := defaultState(home)
+func loadState(db *sql.DB) (*State, error) {
+	st := defaultState()
 	kv := map[string]string{}
 	rows, err := db.Query(`SELECT k, v FROM kv`)
 	if err != nil {

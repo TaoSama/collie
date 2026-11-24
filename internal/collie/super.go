@@ -97,7 +97,7 @@ func newSuper(s *Server, dir string) (*Super, error) {
 		return nil, err
 	}
 	sp.db = db
-	if sp.st, err = loadState(db, s.home); err != nil {
+	if sp.st, err = loadState(db); err != nil {
 		return nil, err
 	}
 	return sp, nil

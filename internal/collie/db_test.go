@@ -15,7 +15,7 @@ func TestStateRoundTrip(t *testing.T) {
 	defer db.Close()
 	now := time.Now().Truncate(time.Second)
 
-	st := defaultState("/home/x")
+	st := defaultState()
 	st.Seq = 7
 	st.Triggers = append(st.Triggers, &Trigger{ID: "t1", Source: "chat", Thread: mainThread, Text: "hi", At: now, Status: "queued"})
 	st.Threads[mainThread] = &Thread{ID: mainThread, LastAt: now}
@@ -27,7 +27,7 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := loadState(db, "/home/x")
+	got, err := loadState(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestStateRoundTrip(t *testing.T) {
 	if err := saveState(db, got, []string{"m3"}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = loadState(db, "/home/x")
+	got, _ = loadState(db)
 	if len(got.Timers) != 0 {
 		t.Fatalf("deleted timer came back")
 	}

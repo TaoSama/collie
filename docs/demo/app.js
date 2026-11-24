@@ -10,6 +10,8 @@
   };
   const narrow = () => matchMedia("(max-width: 760px)").matches;
   const AGENT_LABEL = { claude: "Claude Code", codex: "Codex", agy: "Antigravity" };
+  // An Enter or Escape that belongs to the input method, not the page.
+  const composing = (e) => e.isComposing || e.keyCode === 229;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const tilde = (p) => (p || "").replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, "~");
   const hhmm = (t) => { const d = new Date(t); return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
@@ -1307,7 +1309,7 @@
       if (q && q === searchQuery && panel.hidden) showSearchPanel();
     });
     input?.addEventListener("keydown", (e) => {
-      if (e.isComposing || e.keyCode === 229) return;
+      if (composing(e)) return;
       if (e.key === "ArrowDown" && searchHits.length) {
         e.preventDefault();
         if (panel.hidden) showSearchPanel();
@@ -1360,7 +1362,7 @@
         openSuperSearch(true);
         return;
       }
-      if (e.key === "Escape" && wrap && !wrap.hidden && !e.isComposing && e.keyCode !== 229) {
+      if (e.key === "Escape" && wrap && !wrap.hidden && !composing(e)) {
         if (pickOpen || pendingOpen || !$("#file-view")?.hidden) return;
         e.preventDefault();
         closeSuperSearch(true);
@@ -2313,7 +2315,10 @@
     sel.innerHTML = aliasOpts(list, keptAlias(all, list, want));
     delete sel.dataset.value;
     syncPick(sel);
+    showRouterArgs(form);
   }
+  // An alias brings its own arguments: Collie's extra ones apply only without one.
+  const showRouterArgs = (form) => { const adv = form.querySelector(".set-adv"); if (adv) adv.hidden = !!form.router_alias.value; };
   // Picking an alias picks its agent, model and effort; another agent drops it.
   async function pickAlias(form, who) {
     const a = (await aliasesOn(formMachine(form, who))).find((x) => x.name === form[who + "_alias"].value);
@@ -2336,7 +2341,7 @@
         fillAliases(form, who);
         fillModels(form, who);
       });
-      form[who + "_alias"].addEventListener("change", () => pickAlias(form, who));
+      form[who + "_alias"].addEventListener("change", () => { pickAlias(form, who); showRouterArgs(form); });
       form[who + "_machine"]?.addEventListener("change", () => { fillModels(form, who); fillAliases(form, who); });
     }
     renderAliasList();
@@ -2381,7 +2386,7 @@
           ${modelPick("router", s.router_model, s.router_effort, s.router_alias)}
         </div>
         ${many || s.router_machine ? `<div class="set-grid three"><label>电脑${machinePick("router_machine", s.router_machine, "Collie 自己在哪台电脑上运行")}<small>hub 连不上模型时换一台；记忆仍存在 hub 上，自动同步过去</small></label></div>` : ""}
-        <details class="set-adv" ${(s.router_args || []).length ? "open" : ""}><summary>更多启动参数</summary>
+        <details class="set-adv" ${(s.router_args || []).length ? "open" : ""} ${s.router_alias ? "hidden" : ""}><summary>更多启动参数</summary>
           <label><input name="router_args" class="mono" value="${esc((s.router_args || []).join(" "))}" placeholder="例如 --permission-mode plan" autocorrect="off" autocapitalize="off" spellcheck="false"><small>原样加在启动命令后面，一般不用填</small></label>
         </details>
       </section>
@@ -2454,7 +2459,7 @@
         const cur = (await api("/api/super/settings")).settings;
         const s = {
           ...cur,
-          router_kind: f.router_kind.value, router_args: f.router_args.value.split(/\s+/).filter(Boolean),
+          router_kind: f.router_kind.value, router_args: f.router_alias.value ? [] : f.router_args.value.split(/\s+/).filter(Boolean),
           router_machine: f.router_machine ? f.router_machine.value : (cur.router_machine || ""),
           router_model: f.router_model.value === "__custom" ? "" : f.router_model.value, router_effort: f.router_effort.value,
           router_alias: f.router_alias.value, worker_alias: f.worker_alias.value,
@@ -2961,6 +2966,34 @@
     } else return;
     renderSessions();
   });
+  // ───────────────────────────── the app's own confirm and prompt
+  // ask() resolves true (or the text typed, when given a value to edit) on
+  // OK, null when cancelled; warn colours OK for what can't be taken back.
+  const askDlg = $("#ask");
+  // askEnd answers the ask on screen; replacing it answers the old one null.
+  let askEnd = null;
+  function ask({ title, text = "", value, ok = "确定", warn = false }) {
+    askEnd?.("");
+    if (askDlg.open) askDlg.close("");
+    $("#ask-title").textContent = title;
+    $("#ask-text").textContent = text;
+    $("#ask-text").hidden = !text;
+    const input = $("#ask-input"), okBtn = $("#ask-ok");
+    $("#ask-field").hidden = value === undefined;
+    input.value = value ?? "";
+    okBtn.textContent = ok;
+    okBtn.classList.toggle("warn", warn);
+    askDlg.returnValue = "";
+    askDlg.showModal();
+    if (value === undefined) okBtn.focus(); else { input.focus(); input.select(); }
+    return new Promise((resolve) => askEnd = (rv) => { askEnd = null; resolve(rv !== "ok" ? null : value === undefined ? true : input.value); });
+  }
+  // A close queued by replacing an ask arrives once the new one is open: not its answer.
+  askDlg.addEventListener("close", () => { if (!askDlg.open) askEnd?.(askDlg.returnValue); });
+  askDlg.addEventListener("click", (e) => { if (e.target.closest("[data-ask-cancel]") || e.target === askDlg) askDlg.close(""); });
+  // Enter that picks an input-method word must not submit.
+  $("#ask-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && composing(e)) e.preventDefault(); });
+
   // ───────────────────────────── a session's menu
   // Right-click a session (or hold it on a touch screen): rename it, mark it
   // unread, copy its id, archive it. Renaming and archiving go to its own
@@ -3064,7 +3097,7 @@
     else if (act === "archive") await archiveRow(r);
   }
   async function renameRow(r) {
-    const name = prompt("重命名", r.name)?.replace(/\s+/g, " ").trim();
+    const name = (await ask({ title: "重命名", value: r.name, ok: "改名" }))?.replace(/\s+/g, " ").trim();
     if (!name || name === r.name) return;
     if (typesRename(r)) {
       // Typed into it: only while it waits for you, not mid-task or on a question.
@@ -3079,10 +3112,9 @@
   }
   async function archiveRow(r) {
     const own = r.kind !== "claude", running = r.src === "pane";
-    const msg = [`归档「${r.name}」？`,
-      running ? "会先结束这个 agent（关闭它的工作区）。" : "",
-      own ? `用 ${AGENT_LABEL[r.kind] || r.kind} 自己的归档，在它那边也会归档。` : "Claude Code 没有自己的归档：Collie 只把它从列表里藏起来，会话文件不动。"].filter(Boolean).join("\n\n");
-    if (!confirm(msg)) return;
+    const text = [running ? "会先结束这个 agent（关闭它的工作区）。" : "",
+      own ? `用 ${AGENT_LABEL[r.kind] || r.kind} 自己的归档，在它那边也会归档。` : "Claude Code 没有自己的归档：Collie 只把它从列表里藏起来，会话文件不动。"].filter(Boolean).join("\n");
+    if (!await ask({ title: `归档「${r.name}」？`, text, ok: "归档", warn: true })) return;
     // Hidden first, so a closed agent whose archive then fails doesn't come
     // back as an ended session; the error says so.
     await setMark(r.key, { archived: true });
@@ -3137,7 +3169,7 @@
     const e = ext.find((x) => x.id === extCur);
     if (!e) return;
     const app = e.app || "另一个终端";
-    if (e.live && !confirm(`接管「${extName(e)}」？\n\n会先结束 ${app} 里的这个 ${KIND_LABEL[e.kind] || e.kind} 进程（相当于按 Ctrl-C），然后在 herdr 里用同一个会话继续。${app} 那边会回到命令行。`)) return;
+    if (e.live && !(await ask({ title: `接管「${extName(e)}」？`, ok: "接管", text: `会先结束 ${app} 里的这个 ${KIND_LABEL[e.kind] || e.kind} 进程（相当于按 Ctrl-C），然后在 herdr 里用同一个会话继续。${app} 那边会回到命令行。` }))) return;
     const b = $("#x-takeover");
     b.disabled = true; b.textContent = "接管中…";
     try {
@@ -3233,13 +3265,14 @@
   let devAddr = store.get("pairAddr", "");
   let pairing = { browser: null, machine: null }; // {code, expires}
 
-  // The devices page by what you came for: the computers (and how they are
-  // doing), phones and browsers, other hubs, or connecting a new one.
+  // The devices page by what you came for: connecting (pairing a phone or a
+  // computer, the other hubs, the phones and browsers in), or the computers
+  // and how they are doing.
   let devTab = store.get("devTab", "machines");
   bindTabs("#dev-tabs", "devices", "#devices-body", () => devTab, (t) => { devTab = t; store.set("devTab", t); }, (saved) => openDevices(saved));
 
   function openDevices(restore = null) {
-    if (!(devTab in DEV_VIEW)) devTab = "machines";
+    if (!(devTab in DEV_VIEW)) store.set("devTab", devTab = "connect"); // a tab merged into 连接
     markTab("#dev-tabs", devTab);
     clearInterval(devTimer);
     if (restore) restoreSimpleScroll($("#devices-body"), restore);
@@ -3442,19 +3475,21 @@
   // hubs are this browser's own list).
   const DEV_VIEW = {
     machines: (r) => `<div class="mc-list" id="dev-machines">${machineCards(r)}</div>`,
-    browsers: (r) => {
+    connect: (r) => devPairing(r) + devHubs() + devBrowsers(r),
+  };
+  function devBrowsers(r) {
       const browsers = r.devices.filter((d) => d.kind !== "machine");
       return `
-      <div class="card"><ul class="rows">
+      <div class="card"><div class="card-h">手机和浏览器</div><ul class="rows">
         ${browsers.length ? browsers.map((d) => `<li class="row dev-row">
           <span class="dot unknown"></span>
           <div><div class="meta"><b>${esc(d.name)}</b>${d.current ? '<span class="tag">当前</span>' : ""}<span>最近 ${when(d.last_seen)}</span></div></div>
           <button class="btn ghost small" data-del-dev="${esc(d.id)}" data-name="${esc(d.name)}">移除</button></li>`).join("")
         : `<li class="empty-row">还没有配对过的手机。用访问令牌登录的浏览器不在这里列出。</li>`}
       </ul></div>`;
-    },
-    hubs: () => `
-      <div class="card"><p class="pair-hint">别的网络里的 Collie hub（云电脑、家里的电脑）。和这台 hub 不通也没关系：只要这个浏览器能打开它，它的会话就会出现在侧栏里。</p>
+  }
+  const devHubs = () => `
+      <div class="card"><div class="card-h">其他 hub</div><p class="pair-hint">别的网络里的 Collie hub（云电脑、家里的电脑）。和这台 hub 不通也没关系：只要这个浏览器能打开它，它的会话就会出现在侧栏里。</p>
         <ul class="rows">${hubs.map((h) => { const on = remote.get(h.key)?.online; return `<li class="row dev-row">
           <span class="dot ${on ? "online" : "offline"}"></span>
           <div><div class="meta"><b>${esc(h.name)}</b><span>${on ? "在线" : "连不上"}</span></div><div class="text mono">${esc(h.url)}</div></div>
@@ -3466,8 +3501,8 @@
           <button class="btn primary small">添加</button>
         </form>
         <p class="pair-hint muted">那个 hub 也要是 v0.2.4 以后的版本。</p>
-      </div>`,
-    connect: (r) => {
+      </div>`;
+  function devPairing(r) {
       const addrs = r.addresses || [];
       if (!addrs.includes(devAddr)) devAddr = addrs[0] || location.origin;
       const fresh = (k) => pairing[k] && pairing[k].expires - Date.now() > 15000;
@@ -3500,8 +3535,7 @@
           <p class="pair-hint muted">需要这台电脑能访问上面的地址（同一内网或 VPN）。</p>
         </div>
       </div>`;
-    },
-  };
+  }
 
   let devSeq = 0;
   async function loadDevices(restore = null) {
@@ -3509,7 +3543,7 @@
     const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
     let r = null;
     try {
-      if (tab !== "hubs") r = await api("/api/devices");
+      r = await api("/api/devices");
       const pb = pairing.browser;
       if (tab === "connect" && !(pb && pb.expires - Date.now() > 15000)) await newCode("browser").catch(() => {});
     } catch (err) {
@@ -3580,19 +3614,19 @@
       } else if (b.id === "new-node-code") { await newCode("machine"); loadDevices(); }
       else if (b.dataset.update !== undefined) {
         const id = b.dataset.update;
-        if (!confirm(`更新「${b.dataset.name}」上的 Collie？它会下载新版并重启，大约十几秒连不上${id ? "" : "（这是 hub，页面会短暂断开）"}；里面的 agent 不受影响。`)) return;
+        if (!(await ask({ title: `更新「${b.dataset.name}」上的 Collie？`, ok: "更新", text: `它会下载新版并重启，大约十几秒连不上${id ? "" : "（这是 hub，页面会短暂断开）"}；里面的 agent 不受影响。` }))) return;
         b.disabled = true; b.textContent = "更新中…";
         const r = await api("/api/update?" + new URLSearchParams(id ? { machine: id } : {}), { body: {} });
         toast(r.latest ? "已经是最新版" : `已更新到 ${r.version}，正在重启`);
         setTimeout(() => { loadDevices(); checkUpdates(); }, 12000);
       }
       else if (b.dataset.delHub) {
-        if (!confirm(`不再显示「${b.dataset.name}」的会话？那个 hub 本身不受影响。`)) return;
+        if (!(await ask({ title: `不再显示「${b.dataset.name}」的会话？`, text: "那个 hub 本身不受影响。", ok: "不再显示" }))) return;
         hubs = (await api("/api/hubs", { body: { hubs: hubs.filter((h) => h.key !== b.dataset.delHub) } })).hubs;
         await loadHubs(); loadExternal(); loadHistory(); loadDevices();
       }
       else if (b.dataset.delDev) {
-        if (!confirm(`移除「${b.dataset.name}」？它需要重新配对才能再连进来。`)) return;
+        if (!(await ask({ title: `移除「${b.dataset.name}」？`, text: "它需要重新配对才能再连进来。", ok: "移除", warn: true }))) return;
         await api(`/api/devices/${encodeURIComponent(b.dataset.delDev)}/delete`, { body: {} });
         loadDevices();
       }
@@ -5945,7 +5979,7 @@
     if (machine) bindFiles(form, machine);
     input.addEventListener("input", () => grow(input));
     input.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+      if (e.key !== "Enter" || e.shiftKey || composing(e)) return;
       const mod = e.metaKey || e.ctrlKey;
       // "mod": Enter makes a new line and ⌘/Ctrl+Enter sends.
       if (prefs.sendKey() === "mod" ? mod : !mod) { e.preventDefault(); form.requestSubmit(); }
@@ -6000,7 +6034,7 @@
         location.hash = "#/p/" + encodeURIComponent(r.pane_id);
       }
       if (act === "close" && v) {
-        if (!confirm(`关闭工作区「${v.workspace_label || v.workspace_id}」？里面的进程会被结束。`)) return;
+        if (!(await ask({ title: `关闭工作区「${v.workspace_label || v.workspace_id}」？`, text: "里面的进程会被结束。", ok: "关闭", warn: true }))) return;
         await api(`/api/workspaces/${encodeURIComponent(v.workspace_id)}/close`, { method: "POST", body: {} });
         state = { ...state, agents: state.agents.filter((a) => a.workspace_id !== v.workspace_id), shells: state.shells.filter((a) => a.workspace_id !== v.workspace_id) };
         if (store.get("last") === location.hash) store.set("last", "#/collie");
@@ -6011,7 +6045,7 @@
         if (p) location.hash = "#/p/" + encodeURIComponent(p); else toast("Collie 还在休眠；发一条消息就会唤醒它");
       }
       if (act === "router-restart") {
-        if (!confirm("重启 Collie？它会读自己的记忆恢复上下文，排队的消息不会丢。")) return;
+        if (!(await ask({ title: "重启 Collie？", text: "它会读自己的记忆恢复上下文，排队的消息不会丢。", ok: "重启" }))) return;
         await api("/api/super/router/restart", { method: "POST", body: {} });
         toast("Collie 正在重启");
       }

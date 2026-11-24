@@ -294,7 +294,7 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .side-views button:hover { color: var(--fg); }
 .side-views button.on { background: var(--bg-3); color: var(--fg); font-weight: 500; }
 .side-views .dot { width: 6px; height: 6px; }
-.side-chips { gap: 6px; }
+.side-chips { gap: 6px; padding-left: calc(8px + 12px); } /* the row's 8px and a view button's 12px: outlines start where the words above do */
 .side-chips[hidden] { display: none; }
 .side-chips button { flex: none; white-space: nowrap; display: inline-flex; align-items: baseline; gap: 5px; height: 24px; line-height: 22px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 12px; color: var(--fg-2); transition: border-color .12s, background .12s, color .12s; }
 .side-chips button:hover { border-color: var(--line-2); color: var(--fg); }
@@ -1420,6 +1420,12 @@ a.url:hover { text-decoration-color: currentColor; }
 .dirs li::before { content: "▸ "; color: var(--fg-3); }
 .form-error { margin: 0; padding: 0 20px; color: var(--attn); font-size: 13px; min-height: 1em; }
 .sheet-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px 20px; border-top: 1px solid var(--line); background: var(--bg); }
+/* the app's own confirm and prompt */
+@media (min-width: 761px) { .sheet.ask { width: min(420px, calc(100vw - 32px)); } }
+.ask-text { margin: 0; padding: 4px 20px 8px; color: var(--fg-2); font-size: 14px; line-height: 1.65; white-space: pre-line; }
+.ask .field input { width: 100%; }
+.ask .sheet-foot { border-top: 0; }
+.btn.primary.warn { background: var(--attn); border-color: var(--attn); color: #fff; }
 
 /* ─── toasts ─── */
 .toasts { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translateX(-50%); display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); }
