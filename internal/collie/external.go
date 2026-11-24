@@ -2,6 +2,7 @@ package collie
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -50,9 +51,11 @@ type External struct {
 	CanTakeOver bool `json:"can_take_over,omitempty"`
 
 	path, format string
-	reg          *claudeReg
-	desktop      bool   // listed from a desktop app's index (desktop.go)
-	via          string // "app": a message goes through the Codex App's message bus
+	// startDir: where it was started, to resume it there (empty: Cwd).
+	startDir string
+	reg      *claudeReg
+	desktop  bool   // listed from a desktop app's index (desktop.go)
+	via      string // "app": a message goes through the Codex App's message bus
 }
 
 type proc struct {
@@ -147,6 +150,16 @@ func terminalApp(ps map[int]*proc, p *proc) (app string, inHerdr bool) {
 	return app, false
 }
 
+// launchShell is the shell a Claude was typed into, on the same terminal, or
+// nil. Claude Code moves its own process into the worktrees it enters, so
+// where it is now is not where it should resume: the shell's directory is.
+func launchShell(ps map[int]*proc, p *proc) *proc {
+	if q := ps[p.ppid]; q != nil && q.tty == p.tty && shells[strings.ToLower(q.name)] {
+		return q
+	}
+	return nil
+}
+
 func cwdOf(pids []int) map[int]string {
 	m := map[int]string{}
 	if runtime.GOOS == "linux" {
@@ -210,6 +223,9 @@ func (s *Server) externalSessions() []*External {
 	pids := make([]int, 0, len(cands))
 	for _, p := range cands {
 		pids = append(pids, p.pid)
+		if q := launchShell(ps, p); q != nil && externalKinds[p.name] == "claude" {
+			pids = append(pids, q.pid)
+		}
 	}
 	cwds := cwdOf(pids)
 	now := time.Now()
@@ -235,6 +251,9 @@ func (s *Server) externalSessions() []*External {
 		}
 		kind := externalKinds[p.name]
 		e := &External{ID: fmt.Sprintf("%s-%d", kind, p.pid), Kind: kind, PID: p.pid, Cwd: cwds[p.pid], App: app, Started: now.Add(-p.age), Live: true}
+		if q := launchShell(ps, p); q != nil && kind == "claude" {
+			e.startDir = cwds[q.pid]
+		}
 		s.locateExternal(e, p)
 		e.reg = regOf[p.pid]
 		s.reachable(e)
@@ -669,7 +688,7 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	pane, ws, err := s.startAgent(ctx, "", kinds[e.Kind], name, e.Cwd, name, args)
+	pane, ws, err := s.startAgent(ctx, "", kinds[e.Kind], name, cmp.Or(e.startDir, e.Cwd), name, args)
 	var he *HerdrError
 	if err != nil && !(errors.As(err, &he) && he.Code == "agent_not_ready") {
 		fail(w, err)

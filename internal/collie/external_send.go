@@ -581,6 +581,10 @@ func (s *Server) stopCodexTurn(ctx context.Context, machine, thread string) erro
 
 // ---------------------------------------------------------------- HTTP
 
+// heldNote: a Claude in bypass mode holds a message from outside for a
+// confirmation only its own terminal shows; a herdr pane's shows here too.
+const heldNote = "已送到，但被这个会话扣住了：它开着跳过权限（bypass）模式，Claude 会先扣下外来消息等你确认，过一阵作废。要让它照做，在电脑上直接确认或对它说；也可以点「在 herdr 里接管」，之后切到「屏幕」模式就能在这里确认"
+
 func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text string `json:"text"`
@@ -620,7 +624,7 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if e.path != "" && !peerTaken(e.path, offset, text, 6*time.Second) {
-			writeJSON(w, 202, map[string]any{"ok": true, "note": "已送到，但被这个会话扣住了：它开着跳过权限（bypass）模式，Claude 会先扣下外来消息，过一阵作废。要让它照做，在电脑上直接对它说"})
+			writeJSON(w, 202, map[string]any{"ok": true, "note": heldNote})
 			return
 		}
 	case "codex":
