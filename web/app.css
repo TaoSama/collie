@@ -1625,6 +1625,12 @@ select.picked { display: none; }
 }
 .pick-pop.sheet .ph { padding: 10px 12px 8px; font-size: 13px; }
 .pick-pop.sheet .po { padding: 13px 12px; font-size: 15.5px; }
+/* a session's menu: the picker's look; archiving is the warning colour */
+.ctx-menu .po.danger, .ctx-menu .po.danger .pi { color: var(--attn); }
+.ctx-menu .pi svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ctx-menu .po .ck { display: none; }
+/* holding a session opens its menu, not the system's link preview */
+.item[data-row] { -webkit-touch-callout: none; }
 @keyframes pick-up { from { transform: translateY(24px); opacity: 0; } }
 
 /* ended sessions in the sidebar read quieter */

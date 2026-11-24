@@ -1,7 +1,6 @@
 package collie
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -262,37 +261,12 @@ func (s *Server) codexModels(ctx context.Context, info *ModelInfo) {
 	}
 }
 
-// codexModelList asks a short-lived `codex app-server` (stdio, JSON lines).
+// codexModelList asks a short-lived `codex app-server` for its models.
 func codexModelList(ctx context.Context, bin string) []ModelOpt {
-	cmd := exec.CommandContext(ctx, bin, "app-server")
-	in, _ := cmd.StdinPipe()
-	out, _ := cmd.StdoutPipe()
-	if cmd.Start() != nil {
+	raw, err := codexOnce(ctx, bin, "model/list", map[string]any{})
+	if err != nil {
 		return nil
 	}
-	defer func() { in.Close(); cmd.Process.Kill(); cmd.Wait() }()
-	send := func(v any) { in.Write(append(jsonNoEscape(v), '\n')) }
-	sc := bufio.NewScanner(out)
-	sc.Buffer(make([]byte, 0, 1<<20), 16<<20)
-	wait := func(id int) json.RawMessage {
-		for sc.Scan() {
-			var m struct {
-				ID     *int            `json:"id"`
-				Method string          `json:"method"`
-				Result json.RawMessage `json:"result"`
-			}
-			if json.Unmarshal(sc.Bytes(), &m) == nil && m.ID != nil && *m.ID == id && m.Method == "" {
-				return m.Result
-			}
-		}
-		return nil
-	}
-	send(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]any{"name": "collie", "version": "1"}}})
-	if wait(1) == nil {
-		return nil
-	}
-	send(map[string]any{"method": "initialized", "params": map[string]any{}})
-	send(map[string]any{"id": 2, "method": "model/list", "params": map[string]any{}})
 	var res struct {
 		Data []struct {
 			ID      string `json:"id"`
@@ -305,7 +279,7 @@ func codexModelList(ctx context.Context, bin string) []ModelOpt {
 			} `json:"supportedReasoningEfforts"`
 		} `json:"data"`
 	}
-	json.Unmarshal(wait(2), &res)
+	json.Unmarshal(raw, &res)
 	var list []ModelOpt
 	for _, d := range res.Data {
 		if d.Hidden {

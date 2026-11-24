@@ -41,7 +41,7 @@
     { id: "", name: "devbox", os: "linux/amd64", home: "/home/alex", local: true, online: true, agents: ["claude", "codex", "agy"] },
     { id: "macbook", name: "macbook", os: "darwin/arm64", home: "/Users/alex", online: true, version: "v0.2.41", agents: ["claude", "codex"] },
   ];
-  const agent = (o) => ({ workspace_label: o.name, title: "", is_agent: true, machine: o.pane_id.includes("@") ? o.pane_id.split("@")[1] : "", ...o });
+  const agent = (o) => ({ workspace_label: o.name, title: "", is_agent: true, machine: o.pane_id.includes("@") ? o.pane_id.split("@")[1] : "", session: "0193a1c2-" + o.workspace_id.replace(/\W/g, "") + "-demo", ...o });
   const agents = [
     agent({ pane_id: "w1:p1", workspace_id: "w1", name: "collie", kind: "claude", status: "idle", cwd: "/home/alex/.collie/router" }),
     agent({ pane_id: "w2:p1@macbook", workspace_id: "w2@macbook", name: "claude-1", kind: "claude", status: "working", cwd: "/Users/alex/code/shop-web", topic: "首页加暗色模式", run: ["opus", "high"] }),
@@ -56,6 +56,7 @@
     { pane_id: "w7:p1", workspace_id: "w7", workspace_label: "logs", name: "logs", kind: "", status: "shell", cwd: "/home/alex/code/shop-api", title: "", is_agent: false, machine: "" },
   ];
   const state = () => ({ ok: true, agents, shells, machines });
+  const marks = {};
 
   const workers = [
     { name: "fix-flaky-test", kind: "codex", cwd: "/home/alex/code/shop-api", task: "找出 TestOrdersPagination 偶发失败的原因并修好", thread: "chat:main", pane_id: "w5:p1", workspace_id: "w5", machine: "", created_by: "collie", created_at: ago(14), status: "working", run: ["gpt-6.1-sol", "medium"] },
@@ -172,7 +173,7 @@
     "w9:p1": [
       { kind: "user", text: "在 Linux 上跑一遍 e2e 回归，看看暗色模式有没有影响" },
       tool("Bash", "pnpm test:e2e", "42 passed"),
-      { kind: "assistant", text: "42 个 e2e 用例都过了，暗色模式的改动还没合进来，合并后再跑一次。" },
+      { kind: "assistant", text: "42 个 e2e 用例都过了，暗色模式的改动还没合进来，合并后再跑一次。\n\n| 套件 | 用例 | 结果 |\n|-|-|-|\n| 下单 | 18 | 通过 |\n| 购物车 | 15 | 通过 |\n| 账户 | 9 | 通过 |\n\n报告：https://ci.example.com/shop-web/pipelines/48213/jobs/e2e-linux/artifacts/report/index.html?tab=summary" },
     ],
     "w6:p1@macbook": [
       { kind: "user", text: "[collie] 根据 v1.3..main 的提交写 v1.4 发布说明。完成后 collie report。" },
@@ -558,6 +559,15 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if (p === "/api/super/say") return json({ ok: true, entry: collieSay(body.text || "", body.re) });
     if (p === "/api/external") return json({ sessions: external });
     if (p === "/api/history") return json({ sessions: history });
+    if (p === "/api/marks") {
+      if (method === "POST") {
+        const m = { ...marks[body.key] };
+        for (const k of ["unread", "archived", "title"]) if (body[k] !== undefined) m[k] = body[k];
+        if (m.unread || m.archived || m.title) marks[body.key] = m; else delete marks[body.key];
+      }
+      return json({ marks });
+    }
+    if (/^\/api\/sessions\/[^/]+\/(rename|archive)$/.test(p)) return json({ ok: true });
     if (p === "/api/hubs") return json({ hubs: [] });
     if (p === "/api/version") return json({ version: "v0.2.41", latest: "v0.2.41", outdated: [] });
     if (p === "/api/local-app") return json({ url: "" });

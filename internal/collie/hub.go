@@ -366,6 +366,8 @@ func (s *Server) hubRoutes(mux *http.ServeMux) {
 	api("GET /api/version", s.getVersion)
 	api("GET /api/history", s.listHistory)
 	api("POST /api/history/{id}/delete", s.deleteHistory)
+	api("GET /api/marks", s.listMarks)
+	api("POST /api/marks", s.setMark)
 	api("POST /api/devices/{id}/delete", s.deleteDevice)
 	api("GET /api/hubs", s.getHubs)
 	api("POST /api/hubs", s.setHubs)

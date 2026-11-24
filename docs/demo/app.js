@@ -470,12 +470,12 @@
   }
 
   // ───────────────────────────── sidebar
-  function itemHTML(v) {
+  function itemHTML(v, attrs = "") {
     const where = (state.machines || []).length > 1 ? machineName(v.machine) + " · " : "";
     const named = v.is_agent && v.name !== ROUTER && !isWorker(v.name) && v.name && !autoName(v.name) && v.topic && v.topic !== v.name ? v.name + " · " : "";
     const sub = v.name === ROUTER ? "Collie 停在一个对话框上"
       : v.is_agent ? `${named}${KIND_LABEL[v.kind] || v.kind} · ${where}${base(tilde(v.cwd))}` : where + tilde(v.cwd);
-    return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}" href="#/p/${encodeURIComponent(v.pane_id)}">
+    return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}">
       <span class="glyph">${glyph(v)}</span>
       <span class="body"><div class="name">${isCollieOwned(v) && v.name !== ROUTER ? `<span class="nm">${esc(title(v))}</span><span class="by-collie">Collie 派出</span>` : esc(v.is_agent ? title(v) : v.workspace_label || base(tilde(v.cwd)))}</div><div class="sub">${esc(sub)}</div></span>
       <span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span></a></li>`;
@@ -2564,6 +2564,7 @@
     return best;
   };
   async function loadHistory() {
+    loadMarks();
     try { hist = (await api("/api/history")).sessions || []; } catch { return; }
     hist = hist.concat(...await fromHubs("/api/history", "hist"));
     renderHist();
@@ -2678,26 +2679,51 @@
   // one open now stays, so it doesn't vanish under you.
   const readOnlyHidden = (e) => !e.can_send && !prefs.readOnly() && !(view === "ext" && extCur === e.id);
   function renderExt() { renderSessions(); }
+  // What the hub keeps about a session for you (marked unread, hidden, the
+  // name you gave it), by computer, agent and session. A remote hub's tag is
+  // spelled differently in the key so the request stays on this hub.
+  let marks = {}, sideByRow = new Map();
+  // Ids from another hub may carry its tag more than once; the key keeps one.
+  const machineParts = (machine) => String(machine || "").split("!");
+  const markKey = (machine, kind, session) => {
+    if (!session) return "";
+    const [m, hub] = machineParts(machine);
+    return [m + (hub ? "~" + hub : ""), shortKind(kind), session].join("|");
+  };
+  async function loadMarks() {
+    try { marks = (await api("/api/marks")).marks || {}; } catch { return; }
+    renderSessions();
+  }
+  async function setMark(key, change) {
+    marks = (await api("/api/marks", { body: { key, ...change } })).marks || {};
+    renderSessions();
+  }
   function sideRows() {
     const many = (state.machines || []).length > 1;
-    const extRow = (e) => {
+    const rowAttrs = (id, m) => ` data-row="${esc(id)}"${m?.unread ? " data-unread" : ""}`;
+    const unreadDot = `<span class="dot done" title="未读"></span>`;
+    const extRow = (e, key, m) => {
       const open = e.live && e.status === "idle";
       const where = [e.app || KIND_LABEL[e.kind] || e.kind, many && e.machine ? machineName(e.machine) : "", e.live && !open ? "" : ago(e.updated || e.started)].filter(Boolean).join(" · ");
-      const dot = e.live ? `<span class="dot ${esc(e.status || "unknown")}" title="${esc(EXT_STATE[e.status] || "正在运行")}"></span>` : "";
-      return `<li><a class="item ${e.live ? "" : "ended"} ${view === "ext" && extCur === e.id ? "active" : ""}" href="#/x/${encodeURIComponent(e.id)}">
+      const dot = e.live ? `<span class="dot ${esc(e.status || "unknown")}" title="${esc(EXT_STATE[e.status] || "正在运行")}"></span>` : m?.unread ? unreadDot : "";
+      return `<li><a class="item ${e.live ? "" : "ended"} ${view === "ext" && extCur === e.id ? "active" : ""}"${rowAttrs(e.id, m)} href="#/x/${encodeURIComponent(e.id)}">
         <span class="glyph">${GLYPHS[e.kind] || GLYPHS.agent}</span>
-        <span class="body"><div class="name">${esc(extName(e))}</div><div class="sub">${esc(where)}</div></span>${dot}</a></li>`;
+        <span class="body"><div class="name">${esc(m?.title || extName(e))}</div><div class="sub">${esc(where)}</div></span>${dot}</a></li>`;
     };
-    const histRow = (h) => {
+    const histRow = (h, key, m) => {
       const sub = [KIND_LABEL[h.kind] || h.kind, many ? machineName(h.machine) : "", ago(h.ended)].filter(Boolean).join(" · ");
-      return `<li><a class="item ended ${view === "ext" && extCur === "h:" + h.id ? "active" : ""}" href="#/h/${encodeURIComponent(h.id)}">
+      return `<li><a class="item ended ${view === "ext" && extCur === "h:" + h.id ? "active" : ""}"${rowAttrs("h:" + h.id, m)} href="#/h/${encodeURIComponent(h.id)}">
         <span class="glyph">${GLYPHS[h.kind] || GLYPHS.agent}</span>
-        <span class="body"><div class="name">${esc(histName(h))}</div><div class="sub">${esc(sub)}</div></span></a></li>`;
+        <span class="body"><div class="name">${esc(m?.title || histName(h))}</div><div class="sub">${esc(sub)}</div></span>${m?.unread ? unreadDot : ""}</a></li>`;
     };
     const pane = (a, term) => {
-      const rank = RANK[a.status] ?? 3;
-      const bucket = term ? "term" : a.status === "blocked" ? "attn" : a.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
-      return { id: a.pane_id, src: "pane", html: itemHTML(a), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd };
+      const key = term ? "" : markKey(a.machine, a.kind, a.session), m = marks[key];
+      // Marked unread, a resting agent reads as finished and not looked at.
+      const v = m?.unread && a.status === "idle" ? { ...a, status: "done" } : a;
+      const rank = RANK[v.status] ?? 3;
+      const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
+      return { id: a.pane_id, src: "pane", html: itemHTML(v, term ? "" : rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd,
+        key, mark: m, session: a.session || "", name: term ? "" : title(a), status: a.status, ws: a.workspace_id, live: true };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -2707,43 +2733,67 @@
     const collieRan = (name) => name === ROUTER || workers.has(name);
     // Another hub's own computer has no machine id: it is that hub.
     const machineOf = (x) => x.hub ? tagged(x.machine || "", x.hub) : x.machine || "";
+    const rest = (r) => {
+      // Marked unread, it waits under 完成未看 until opened.
+      if (r.mark?.unread && r.rank >= ENDED_RANK) r.bucket = "done";
+      return r;
+    };
     return [
       ...state.agents.filter((a) => a.name !== ROUTER || a.status === "blocked").map((a) => pane(a, false)),
       ...state.shells.map((a) => pane(a, true)),
-      ...ext.filter((e) => !readOnlyHidden(e)).map((e) => ({
-        id: e.id, src: "ext", html: extRow(e), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
-        t: new Date(e.updated || e.started), machine: machineOf(e), cwd: e.cwd,
-      })),
-      ...hist.filter((h) => !collieRan(h.name)).map((h) => ({
-        id: "h:" + h.id, src: "hist", html: histRow(h), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine: machineOf(h), cwd: h.cwd,
-      })),
-    ];
+      ...ext.filter((e) => !readOnlyHidden(e)).map((e) => {
+        const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
+        return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
+          t: new Date(e.updated || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
+      }),
+      ...hist.filter((h) => !collieRan(h.name)).map((h) => {
+        const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
+        return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine, cwd: h.cwd,
+          key, mark: m, session: h.session || "", name: m?.title || histName(h), live: false });
+      }),
+    // Archived where its agent has no archive of its own (or not yet listed
+    // as archived): hidden while it rests.
+    ].filter((r) => !(r.mark?.archived && r.rank >= ENDED_RANK));
   }
   // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {
     if (sideView === "status") return STATUS_GROUPS.map(([key, label]) => ({ key, label, rows: rows.filter((r) => r.bucket === key) }));
+    // A project is its folder's name on one computer: a repository and its
+    // worktrees (wherever they live) are one project.
     const by = new Map();
     for (const r of rows) {
       if (r.bucket === "attn") continue;
-      const path = repoOf(r.cwd), key = r.machine + "\n" + path;
-      if (!by.has(key)) by.set(key, { key, machine: r.machine, path, label: path ? base(path) : "其他", title: tilde(path), project: true, rows: [], best: Infinity, last: 0 });
+      const path = repoOf(r.cwd), label = path ? base(path) : "其他", key = r.machine + "\n" + label;
+      if (!by.has(key)) by.set(key, { key, machine: r.machine, label, paths: new Set(), project: true, rows: [], best: Infinity, last: 0 });
       const g = by.get(key);
+      if (path) g.paths.add(tilde(path));
       g.rows.push(r); g.best = Math.min(g.best, r.rank); g.last = Math.max(g.last, +r.t || 0);
     }
     const groups = [...by.values()].sort((x, y) => x.best - y.best || y.last - x.last || x.label.localeCompare(y.label));
     for (const g of groups) {
-      // Projects of the same name say where they are: the computer, or the
-      // path when they share one.
-      const twins = groups.filter((o) => o !== g && o.label === g.label);
-      if (twins.length) g.on = twins.some((o) => o.machine === g.machine) ? g.title : machineName(g.machine);
+      g.title = [...g.paths].join("\n");
+      // The same project on another computer says which.
+      if (groups.some((o) => o !== g && o.label === g.label)) g.on = machineName(g.machine);
       g.rows.sort((x, y) => x.rank - y.rank || y.t - x.t);
     }
     return [{ key: "attn", label: "需要你", rows: rows.filter((r) => r.bucket === "attn") }, ...groups];
+  }
+  const sideHere = (r) => view === "ext" ? r.id === extCur : view === "pane" && r.id === current;
+  // Opening a session marked unread reads it, once per opening: marking the
+  // open one unread keeps it so.
+  let hereSeen = "";
+  function readOnOpen(all) {
+    const here = all.find(sideHere);
+    if (here?.id === hereSeen) return;
+    hereSeen = here?.id || "";
+    if (here?.mark?.unread) setMark(here.key, { unread: false }).catch((err) => toast(err.message, "attn"));
   }
   // Narrowed to a kind, the status groups show open.
   const sideFoldable = () => !(sideView === "status" && sideKind);
   function renderSessions() {
     const all = sideRows();
+    readOnOpen(all);
+    sideByRow = new Map(all.filter((r) => r.kind && r.bucket !== "term").map((r) => [r.id, r]));
     const kindOf = (r) => r.bucket === "term" ? "term" : r.kind;
     const nOn = {};
     for (const r of all) nOn[r.machine] = (nOn[r.machine] || 0) + 1;
@@ -2772,9 +2822,7 @@
       let shown = extAll ? ended : ended.slice(0, RECENT_N);
       const cur = view === "ext" && extCur && ended.find((r) => r.id === extCur && !shown.includes(r));
       if (cur) shown = [...shown, cur];
-      // A project rests folded unless something in it runs or is open here.
-      const here = g.rows.some((r) => view === "ext" ? r.id === extCur : view === "pane" && r.id === current);
-      const fk = (g.project ? "p:" : "status:") + g.key, dflt = g.project ? !open.length && !here : g.key === "term";
+      const fk = (g.project ? "p:" : "status:") + g.key, dflt = !g.project && g.key === "term";
       const folded = sideFoldable() && (fk in sideFold ? sideFold[fk] : dflt);
       const busy = g.key === "going" ? g.rows.filter((r) => r.rank <= 1).length : 0;
       const count = busy ? `${busy} 个在跑` : g.rows.length || "";
@@ -2905,6 +2953,140 @@
     } else return;
     renderSessions();
   });
+  // ───────────────────────────── a session's menu
+  // Right-click a session (or hold it on a touch screen): rename it, mark it
+  // unread, copy its id, archive it. Renaming and archiving go to its own
+  // agent (session_menu.go); Claude Code has no archive, so Collie hides it.
+  const ctxPop = document.createElement("div");
+  ctxPop.className = "pick-pop ctx-menu"; ctxPop.hidden = true; ctxPop.setAttribute("role", "menu");
+  const ctxBack = document.createElement("div");
+  ctxBack.className = "pick-back"; ctxBack.hidden = true;
+  document.body.append(ctxBack, ctxPop);
+  let ctxRow = null;
+  const CTX_ICONS = {
+    rename: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
+    unread: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>',
+    read: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
+    copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
+    archive: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></svg>',
+  };
+  // A running Claude Code renames itself by its /rename; the others by their own API.
+  const typesRename = (r) => r.src === "pane" && r.kind === "claude";
+  function openCtx(row, x, y) {
+    closePick();
+    ctxRow = row;
+    const unread = !!row.mark?.unread;
+    const items = [
+      ["rename", "重命名", !typesRename(row) && !row.session],
+      [unread ? "read" : "unread", unread ? "标记为已读" : "标记为未读", !row.key],
+      ["copy", "复制对话 ID", !row.session],
+      ["archive", "归档", !row.session],
+    ];
+    ctxPop.innerHTML = `<div class="ph">${esc(row.name)}</div>` + items.map(([act, label, off]) =>
+      `<button type="button" class="po${act === "archive" ? " danger" : ""}" role="menuitem" data-ctx="${act}" ${off ? "disabled" : ""}><span class="pi">${CTX_ICONS[act]}</span><span class="pl"><span>${label}</span></span></button>`).join("");
+    const sheet = narrow();
+    ctxPop.classList.toggle("sheet", sheet);
+    ctxBack.hidden = !sheet;
+    ctxPop.hidden = false;
+    if (sheet) ctxPop.style.cssText = "";
+    else {
+      ctxPop.style.minWidth = "180px";
+      const w = ctxPop.offsetWidth, h = ctxPop.offsetHeight;
+      ctxPop.style.left = Math.min(Math.max(8, x), innerWidth - w - 8) + "px";
+      ctxPop.style.top = Math.min(Math.max(8, y), innerHeight - h - 8) + "px";
+    }
+    $(".po:not([disabled])", ctxPop)?.focus({ preventScroll: true });
+  }
+  function closeCtx() { ctxPop.hidden = true; ctxBack.hidden = true; ctxRow = null; }
+  const sideBox = $("#side-groups");
+  // Holding a session on a touch screen opens the menu too (iOS sends no
+  // contextmenu for a link); the tap that ends the hold doesn't open it.
+  const HOLD_MS = 500, HOLD_SLOP = 10;
+  let hold = null;
+  const dropHold = () => { if (hold) clearTimeout(hold.t); };
+  sideBox.addEventListener("contextmenu", (e) => {
+    const row = sideByRow.get(e.target.closest(".item[data-row]")?.dataset.row);
+    if (!row) return;
+    e.preventDefault();
+    dropHold();
+    if (hold) hold.fired = true;
+    openCtx(row, e.clientX, e.clientY);
+  });
+  sideBox.addEventListener("pointerdown", (e) => {
+    hold = null;
+    const a = e.pointerType === "touch" && e.target.closest(".item[data-row]");
+    if (!a) return;
+    hold = { x: e.clientX, y: e.clientY, fired: false };
+    hold.t = setTimeout(() => {
+      const row = sideByRow.get(a.dataset.row);
+      if (!hold || !row) return;
+      hold.fired = true;
+      openCtx(row, hold.x, hold.y);
+    }, HOLD_MS);
+  });
+  sideBox.addEventListener("pointermove", (e) => {
+    if (hold && !hold.fired && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > HOLD_SLOP) { dropHold(); hold = null; }
+  });
+  sideBox.addEventListener("pointerup", dropHold);
+  sideBox.addEventListener("pointercancel", () => { dropHold(); hold = null; });
+  sideBox.addEventListener("click", (e) => {
+    if (hold?.fired) { e.preventDefault(); e.stopPropagation(); }
+    hold = null;
+  }, true);
+  ctxBack.addEventListener("click", closeCtx);
+  document.addEventListener("mousedown", (e) => { if (!ctxPop.hidden && !ctxPop.contains(e.target)) closeCtx(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !ctxPop.hidden) closeCtx(); });
+  addEventListener("resize", () => { if (!ctxPop.hidden) closeCtx(); });
+  ctxPop.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-ctx]");
+    if (!b || !ctxRow) return;
+    const row = ctxRow, act = b.dataset.ctx;
+    closeCtx();
+    try { await ctxAct(row, act); } catch (err) { toast(err.message, "attn"); }
+  });
+  // The session's id with its computer (and hub), so the request goes there.
+  const sessionPath = (r) => {
+    const [m, hub] = machineParts(r.machine);
+    return encodeURIComponent(r.session + (m ? "@" + m : "") + (hub ? "!" + hub : ""));
+  };
+  async function ctxAct(r, act) {
+    if (act === "copy") { await copy(r.session); toast("已复制 " + r.session); }
+    else if (act === "unread" || act === "read") await setMark(r.key, { unread: act === "unread" });
+    else if (act === "rename") await renameRow(r);
+    else if (act === "archive") await archiveRow(r);
+  }
+  async function renameRow(r) {
+    const name = prompt("重命名", r.name)?.replace(/\s+/g, " ").trim();
+    if (!name || name === r.name) return;
+    if (typesRename(r)) {
+      // Typed into it: only while it waits for you, not mid-task or on a question.
+      if (!["idle", "done"].includes(r.status)) throw new Error("它正在干活或在等你确认：等它停下来再改名");
+      await api(paneURL(r.id, "text"), { body: { text: "/rename " + name, enter: true } });
+    } else {
+      await api(`/api/sessions/${sessionPath(r)}/rename`, { body: { kind: r.kind, name } });
+      if (r.src !== "pane") await setMark(r.key, { title: name });
+      if (r.src === "ext") loadExternal();
+    }
+    toast("已改名为「" + name + "」");
+  }
+  async function archiveRow(r) {
+    const own = r.kind !== "claude", running = r.src === "pane";
+    const msg = [`归档「${r.name}」？`,
+      running ? "会先结束这个 agent（关闭它的工作区）。" : "",
+      own ? `用 ${AGENT_LABEL[r.kind] || r.kind} 自己的归档，在它那边也会归档。` : "Claude Code 没有自己的归档：Collie 只把它从列表里藏起来，会话文件不动。"].filter(Boolean).join("\n\n");
+    if (!confirm(msg)) return;
+    // Hidden first, so a closed agent whose archive then fails doesn't come
+    // back as an ended session; the error says so.
+    await setMark(r.key, { archived: true });
+    if (running) {
+      await api(`/api/workspaces/${encodeURIComponent(r.ws)}/close`, { body: {} });
+      state = { ...state, agents: state.agents.filter((a) => a.workspace_id !== r.ws), shells: state.shells.filter((a) => a.workspace_id !== r.ws) };
+      if (view === "pane" && current === r.id) goBack(true);
+    }
+    if (own) await api(`/api/sessions/${sessionPath(r)}/archive`, { body: { kind: r.kind, just_closed: running } });
+    if (r.src === "ext") loadExternal();
+    toast("已归档");
+  }
   async function openExt(id, restore = null) {
     closeExt();
     extCur = id;
@@ -5406,14 +5588,11 @@
     return out;
   }
   // A bare link: ASCII URL characters up to whitespace, tags or non-ASCII text
-  // and punctuation, shown as its host and path, shortened ([name](url) is
-  // better still: the name shows).
+  // and punctuation, shown whole without its scheme ([name](url) is better
+  // still: the name shows).
   const URL_RE = /(?<![A-Za-z0-9_\/])https?:\/\/[^\x00-\x20<>\x7f-\uffff]+/g;
   const unesc = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (m) => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" }[m]));
-  const urlLabel = (u) => {
-    const s = u.replace(/^https?:\/\//, "").replace(/\/$/, "");
-    return s.length > 42 ? s.slice(0, 40) + "…" : s;
-  };
+  const urlLabel = (u) => u.replace(/^https?:\/\//, "").replace(/\/$/, "");
   function parseInlineCodePath(raw) {
     if (!raw || raw.includes("://") || raw.includes("//") || /[\s<>"'`*?;$&|()\\]/.test(raw)) return "";
     const base = raw.replace(/(?:#L\d+(?:-L?\d+)?|:\d+(?:[-:]\d+)?)$/i, "");
@@ -5514,7 +5693,7 @@
     const flushList = () => { if (list) { out.push(`<${list.tag}${list.start > 1 ? ` start="${list.start}"` : ""}>${list.items.map((x) => `<li>${inline(x)}</li>`).join("")}</${list.tag}>`); list = null; } };
     // A GFM table: a | row, a |---| row, then more | rows.
     const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
-    const isSep = (row) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(row) && row.includes("-");
+    const isSep = (row) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(row) && row.includes("-");
     const lines = text.split("\n");
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li];

@@ -33,7 +33,10 @@ var agyServerCache struct {
 	ls *agyServer
 }
 
-const agyService = "/exa.language_server_pb.LanguageServerService/"
+const (
+	agyService       = "/exa.language_server_pb.LanguageServerService/"
+	agyConversations = "/product.v1.ConversationService/"
+)
 
 // agyDesktopServer: the running app's language server, or nil.
 func agyDesktopServer() *agyServer {
@@ -154,14 +157,21 @@ type agyError struct{ Code, Message string }
 func (e *agyError) Error() string { return e.Message }
 
 func (ls *agyServer) call(ctx context.Context, method string, body any) (json.RawMessage, error) {
+	return ls.post(ctx, agyService+method, body)
+}
+
+// post calls one of the server's services; each reads the token from a
+// header of its own name, so both are sent.
+func (ls *agyServer) post(ctx context.Context, path string, body any) (json.RawMessage, error) {
 	b, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, "POST", "http://"+ls.addr+agyService+method, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, "POST", "http://"+ls.addr+path, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Connect-Protocol-Version", "1")
 	req.Header.Set("x-codeium-csrf-token", ls.csrf)
+	req.Header.Set("x-antigravity-csrf-token", ls.csrf)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
