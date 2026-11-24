@@ -3751,16 +3751,19 @@
   // change whatever the agent is doing.
   let sess = null, sessSeq = 0, sessBusy = false;
   async function renderSessionChips(v) {
-    const kSel = $("#p-kind"), mSel = $("#p-model"), eSel = $("#p-effort");
-    const w = !v.run && isWorker(v.name) ? sup.workers.find((x) => x.name === v.name && !x.ended) : null;
+    const kSel = $("#p-kind"), aSel = $("#p-alias"), mSel = $("#p-model"), eSel = $("#p-effort");
+    const w = isWorker(v.name) ? sup.workers.find((x) => x.name === v.name && !x.ended) : null;
     const run = v.run || w?.run || ["", ""];
     const kind = shortKind(v.kind), machine = v.machine || "", remote = !!hubOf(v.pane_id);
     const show = v.is_agent && !isLocalRouter(v) && AGENT_KINDS.some(([k]) => k === kind);
-    const key = show ? [v.pane_id, kind, machine, ...run].join("|") : "";
+    const alias = show ? w?.alias || "" : ""; // a task Collie started through an alias
+    const key = show ? [v.pane_id, kind, machine, alias, ...run].join("|") : "";
     if (sess?.key === key) return lockSession();
     const seq = ++sessSeq;
     sess = { key };
     kSel.hidden = mSel.hidden = eSel.hidden = !show;
+    aSel.hidden = !alias;
+    aSel.innerHTML = alias ? `<span class="pv"><span class="pt">${esc(alias)}</span></span>` : "";
     mSel.disabled = eSel.disabled = true;
     for (const s of [mSel, eSel]) syncPick(s);
     if (!show) return;

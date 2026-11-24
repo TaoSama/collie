@@ -2,9 +2,11 @@ package collie
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -196,6 +198,9 @@ func TestResumeCarriesAlias(t *testing.T) {
 	b := spawnBody{Task: "go on"}
 	if s := b.carryOver(old); s != "s-1" || b.Alias == nil || *b.Alias != "ccx" || b.Kind != "claude" || b.Model != "opus" || *b.Machine != "m1" || b.Name != "w" || b.Thread != "t1" {
 		t.Fatalf("carried: %q %+v", s, b)
+	}
+	if j, _ := json.Marshal(old); !strings.Contains(string(j), `"alias":"ccx"`) {
+		t.Errorf("the page isn't told its alias: %s", j)
 	}
 	b = spawnBody{Task: "go on", Alias: &none, Model: "sonnet"}
 	b.carryOver(old)
