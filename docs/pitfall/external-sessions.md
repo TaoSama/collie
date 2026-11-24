@@ -23,3 +23,7 @@ Claude Code 进入 worktree（`EnterWorktree`）时会把自己的进程 `chdir`
 实测接管：`COLLIE_EXTERNAL=1 go test -run TestExternalLive -v` 列出这台电脑的外部会话和猜到的 alias，`COLLIE_TAKEOVER=<id> go test -run TestTakeOverLive -v` 把一个接管进本机 herdr（不用部署）。
 
 测完后关掉测试用的 herdr workspace，并从 hub 的 `/api/history` 删掉它们留下的记录。不删的话，它们会留在侧栏里。
+
+## Codex App 的线程列表先滤掉 worker，再截断
+
+`codexAppRows`（`internal/collie/desktop.go`）读 App 的 `threads` 表。Collie 自己 worker 的线程也在表里，而且通常最新。要是 SQL 先 `LIMIT` 再在 Go 里滤掉 worker，worker 越多，App 自己的线程被挤掉越多（曾经 7 天内 29 个只显示 16 个）。所以 SQL 不加 `LIMIT`，Go 里滤完 worker 再数满 `codexMax`。App 侧栏没有 7 天窗口，月度、每周的自动化两次运行之间会超过一周，所以 ACTIVE 自动化写入的线程（`automations/<id>/automation.toml` 的 `target_thread_id`）不受窗口和上限限制。
