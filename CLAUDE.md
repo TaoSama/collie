@@ -42,6 +42,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 
 坑按主题记录在 `docs/pitfall/`，动某个模块前先读对应的文件。
 
+- 手机布局按 `(max-width: 760px), (max-height: 500px) and (pointer: coarse)` 判断（横屏手机也是单栏），`narrow()` 和 CSS 要一起改；iOS 键盘只缩 `visualViewport`，高度用 `--vh`（`docs/pitfall/mobile.md`）
 - Router 的 herdr 名字不一定是 `collie`，发消息用 `routerAgent()`；看不到 Router 不代表它退出了（`docs/pitfall/router.md`）
 - **herdr 0.8**。按 pane ID 查找 Agent，Collie 持久化自己启动的 Agent 名称。遇到 `launch_pending` 时，只有确认 Agent 空闲且终端无选择框才回退为粘贴输入。Claude 目录信任提示可能被报告为空闲，Collie 会结合终端内容识别并标记为待确认。
 - **同一会话的识别**。工作目录可能同时有多个会话。Antigravity 会通过会话索引和目录定位记录，匹配不到时显示终端输出。外部会话和 herdr 会话去重需核对会话 ID、来源和运行电脑。接管及发送限制见 [外部会话](docs/pitfall/external-sessions.md)。

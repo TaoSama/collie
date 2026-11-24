@@ -9,11 +9,16 @@
     set(k, v) { try { localStorage.setItem("collie." + k, JSON.stringify(v)); } catch {} },
     del(k) { try { localStorage.removeItem("collie." + k); } catch {} },
   };
-  const narrow = () => matchMedia("(max-width: 760px)").matches;
+  // One column: phones, including a phone held sideways (too short for two).
+  // The same queries guard the phone layout in app.css.
+  const narrowMQ = matchMedia("(max-width: 760px), (max-height: 500px) and (pointer: coarse)");
+  const shortMQ = matchMedia("(max-height: 500px) and (pointer: coarse)");
+  const narrow = () => narrowMQ.matches;
   const AGENT_LABEL = { claude: "Claude Code", codex: "Codex", agy: "Antigravity" };
-  // "上下文 12% · 120k / 1000k": how full a session's context window is.
+  // "上下文 12% · 120k / 1000k": how full a session's context window is. A
+  // phone header drops the token counts (.ctx-n), the narrowest the label too.
   const fmtTokens = (n) => Math.round(n / 1000) + "k";
-  const ctxText = (pct, used, window) => `上下文 ${pct}%` + (used && window ? ` · ${fmtTokens(used)} / ${fmtTokens(window)}` : "");
+  const ctxHTML = (pct, used, window) => `<span class="ctx-l">上下文 </span>${+pct}%` + (used && window ? `<span class="ctx-n"> · ${fmtTokens(used)} / ${fmtTokens(window)}</span>` : "");
   // An Enter or Escape that belongs to the input method, not the page.
   const composing = (e) => e.isComposing || e.keyCode === 229;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,6 +88,7 @@
     bar.textContent = "Collie 有新版本，点这里刷新";
     bar.onclick = () => location.reload();
     document.body.append(bar);
+    document.body.classList.add("has-update");
   }
   // ───────────────────────────── other hubs
   // Hubs on networks that can't reach each other (a devbox, a cloud
@@ -1448,7 +1454,8 @@
     wk.hidden = !busy;
     $("#router-queue").textContent = sup.paused ? "已暂停投递" : routerQueued() ? `${routerQueued()} 条事件排队中` : "";
     const cx = $("#router-ctx");
-    cx.textContent = r.handover ? "正在交接记忆…" : r.alive && r.context ? ctxText(r.context, r.used, r.window) : "";
+    const cxHTML = r.handover ? "正在交接记忆…" : r.alive && r.context ? ctxHTML(r.context, r.used, r.window) : "";
+    if (cx._html !== cxHTML) cx.innerHTML = cx._html = cxHTML;
     cx.classList.toggle("warn", !!r.handover || (r.rotate_at > 0 && r.context >= r.rotate_at - 10));
     cx.title = r.rotate_at > 0 ? `用到 ${r.rotate_at}% 时，Collie 会把要记住的事写进 memory/，然后换一个新会话` : "自动换会话已关闭（自动化 → 设置）";
     renderRouterModel(r);
@@ -2607,7 +2614,7 @@
       <section class="card set-sec">
         <header><h4>通知</h4></header>
         <div class="set-grid">
-          <label class="check span3"><input type="checkbox" name="notify_lark" ${s.notify_lark ? "checked" : ""}> 用 hub 上的 lark-cli 发飞书消息给你<small id="lark-who" class="muted">· 正在看 hub 上的 lark-cli…</small></label>
+          <label class="check span3"><input type="checkbox" name="notify_lark" ${s.notify_lark ? "checked" : ""}><span>用 hub 上的 lark-cli 发飞书消息给你<small id="lark-who" class="muted">· 正在看 hub 上的 lark-cli…</small></span></label>
           <label>Webhook<input name="notify_webhook" value="${esc(s.notify_webhook || "")}" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" autocorrect="off" autocapitalize="off" spellcheck="false"><small>飞书 / Lark 机器人或 Slack</small></label>
           <label>什么时候推送<select name="notify_level" data-pick="compact" data-title="什么时候推送"><option value="quiet" ${s.notify_level === "quiet" ? "selected" : ""} data-sub="卡住、要你确认、出错">只在需要你时</option><option value="normal" ${s.notify_level === "normal" ? "selected" : ""} data-sub="外加 Collie 的回复，比如做完事的汇报">也推送 Collie 的回复</option></select><small>你正开着 Collie 的网页时不推</small></label>
         </div>
@@ -3266,6 +3273,9 @@
   });
   sideBox.addEventListener("pointerup", dropHold);
   sideBox.addEventListener("pointercancel", () => { dropHold(); hold = null; });
+  // Lifting the finger after the menu opened would send compatibility mouse
+  // events that close it again (and open the row); cancel them.
+  sideBox.addEventListener("touchend", (e) => { if (hold?.fired) e.preventDefault(); }, { passive: false });
   sideBox.addEventListener("click", (e) => {
     if (hold?.fired) { e.preventDefault(); e.stopPropagation(); }
     hold = null;
@@ -3882,8 +3892,9 @@
     const cwd = home && (v.cwd || "").startsWith(home) ? "~" + v.cwd.slice(home.length) : tilde(v.cwd);
     $("#d-cwd").textContent = (ms.length > 1 ? machineName(v.machine) + " · " : "") + cwd;
     const u = v.context, pct = u?.window ? Math.floor(u.used * 100 / u.window) : 0;
-    $("#d-ctx").textContent = pct ? ctxText(pct, u.used, u.window) : "";
-    $("#d-ctx").classList.toggle("warn", pct >= CTX_WARN_PCT);
+    const dcx = $("#d-ctx"), dcxHTML = pct ? ctxHTML(pct, u.used, u.window) : "";
+    if (dcx._html !== dcxHTML) { dcx.innerHTML = dcx._html = dcxHTML; dcx.title = dcx.textContent; }
+    dcx.classList.toggle("warn", pct >= CTX_WARN_PCT);
     renderSessionChips(v);
     // The pane may have shown up before the page knew what it is (a fresh
     // terminal): once it does, switch to the view that fits.
@@ -4085,7 +4096,8 @@
   }
   // The pane keeps its own width (herdr can't resize it for us), so a phone
   // can't fit 120 columns legibly: there it shows the screen at a readable
-  // size and scrolls sideways, or, with 全览, the whole width at once.
+  // size and scrolls sideways, or, with 全览, the whole width at once. Only the
+  // width matters here, so a phone held sideways fits the whole screen.
   const narrowScreen = matchMedia("(max-width: 760px)");
   function fitTerm() {
     if (!term || !size.cols) return;
@@ -6507,7 +6519,7 @@
   // page around it. Typing that stays within the lines it has, or grows
   // past the cap, needs none of that; only text that overflows or went away.
   function grow(el) {
-    const max = innerHeight * 0.4, len = el.value.length, longer = len >= (el._len ?? 0);
+    const max = (window.visualViewport?.height || innerHeight) * (shortMQ.matches ? 0.25 : 0.4), len = el.value.length, longer = len >= (el._len ?? 0);
     el._len = len;
     if (longer && (el.scrollHeight <= el.clientHeight || el.offsetHeight >= Math.floor(max))) return;
     el.style.height = "auto";
@@ -6904,11 +6916,35 @@
     root.setProperty("--vh", (v ? v.height : innerHeight) + "px");
     pinned.forEach((el) => { el.scrollTop = el.scrollHeight; });
     root.setProperty("--vtop", (v ? Math.max(0, v.offsetTop) : 0) + "px");
+    // iOS: the keyboard shrinks only the visual viewport (pinch zoom does too).
+    const kb = !!v && v.scale < 1.05 && innerHeight - v.height > 120;
+    // A settings field the keyboard just covered scrolls back into view.
+    if (kb && !document.documentElement.classList.contains("kb-open")) {
+      const f = document.activeElement;
+      if (f?.closest?.(".auto-body")) requestAnimationFrame(() => f.scrollIntoView({ block: "nearest" }));
+    }
+    document.documentElement.classList.toggle("kb-open", kb);
   }
   window.visualViewport?.addEventListener("resize", setVH);
   window.visualViewport?.addEventListener("scroll", setVH);
   addEventListener("resize", setVH);
   setVH();
+  // The same when something below a chat grows (the input box getting
+  // taller, the pending tray, attached files) and its scroller shrinks.
+  const pinObs = new ResizeObserver((entries) => {
+    for (const { target: el, contentRect: r } of entries) {
+      const was = el._pinH || 0;
+      el._pinH = r.height;
+      // Several shrinks can land in one frame, before the pin's scroll event:
+      // judge "was at the bottom" against the old height too.
+      if (was > 0 && r.height > 0 && r.height < was && (el._atBottom || el.scrollHeight - el.scrollTop - was <= AT_BOTTOM_PX)) el.scrollTop = el.scrollHeight;
+    }
+  });
+  $$(".viewer, #log, #screen").forEach((el) => {
+    el._atBottom = true;
+    el.addEventListener("scroll", () => { el._atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_PX; }, { passive: true });
+    pinObs.observe(el);
+  });
 
   // ───────────────────────────── boot
   function stripLarkJumpParams() {
@@ -6961,6 +6997,14 @@
     setMode(mode);
     booted = false;
     view = undefined;
+    // A phone opened straight into a session (a notification, a shared link)
+    // gets the session list underneath, so the system back gesture lands
+    // there instead of leaving the app.
+    const deep = location.hash;
+    if (narrow() && typeof history.state?.collieIdx !== "number" && deep.length > 2) {
+      history.replaceState({ collieIdx: 0 }, "", "#/");
+      history.pushState({ collieIdx: 1 }, "", deep);
+    }
     route();
     booted = true;
   }

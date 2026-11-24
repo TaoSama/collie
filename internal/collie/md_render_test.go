@@ -117,6 +117,7 @@ function loadRenderer(withKatex) {
     localStorage: { getItem: () => null, setItem: noop },
     matchMedia: () => ({ matches: false, addEventListener: noop }),
     MutationObserver: class { observe() {} },
+    ResizeObserver: class { observe() {} },
     EventSource: class { addEventListener() {} close() {} },
     CSS: { escape: (s) => String(s) },
     URL,
