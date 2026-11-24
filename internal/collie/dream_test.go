@@ -87,8 +87,10 @@ func TestFinishDreamSkillOptionsPendingDBAndLark(t *testing.T) {
 	for _, want := range []string{
 		`"template":"orange"`,
 		"Collie · 需要你",
-		"可选：「做成个人 skill」 · 「放到项目仓库」 · 「先不用」",
-		"可选：「派人去修」 · 「先不用」",
+		"Collie 需要你选：做成个人 skill / 放到项目仓库 / 先不用",
+		"Collie 需要你选：派人去修 / 先不用",
+		"#/d/" + eSkill.ID,
+		"#/d/" + eFix.ID,
 	} {
 		if !strings.Contains(larkStr, want) {
 			t.Errorf("lark card missing %q in:\n%s", want, larkStr)

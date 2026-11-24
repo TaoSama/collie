@@ -719,6 +719,21 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 }
 /* redrawn in place: only a card's first appearance rises */
 .ask.still { animation: none; }
+/* opened from a notification: the card it was about */
+#live .ask.flash { animation: rise .22s ease-out, flash 1.6s ease-out .22s; }
+@media (prefers-reduced-motion: reduce) { #live .ask.flash { animation: flash .8s ease-out; } }
+/* how a notification's decision was settled, when it was before you opened it */
+.decided {
+  position: absolute; z-index: 30; top: calc(env(safe-area-inset-top) + 72px); left: 16px; right: 16px; margin: 0 auto;
+  display: flex; align-items: center; gap: 10px; width: fit-content; max-width: 560px; padding: 9px 8px 9px 14px;
+  background: var(--bg); border: var(--bw) solid var(--line-2); border-radius: calc(12px * var(--round)); box-shadow: var(--shadow-pop);
+  font-size: var(--fs-meta); color: var(--fg); animation: rise .2s ease-out;
+}
+.decided[hidden] { display: none; }
+.decided .t { min-width: 0; overflow-wrap: anywhere; }
+.decided button { flex: none; border: 0; background: none; color: var(--t-meta); font-size: var(--fs-lead); line-height: 1; padding: 4px 8px; cursor: pointer; }
+.decided button:hover { color: var(--fg); }
+@media (pointer: coarse) { .decided button { min-width: 44px; min-height: 44px; margin: -8px -4px -8px 0; } }
 .ask-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 0; font-size: var(--fs-small); color: var(--t-meta); }
 .ask-head > * { white-space: nowrap; flex: none; }
 .ask-head > .who { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

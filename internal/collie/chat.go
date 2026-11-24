@@ -1212,7 +1212,8 @@ func (s *Server) paneAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"asking": false})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"asking": true, "approval": parseApproval(text)})
+	a := parseApproval(text)
+	writeJSON(w, 200, map[string]any{"asking": true, "approval": a, "sig": askSig(a)})
 }
 
 // askOf turns a question to the human into an ask item: Claude's

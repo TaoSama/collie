@@ -154,10 +154,17 @@ func larkCard(ns []notice, link string) string {
 		}
 	}
 	var els []any
+	general := false // something besides decisions: the card ends with a way into Collie
 	for i, n := range ns {
 		if i > 0 {
 			els = append(els, map[string]any{"tag": "hr"})
 		}
+		if n.decision != "" {
+			els = append(els, larkDecision(n)...)
+			general = general || n.link == ""
+			continue
+		}
+		general = true
 		t := clip(n.text, 1500)
 		if n.re != nil {
 			t = "<font color='grey'>↩ " + larkEscape(n.re.line()) + "</font>\n" + t
@@ -174,12 +181,8 @@ func larkCard(ns []notice, link string) string {
 		}
 		els = append(els, map[string]any{"tag": "markdown", "content": t})
 	}
-	if link != "" {
-		els = append(els, map[string]any{
-			"tag": "button", "type": "default", "width": "default",
-			"text":      map[string]string{"tag": "plain_text", "content": "打开 Collie"},
-			"behaviors": []any{map[string]string{"type": "open_url", "default_url": link}},
-		})
+	if link != "" && general {
+		els = append(els, larkButton("打开 Collie", "default", link))
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -191,6 +194,29 @@ func larkCard(ns []notice, link string) string {
 		"body":   map[string]any{"elements": els},
 	})
 	return strings.TrimSuffix(buf.String(), "\n")
+}
+
+// larkDecision is a decision in the card: whose it is and what it needs, and
+// a button to the page where it is settled. What the agent's screen says
+// stays there, behind the sign-in.
+func larkDecision(n notice) []any {
+	t := "**" + larkEscape(n.line()) + "**"
+	if n.summary != "" {
+		t += "\n<font color='grey'>" + larkEscape(n.summary) + "</font>"
+	}
+	els := []any{map[string]any{"tag": "markdown", "content": t}}
+	if n.link != "" {
+		els = append(els, larkButton("去处理", "primary", larkJumpURL(n.link)))
+	}
+	return els
+}
+
+func larkButton(label, kind, link string) map[string]any {
+	return map[string]any{
+		"tag": "button", "type": kind, "width": "default",
+		"text":      map[string]string{"tag": "plain_text", "content": label},
+		"behaviors": []any{map[string]string{"type": "open_url", "default_url": link}},
+	}
 }
 
 // larkEscape keeps quoted text from being read as card Markdown.
@@ -212,6 +238,9 @@ func cardSummary(ns []notice) string {
 		if n.needsYou() {
 			pick = n
 		}
+	}
+	if pick.decision != "" {
+		return pick.line()
 	}
 	for _, l := range strings.Split(pick.text, "\n") {
 		l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#>-*• "))

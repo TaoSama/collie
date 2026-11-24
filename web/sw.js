@@ -46,3 +46,37 @@ async function fromShell(key, req) {
   if (res.ok) await c.put(key, res.clone());
   return res;
 }
+
+// A notification opens what it is about (data.url, a #/d/… decision link):
+// in the open page if there is one, else a new window (an installed app
+// starts cold). One of its buttons answers the decision from here; when that
+// fails (the dialog changed, already answered, signed out), the page opens.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(notificationClicked(e.notification.data || {}, e.action));
+});
+
+async function notificationClicked(d, action) {
+  const choice = action && d.answer ? (d.choices || [])[+action] : undefined;
+  if (choice !== undefined) {
+    try {
+      const r = await fetch("/api/super/decide", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...d.answer, choice }),
+      });
+      if (r.ok) return;
+    } catch (err) { console.warn("answering from a notification:", err); }
+  }
+  await openPage(d.url || "/");
+}
+
+async function openPage(url) {
+  const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const w = wins.find((c) => new URL(c.url).origin === location.origin);
+  if (w) {
+    w.postMessage({ type: "open", url });
+    await w.focus();
+    return;
+  }
+  await self.clients.openWindow(url);
+}

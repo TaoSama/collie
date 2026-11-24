@@ -228,7 +228,7 @@ func TestLarkNotifyOptionsInQuietMode(t *testing.T) {
 		t.Fatal("reply with options did not notify")
 	}
 	got := string(b)
-	for _, want := range []string{`"template":"orange"`, "Collie · 需要你", "可选：「修并升级」 · 「先只改本地」"} {
+	for _, want := range []string{`"template":"orange"`, "Collie · 需要你", "Collie 需要你选：修并升级 / 先只改本地", "本地改好了，要现在发版升级吗？"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}

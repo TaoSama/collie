@@ -66,8 +66,9 @@ type Super struct {
 	pinnedCache    map[string]*Entry    // older pinned entries resolved from SQLite
 	notifyBuf      []notice
 	notifyAt       time.Time
-	seenAt         time.Time // when a page of Collie was last open in front of you
-	seenURL        string    // where that page was, for the link in a notification
+	seenAt         time.Time         // when a page of Collie was last open in front of you
+	seenURL        string            // where that page was, for the link in a notification
+	picked         map[string]Answer // pane → the choice a page clicked on its dialog card
 }
 
 type screenMark struct {
@@ -149,10 +150,13 @@ func (sp *Super) addEntryReLocked(role, thread, text, ref, tone string, re *Quot
 }
 
 func (sp *Super) addEntryReplyLocked(role, thread, text, ref, tone string, re *Quote, opts []string, check bool) *Entry {
-	e := &Entry{ID: sp.st.nextID("e"), Role: role, Thread: thread, Text: text, At: time.Now(), Ref: ref, Tone: tone, Re: re, Options: opts, Check: check}
+	return sp.appendEntryLocked(&Entry{ID: sp.st.nextID("e"), Role: role, Thread: thread, Text: text, At: time.Now(), Ref: ref, Tone: tone, Re: re, Options: opts, Check: check})
+}
+
+func (sp *Super) appendEntryLocked(e *Entry) *Entry {
 	sp.st.Entries = append(sp.st.Entries, e)
-	if role == "collie" || tone == "blocked" || tone == "error" {
-		sp.queueNotifyLocked(role, text, tone, re, check, opts...)
+	if e.Role == "collie" || e.Tone == "blocked" || e.Tone == "error" {
+		sp.queueNotifyLocked(e)
 	}
 	sp.changed()
 	return e
@@ -427,6 +431,9 @@ func (sp *Super) tick(parent context.Context) {
 			w.Status = a.Status
 			w.PaneID = a.Pane
 			sp.changed()
+			if prev == "blocked" {
+				sp.settleAskLocked(a.Pane, "", "") // answered in its terminal, or it moved on
+			}
 			switch {
 			case a.Status == "blocked":
 				fin = append(fin, finished{w, true})
@@ -717,12 +724,19 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		return
 	}
 	summary := sp.lastAssistant(ctx, w)
+	var dialog *Approval
+	if blocked {
+		if screen, err := sp.s.herdr.ReadAsk(ctx, w.PaneID); err == nil && screenAsks(screen) {
+			a := parseApproval(screen)
+			dialog = &a
+		}
+	}
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if blocked {
 		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s is BLOCKED on a dialog in its terminal (the human also sees it as a card in chat). Screen:\n%s%s\nIf the answer follows from what the human asked, or is routine, answer it yourself: `collie answer %s <choice>`. Leave it to the human only when it is theirs to decide (see ROUTER.md).", w.Name, summary, sp.choicesText(ctx, w.PaneID), w.Name), "", "", w.Name)
-		sp.addEntryLocked("event", w.Thread, w.Name+" 等你确认", w.Name, "blocked")
+			fmt.Sprintf("worker %s is BLOCKED on a dialog in its terminal (the human also sees it as a card in chat). Screen:\n%s%s\nIf the answer follows from what the human asked, or is routine, answer it yourself: `collie answer %s <choice>`. Leave it to the human only when it is theirs to decide (see ROUTER.md).", w.Name, summary, choicesText(dialog), w.Name), "", "", w.Name)
+		sp.addAskLocked(w, dialog)
 		return
 	}
 	if msg := sp.workerAgentError(ctx, w, summary); msg != "" {
@@ -1251,14 +1265,13 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 
 // choicesText lists a dialog's choices for the router, numbered as `collie
 // answer` takes them.
-func (sp *Super) choicesText(ctx context.Context, pane string) string {
-	screen, err := sp.s.herdr.ReadAsk(ctx, pane)
-	if err != nil || !screenAsks(screen) {
+func choicesText(a *Approval) string {
+	if a == nil {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("\nChoices:")
-	for i, c := range parseApproval(screen).Choices {
+	for i, c := range a.Choices {
 		fmt.Fprintf(&b, "\n  %d. %s", i+1, c.Label)
 	}
 	return b.String()
@@ -1300,12 +1313,7 @@ func (sp *Super) Report(name, text string) error {
 func (sp *Super) workerByPane(pane string) string {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	for _, w := range sp.st.Workers {
-		if w.PaneID == pane && !w.Ended {
-			return w.Name
-		}
-	}
-	return ""
+	return sp.workerByPaneLocked(pane)
 }
 
 // ---------------------------------------------------------------- watchdog
@@ -1428,23 +1436,34 @@ func progressHash(screen string) string {
 
 // ---------------------------------------------------------------- outbox
 
-func (sp *Super) queueNotifyLocked(role, text, tone string, re *Quote, check bool, opts ...string) {
+func (sp *Super) queueNotifyLocked(e *Entry) {
 	if sp.st.Settings.NotifyWebhook == "" && !sp.st.Settings.NotifyLark {
 		return
 	}
-	if sp.st.Settings.NotifyLevel == "quiet" && role == "collie" && len(opts) == 0 && !check {
+	n := notice{tone: e.Tone, text: e.Text, re: e.Re, options: e.Options, check: e.Check}
+	switch {
+	case e.Ask != nil: // a dialog's screen stays on the page
+		n.decision, n.task, n.options = e.ID, entryTask(e), e.Ask.Choices
+	case isDecision(e):
+		n.decision, n.task, n.summary = e.ID, entryTask(e), pendingSummary(e.Text, nil)
+	case !n.needsYou() && sp.st.Settings.NotifyLevel == "quiet" && e.Role == "collie":
 		return
 	}
-	sp.notifyBuf = append(sp.notifyBuf, notice{tone: tone, text: text, re: re, options: opts, check: check})
+	sp.notifyBuf = append(sp.notifyBuf, n)
 }
 
 // A notice is one thing to tell you: what Collie said (and what about), or
-// what needs you.
+// what needs you. One that needs you is a decision: it says whose it is and
+// what it needs (line), and links to it; the text stays on the page.
 type notice struct {
 	tone, text string
 	re         *Quote
 	options    []string
 	check      bool
+	decision   string // the entry that announced it
+	task       string // the worker it is about, or Collie
+	link       string // set when it goes out
+	summary    string // a --opt/--check message's first line
 }
 
 func (n notice) needsYou() bool {
@@ -1503,18 +1522,8 @@ func (sp *Super) collieQuoteLocked(id string) *Quote {
 	if id == "" {
 		return nil
 	}
-	for i := len(sp.st.Entries) - 1; i >= 0; i-- {
-		if e := sp.st.Entries[i]; e.ID == id && e.Role == "collie" {
-			return &Quote{Entry: e.ID, Who: "Collie", Text: clip(e.Text, 600)}
-		}
-	}
-	if sp.db != nil {
-		var raw string
-		var e Entry
-		if sp.db.QueryRow(`SELECT data FROM entries WHERE id = ?`, id).Scan(&raw) == nil &&
-			json.Unmarshal([]byte(raw), &e) == nil && e.Role == "collie" {
-			return &Quote{Entry: e.ID, Who: "Collie", Text: clip(e.Text, 600)}
-		}
+	if e, _ := sp.entryLocked(id); e != nil && e.Role == "collie" {
+		return &Quote{Entry: e.ID, Who: "Collie", Text: clip(e.Text, 600)}
 	}
 	return nil
 }
@@ -1531,6 +1540,7 @@ type PendingItem struct {
 	Summary string    `json:"summary"`
 	Options []string  `json:"options,omitempty"`
 	Check   bool      `json:"check,omitempty"`
+	Task    string    `json:"task,omitempty"` // the worker it is about, or Collie
 }
 
 // PinnedItem is one message in chat:main manually pinned by the human. Unlike
@@ -1644,19 +1654,24 @@ func (sp *Super) Dismiss(id string) {
 		return
 	}
 	sp.mu.Lock()
-	if sp.st.Dismissed == nil {
-		sp.st.Dismissed = map[string]bool{}
-	}
-	changed := !sp.st.Dismissed[id]
-	if changed {
-		sp.st.Dismissed[id] = true
-		sp.changed()
-	}
+	changed := sp.dismissLocked(id)
 	hasDB := sp.db != nil
 	sp.mu.Unlock()
 	if changed && hasDB {
 		sp.flush()
 	}
+}
+
+func (sp *Super) dismissLocked(id string) bool {
+	if sp.st.Dismissed == nil {
+		sp.st.Dismissed = map[string]bool{}
+	}
+	if sp.st.Dismissed[id] {
+		return false
+	}
+	sp.st.Dismissed[id] = true
+	sp.changed()
+	return true
 }
 
 // pendingLocked computes unanswered --opt and --check Collie messages in chat:main.
@@ -1682,39 +1697,42 @@ func (sp *Super) pendingLocked(now time.Time) []PendingItem {
 		if len(opts) == 0 && !e.Check {
 			continue
 		}
-		resolved, otherCollie := false, false
-		for j := i + 1; j < len(es); j++ {
-			next := es[j]
-			if next.Thread != "" && next.Thread != mainThread {
-				continue
-			}
-			switch next.Role {
-			case "user":
-				reID := ""
-				if next.Re != nil {
-					reID = next.Re.Entry
-				}
-				if reID == e.ID || (reID == "" && !otherCollie) {
-					resolved = true
-				}
-			case "collie":
-				otherCollie = true
-			}
-			if resolved {
-				break
-			}
-		}
-		if !resolved {
+		if sp.replyLocked(i) == nil {
 			out = append(out, PendingItem{
 				ID:      e.ID,
 				At:      e.At,
 				Summary: pendingSummary(e.Text, opts),
 				Options: opts,
 				Check:   e.Check,
+				Task:    entryTask(e),
 			})
 		}
 	}
 	return out
+}
+
+// replyLocked is your message that settles the --opt/--check message at
+// Entries[i], by rules 2 and 3 above; nil while there is none.
+func (sp *Super) replyLocked(i int) *Entry {
+	e, otherCollie := sp.st.Entries[i], false
+	for _, next := range sp.st.Entries[i+1:] {
+		if next.Thread != "" && next.Thread != mainThread {
+			continue
+		}
+		switch next.Role {
+		case "user":
+			reID := ""
+			if next.Re != nil {
+				reID = next.Re.Entry
+			}
+			if reID == e.ID || (reID == "" && !otherCollie) {
+				return next
+			}
+		case "collie":
+			otherCollie = true
+		}
+	}
+	return nil
 }
 
 var (
@@ -2039,6 +2057,17 @@ func (n notice) label() string {
 func noticesText(ns []notice) string {
 	var parts []string
 	for _, n := range ns {
+		if n.decision != "" {
+			p := n.label() + "：" + n.line()
+			if n.summary != "" {
+				p += "\n" + n.summary
+			}
+			if n.link != "" {
+				p += "\n去处理：" + n.link
+			}
+			parts = append(parts, p)
+			continue
+		}
 		p := n.label() + "：" + clip(n.text, 400)
 		if n.re != nil {
 			p = "↩ " + n.re.line() + "\n" + p
@@ -2071,20 +2100,31 @@ func (sp *Super) sendNotifications() {
 		sp.mu.Unlock()
 		return
 	}
-	notices := sp.notifyBuf
-	text := noticesText(notices)
 	url, toLark := sp.st.Settings.NotifyWebhook, sp.st.Settings.NotifyLark
 	looking := time.Since(sp.seenAt) < 75*time.Second
-	link := sp.seenURL
+	base := sp.linkBaseLocked()
+	// A decision settled while it waited here (Collie answered, you did on
+	// the page) is no longer news.
+	var notices []notice
+	for _, n := range sp.notifyBuf {
+		if n.decision != "" {
+			if !sp.decisionOpenLocked(n.decision) {
+				continue
+			}
+			n.link = decisionLink(base, n.decision)
+		}
+		notices = append(notices, n)
+	}
 	sp.notifyBuf, sp.notifyAt = nil, time.Now()
 	sp.mu.Unlock()
-	if looking {
+	if looking || len(notices) == 0 {
 		return
 	}
+	link := ""
+	if base != "" {
+		link = strings.TrimRight(base, "/") + "/#/collie"
+	}
 	if toLark {
-		if link != "" {
-			link = larkJumpURL(strings.TrimRight(link, "/") + "/#/collie")
-		}
 		if err := larkSend(notices, link); err != nil {
 			log.Printf("notify lark: %v", err)
 		}
@@ -2092,10 +2132,15 @@ func (sp *Super) sendNotifications() {
 	if url == "" {
 		return
 	}
-	body, _ := json.Marshal(map[string]any{
+	text := noticesText(notices)
+	payload := map[string]any{
 		"msg_type": "text", "content": map[string]string{"text": text}, // Feishu/Lark bot
 		"text": text, // Slack-style
-	})
+	}
+	if d := firstDecision(notices); d != nil {
+		payload["link"] = d.link
+	}
+	body, _ := json.Marshal(payload)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))

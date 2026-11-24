@@ -23,6 +23,9 @@
   const composing = (e) => e.isComposing || e.keyCode === 229;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const normMsg = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  // Start a one-shot animation class again, even if it is still on.
+  const replayClass = (el, cls) => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); };
   const tilde = (p) => (p || "").replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, "~");
   // Built once: toLocale*String with options makes a formatter per call.
   const HHMM = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
@@ -399,6 +402,7 @@
     const ev = new EventSource("/api/events");
     ev.addEventListener("super", (e) => {
       sup = normSup(JSON.parse(e.data));
+      notifyPending();
       renderSide();
       if (view === "collie") renderSuper();
     });
@@ -452,12 +456,76 @@
   function ping(msg, a, kind) {
     if (a.pane_id !== current || document.hidden) {
       toast(msg, kind);
-      if (document.hidden && prefs.notify() && "Notification" in window && Notification.permission === "granted") {
-        const n = new Notification("Collie", { body: msg, icon: "/icon.svg", tag: a.pane_id });
-        n.onclick = () => { focus(); location.hash = "#/p/" + encodeURIComponent(a.pane_id); };
+      if (document.hidden && canNotify()) {
+        if (a.status === "blocked") notifyAsk(a);
+        else systemNotify({ body: msg, tag: a.pane_id, hash: "#/p/" + encodeURIComponent(a.pane_id) });
       }
     }
   }
+
+  // ───────────────────────────── system notifications
+  // One that needs you says whose decision it is and what it needs, links to
+  // the decision itself (#/d/…, see openDecision) and, when all its choices
+  // fit, offers them as buttons that sw.js answers without opening the page.
+  // What the agent's screen says stays on the page. It goes through the
+  // service worker when there is one, so a click still lands after the page
+  // has gone (an installed app opens cold).
+  const canNotify = () => prefs.notify() && "Notification" in window && Notification.permission === "granted";
+  const NOTE_CHOICE = 24; // a choice's length in a notification's text and buttons
+  const clipNote = (s) => (s.length > NOTE_CHOICE ? s.slice(0, NOTE_CHOICE - 1) + "…" : s);
+  // Whose decision it is and what it needs (notice.line on the hub).
+  const needLine = (who, choices, check) => choices.length ? `${who} 需要你选：${choices.map(clipNote).join(" / ")}`
+    : `${who} 需要你${check ? "看一下" : "确认"}`;
+  async function systemNotify({ body, tag, hash, choices = [], answer = null }) {
+    const reg = "serviceWorker" in navigator && isSecureContext ? await navigator.serviceWorker.getRegistration().catch(() => null) : null;
+    const max = reg && answer ? Notification.maxActions || 0 : 0;
+    const fit = choices.length && choices.length <= max;
+    const opts = { body, icon: "/icon.svg", tag, data: { url: location.origin + "/" + hash, answer: fit ? answer : null, choices: fit ? choices : [] } };
+    if (reg) {
+      try {
+        await reg.showNotification("Collie", { ...opts, actions: fit ? choices.map((c, i) => ({ action: String(i), title: clipNote(c) })) : [] });
+        return;
+      } catch (err) { console.warn("notification:", err); }
+    }
+    const n = new Notification("Collie", opts);
+    n.onclick = () => { focus(); location.hash = hash; n.close(); };
+  }
+  async function notifyAsk(a) {
+    let r = null;
+    try { r = await api(paneURL(a.pane_id, "ask")); } catch (err) { console.warn("reading the dialog:", err); }
+    const choices = r?.asking ? (r.approval.choices || []).map((c) => normMsg(c.label)) : [];
+    const body = needLine(title(a), choices, false);
+    // A button answers through this page's own hub; another hub's session just opens.
+    const answer = r?.asking && !hubOf(a.pane_id) ? { pane: a.pane_id, sig: r.sig } : null;
+    systemNotify({ body, tag: a.pane_id, hash: "#/d/pane/" + encodeURIComponent(a.pane_id), choices, answer });
+  }
+  // Collie's questions (--opt, --check) notify once each: the ones already
+  // waiting when the page opened, or notified by another page here, don't.
+  const NOTIFIED_KEEP = 200;
+  let notified = null;
+  function notifyPending() {
+    const list = sup.hasPending ? sup.pending : null;
+    if (!list) return;
+    const fresh = !notified;
+    notified ||= new Set(store.get("notified", []));
+    let changed = false;
+    for (const p of list) {
+      if (notified.has(p.id)) continue;
+      notified.add(p.id); changed = true;
+      if (fresh || !document.hidden || !canNotify()) continue;
+      const opts = p.options || [];
+      const body = needLine(p.task || "Collie", opts, true) + (p.summary ? "\n" + p.summary : "");
+      systemNotify({ body, tag: "d:" + p.id, hash: "#/d/" + encodeURIComponent(p.id), choices: opts.length ? opts : ["已看"], answer: { id: p.id } });
+    }
+    if (changed) store.set("notified", [...notified].slice(-NOTIFIED_KEEP));
+  }
+  // A click on a notification while a page is open comes here (sw.js).
+  navigator.serviceWorker?.addEventListener("message", (e) => {
+    if (e.data?.type !== "open") return;
+    const h = new URL(e.data.url, location.origin).hash;
+    if (h && h !== location.hash) location.hash = h;
+    else if (h) route();
+  });
 
   // Tell the hub a page of Collie is in front of you: it holds back
   // notifications while you can see them here.
@@ -787,6 +855,7 @@
     syncHistoryIndex();
     let h = location.hash;
     let next = null, id = null;
+    if (h.startsWith("#/d/")) { openDecision(h.slice(4)); return; }
     if (h.startsWith("#/p/")) { next = "pane"; id = decodeURIComponent(h.slice(4)); }
     else if (h.startsWith("#/x/")) { next = "ext"; id = decodeURIComponent(h.slice(4)); }
     else if (h.startsWith("#/h/")) { next = "ext"; id = "h:" + decodeURIComponent(h.slice(4)); }
@@ -809,6 +878,7 @@
       else next = h.slice(2);
     }
     if (next && next !== "file") store.set("last", h);
+    if (decidedAt && (decidedAt.view !== next || decidedAt.id !== id)) hideDecided();
     if (next === view && id === (next === "ext" ? extCur : current)) return;
     // Snapshot the departing view right before its DOM is hidden.
     if (prevView && performance.now() >= programmaticScrollUntil) {
@@ -862,6 +932,94 @@
   }
   addEventListener("popstate", route);
   addEventListener("hashchange", route);
+
+  // ───────────────────────────── decisions (a notification's link)
+  // #/d/<entry id> is a decision Collie recorded (a worker's dialog, a
+  // --opt or --check message); #/d/pane/<pane id> any session's dialog. The
+  // link lands on the card itself, flashed, or says how it was settled. The
+  // view underneath shows at once (a cold start draws it from the launch
+  // snapshot); the hub then says where exactly. Signed out, the link stays
+  // in the address bar and opens after signing in.
+  let focusAsk = null; // { pane, until }: the dialog to flash when its card shows
+  let decidedAt = null; // where the "已处理" bar was shown: { view, id }
+  async function openDecision(spec) {
+    const deep = location.hash, seq = ++decisionSeq;
+    const byPane = spec.startsWith("pane/");
+    const key = decodeURIComponent(byPane ? spec.slice(5) : spec);
+    const go = (v, id) => {
+      const hash = v === "pane" ? "#/p/" + encodeURIComponent(id) : "#/collie";
+      if (location.hash !== hash) { replaceHash(hash); route(); }
+    };
+    hideDecided();
+    go(byPane ? "pane" : "collie", key);
+    let d = null;
+    try {
+      d = await api("/api/super/decision?" + new URLSearchParams(byPane ? { pane: key } : { id: key }));
+    } catch (err) {
+      if (seq !== decisionSeq) return;
+      if (err.message === "unauthorized") { history.replaceState(history.state, "", deep); return; }
+      if (!byPane) { toast("找不到这个决策", "attn"); return; }
+    }
+    const pane = d?.pane || (byPane ? key : "");
+    let asking = false;
+    if (pane && (!d || d.status === "open")) {
+      try { asking = !!(await api(paneURL(pane, "ask"))).asking; } catch (err) { console.warn("reading the dialog:", err); }
+    }
+    if (seq !== decisionSeq) return;
+    if (asking) {
+      focusAsk = { pane, until: Date.now() + 15e3 };
+      go("pane", pane);
+      flashAsk(); // already on screen: the stream won't redraw an unchanged card
+      return;
+    }
+    if (d && d.kind !== "dialog") {
+      go("collie");
+      if (d.status !== "open") showDecided(d);
+      jumpToEntry(d.id);
+      return;
+    }
+    // A dialog no longer on screen: its session if still there, else the chat.
+    if (pane && find(pane)) go("pane", pane);
+    else go("collie");
+    showDecided(d || { kind: "dialog", task: find(pane) ? title(find(pane)) : "", status: "done" });
+  }
+  let decisionSeq = 0;
+  function flashAsk() {
+    if (!focusAsk) return;
+    if (Date.now() >= focusAsk.until) { focusAsk = null; return; }
+    const card = $("#live").hidden ? null : $("#live .ask");
+    if (!card || view !== "pane" || focusAsk.pane !== current) return;
+    replayClass(card, "flash");
+    card.scrollIntoView({ block: "nearest" });
+    focusAsk = null;
+  }
+  function decidedText(d) {
+    const a = d.answer, c = a?.choice || "";
+    if (d.status === "gone") return "已处理：它已经结束了";
+    if (d.status === "expired") return "已过期：一周没有回答，Collie 不再等它";
+    if (d.status === "open") return "已处理：它已经不在等确认了";
+    if (a?.dismissed) return d.kind === "check" ? "已处理：已看" : "已处理：不用回答";
+    if (!c) return d.kind === "dialog" ? "已处理：在终端里答过了" : "已处理";
+    if (d.kind !== "dialog" && !(d.options || []).includes(c)) return `已处理：你回复了「${c}」`;
+    return `已处理：选了「${c}」` + (a.by === "Collie" ? "（Collie 替你选的）" : "");
+  }
+  function showDecided(d) {
+    const bar = $("#decided");
+    $(".t", bar).textContent = (d.task ? d.task + " · " : "") + decidedText(d);
+    bar.hidden = false;
+    decidedAt = { view, id: view === "ext" ? extCur : current };
+  }
+  function hideDecided() {
+    $("#decided").hidden = true;
+    decidedAt = null;
+  }
+  $("#decided button").addEventListener("click", hideDecided);
+  // A dialog answered from its card: the hub can't see which choice the keys
+  // were, so say it, and the decision reads "选了 X" afterwards.
+  function noteDecided(pane, label) {
+    if (!pane || hubOf(pane) || !label) return;
+    api("/api/super/decided", { body: { pane, choice: normMsg(label) } }).catch((err) => console.warn("noting the choice:", err));
+  }
   addEventListener("resize", () => { if (booted && !view && !narrow()) route(); });
 
   // ───────────────────────────── Collie (super-agent) view
@@ -1161,9 +1319,7 @@
     flashEntry = { id, until: Date.now() + 1550 };
     const hit = document.querySelector(sel);
     if (hit) {
-      hit.classList.remove("flash");
-      void hit.offsetWidth;
-      hit.classList.add("flash");
+      replayClass(hit, "flash");
     }
     setTimeout(() => {
       if (flashEntry.id === id && Date.now() >= flashEntry.until) {
@@ -1724,10 +1880,11 @@
     const b = e.target.closest("button"), card = b?.closest(".ask[data-pane]");
     if (!card || card.dataset.busy) return;
     const pane = card.dataset.pane;
-    let kind, body;
+    let kind, body, label = "";
     if (b.dataset.choice != null) {
       const c = superAsks.get(pane)?.a?.choices?.[+b.dataset.choice];
       if (!c) return;
+      label = c.label;
       if (c.keys?.length) { kind = "keys"; body = { keys: c.keys }; }
       else if (c.text) { kind = "text"; body = { text: c.text }; }
       else { kind = "keys"; body = { keys: ["enter"] }; }
@@ -1740,6 +1897,7 @@
     if (cur) cur.sending = true;
     try {
       await api(paneURL(pane, kind), { body });
+      noteDecided(pane, label);
       await new Promise((r) => setTimeout(r, 350));
       await loadSuperAsk(pane, true);
     } catch (err) {
@@ -4442,7 +4600,6 @@
   // and given time to show up.
   const SENDING_STALE_MS = 20000;
   const sendingByKey = new Map();
-  const normMsg = (t) => String(t || "").replace(/\s+/g, " ").trim();
   const userCount = (msgs, t) => msgs.reduce((n, m) => n + (m.kind === "user" && normMsg(m.text) === t ? 1 : 0), 0);
   function sendingThread(key) {
     if (view === "pane" && key === "p:" + current && curMode() === "chat") return $("#thread");
@@ -4705,6 +4862,7 @@
     if (meta && meta.textContent !== (l.meta || "")) meta.textContent = l.meta || "";
     box.hidden = !html;
     stick(th, was);
+    flashAsk();
   }
 
   // Terminal dialogs arrive hard-wrapped at the terminal's width. Rebuild the
@@ -4801,6 +4959,8 @@
       if (c.keys?.length) p = sendKeys(c.keys);
       else if (c.text) p = sendText(c.text);
       else p = sendKeys(["enter"]);
+      const pane = current;
+      Promise.resolve(p).then(() => noteDecided(pane, c.label), () => {});
     } else if (b.dataset.k) {
       p = sendKeys([b.dataset.k]);
     } else return;

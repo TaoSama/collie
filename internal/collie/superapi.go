@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -33,6 +34,9 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("POST /api/super/subscribe", s.superSubscribe)
 	api("POST /api/super/stop", s.superStop)
 	api("POST /api/super/answer", s.superAnswer)
+	api("GET /api/super/decision", s.superDecision)
+	api("POST /api/super/decide", s.superDecide)
+	api("POST /api/super/decided", s.superDecided)
 	api("GET /api/super/show/{id}", s.superShow)
 	api("GET /api/super/list", s.superList)
 	api("GET /api/super/triggers", s.superTriggers)
@@ -234,13 +238,7 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 	}
 	sp := s.sup
 	sp.mu.Lock()
-	re := sp.collieQuoteLocked(body.Re)
-	e := sp.addEntryReLocked("user", mainThread, body.Text, "", "", re)
 	// The composer's "派到" chip: a one-off choice the router should honour.
-	text := body.Text
-	if re != nil { // which of your messages they mean: Collie need not guess
-		text = "[In reply to what you said earlier: \"" + clip(re.Text, 300) + "\"]\n" + text
-	}
 	st := sp.st.Settings
 	var hint []string
 	if m := s.machineByName(body.Machine); m != "" || body.Machine == "local" {
@@ -282,12 +280,25 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 			hint = append(hint, "--alias "+*a)
 		}
 	}
+	note := ""
 	if len(hint) > 0 {
-		text += "\n\n[The human picked where this runs: spawn with " + strings.Join(hint, " ") + "]"
+		note = "\n\n[The human picked where this runs: spawn with " + strings.Join(hint, " ") + "]"
 	}
-	t := sp.ingestLocked("chat", mainThread, "you", text, "", "", e.ID)
+	e, t := sp.sayLocked(body.Text, body.Re, note)
 	sp.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"entry": e.ID, "trigger": t.ID})
+}
+
+// sayLocked is your message to Collie, answering its message reID if set;
+// note goes to Collie only.
+func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger) {
+	re := sp.collieQuoteLocked(reID)
+	e := sp.addEntryReLocked("user", mainThread, text, "", "", re)
+	prompt := text
+	if re != nil { // which of your messages they mean: Collie need not guess
+		prompt = "[In reply to what you said earlier: \"" + clip(re.Text, 300) + "\"]\n" + prompt
+	}
+	return e, sp.ingestLocked("chat", mainThread, "you", prompt+note, "", "", e.ID)
 }
 
 func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
@@ -1140,37 +1151,29 @@ func (s *Server) superAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "no running worker " + body.Worker})
 		return
 	}
-	screen, err := s.herdr.ReadAsk(r.Context(), wk.PaneID)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	if !screenAsks(screen) {
+	label, err := sp.answerPane(r.Context(), wk.PaneID, "", byCollie, func(a Approval) (Choice, bool) {
+		if strings.EqualFold(strings.TrimSpace(body.Choice), "esc") {
+			return Choice{Label: "Esc", Keys: []string{"esc"}}, true
+		}
+		return pickChoice(a, body.Choice)
+	})
+	var none noChoiceError
+	switch {
+	case errors.Is(err, errNotAsking):
 		writeJSON(w, 409, map[string]any{"error": body.Worker + " isn't showing a dialog now"})
 		return
-	}
-	a := parseApproval(screen)
-	label := "Esc"
-	if strings.EqualFold(strings.TrimSpace(body.Choice), "esc") {
-		err = s.herdr.Call(r.Context(), "pane.send_keys", map[string]any{"pane_id": wk.PaneID, "keys": []string{"esc"}}, nil)
-	} else {
-		c, ok := pickChoice(a, body.Choice)
-		if !ok {
-			var list []string
-			for i, c := range a.Choices {
-				list = append(list, fmt.Sprintf("%d. %s", i+1, c.Label))
-			}
-			writeJSON(w, 400, map[string]any{"error": "no single choice matches " + strconv.Quote(body.Choice), "choices": list})
-			return
+	case errors.As(err, &none):
+		var list []string
+		for i, c := range none.choices {
+			list = append(list, fmt.Sprintf("%d. %s", i+1, c))
 		}
-		label, err = strings.Join(strings.Fields(c.Label), " "), sp.choose(r.Context(), wk.PaneID, c)
-	}
-	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "no single choice matches " + strconv.Quote(body.Choice), "choices": list})
+		return
+	case err != nil:
 		fail(w, err)
 		return
 	}
 	sp.mu.Lock()
-	sp.noteAnsweredLocked(wk)
 	sp.addEntryLocked("event", wk.Thread, "替 "+wk.Name+" 选了："+clip(label, 80), wk.Name, "info")
 	sp.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"ok": true, "picked": label})

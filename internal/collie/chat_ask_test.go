@@ -67,7 +67,11 @@ func TestCodexQueuedQuestion(t *testing.T) {
 	if err != nil || got != string(opened) || f.count("pane.send_keys") != 1 {
 		t.Fatalf("ReadAsk did not open it: %v, %d key sends", err, f.count("pane.send_keys"))
 	}
-	if !strings.Contains(sp.choicesText(context.Background(), pane), "4. Other") {
+	again, err := sp.s.herdr.ReadAsk(context.Background(), pane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := parseApproval(again); !strings.Contains(choicesText(&a), "4. Other") {
 		t.Error("the router isn't told the choices")
 	}
 	if f.count("pane.send_keys") != 1 {

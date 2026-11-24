@@ -36,6 +36,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 - **会话**。对话流来自 Agent 会话记录，终端请求直接走 herdr。外部会话按进程、会话 ID 或工作目录定位记录，具体方式随 Agent 和桌面应用而异。决策卡片从终端状态识别问题和选项，再把选择转换成对应的终端输入。
 - **Router 和 worker**。聊天、Webhook、定时器和 worker 状态作为 Trigger 入队。先按来源策略（`respond` / `candidate` / `ignore`）处理，再交给 Router 或订阅该线程的 worker。会话忙时排队，空闲后可批量投递。超过 700 字符的投递正文可用 `collie show ID` 取回。
 - **调度 CLI**。Router 用 `collie spawn`、`send`、`subscribe`、`stop`、`answer` 和 `reply` 分派及反馈。worker 用 `collie report` 回报，对应 pane 由 `HERDR_PANE_ID` 识别。用 `collie list` 查看 worker，用 `collie hook SOURCE TEXT` 模拟外部事件。参数和 Router 手册见 [cli.go](internal/collie/cli.go)。
+- **通知直达决策**。需要人处理的通知（worker 的对话框、`--opt` / `--check`）链接到 `#/d/<entry id>`，任意会话的对话框链接到 `#/d/pane/<pane id>`，页面用 `GET /api/super/decision` 定位并高亮卡片。通知正文只写任务名和选项，不放屏幕内容（`docs/pitfall/notifications.md`）。
 - **持久化**。默认数据目录是 `~/.collie`（`COLLIE_HOME` 可覆盖）。`herd.db` 保存事件、线程、worker、对话、定时器、设置和配对令牌哈希。hub 的 `token` 和 `addr` 供 CLI 发现本机服务，node 用 `node.json` 保存 hub 地址和设备令牌。Router 的 `router/` 目录保存生成的手册与 `memory/`。`go run` 启动时会写出稳定的 CLI 路径 `bin/collie`，供 Agent 调用。
 - **运行参数**。用 `collie --help` 和 `collie node --help` 查看参数。hub 支持 `COLLIE_ADDR`、`HERDR_SOCKET_PATH`、`COLLIE_TOKEN` 和 `COLLIE_URL`。node 的 `--ui` 控制本机界面监听地址，传 `off` 可关闭。
 

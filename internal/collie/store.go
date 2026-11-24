@@ -80,6 +80,8 @@ type Entry struct {
 	Options []string `json:"options,omitempty"`
 	// Marked by Collie (--check) when a reply without options still awaits the human's review or action.
 	Check bool `json:"check,omitempty"`
+	// The dialog a "等你确认" event is about (decisions.go).
+	Ask *DialogAsk `json:"ask,omitempty"`
 }
 
 // SearchHit is one matched user/collie message in a conversation search.
