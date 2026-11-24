@@ -1,7 +1,10 @@
 package collie
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -30,5 +33,44 @@ func TestQueuedCommand(t *testing.T) {
 	}
 	if len(tr.msgs) != 2 || tr.msgs[0].Text != "还有些消息看不到" || tr.msgs[1].Text != "[image]\n看图" {
 		t.Fatalf("%+v %+v", tr.msgs[0], tr.msgs[len(tr.msgs)-1])
+	}
+}
+
+// Real Codex 0.172 screens: a request_user_input question asked mid-turn,
+// folded under "Queued follow-up inputs", then opened with ⇧←.
+func TestCodexQueuedQuestion(t *testing.T) {
+	queued, _ := os.ReadFile("testdata/codex-question-queued.txt")
+	opened, _ := os.ReadFile("testdata/codex-question-expanded.txt")
+	if !codexQueuedAsk(string(queued)) || codexQueuedAsk(string(opened)) {
+		t.Fatal("folded question not told from the opened one")
+	}
+	if screenAsks(string(queued)) {
+		t.Error("the folded question has no choices to show")
+	}
+	a := parseApproval(string(opened))
+	var labels []string
+	for _, c := range a.Choices {
+		labels = append(labels, c.Label)
+	}
+	if !screenAsks(string(opened)) || strings.TrimSpace(a.Question) != "Which color do you prefer?" || strings.Join(labels, ",") != "Red,Green,Blue,Other" {
+		t.Fatalf("opened: %q %v", a.Question, labels)
+	}
+	if k := a.Choices[2].Keys; strings.Join(k, " ") != "down down enter" {
+		t.Errorf("Blue: %v", k)
+	}
+
+	f := newFakeHerdr(t)
+	sp := newRouterTestSuper(t, f)
+	pane := f.add("w1", "cx", "codex-1", "codex", "/")
+	f.panes[pane].screen, f.panes[pane].unfolded = string(queued), string(opened)
+	got, err := sp.s.herdr.ReadAsk(context.Background(), pane)
+	if err != nil || got != string(opened) || f.count("pane.send_keys") != 1 {
+		t.Fatalf("ReadAsk did not open it: %v, %d key sends", err, f.count("pane.send_keys"))
+	}
+	if !strings.Contains(sp.choicesText(context.Background(), pane), "4. Other") {
+		t.Error("the router isn't told the choices")
+	}
+	if f.count("pane.send_keys") != 1 {
+		t.Error("an opened question is not pressed again")
 	}
 }

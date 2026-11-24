@@ -483,6 +483,7 @@
   // nothing, so until there's a title use the folder it works in.
   const autoName = (n) => /^(claude|codex|agy|antigravity)-\d+$/.test(n || "");
   const base = (p) => (p || "").replace(/\/+$/, "").split("/").pop() || "~";
+  const termName = (v) => v.workspace_label || base(tilde(v.cwd));
   function title(v) {
     if (!v) return "";
     if (isLocalRouter(v)) return "Collie";
@@ -498,7 +499,7 @@
       : v.is_agent ? `${named}${KIND_LABEL[v.kind] || v.kind} · ${where}${base(tilde(v.cwd))}` : where + tilde(v.cwd);
     return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}">
       <span class="glyph">${glyph(v)}</span>
-      <span class="body"><div class="name">${isCollieOwned(v) && !isLocalRouter(v) ? `<span class="nm">${esc(title(v))}</span><span class="by-collie">Collie 派出</span>` : esc(v.is_agent ? title(v) : v.workspace_label || base(tilde(v.cwd)))}</div><div class="sub">${esc(sub)}</div></span>
+      <span class="body"><div class="name">${isCollieOwned(v) && !isLocalRouter(v) ? `<span class="nm">${esc(title(v))}</span><span class="by-collie">Collie 派出</span>` : esc(v.is_agent ? title(v) : termName(v))}</div><div class="sub">${esc(sub)}</div></span>
       <span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span></a></li>`;
   }
 
@@ -2769,7 +2770,7 @@
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
       return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd,
-        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? a.workspace_label || base(tilde(a.cwd)) : "", status: a.status, ws: a.workspace_id, live: true };
+        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -3171,6 +3172,7 @@
     if (!await ask({ title: `关闭终端「${r.term}」？`, text: "里面在跑的进程会被结束。", ok: "关闭", warn: true })) return;
     await api(paneURL(r.id, "close"), { body: {} });
     state = { ...state, shells: state.shells.filter((a) => a.pane_id !== r.id) };
+    if (store.get("last") === "#/p/" + encodeURIComponent(r.id)) store.set("last", "#/collie");
     if (view === "pane" && current === r.id) goBack(true);
     renderSessions();
     toast("已关闭");
@@ -3693,7 +3695,7 @@
     const v = find(current);
     if (!v) return;
     markSeen(v);
-    $("#d-name").textContent = isLocalRouter(v) ? "Collie 的终端" : v.is_agent ? title(v) : v.workspace_label || base(tilde(v.cwd));
+    $("#d-name").textContent = isLocalRouter(v) ? "Collie 的终端" : v.is_agent ? title(v) : termName(v);
     $("#d-name").title = v.is_agent && v.name && !isLocalRouter(v) ? `名字：${v.name}` : "";
     $("#d-kind").textContent = v.is_agent ? (KIND_LABEL[v.kind] || v.kind) : "";
     const role = isWorker(v.name) ? "Collie 派出" : "";

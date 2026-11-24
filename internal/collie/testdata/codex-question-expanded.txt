@@ -1,0 +1,31 @@
+[luwentao@Mac.local][/private/tmp/collie-ctx-verify/cx]$ codex
+
+
+  >_ OpenAI Codex (v0.172.0)
+     /private/tmp/collie-ctx-verify/cx
+  permissions: YOLO mode
+
+  Tip: Use the desktop app. Run codex app to open it. It installs automatically if needed.
+
+
+› Use the request_user_input tool right now to ask me which color I prefer, with options Red, Green, Blue. Do nothing else.
+
+
+? Which color do you prefer?
+
+  • Red
+  • Green
+  • Blue
+
+• Working (1m 12s • esc to interrupt)
+
+• Queued follow-up inputs
+
+  Which color do you prefer?
+
+  › 1. Red
+    2. Green
+    3. Blue
+    4. Other
+
+  enter submit   ⌃] skip   ⇧→ main prompt

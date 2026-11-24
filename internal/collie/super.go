@@ -1230,13 +1230,13 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 // choicesText lists a dialog's choices for the router, numbered as `collie
 // answer` takes them.
 func (sp *Super) choicesText(ctx context.Context, pane string) string {
-	rr, err := sp.s.herdr.Read(ctx, pane, "detection", "text", 0)
-	if err != nil || !screenAsks(rr.Text) {
+	screen, err := sp.s.herdr.ReadAsk(ctx, pane)
+	if err != nil || !screenAsks(screen) {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("\nChoices:")
-	for i, c := range parseApproval(rr.Text).Choices {
+	for i, c := range parseApproval(screen).Choices {
 		fmt.Fprintf(&b, "\n  %d. %s", i+1, c.Label)
 	}
 	return b.String()

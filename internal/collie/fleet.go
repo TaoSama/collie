@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -64,17 +65,19 @@ type Herdr struct {
 	runs     map[string][2]string
 	saveRuns func(map[string][2]string)
 
-	asks map[string]askCheck // pane → recent look at an "idle" screen
+	asks     map[string]askCheck  // pane → recent look at an "idle" screen
+	unfolded map[string]time.Time // pane → when Codex's queued question was last opened
 }
 
 func newHerdr(socket, hostname, home string) *Herdr {
 	return &Herdr{
-		local:  &Machine{ID: "", Name: hostname, Home: home, Local: true, conn: &herdrConn{dial: unixDialer(socket)}},
-		remote: map[string]*Machine{},
-		names:  map[string]string{},
-		named:  map[string]string{},
-		runs:   map[string][2]string{},
-		asks:   map[string]askCheck{},
+		local:    &Machine{ID: "", Name: hostname, Home: home, Local: true, conn: &herdrConn{dial: unixDialer(socket)}},
+		remote:   map[string]*Machine{},
+		names:    map[string]string{},
+		named:    map[string]string{},
+		runs:     map[string][2]string{},
+		asks:     map[string]askCheck{},
+		unfolded: map[string]time.Time{},
 	}
 }
 
@@ -611,6 +614,62 @@ func (h *Herdr) ScreenAsks(ctx context.Context, pane string) bool {
 		return false
 	}
 	return screenAsks(res.Text)
+}
+
+// ReadAsk reads the screen a dialog would be on. Codex files a question
+// asked mid-turn under "Queued follow-up inputs" as "? 1 question ⇧← to
+// answer", its options hidden: ⇧← opens it, so it can be read and answered.
+func (h *Herdr) ReadAsk(ctx context.Context, pane string) (string, error) {
+	res, err := h.Read(ctx, pane, "detection", "text", 0)
+	if err != nil || !codexQueuedAsk(res.Text) {
+		return res.Text, err
+	}
+	h.mu.Lock()
+	recent := time.Since(h.unfolded[pane]) < unfoldEvery
+	if !recent {
+		h.unfolded[pane] = time.Now()
+	}
+	h.mu.Unlock()
+	if recent {
+		return res.Text, nil // pressed a moment ago: don't press again while it opens
+	}
+	if err := h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"shift+left"}}, nil); err != nil {
+		return res.Text, err
+	}
+	for until := time.Now().Add(unfoldWait); time.Now().Before(until); {
+		if err := sleepCtx(ctx, unfoldPoll); err != nil {
+			return res.Text, err
+		}
+		if r, err := h.Read(ctx, pane, "detection", "text", 0); err == nil && !codexQueuedAsk(r.Text) {
+			return r.Text, nil
+		}
+	}
+	return res.Text, nil
+}
+
+const (
+	unfoldEvery = 3 * time.Second
+	unfoldWait  = 2 * time.Second
+	unfoldPoll  = 150 * time.Millisecond
+)
+
+var queuedQuestionRe = regexp.MustCompile(`^\?\s+\d+\s+questions?$`)
+
+// codexQueuedAsk: Codex's folded question ("? 1 question" over "⇧← to
+// answer") is on screen.
+func codexQueuedAsk(screen string) bool {
+	prev := ""
+	for _, l := range strings.Split(screen, "\n") {
+		t := strings.TrimSpace(l)
+		if t == "" {
+			continue
+		}
+		if t == "⇧← to answer" && queuedQuestionRe.MatchString(prev) {
+			return true
+		}
+		prev = t
+	}
+	return false
 }
 
 // screenAsks: a menu with a key hint ("Enter to confirm · Esc to cancel") or

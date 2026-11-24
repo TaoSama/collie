@@ -1120,16 +1120,16 @@ func (s *Server) superAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "no running worker " + body.Worker})
 		return
 	}
-	rr, err := s.herdr.Read(r.Context(), wk.PaneID, "detection", "text", 0)
+	screen, err := s.herdr.ReadAsk(r.Context(), wk.PaneID)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if !screenAsks(rr.Text) {
+	if !screenAsks(screen) {
 		writeJSON(w, 409, map[string]any{"error": body.Worker + " isn't showing a dialog now"})
 		return
 	}
-	a := parseApproval(rr.Text)
+	a := parseApproval(screen)
 	label := "Esc"
 	if strings.EqualFold(strings.TrimSpace(body.Choice), "esc") {
 		err = s.herdr.Call(r.Context(), "pane.send_keys", map[string]any{"pane_id": wk.PaneID, "keys": []string{"esc"}}, nil)

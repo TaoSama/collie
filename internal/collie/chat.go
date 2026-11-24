@@ -905,6 +905,13 @@ func parseApproval(screen string) Approval {
 	if from < 0 {
 		from = 0
 	}
+	// Codex's opened question: what is above it is the conversation.
+	for i := start - 1; i >= from; i-- {
+		if strings.TrimSpace(lines[i]) == "• Queued follow-up inputs" {
+			from = i + 1
+			break
+		}
+	}
 	a.Question = strings.Join(trimBlank(lines[from:start]), "\n")
 	return a
 }
@@ -1102,13 +1109,13 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 
 		// Live card: progress while working, the question while blocked.
 		live := map[string]any{"status": status}
-		if status == "working" || status == "blocked" {
+		if status == "blocked" {
+			if text, e := s.herdr.ReadAsk(ctx, id); e == nil {
+				live["approval"] = parseApproval(text)
+			}
+		} else if status == "working" {
 			if res, e := s.herdr.Read(ctx, id, "detection", "text", 0); e == nil {
-				if status == "blocked" {
-					live["approval"] = parseApproval(res.Text)
-				} else {
-					live["tail"], live["meta"] = activityLine(res.Text)
-				}
+				live["tail"], live["meta"] = activityLine(res.Text)
 			}
 		}
 		cancel()
@@ -1168,16 +1175,16 @@ func (s *Server) lastMessage(w http.ResponseWriter, r *http.Request) {
 // paneAsk: the dialog a pane is showing, if any, so it can be answered from
 // Collie's conversation without opening the pane.
 func (s *Server) paneAsk(w http.ResponseWriter, r *http.Request) {
-	res, err := s.herdr.Read(r.Context(), r.PathValue("id"), "detection", "text", 0)
+	text, err := s.herdr.ReadAsk(r.Context(), r.PathValue("id"))
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if !screenAsks(res.Text) {
+	if !screenAsks(text) {
 		writeJSON(w, 200, map[string]any{"asking": false})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"asking": true, "approval": parseApproval(res.Text)})
+	writeJSON(w, 200, map[string]any{"asking": true, "approval": parseApproval(text)})
 }
 
 // askOf turns a question to the human into an ask item: Claude's

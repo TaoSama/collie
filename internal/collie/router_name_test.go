@@ -25,6 +25,8 @@ type fakeHerdr struct {
 
 type fakePane struct {
 	ws, name, kind, cwd string
+	// screen is what pane.read shows; ⇧← turns it into unfolded.
+	screen, unfolded string
 }
 
 func newFakeHerdr(t *testing.T) *fakeHerdr {
@@ -109,6 +111,18 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 			return nil, &HerdrError{Code: "pane_not_found"}
 		}
 		return map[string]any{"pane": agentView(str("pane_id"), p)}, nil
+	case "pane.read":
+		p := f.panes[str("pane_id")]
+		if p == nil {
+			return nil, &HerdrError{Code: "pane_not_found"}
+		}
+		return map[string]any{"read": map[string]any{"text": p.screen}}, nil
+	case "pane.send_keys":
+		p := f.panes[str("pane_id")]
+		if keys, _ := params["keys"].([]any); p != nil && len(keys) == 1 && keys[0] == "shift+left" && p.unfolded != "" {
+			p.screen = p.unfolded
+		}
+		return map[string]any{}, nil
 	case "agent.start":
 		// Like the alias path: the agent is up before herdr refuses the name.
 		p := f.panes[str("pane_id")]
