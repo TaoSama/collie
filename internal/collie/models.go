@@ -354,18 +354,7 @@ func findBin(name, home string) string {
 		}
 	}
 	if found == "" {
-		sh := os.Getenv("SHELL")
-		if sh == "" {
-			sh = "/bin/bash"
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		out, _ := exec.CommandContext(ctx, sh, "-lic", "command -v "+name).Output()
-		cancel()
-		for _, l := range strings.Split(string(out), "\n") {
-			if l = strings.TrimSpace(l); filepath.IsAbs(l) && isFile(l) {
-				found = l
-			}
-		}
+		found = binInShell(context.Background(), home, name)
 	}
 	if found != "" {
 		binCache.Store(name, found)

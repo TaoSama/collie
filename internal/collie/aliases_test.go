@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -416,5 +417,37 @@ func TestNodeJSONStatusError(t *testing.T) {
 	var se *nodeStatusError
 	if !errors.As(err, &se) || se.Code != http.StatusNotFound {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// The program is only on the PATH the rc file sets, and an alias of the same
+// name shadows it there (devbox: alias codex='command codex --no-alt-screen').
+func TestBinInShellSeesThroughAlias(t *testing.T) {
+	sh := path.Base(loginShell())
+	if sh != "bash" && sh != "zsh" {
+		t.Skipf("login shell %q", sh)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", home)
+	bin := filepath.Join(home, "tools")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prog := filepath.Join(bin, "fakeagent")
+	if err := os.WriteFile(prog, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc := "export PATH=\"" + bin + ":$PATH\"\nalias fakeagent='command fakeagent --flag'\n"
+	for _, f := range []string{".bashrc", ".zshrc"} {
+		if err := os.WriteFile(filepath.Join(home, f), []byte(rc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := binInShell(context.Background(), home, "fakeagent"); got != prog {
+		t.Fatalf("got %q, want %q", got, prog)
+	}
+	if got := binInShell(context.Background(), home, "no-such-agent-xyz"); got != "" {
+		t.Fatalf("missing program: %q", got)
 	}
 }

@@ -77,11 +77,17 @@ const bashAliasScript = `printf '\002collie-aliases\002'; alias -p; printf '\003
 
 // ---------------------------------------------------------------- the shell
 
-// loginShell: the user's shell, from $SHELL, else the account database.
+// loginShell: the shell the account logs in with, which is what herdr's
+// panes run. The account database comes first: a service's $SHELL may be
+// another shell (systemd --user hands out /bin/bash on some machines).
 func loginShell() string {
-	if sh := os.Getenv("SHELL"); sh != "" {
+	if sh := accountShell(); sh != "" {
 		return sh
 	}
+	return os.Getenv("SHELL")
+}
+
+func accountShell() string {
 	u, err := user.Current()
 	if err != nil {
 		return ""
@@ -101,6 +107,30 @@ func loginShell() string {
 			if f := strings.Fields(string(out)); len(f) == 2 {
 				return f[1]
 			}
+		}
+	}
+	return ""
+}
+
+// binInShell finds name as the user's terminal would: their login shell,
+// interactive (PATH from rc files, fnm/nvm shims), real files only. `command
+// -v` answers with the alias when one shadows the program (alias codex=…).
+func binInShell(ctx context.Context, home, name string) string {
+	sh := loginShell()
+	if sh == "" {
+		sh = "/bin/bash"
+	}
+	lookup := "type -P " + name
+	if path.Base(sh) == "zsh" {
+		lookup = "whence -p " + name
+	}
+	out, err := runShell(ctx, home, sh, lookup+"; printf '\\003collie-aliases\\003'")
+	if err != nil {
+		return ""
+	}
+	for _, l := range strings.Split(string(out), "\n") {
+		if l = strings.TrimSpace(strings.TrimSuffix(l, aliasEnd)); filepath.IsAbs(l) && isFile(l) {
+			return l
 		}
 	}
 	return ""
