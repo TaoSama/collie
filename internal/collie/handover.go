@@ -154,7 +154,7 @@ func (sp *Super) finishHandover(ctx context.Context, h *handover) {
 		Kind: h.kind, Machine: h.machine, Cwd: sp.routerCwd(h.machine), Name: routerName, Session: h.session, Ended: time.Now(),
 		Title: "Collie · 交接前的会话（" + h.at.Format("01-02 15:04") + "）",
 	}
-	sp.s.remember(e)
+	sp.s.rememberRouter(e)
 	if err := sp.RestartRouter(ctx); err != nil {
 		log.Printf("handover restart: %v", err)
 	}

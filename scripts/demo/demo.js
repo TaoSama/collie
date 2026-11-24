@@ -43,7 +43,7 @@
   ];
   const agent = (o) => ({ workspace_label: o.name, title: "", is_agent: true, machine: o.pane_id.includes("@") ? o.pane_id.split("@")[1] : "", session: "0193a1c2-" + o.workspace_id.replace(/\W/g, "") + "-demo", ...o });
   const agents = [
-    agent({ pane_id: "w1:p1", workspace_id: "w1", name: "collie", kind: "claude", status: "idle", cwd: "/home/alex/.collie/router" }),
+    agent({ pane_id: "w1:p1", workspace_id: "w1", name: "collie", is_router: true, kind: "claude", status: "idle", cwd: "/home/alex/.collie/router" }),
     agent({ pane_id: "w2:p1@macbook", workspace_id: "w2@macbook", name: "claude-1", kind: "claude", status: "working", cwd: "/Users/alex/code/shop-web", topic: "首页加暗色模式", run: ["claude-opus-5-5[1m]", "high"], context: { used: 120000, window: 1000000 } }),
     agent({ pane_id: "w3:p1", workspace_id: "w3", name: "codex-1", kind: "codex", status: "blocked", cwd: "/home/alex/code/shop-api", topic: "修复 /orders 分页的边界问题", run: ["gpt-6.1-sol", "high"], context: { used: 214000, window: 272000 } }),
     agent({ pane_id: "w4:p1", workspace_id: "w4", name: "agy-1", kind: "agy", status: "waiting", cwd: "/home/alex/code/shop-api", topic: "整理数据库迁移脚本", run: ["", ""] }),

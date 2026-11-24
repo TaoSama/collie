@@ -237,6 +237,7 @@ type AgentView struct {
 	Topic          string     `json:"topic,omitempty"`   // the session's own title
 	Session        string     `json:"session,omitempty"` // id to resume it by
 	IsAgent        bool       `json:"is_agent"`
+	IsRouter       bool       `json:"is_router"`
 	Machine        string     `json:"machine"`
 	Run            *[2]string `json:"run,omitempty"` // model, effort: its latest reply's, else what Collie started it with
 	Context        *ctxUsage  `json:"context,omitempty"`
@@ -278,8 +279,12 @@ func (s *Server) state(ctx context.Context) PaneState {
 		order[w.ID] = w.Number
 	}
 	names := map[string]string{}
+	var routerPane string
 	for _, a := range agents {
 		names[a.PaneID] = deref(a.Name)
+		if names[a.PaneID] == routerName {
+			routerPane = a.PaneID
+		}
 	}
 
 	st := PaneState{OK: true, Agents: []AgentView{}, Shells: []AgentView{}, Machines: machines}
@@ -297,7 +302,7 @@ func (s *Server) state(ctx context.Context) PaneState {
 		v := AgentView{
 			PaneID: p.ID, WorkspaceID: p.WorkspaceID, WorkspaceLabel: labels[p.WorkspaceID],
 			Kind: deref(p.Agent), Status: p.AgentStatus, Cwd: cwd, Title: deref(p.Title),
-			Name: names[p.ID], IsAgent: p.Agent != nil,
+			Name: names[p.ID], IsAgent: p.Agent != nil, IsRouter: p.ID == routerPane && p.Agent != nil,
 		}
 		var local string
 		local, v.Machine = split(p.ID)

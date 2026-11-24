@@ -17,14 +17,15 @@ import (
 // so they can be read and continued later.
 
 type Ended struct {
-	ID      string    `json:"id"`
-	Kind    string    `json:"kind"` // claude | codex | agy
-	Machine string    `json:"machine,omitempty"`
-	Cwd     string    `json:"cwd"`
-	Title   string    `json:"title,omitempty"`
-	Name    string    `json:"name,omitempty"`
-	Session string    `json:"session"`
-	Ended   time.Time `json:"ended"`
+	ID       string    `json:"id"`
+	Kind     string    `json:"kind"` // claude | codex | agy
+	Machine  string    `json:"machine,omitempty"`
+	Cwd      string    `json:"cwd"`
+	Title    string    `json:"title,omitempty"`
+	Name     string    `json:"name,omitempty"`
+	IsRouter *bool     `json:"is_router,omitempty"` // nil for records written before roles were stored
+	Session  string    `json:"session"`
+	Ended    time.Time `json:"ended"`
 }
 
 const maxEnded = 40
@@ -74,6 +75,19 @@ func (s *Server) remember(e *Ended) {
 	s.saveHistory()
 }
 
+func (e *Ended) isRouter() bool {
+	if e.IsRouter != nil {
+		return *e.IsRouter
+	}
+	return e.Name == routerName
+}
+
+func (s *Server) rememberRouter(e *Ended) {
+	isRouter := true
+	e.IsRouter = &isRouter
+	s.remember(e)
+}
+
 // forgetSession drops a session that is live again (it was continued).
 func (s *Server) forgetSession(kind, machine, session string) {
 	history.Lock()
@@ -121,9 +135,8 @@ func (s *Server) watchEndings(ctx context.Context) {
 		now := map[string]bool{}
 		for _, a := range st.Agents {
 			now[a.PaneID] = true
-			// Collie's own session isn't one to reopen; its name can lag behind
-			// after a restart, its workspace label doesn't.
-			if a.Name == routerName || a.WorkspaceLabel == routerLabel || a.Name == dreamName || a.WorkspaceLabel == dreamLabel || a.Session == "" {
+			// The managed workspace label covers a Router still starting up.
+			if a.IsRouter || a.WorkspaceLabel == routerLabel || a.Name == dreamName || a.WorkspaceLabel == dreamLabel || a.Session == "" {
 				delete(prev, a.PaneID)
 				continue
 			}
@@ -131,7 +144,7 @@ func (s *Server) watchEndings(ctx context.Context) {
 			if kind == "antigravity" {
 				kind = "agy"
 			}
-			prev[a.PaneID] = &seen{Ended: Ended{Kind: kind, Machine: a.Machine, Cwd: a.Cwd, Title: a.Topic, Name: a.Name, Session: a.Session}}
+			prev[a.PaneID] = &seen{Ended: Ended{Kind: kind, Machine: a.Machine, Cwd: a.Cwd, Title: a.Topic, Name: a.Name, IsRouter: &a.IsRouter, Session: a.Session}}
 			s.forgetSession(kind, a.Machine, a.Session)
 		}
 		for id, p := range prev {

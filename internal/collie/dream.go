@@ -163,7 +163,7 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 				}
 				e := &Ended{Kind: k, Machine: prev, Cwd: sp.routerCwd(prev), Name: routerName, Session: a.Session, Ended: time.Now(),
 					Title: "Collie · 做梦前的会话（" + time.Now().Format("01-02 15:04") + "）"}
-				sp.s.remember(e)
+				sp.s.rememberRouter(e)
 				sp.mu.Lock()
 				entry.Ref = "h:" + e.ID
 				sp.changed()
@@ -417,7 +417,7 @@ func (sp *Super) writeDreamInput(ctx context.Context) error {
 	sp.s.loadHistory()
 	var sess []*Ended
 	for _, h := range history.list {
-		if h.Name == routerName && h.Ended.After(since) {
+		if h.isRouter() && h.Ended.After(since) {
 			sess = append(sess, h)
 		}
 	}

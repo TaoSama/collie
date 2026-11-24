@@ -51,13 +51,15 @@
     asleep: "休眠中", starting: "启动中", gone: "已退出", failed: "启动失败",
   };
   const ROUTER = "collie";
+  const isLocalRouter = (a) => a.is_router && !a.hub;
+  const isRouterHistory = (h) => h.is_router ?? (h.name === ROUTER);
   // Collie is one conversation to the human; the session behind it is an
   // implementation detail. "done" just means a turn ended: it is idle.
   const COLLIE_STATUS = { asleep: "休眠中", starting: "正在唤醒", working: "在想…", blocked: "等你确认", failed: "出错了", dreaming: "在做梦…" };
   const SOURCE_LABEL = { worker: "派出的 agent", chat: "对话", timer: "定时", system: "Collie" };
   const collieStatus = (s) => COLLIE_STATUS[s] || "空闲";
   const collieDot = (s) => (s === "done" || s === "unknown" ? "idle" : s === "dreaming" ? "starting" : s || "asleep");
-  const glyph = (v) => v.name === ROUTER ? GLYPHS.collie : !v.is_agent ? GLYPHS.shell : (GLYPHS[v.kind] || GLYPHS.agent);
+  const glyph = (v) => isLocalRouter(v) ? GLYPHS.collie : !v.is_agent ? GLYPHS.shell : (GLYPHS[v.kind] || GLYPHS.agent);
 
   // ───────────────────────────── api
   // A page left open keeps its old code after the hub is updated: when the
@@ -300,12 +302,12 @@
   // ───────────────────────────── live state
   let state = { ok: false, agents: [], shells: [] };
   let localState = state;     // this hub's own; state adds the other hubs'
-  function tagState(s, h, online) {
+  function tagState(s, h, online, routerPane) {
     const k = h.key;
     const fix = (a) => ({ ...a, hub: k, pane_id: tagged(a.pane_id, k), machine: tagged(a.machine, k),
       workspace_id: a.workspace_id ? tagged(a.workspace_id, k) : a.workspace_id,
       // Each hub has its own Collie; only this hub's is "Collie" here.
-      ...(a.name === ROUTER ? { name: "Collie · " + h.name, topic: "Collie · " + h.name } : {}) });
+      ...((a.is_router ?? a.pane_id === routerPane) ? { name: "Collie · " + h.name, topic: "Collie · " + h.name } : {}) });
     const ms = s.machines && s.machines.length ? s.machines : [{ id: "", name: h.name, local: true, online: s.ok !== false }];
     return {
       agents: (s.agents || []).map(fix), shells: (s.shells || []).map(fix),
@@ -337,10 +339,20 @@
     r.es?.close();
     const es = r.es = openES("/api/events", h);
     let gone;
+    // Older hubs identify their Router by pane ID in the super snapshot.
+    es.addEventListener("super", (e) => {
+      const routerPane = JSON.parse(e.data).router?.pane_id;
+      if (r.routerPane === routerPane) return;
+      r.routerPane = routerPane;
+      if (r.online && r.raw?.agents?.some((a) => a.is_router == null)) {
+        r.state = tagState(r.raw, h, true, routerPane);
+        remoteChanged();
+      }
+    });
     es.addEventListener("state", (e) => {
       clearTimeout(gone);
       r.online = true; r.raw = JSON.parse(e.data);
-      r.state = tagState(r.raw, h, true);
+      r.state = tagState(r.raw, h, true, r.routerPane);
       remoteChanged();
     });
     es.onerror = () => {
@@ -408,7 +420,7 @@
       const before = prevStatus.get(a.pane_id);
       if (before && before !== a.status) {
         if (a.status === "blocked") ping(`${title(a)} 需要你确认`, a, "attn");
-        else if (before === "working" && (a.status === "done" || a.status === "idle") && !isWorker(a.name) && a.name !== ROUTER) {
+        else if (before === "working" && (a.status === "done" || a.status === "idle") && !isWorker(a.name) && !isLocalRouter(a)) {
           ping(`${title(a)} 完成了`, a);
         }
       }
@@ -460,7 +472,8 @@
     return s;
   }
   const isWorker = (name) => sup.workers.some((w) => w.name === name && !w.ended);
-  const paneOf = (name) => state.agents.find((a) => a.name === name)?.pane_id;
+  const routerPane = () => state.agents.find(isLocalRouter)?.pane_id;
+  const paneOf = (name) => name === ROUTER ? routerPane() : state.agents.find((a) => a.name === name)?.pane_id;
   // A worker's status as the sidebar shows it (which knows when it waits on
   // background work), else as Collie last saw it.
   const workerStatus = (w) => (!w.ended && state.agents.find((a) => a.name === w.name)?.status) || w.status;
@@ -472,7 +485,7 @@
   const base = (p) => (p || "").replace(/\/+$/, "").split("/").pop() || "~";
   function title(v) {
     if (!v) return "";
-    if (v.name === ROUTER) return "Collie";
+    if (isLocalRouter(v)) return "Collie";
     if (isWorker(v.name)) return v.name; // Collie talks about its agents by name
     return v.topic || (v.name && !autoName(v.name) ? v.name : base(tilde(v.cwd))) || v.pane_id;
   }
@@ -480,17 +493,17 @@
   // ───────────────────────────── sidebar
   function itemHTML(v, attrs = "") {
     const where = (state.machines || []).length > 1 ? machineName(v.machine) + " · " : "";
-    const named = v.is_agent && v.name !== ROUTER && !isWorker(v.name) && v.name && !autoName(v.name) && v.topic && v.topic !== v.name ? v.name + " · " : "";
-    const sub = v.name === ROUTER ? "Collie 停在一个对话框上"
+    const named = v.is_agent && !isLocalRouter(v) && !isWorker(v.name) && v.name && !autoName(v.name) && v.topic && v.topic !== v.name ? v.name + " · " : "";
+    const sub = isLocalRouter(v) ? "Collie 停在一个对话框上"
       : v.is_agent ? `${named}${KIND_LABEL[v.kind] || v.kind} · ${where}${base(tilde(v.cwd))}` : where + tilde(v.cwd);
     return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}">
       <span class="glyph">${glyph(v)}</span>
-      <span class="body"><div class="name">${isCollieOwned(v) && v.name !== ROUTER ? `<span class="nm">${esc(title(v))}</span><span class="by-collie">Collie 派出</span>` : esc(v.is_agent ? title(v) : v.workspace_label || base(tilde(v.cwd)))}</div><div class="sub">${esc(sub)}</div></span>
+      <span class="body"><div class="name">${isCollieOwned(v) && !isLocalRouter(v) ? `<span class="nm">${esc(title(v))}</span><span class="by-collie">Collie 派出</span>` : esc(v.is_agent ? title(v) : v.workspace_label || base(tilde(v.cwd)))}</div><div class="sub">${esc(sub)}</div></span>
       <span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span></a></li>`;
   }
 
   const machineName = (id) => (state.machines || []).find((m) => m.id === (id || ""))?.name || id || "本机";
-  const isCollieOwned = (v) => v.name === ROUTER || isWorker(v.name);
+  const isCollieOwned = (v) => isLocalRouter(v) || isWorker(v.name);
 
   // "09:00", "明天 09:00", "11月24日 09:00".
   function whenShort(at) {
@@ -725,7 +738,7 @@
       if (v && isCollieOwned(v)) return "#/collie";
     } else if (view === "ext" && extCur?.startsWith("h:")) {
       const h = hist.find((x) => x.id === extCur.slice(2));
-      if (h && (h.name === ROUTER || sup.workers.some((w) => w.name === h.name || (h.session && w.session === h.session)))) return "#/collie";
+      if (h && (isRouterHistory(h) || sup.workers.some((w) => w.name === h.name || (h.session && w.session === h.session)))) return "#/collie";
     }
     return "#/";
   }
@@ -1549,7 +1562,7 @@
         if (got?.a) return superAskHTML(got.a, a);
         return `<a class="need" href="#/p/${encodeURIComponent(a.pane_id)}">
         <span class="dot blocked"></span>
-        <span class="body"><div class="name">${esc(title(a))} 等你确认</div><div class="sub">${esc(a.name === ROUTER ? "它停在一个对话框上，处理后才能继续" : (KIND_LABEL[a.kind] || a.kind) + " · " + tilde(a.cwd))}</div></span>
+        <span class="body"><div class="name">${esc(title(a))} 等你确认</div><div class="sub">${esc(isLocalRouter(a) ? "它停在一个对话框上，处理后才能继续" : (KIND_LABEL[a.kind] || a.kind) + " · " + tilde(a.cwd))}</div></span>
         <span class="go">处理 →</span></a>`;
       }).join("") + `</div>`;
     }
@@ -2590,7 +2603,7 @@
     if (!t) return null;
     let best = null, bestDiff = 10 * 60e3;
     for (const h of hist) {
-      if (h.name !== ROUTER) continue;
+      if (!isRouterHistory(h)) continue;
       const d = Math.abs(+new Date(h.ended) - t);
       if (d < bestDiff) { best = h; bestDiff = d; }
     }
@@ -2766,7 +2779,7 @@
     // A worker's session is Collie's by its id: its title can change (Codex
     // names threads, anyone can rename them).
     const workerSessions = new Set(sup.workers.map((w) => w.session).filter(Boolean));
-    const collieRan = (name, session) => name === ROUTER || workers.has(name) || workerSessions.has(session);
+    const collieRan = (h) => isRouterHistory(h) || workers.has(h.name) || workerSessions.has(h.session);
     // Another hub's own computer has no machine id: it is that hub.
     const machineOf = (x) => x.hub ? tagged(x.machine || "", x.hub) : x.machine || "";
     const rest = (r) => {
@@ -2775,14 +2788,14 @@
       return r;
     };
     return [
-      ...state.agents.filter((a) => a.name !== ROUTER || a.status === "blocked").map((a) => pane(a, false)),
+      ...state.agents.filter((a) => !isLocalRouter(a) || a.status === "blocked").map((a) => pane(a, false)),
       ...state.shells.map((a) => pane(a, true)),
       ...ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
         const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
         return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
           t: new Date(e.updated || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
       }),
-      ...hist.filter((h) => !collieRan(h.name, h.session)).map((h) => {
+      ...hist.filter((h) => !collieRan(h)).map((h) => {
         const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
         return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine, cwd: h.cwd,
           key, mark: m, session: h.session || "", name: m?.title || histName(h), live: false });
@@ -3469,7 +3482,7 @@
   function machineCard(m, latest) {
     const r = sysm.get(m.id)?.r, sys = r?.system || {}, ver = r?.versions || {};
     const sub = [sys.os || m.os, sys.cpu].filter(Boolean).join(" · ");
-    const mine = state.agents.filter((a) => (a.machine || "") === m.id && a.name !== ROUTER);
+    const mine = state.agents.filter((a) => (a.machine || "") === m.id && !isLocalRouter(a));
     const busy = mine.filter((a) => (RANK[a.status] ?? 3) <= 1).length;
     const said = !m.online ? `离线 · 上次 ${when(m.last_seen)}` : mine.length ? `${mine.length} 个 Agent${busy ? `，${busy} 个在工作` : ""}` : "没有 Agent";
     const vers = ["claude", "herdr"].filter((k) => ver[k]).map((k) => `<span>${k} ${esc(ver[k])}</span>`).join("");
@@ -3668,8 +3681,8 @@
     const v = find(current);
     if (!v) return;
     markSeen(v);
-    $("#d-name").textContent = v.name === ROUTER ? "Collie 的终端" : v.is_agent ? title(v) : v.workspace_label || base(tilde(v.cwd));
-    $("#d-name").title = v.is_agent && v.name && v.name !== ROUTER ? `名字：${v.name}` : "";
+    $("#d-name").textContent = isLocalRouter(v) ? "Collie 的终端" : v.is_agent ? title(v) : v.workspace_label || base(tilde(v.cwd));
+    $("#d-name").title = v.is_agent && v.name && !isLocalRouter(v) ? `名字：${v.name}` : "";
     $("#d-kind").textContent = v.is_agent ? (KIND_LABEL[v.kind] || v.kind) : "";
     const role = isWorker(v.name) ? "Collie 派出" : "";
     $("#d-worker").hidden = !role;
@@ -3690,7 +3703,7 @@
     // The pane may have shown up before the page knew what it is (a fresh
     // terminal): once it does, switch to the view that fits.
     if (view === "pane" && $("#viewer").dataset.mode && $("#viewer").dataset.mode !== curMode()) { closeStream(); resetChat(); resetScreen(); openStream(); }
-    $("#input").placeholder = v.name === ROUTER ? "直接在 Collie 的终端里输入…" : v.is_agent ? `给 ${KIND_LABEL[v.kind] || v.kind} 发消息…` : "输入命令…";
+    $("#input").placeholder = isLocalRouter(v) ? "直接在 Collie 的终端里输入…" : v.is_agent ? `给 ${KIND_LABEL[v.kind] || v.kind} 发消息…` : "输入命令…";
   }
 
   // Every agent session shows its agent, model and thinking level under the
@@ -3721,7 +3734,7 @@
     const w = !v.run && isWorker(v.name) ? sup.workers.find((x) => x.name === v.name && !x.ended) : null;
     const run = v.run || w?.run || ["", ""];
     const kind = shortKind(v.kind), machine = v.machine || "", remote = !!hubOf(v.pane_id);
-    const show = v.is_agent && v.name !== ROUTER && AGENT_KINDS.some(([k]) => k === kind);
+    const show = v.is_agent && !isLocalRouter(v) && AGENT_KINDS.some(([k]) => k === kind);
     const key = show ? [v.pane_id, kind, machine, ...run].join("|") : "";
     if (sess?.key === key) return lockSession();
     const seq = ++sessSeq;
@@ -6348,7 +6361,7 @@
         goBack(true);
       }
       if (act === "router-open") {
-        const p = paneOf(ROUTER);
+        const p = routerPane();
         if (p) location.hash = "#/p/" + encodeURIComponent(p); else toast("Collie 还在休眠；发一条消息就会唤醒它");
       }
       if (act === "router-restart") {
