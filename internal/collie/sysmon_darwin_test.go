@@ -16,10 +16,15 @@ func TestNettopLines(t *testing.T) {
 		read("default -> utun4,999999,999999,")
 		read("1/8 -> utun4,5,5,")
 	}
-	snap("5000", "7000")
-	snap("6000", "9000")
+	read("^D\b\b,bytes_in,bytes_out,\r") // the first, after the terminal's echo
+	read("default -> en0 -> 100.72.232.1,4000,6000,\r")
+	snap("5000", "7000") // ends the first: no rate from one snapshot
 	if p.rx != nil {
-		t.Fatalf("a rate before two whole snapshots: %v", *p.rx)
+		t.Fatalf("a rate from one snapshot: %v", *p.rx)
+	}
+	snap("6000", "9000") // ends the second, (6000 − 4000) / 10 s: the first wasn't lost
+	if p.rx == nil || *p.rx != 200 {
+		t.Fatalf("rx %v", p.rx)
 	}
 	snap("7000", "9500")
 	if p.rx == nil || p.tx == nil || *p.rx != 100 || *p.tx != 200 {

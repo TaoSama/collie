@@ -53,7 +53,10 @@ func newSysProbe(ctx context.Context) sysProbe {
 	every := strconv.Itoa(int(sysEvery / time.Second))
 	go resident(ctx, "iostat", []string{"-n", "0", "-w", every}, (*iostatReader)(p))
 	go resident(ctx, "vm_stat", []string{every}, &p.vm)
-	go resident(ctx, "nettop", []string{"-P", "-n", "-L", "0", "-s", every, "-m", "route", "-J", "bytes_in,bytes_out"}, &p.net)
+	// Into a pipe nettop writes in blocks, three snapshots at a time; on a
+	// terminal (script's) it writes each as it comes. Its lines then end in
+	// "\r", after the last comma, where nothing is read.
+	go resident(ctx, "script", []string{"-q", "/dev/null", "nettop", "-P", "-n", "-L", "0", "-s", every, "-m", "route", "-J", "bytes_in,bytes_out"}, &p.net)
 	return p
 }
 
@@ -224,8 +227,9 @@ func (p *darwinProbe) sample(s *sysSample) []sysDisk {
 // route through a physical interface (en*: Wi-Fi, Ethernet, Thunderbolt; not
 // utun VPNs or bridges) carried. Interface counters can't do: a Wi-Fi
 // interface doing channel I/O counts no input at all. A snapshot is whole
-// when the next one's header comes. Snapshots are every apart: through a
-// pipe nettop's output comes in bursts, so when a line arrives says nothing.
+// when the next one's header comes; they are every apart. The terminal
+// echoes script's end of input (^D) before the first header, so a header is
+// found anywhere in its line.
 type nettopReader struct {
 	p      *darwinProbe
 	every  time.Duration
@@ -236,7 +240,7 @@ type nettopReader struct {
 }
 
 func (r *nettopReader) line(line string) {
-	if strings.HasPrefix(line, ",bytes_in") {
+	if strings.Contains(line, ",bytes_in,") {
 		if r.inSnap {
 			r.clock = r.clock.Add(r.every)
 			rx, tx := r.sums.next(r.clock, r.rx, r.tx, "")
