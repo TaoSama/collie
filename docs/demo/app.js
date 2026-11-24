@@ -3516,7 +3516,7 @@
     const mine = state.agents.filter((a) => (a.machine || "") === m.id && !isLocalRouter(a));
     const busy = mine.filter((a) => (RANK[a.status] ?? 3) <= 1).length;
     const said = !m.online ? `离线 · 上次 ${when(m.last_seen)}` : mine.length ? `${mine.length} 个 Agent${busy ? `，${busy} 个在工作` : ""}` : "没有 Agent";
-    const vers = ["claude", "herdr"].filter((k) => ver[k]).map((k) => `<span>${k} ${esc(ver[k])}</span>`).join("");
+    const shown = [...AGENT_KINDS.map(([k]) => k), "herdr"].filter((k) => ver[k]).map((k) => `${k} ${ver[k]}`);
     const open = mcOpen.has(m.id);
     return `<section class="mc ${m.online ? "" : "off"}">
       <header class="mc-h"><span class="mc-ic">${MACHINE_ICON}</span><div class="mc-t">
@@ -3524,7 +3524,7 @@
         <p class="mc-sub" title="${esc(sub)}">${esc(sub)}</p></div></header>
       ${m.online ? metricsHTML(m) : ""}
       ${open ? detailsHTML(m, latest) : ""}
-      <footer class="mc-f"><span>${said}</span><span class="mc-ver">${vers}</span>
+      <footer class="mc-f"><span>${said}</span><span class="mc-ver" title="${esc(shown.join(" · "))}">${shown.map((v) => `<span>${esc(v)}</span>`).join("")}</span>
         <button type="button" class="mc-tg" data-mc="${esc(m.id)}" aria-expanded="${open}">${open ? "收起" : "详情"}<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></footer>
     </section>`;
   }
