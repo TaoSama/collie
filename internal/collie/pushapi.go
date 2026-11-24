@@ -26,13 +26,21 @@ func (s *Server) pushDevice(r *http.Request) string {
 	return ""
 }
 
-// pushStatus: the key to subscribe with, and whether the hub has this
-// browser's subscription (?endpoint=).
+// pushStatus: the key to subscribe with, whether the hub has this browser's
+// subscription (?endpoint=), and how the latest push to it went.
 func (s *Server) pushStatus(w http.ResponseWriter, r *http.Request) {
 	wp := s.sup.push
-	sub := wp.get(r.URL.Query().Get("endpoint"))
-	writeJSON(w, 200, map[string]any{"key": wp.key.publicKey(), "subscribed": sub != nil && sub.Device == s.pushDevice(r)})
+	ep := r.URL.Query().Get("endpoint")
+	sub := wp.get(ep)
+	out := map[string]any{"key": wp.key.publicKey(), "subscribed": sub != nil && sub.Device == s.pushDevice(r)}
+	if last := wp.lastResult(ep); last != nil {
+		out["last"] = last
+	}
+	writeJSON(w, 200, out)
 }
+
+// pushTestDelay gives you time to lock the phone or leave the app first.
+var pushTestDelay = 5 * time.Second
 
 type pushSubBody struct {
 	Endpoint string `json:"endpoint"`
@@ -98,12 +106,14 @@ func (s *Server) pushTest(w http.ResponseWriter, r *http.Request) {
 	s.sup.mu.Lock()
 	subject := s.sup.pushSubjectLocked()
 	s.sup.mu.Unlock()
-	ctx, cancel := context.WithTimeout(r.Context(), pushTimeout)
+	// Not tied to the request: a phone locked meanwhile may drop it.
+	ctx, cancel := context.WithTimeout(context.Background(), pushTestDelay+pushTimeout)
 	defer cancel()
-	n := pushNote{Title: pushTitle, Body: "推送通知可以用了：页面关掉也能收到需要你处理的事", Tag: "push-test", Hash: "#/prefs"}
+	time.Sleep(pushTestDelay)
+	n := pushNote{Title: pushTitle, Body: "推送通知可以用了：页面关掉也能收到需要你处理的事", Tag: "push-test", Hash: "#/prefs", Always: true}
 	if err := wp.deliver(ctx, subject, *sub, n); err != nil {
-		writeJSON(w, 502, map[string]any{"error": err.Error(), "gone": wp.get(body.Endpoint) == nil})
+		writeJSON(w, 502, map[string]any{"error": err.Error(), "gone": wp.get(body.Endpoint) == nil, "last": wp.lastResult(body.Endpoint)})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "last": wp.lastResult(body.Endpoint)})
 }

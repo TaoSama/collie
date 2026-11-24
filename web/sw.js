@@ -61,7 +61,7 @@ const clipNote = (s) => (s.length > NOTE_CHOICE ? s.slice(0, NOTE_CHOICE - 1) + 
 
 async function pushed(n) {
   const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  if (wins.some((c) => c.visibilityState === "visible" && c.focused)) return;
+  if (!n.always && wins.some((c) => c.visibilityState === "visible" && c.focused)) return;
   const choices = n.choices || [];
   const max = (self.Notification && Notification.maxActions) || 0;
   const fit = !!n.answer && choices.length > 0 && choices.length <= max;

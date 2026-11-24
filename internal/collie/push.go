@@ -38,6 +38,17 @@ type pushNote struct {
 	Hash    string            `json:"hash"`             // #/d/…, opened on the page's own origin
 	Answer  map[string]string `json:"answer,omitempty"` // the body POST /api/super/decide takes, with choice
 	Choices []string          `json:"choices,omitempty"`
+	// Shown even with a page in front of you: the settings page's test,
+	// pressed with that page open.
+	Always bool `json:"always,omitempty"`
+}
+
+// pushResult is how a subscription's latest push went. The hub keeps no
+// log on some machines, so the settings page shows it.
+type pushResult struct {
+	At     time.Time `json:"at"`
+	Status int       `json:"status,omitempty"` // the push service's answer; 0: it wasn't reached
+	Error  string    `json:"error,omitempty"`
 }
 
 type webPush struct {
@@ -46,7 +57,8 @@ type webPush struct {
 	client *http.Client
 
 	mu   sync.Mutex
-	subs map[string]*pushSub // by endpoint
+	subs map[string]*pushSub   // by endpoint
+	last map[string]pushResult // by endpoint
 	// Dialogs in sessions that aren't Collie's workers (theirs are entries):
 	// what each pane was at the last look, the ones that have since stopped on
 	// a dialog, and the dialog each last notified about.
@@ -72,7 +84,7 @@ const (
 )
 
 func newWebPush(db *sql.DB) (*webPush, error) {
-	wp := &webPush{db: db, client: &http.Client{Timeout: pushTimeout}, subs: map[string]*pushSub{},
+	wp := &webPush{db: db, client: &http.Client{Timeout: pushTimeout}, subs: map[string]*pushSub{}, last: map[string]pushResult{},
 		status: map[string]string{}, dialogs: map[string]time.Time{}, pushed: map[string]pushedAsk{}}
 	var raw string
 	switch err := db.QueryRow(`SELECT v FROM kv WHERE k='vapid'`).Scan(&raw); {
@@ -133,6 +145,15 @@ func (wp *webPush) get(endpoint string) *pushSub {
 	return nil
 }
 
+func (wp *webPush) lastResult(endpoint string) *pushResult {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+	if r, ok := wp.last[endpoint]; ok {
+		return &r
+	}
+	return nil
+}
+
 func (wp *webPush) remove(endpoint string) {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
@@ -140,6 +161,7 @@ func (wp *webPush) remove(endpoint string) {
 		log.Printf("push: forget %s: %v", endpoint, err)
 	}
 	delete(wp.subs, endpoint)
+	delete(wp.last, endpoint)
 }
 
 // dropDevice forgets the subscriptions of a browser that was removed.
@@ -164,6 +186,13 @@ func (wp *webPush) dropDevice(id string) {
 func (wp *webPush) deliver(ctx context.Context, subject string, s pushSub, n pushNote) error {
 	b, _ := json.Marshal(n)
 	code, err := sendPush(ctx, wp.client, wp.key, subject, s, pushMessage{payload: b, topic: pushTopic(n.Tag)})
+	res := pushResult{At: time.Now(), Status: code}
+	if err != nil {
+		res.Error = clip(err.Error(), 200)
+	}
+	wp.mu.Lock()
+	wp.last[s.Endpoint] = res
+	wp.mu.Unlock()
 	if code == http.StatusNotFound || code == http.StatusGone {
 		log.Printf("push: %s is gone (%d), forgetting it", pushHost(s.Endpoint), code)
 		wp.remove(s.Endpoint)

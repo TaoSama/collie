@@ -530,6 +530,7 @@
   // of another hub, which pushes to its own pages.
   let pushSub = null; // this browser's subscription, once the hub has it
   let pushWhy = "";   // why there is none
+  let pushLast = null; // how the hub's latest push to it went: { at, status, error }
   const pushedHere = (pane) => !!pushSub && !hubOf(pane);
   const pushable = () => "serviceWorker" in navigator && "PushManager" in window && isSecureContext;
   const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -549,7 +550,8 @@
       const reg = await swReady();
       if (!reg) { pushWhy = "后台脚本没有启动，刷新页面再试"; return; }
       let sub = await reg.pushManager.getSubscription();
-      const { key, subscribed } = await api("/api/push?" + new URLSearchParams({ endpoint: sub?.endpoint || "" }));
+      const { key, subscribed, last } = await api("/api/push?" + new URLSearchParams({ endpoint: sub?.endpoint || "" }));
+      pushLast = last || null;
       if (sub && sub.options.applicationServerKey && b64url(sub.options.applicationServerKey) !== key) {
         await api("/api/push/unsubscribe", { body: { endpoint: sub.endpoint } }).catch(() => {});
         await sub.unsubscribe();
@@ -565,6 +567,13 @@
       console.warn("push subscription:", err);
     }
     if (view === "prefs") renderPrefs();
+  }
+  // Whether the push service took the latest push: past it, a notification
+  // that never shows is the device's doing (no route to FCM, battery rules).
+  function pushLastLine() {
+    if (!pushLast) return "";
+    const at = new Date(pushLast.at).toTimeString().slice(0, 5);
+    return pushLast.error ? `。上次推送 ${at} 失败：${pushLast.error}` : `。上次推送 ${at}：推送服务已收下（${pushLast.status}）`;
   }
   // Notifications turned off here, or signing out: the hub stops pushing.
   async function dropPush() {
@@ -3787,7 +3796,7 @@
       </div>
       <div class="card"><div class="card-h">通知</div>
         ${row("浏览器通知", esc(perm), sw("notify", prefs.notify() && (!("Notification" in window) || Notification.permission !== "denied")))}
-        ${prefs.notify() ? row("后台推送", esc(pushSub ? "已开：需要你选或确认的事由 hub 推送，页面关掉、锁屏也能收到"
+        ${prefs.notify() ? row("后台推送", esc(pushSub ? "已开：需要你选或确认的事由 hub 推送，页面关掉、锁屏也能收到" + pushLastLine()
           : pushWhy ? "没开成：" + pushWhy : "正在连接…"), pushSub ? '<button type="button" class="btn small" data-act="push-test">发一条试试</button>'
           : pushWhy ? '<button type="button" class="btn small" data-act="push-retry">重试</button>' : "") : ""}
       </div>
@@ -3800,8 +3809,13 @@
     if (link) autoTab = link.dataset.autoTab;
     const act = e.target.closest("button[data-act]")?.dataset.act;
     if (act === "push-test") {
-      try { await api("/api/push/test", { body: { endpoint: pushSub?.endpoint || "" } }); toast("已推送，看看通知栏"); }
-      catch (err) { toast("推送失败：" + err.message, "attn"); }
+      toast("5 秒后推送，可以先锁屏或切到别的 app");
+      try {
+        const r = await api("/api/push/test", { body: { endpoint: pushSub?.endpoint || "" } });
+        pushLast = r.last || null;
+        toast("推送服务已收下，看看通知栏");
+      } catch (err) { toast("推送失败：" + err.message, "attn"); await syncPush(); }
+      if (view === "prefs") renderPrefs();
       return;
     }
     if (act === "push-retry") { await syncPush(); return; }

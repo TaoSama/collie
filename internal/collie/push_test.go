@@ -327,6 +327,8 @@ func TestPushAPI(t *testing.T) {
 	sp := newRouterTestSuper(t, newFakeHerdr(t))
 	ps := withPush(t, sp)
 	sp.push.remove(ps.srv.URL + "/s/phone")
+	defer func(d time.Duration) { pushTestDelay = d }(pushTestDelay)
+	pushTestDelay = 0
 	call := func(method, path string, body any) (int, map[string]any) {
 		var rd io.Reader
 		if body != nil {
@@ -358,9 +360,17 @@ func TestPushAPI(t *testing.T) {
 	if code, out := call("POST", "/api/push/test", map[string]string{"endpoint": sub.Endpoint}); code != 200 {
 		t.Fatalf("test push = %d %v", code, out)
 	}
-	if n := ps.waitPush(1)[0]; n.Tag != "push-test" || n.Hash != "#/prefs" {
+	if n := ps.waitPush(1)[0]; n.Tag != "push-test" || n.Hash != "#/prefs" || !n.Always {
 		t.Fatalf("test push: %+v", n)
 	}
+	if _, out := call("GET", "/api/push?endpoint="+sub.Endpoint, nil); out["last"] == nil || out["last"].(map[string]any)["status"] != float64(201) {
+		t.Fatalf("the test push's outcome isn't kept: %v", out)
+	}
+	ps.code = http.StatusForbidden
+	if code, out := call("POST", "/api/push/test", map[string]string{"endpoint": sub.Endpoint}); code != 502 || out["last"].(map[string]any)["status"] != float64(403) {
+		t.Fatalf("a refused push: %d %v", code, out)
+	}
+	ps.code = 201
 	call("POST", "/api/push/unsubscribe", map[string]string{"endpoint": sub.Endpoint})
 	if code, _ := call("POST", "/api/push/test", map[string]string{"endpoint": sub.Endpoint}); code != 404 || sp.push.has() {
 		t.Fatalf("still subscribed after unsubscribing: %d", code)

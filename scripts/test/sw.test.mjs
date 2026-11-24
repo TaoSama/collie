@@ -53,6 +53,8 @@ test("a page in front of you already shows it", async () => {
   const sw = loadSW({ windows: [{ visibilityState: "visible", focused: true }] });
   await sw.push(dialog);
   assert.equal(sw.shown.length, 0);
+  await sw.push({ ...dialog, tag: "push-test", always: true }); // the settings page's test
+  assert.equal(sw.shown.length, 1);
   const bg = loadSW({ windows: [{ visibilityState: "hidden", focused: false }] });
   await bg.push(dialog);
   assert.equal(bg.shown.length, 1);
