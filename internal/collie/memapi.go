@@ -32,11 +32,15 @@ func readMemFile(path string) *memFile {
 func (s *Server) superMemory(w http.ResponseWriter, r *http.Request) {
 	sp := s.sup
 	dir := sp.routerDir()
+	upFront := sp.upFrontSize()
+	msgs := sp.messagesSize()
 	out := map[string]any{
 		"dir":        s.tilde(dir),
 		"files":      sp.memFiles(),
-		"loaded":     sp.loadedSize(),
-		"budget":     memoryBudget,
+		"up_front":   upFront,
+		"messages":   msgs,
+		"loaded":     upFront + msgs,
+		"budget":     upFrontBudget,
 		"dreaming":   sp.dreaming(),
 		"next_dream": nil,
 		"last_dream": nil,

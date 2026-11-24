@@ -16,13 +16,10 @@ import (
 // old session stays readable from the handover line in chat.
 
 // What a session reads up front from memory/. upFrontBudget covers the files
-// Collie writes (instructions, notes/index.md, open tasks) and is the number
-// every prompt names; memoryBudget adds messages.md, which the hub writes, for
-// the memory page.
-const (
-	upFrontBudget = 6 << 10
-	memoryBudget  = upFrontBudget + 2<<10
-)
+// Collie writes (instructions.md, notes/index.md, open tasks) and is the number
+// every prompt and the memory page judge against (10 KB fits ~3K tokens of
+// 3-byte UTF-8 Chinese); messages.md is written by the hub and shown separately.
+const upFrontBudget = 10 << 10
 
 type handover struct {
 	at      time.Time

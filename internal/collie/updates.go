@@ -25,8 +25,25 @@ import (
 // say which computers run an older Collie. The release page's redirect
 // (…/releases/latest → …/tag/vX.Y.Z) needs no API token or rate limit.
 
-const releasesLatest = "https://github.com/" + repo + "/releases/latest"
 const repo = "TaoSama/collie"
+
+var (
+	selfUpdateMu   sync.Mutex
+	releaseRepoURL = "https://github.com/" + repo
+	executablePath = func() (string, error) {
+		exe, err := os.Executable()
+		if err == nil {
+			exe, err = filepath.EvalSymlinks(exe)
+		}
+		return exe, err
+	}
+	execUpdated = func(exe string) {
+		time.Sleep(800 * time.Millisecond)
+		err := syscall.Exec(exe, os.Args, os.Environ())
+		log.Printf("restart after update: %v", err) // only reached if exec failed
+		os.Exit(1)
+	}
+)
 
 var latestRel struct {
 	sync.Mutex
@@ -79,7 +96,7 @@ func fetchLatestTag() string {
 		Timeout:       20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	resp, err := c.Head(releasesLatest)
+	resp, err := c.Head(releaseRepoURL + "/releases/latest")
 	if err != nil {
 		return ""
 	}
@@ -150,6 +167,16 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 // restarts it in place (same process id, so launchd, systemd or nohup keep
 // tracking it). herdr and the agents in it keep running meanwhile.
 func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
+	if !selfUpdateMu.TryLock() {
+		writeJSON(w, 409, map[string]any{"error": "升级已在进行中，请稍候"})
+		return
+	}
+	restarting := false
+	defer func() {
+		if !restarting {
+			selfUpdateMu.Unlock()
+		}
+	}()
 	if parseVersion(version) == nil {
 		writeJSON(w, 400, map[string]any{"error": "这台的 collie 是从源码编译的（" + version + "），在源码里 git pull 后重新编译来更新"})
 		return
@@ -167,10 +194,7 @@ func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "version": version, "latest": true})
 		return
 	}
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
+	exe, err := executablePath()
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": "找不到自己的程序文件：" + err.Error()})
 		return
@@ -184,19 +208,15 @@ func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	go func() {
-		time.Sleep(800 * time.Millisecond)
-		err := syscall.Exec(exe, os.Args, os.Environ())
-		log.Printf("restart after update: %v", err) // only reached if exec failed
-		os.Exit(1)
-	}()
+	restarting = true
+	go execUpdated(exe)
 }
 
 // downloadRelease puts release tag's binary for this platform at exe,
 // checked against the release's checksums and by running it once.
 func downloadRelease(ctx context.Context, tag, exe string) error {
 	asset := "collie-" + runtime.GOOS + "-" + runtime.GOARCH
-	base := "https://github.com/" + repo + "/releases/download/" + tag + "/"
+	base := releaseRepoURL + "/releases/download/" + tag + "/"
 	c := &http.Client{Timeout: 5 * time.Minute}
 	get := func(name string) (*http.Response, error) {
 		req, _ := http.NewRequestWithContext(ctx, "GET", base+name, nil)
@@ -227,30 +247,37 @@ func downloadRelease(ctx context.Context, tag, exe string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	tmp := exe + ".new"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	f, err := os.CreateTemp(filepath.Dir(exe), ".collie.new.*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
+	defer func() {
+		if tmp != "" {
+			os.Remove(tmp)
+		}
+	}()
 	h := sha256.New()
 	_, err = io.Copy(io.MultiWriter(f, h), resp.Body)
+	if cerr := f.Chmod(0o755); err == nil {
+		err = cerr
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	if err == nil && hex.EncodeToString(h.Sum(nil)) != want {
-		err = fmt.Errorf("下载的文件校验不对，再试一次")
-	}
-	if err == nil {
-		out, rerr := exec.CommandContext(ctx, tmp, "version").Output()
-		if rerr != nil || !strings.Contains(string(out), tag) {
-			err = fmt.Errorf("新版本在这台电脑上跑不起来：%v %s", rerr, strings.TrimSpace(string(out)))
-		}
-	}
-	if err == nil {
-		err = os.Rename(tmp, exe)
-	}
 	if err != nil {
-		os.Remove(tmp)
+		return err
 	}
-	return err
+	if hex.EncodeToString(h.Sum(nil)) != want {
+		return fmt.Errorf("下载的文件校验不对，再试一次")
+	}
+	out, rerr := exec.CommandContext(ctx, tmp, "version").Output()
+	if rerr != nil || !strings.Contains(string(out), tag) {
+		return fmt.Errorf("新版本在这台电脑上跑不起来：%v %s", rerr, strings.TrimSpace(string(out)))
+	}
+	if err := os.Rename(tmp, exe); err != nil {
+		return err
+	}
+	tmp = ""
+	return nil
 }

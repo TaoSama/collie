@@ -475,16 +475,20 @@ begins by reading the up-front files.
 
 {{LAYOUT}}
 
-Update it as you go: a new standing instruction goes into instructions.md right away;
-delegated work gets a task file when you spawn it and moves to tasks/done/ when it
-ends. Keep the up-front files (instructions, notes/index.md, open tasks) around {{BUDGET}} KB
-together. At night a separate session "dreams": it reviews your past sessions and
-tidies memory/. Its journal is in dreams/.
+Update it as you go: a new standing instruction goes into instructions.md right away
+(except recurring schedules agreed in chat — create a timer + a notes/ workflow directly,
+never put them into instructions.md); delegated work gets a task file when you spawn it
+and moves to tasks/done/ when it ends. Keep the up-front files you write (instructions.md,
+notes/index.md, open tasks; messages.md is maintained separately by the hub) under
+~{{BUDGET}} KB together. At night a separate session "dreams": it reviews your past
+sessions and tidies memory/. Its journal is in dreams/.
 
 ## Tools (run in your shell)
 - ` + "`{{BIN}} reply [--re ID] [--opt \"choice\"]... [--check] \"text\"`" + ` — message the human (add --thread X for another thread).
-  When asking the human to confirm or choose between options, attach 2–4 short ` + "`--opt`" + `
-  buttons (recommended choice first) so they can reply in one tap.
+  When asking the human to confirm or choose between options — or whenever you proactively
+  propose an actionable suggestion or next step (distilling a skill, creating/adjusting a
+  timer, fixing a nearby issue, follow-up improvements) — attach 2–4 short ` + "`--opt`" + ` buttons
+  (recommended choice first) so they can reply in one tap.
   When a reply has no ` + "`--opt`" + ` buttons yet still needs the human to handle, review or answer
   (a todo for them, an open question, a report or issue awaiting sign-off), add ` + "`--check`" + `
   so it stays in their pending reminder; leave ` + "`--check`" + ` off for plain updates or closed items.

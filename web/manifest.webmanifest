@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Collie",
   "short_name": "Collie",
-  "description": "在手机上，放牧一群 agent",
+  "description": "在手机上养边牧，放牧一群 Agent",
   "lang": "zh-CN",
   "start_url": "/",
   "scope": "/",

@@ -250,22 +250,22 @@
     { id: "tm1", spec: "weekdays 09:00", text: "检查各个任务的进展，有卡住的告诉我", target: "", enabled: true, next_run: later(60 * 18), owner: "you" },
     { id: "tm2", spec: "in 30m", text: "看一下 fix-flaky-test 跑完没有", target: "", enabled: true, next_run: later(16), owner: "collie" },
   ];
-  const memFile = (name, text, min) => ({ name, text, size: text.length * 2, mod: ago(min) });
+  const memFile = (name, text, min, size) => ({ name, text, size: size ?? text.length * 2, mod: ago(min) });
   const memory = {
-    dir: "~/.collie", loaded: 5200, budget: 8192, dreaming: false, last_dream: ago(60 * 9), next_dream: later(60 * 15), dreams: [
+    dir: "~/.collie", up_front: 5734, messages: 2867, loaded: 8601, budget: 10240, dreaming: false, last_dream: ago(60 * 9), next_dream: later(60 * 15), dreams: [
       { name: "2026-11-18.md", text: "从 fix-flaky-test 里记下了分页测试的坑，写进 shop-api.md；合并了两条重复的笔记\n\n- shop-api.md：同一秒内的订单按 created_at 排序不稳定，要加 id 兜底\n- agents.md：Codex 在 devbox 上跑 shop-api 的测试更稳\n- 你更喜欢先在 devbox 上跑测试，再在 Mac 上看界面（inferred）" },
     ],
     files: [
-      memFile("instructions.md", "# 指令\n- 发布说明用中文，每条一句话\n- 跑测试优先用 devbox，界面相关的活放 macbook\n- 动生产数据库前先问我", 60 * 24),
-      memFile("tasks/v1.4-release.md", "# v1.4 发布\n目标：整理 v1.3 以来的 27 个提交写发布说明（重点提醒配置项改名与 Node 22 起步），定位并修复 /orders 分页同一秒内记录重复的偶发失败（fix-flaky-test），回归通过后一起开 PR。\n- [x] 发布说明（release-notes）\n- [ ] 分页测试修复（fix-flaky-test）\n- [ ] 开 PR", 6),
+      memFile("instructions.md", "# 指令\n- 发布说明用中文，每条一句话\n- 跑测试优先用 devbox，界面相关的活放 macbook\n- 动生产数据库前先问我", 60 * 24, 1843),
+      memFile("tasks/v1.4-release.md", "# v1.4 发布\n目标：整理 v1.3 以来的 27 个提交写发布说明（重点提醒配置项改名与 Node 22 起步），定位并修复 /orders 分页同一秒内记录重复的偶发失败（fix-flaky-test），回归通过后一起开 PR。\n- [x] 发布说明（release-notes）\n- [ ] 分页测试修复（fix-flaky-test）\n- [ ] 开 PR", 6, 2253),
       memFile("tasks/done/dark-mode-fix.md", "# 首页暗色模式修复\n- [x] 定位对比度问题\n- [x] 合入修复（ux-polish）\n已完成：11 月 18 日合入。", 50),
       memFile("tasks/done/ci-cache.md", "# CI 缓存提速\n- [x] 缓存依赖目录\n已完成：构建从 9 分钟降到 4 分钟。", 90),
-      memFile("notes/index.md", "# 笔记索引\n- shop-api.md：订单服务，怎么跑测试、分页的坑\n- shop-web.md：前端，怎么起、发布说明放哪\n- agents.md：哪个 agent 在哪台电脑上好用\n- machines.md：devbox 和 macbook 各装了什么", 60 * 30),
+      memFile("notes/index.md", "# 笔记索引\n- shop-api.md：订单服务，怎么跑测试、分页的坑\n- shop-web.md：前端，怎么起、发布说明放哪\n- agents.md：哪个 agent 在哪台电脑上好用\n- machines.md：devbox 和 macbook 各装了什么", 60 * 30, 1638),
       memFile("notes/shop-api.md", "# shop-api\n- 仓库 ~/code/shop-api（devbox），Go 1.25，测试 `make test`\n- 分页测试偶发失败：同一秒内的订单按 `created_at` 排序不稳定，排序要加 `id` 兜底（fix-flaky-test 查出来的）\n- 测试数据库用 docker 起，`make db`；跑完 `make db-down`\n- CI 只跑 `./internal/...`（截至 11-18）", 60 * 9),
       memFile("notes/shop-web.md", "# shop-web\n- 仓库 ~/code/shop-web（macbook），Vite + React，`pnpm dev`\n- 发布说明写在 CHANGELOG.md，按「需要注意 / 改动」两段\n- 首页明暗主题基准图：![首页暗色预览](~/code/shop-web/docs/preview-dark.png)", 60 * 30),
       memFile("notes/agents.md", "# agent 经验\n- Codex 在 devbox 上跑 shop-api 的测试更稳，Claude 偶尔会改错测试本身\n- 界面相关的活给 macbook 上的 Claude\n- macbook 上没装 Antigravity", 60 * 9),
       memFile("notes/machines.md", "# 电脑\n- devbox：Linux，claude / codex / agy 都有\n- macbook：claude、codex；周末常关机", 60 * 24 * 3),
-      memFile("messages.md", "最近说过的话（自动记录）", 5),
+      memFile("messages.md", "# What Collie recently told the human (written by the hub, oldest first)\n\n- 11-19 09:45 [chat:main] 好，分两路并行：fix-flaky-test 查分页测试，release-notes 写发布说明。\n- 11-19 09:53 [chat:main] shop-api/migrations 整理完了（41 → 33 个文件），那 3 个旧回滚脚本怎么处理？\n- 11-19 09:54 [chat:main] 发布说明写好了：6 条改动，要我直接开 PR 吗？", 5, 2867),
     ],
   };
   const settings = {
@@ -555,7 +555,16 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       if (method === "POST") timers.push({ id: "tm" + (++seq), spec: body.spec, text: body.text, target: body.target, enabled: true, next_run: later(60), owner: "you" });
       return json({ timers });
     }
-    if (p === "/api/super/memory") return json(memory);
+    if (p === "/api/super/memory") {
+      if (method === "POST" && body.path) {
+        const f = memory.files.find((x) => x.name === body.path);
+        if (f) { f.text = body.text; f.size = new Blob([body.text]).size; f.mod = new Date().toISOString(); }
+        memory.up_front = memory.files.filter((x) => x.name === "instructions.md" || x.name === "notes/index.md" || /^tasks\/[^/]+\.md$/.test(x.name)).reduce((s, x) => s + x.size, 0);
+        memory.messages = memory.files.filter((x) => x.name === "messages.md").reduce((s, x) => s + x.size, 0);
+        memory.loaded = memory.up_front + memory.messages;
+      }
+      return json(memory);
+    }
     if (p === "/api/super/say") return json({ ok: true, entry: collieSay(body.text || "", body.re) });
     if (p === "/api/external") return json({ sessions: external });
     if (p === "/api/history") return json({ sessions: history });

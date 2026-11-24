@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -800,6 +801,10 @@ func (s *Server) tilde(p string) string {
 }
 
 func isDir(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() }
+
+func init() {
+	_ = mime.AddExtensionType(".woff2", "font/woff2")
+}
 
 func (s *Server) static() http.Handler {
 	files := http.FileServerFS(s.web)
