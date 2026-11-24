@@ -39,6 +39,9 @@ import (
 const (
 	desktopWindow = 7 * 24 * time.Hour
 	desktopMax    = 20 // per app
+	// The Codex App lists every thread it has, so take more of them; the
+	// threads its automations write to show however old they are.
+	codexMax = 100
 )
 
 const (
@@ -64,7 +67,7 @@ var desktopCache struct {
 	app  bool // the Codex App is up
 }
 
-// desktopRows reads the apps' indexes, at most every 10 seconds.
+// desktopRows reads the apps' indexes, at most every 5 seconds.
 func (s *Server) desktopRows() ([]desktopRow, bool) {
 	desktopCache.Lock()
 	defer desktopCache.Unlock()
@@ -342,15 +345,30 @@ func (s *Server) codexAppRows() []desktopRow {
 		return nil
 	}
 	defer db.Close()
+	args := []any{time.Now().Add(-desktopWindow).Unix()}
+	recent := "updated_at > ?"
+	ids := s.codexAutomationThreads()
+	automation := map[string]bool{}
+	if len(ids) > 0 {
+		recent = "(updated_at > ? OR id IN (?" + strings.Repeat(", ?", len(ids)-1) + "))"
+		for _, id := range ids {
+			args = append(args, id)
+			automation[id] = true
+		}
+	}
+	// No LIMIT: Collie's own workers are told apart in Go below, and they
+	// mustn't take the places of the App's threads; nor may the newer
+	// threads push out an automation's.
 	q := `SELECT id, COALESCE(NULLIF(name,''), NULLIF(title,''), first_user_message), COALESCE(first_user_message, ''), cwd, rollout_path,
 		COALESCE(created_at_ms, created_at*1000), COALESCE(updated_at_ms, updated_at*1000), COALESCE(originator, '')
-		FROM threads WHERE archived = 0 AND source = 'vscode' AND updated_at > ? ORDER BY updated_at DESC LIMIT ?`
-	res, err := db.Query(q, time.Now().Add(-desktopWindow).Unix(), desktopMax)
+		FROM threads WHERE archived = 0 AND source = 'vscode' AND ` + recent + ` ORDER BY updated_at DESC`
+	res, err := db.Query(q, args...)
 	if err != nil {
 		return nil
 	}
 	defer res.Close()
 	var rows []desktopRow
+	kept := 0
 	for res.Next() {
 		var id, title, first, cwd, rollout, originator string
 		var created, updated int64
@@ -362,6 +380,12 @@ func (s *Server) codexAppRows() []desktopRow {
 		if collieSession(first) {
 			continue
 		}
+		if !automation[id] {
+			if kept == codexMax {
+				continue
+			}
+			kept++
+		}
 		app := codexClient(originator, cwd)
 		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated)}
 		if isFile(rollout) {
@@ -371,6 +395,40 @@ func (s *Server) codexAppRows() []desktopRow {
 		rows = append(rows, d)
 	}
 	return rows
+}
+
+// codexAutomationThreads: the threads the App's active automations write to,
+// <CODEX_HOME>/automations/<id>/automation.toml's target_thread_id. A monthly
+// one runs less than once a week, and its thread still belongs in the list.
+func (s *Server) codexAutomationThreads() []string {
+	paths, _ := filepath.Glob(filepath.Join(s.codexHome(), "automations", "*", "automation.toml"))
+	var ids []string
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var status, thread string
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "[") {
+				break // the top-level keys end at the first table
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			switch strings.TrimSpace(k) {
+			case "status":
+				status = tomlString(v)
+			case "target_thread_id":
+				thread = tomlString(v)
+			}
+		}
+		if status == "ACTIVE" && thread != "" {
+			ids = append(ids, thread)
+		}
+	}
+	return ids
 }
 
 // codexTurnRunning: the rollout's last turn has started and not ended. A turn
