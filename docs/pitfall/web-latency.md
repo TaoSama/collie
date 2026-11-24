@@ -44,3 +44,10 @@ hub 以前每次组装状态都要依次问每台电脑的 workspace、pane、ag
 - 自动长高的输入框（`grow`）先设 `height: auto` 再读 `scrollHeight`，会让整页重新排版，对话很长时每个字要几十毫秒。只在文字溢出或变短时才重新量，打字还在原来的行数里时什么也不改。
 
 测量方法：用 Playwright 打开线上页面，用 Event Timing 和 CDP `Performance.getMetrics` 看每次按键的处理时间、排版次数和长任务。
+
+## 读不到 pane 不等于 pane 关了
+
+浏览器收到流的 `gone` 就显示「这个 pane 已经关闭。」并停掉这个流，不会自己恢复，所以只有 herdr 明确回 `*_not_found` 时才能发。连不上 herdr（它在重启或热升级，socket 暂时不在）、5 秒超时、node 正在重连（`machine_offline`），都只是这一轮没读到，下一轮再试。
+
+- 对话流（`streamChat`）先问 `agent.get`：`agent_not_found` 说明这个 pane 没有 agent（shell，或 agent 还没起来），再读一下屏幕，`pane_not_found` 才是关了。`agent.get` 报别的错时，整轮跳过，不要当成 shell 发 `meta`，否则顶栏会闪成终端。
+- 屏幕和日志流（`streamPane`）同样只认 `not_found`。两处共用 `notFound`（`server.go`）。

@@ -116,6 +116,12 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 			return nil, &HerdrError{Code: "pane_not_found"}
 		}
 		return map[string]any{"pane": agentView(str("pane_id"), p)}, nil
+	case "agent.get":
+		p := f.panes[str("target")]
+		if p == nil || p.kind == "" {
+			return nil, &HerdrError{Code: "agent_not_found"}
+		}
+		return map[string]any{"agent": agentView(str("target"), p)}, nil
 	case "pane.read":
 		p := f.panes[str("pane_id")]
 		if p == nil {

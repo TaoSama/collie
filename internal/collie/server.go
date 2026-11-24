@@ -481,9 +481,8 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 		}
 		cancel()
 		if err != nil {
-			var he *HerdrError
-			if errors.As(err, &he) && strings.Contains(he.Code, "not_found") {
-				b, _ := json.Marshal(map[string]any{"error": he.Message})
+			if notFound(err) {
+				b, _ := json.Marshal(map[string]any{"error": err.Error()})
 				sse.send("gone", b)
 				return
 			}
@@ -972,6 +971,14 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// notFound reports herdr saying the target does not exist. For a pane read
+// that means the pane is closed; any other failure (a timeout, a node that is
+// reconnecting) is on the way there and worth another try.
+func notFound(err error) bool {
+	var he *HerdrError
+	return errors.As(err, &he) && strings.Contains(he.Code, "not_found")
 }
 
 func fail(w http.ResponseWriter, err error) {

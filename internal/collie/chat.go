@@ -1050,6 +1050,14 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		beat = time.Now()
 		return sse.send(ev, b) == nil
 	}
+	// next keeps the connection alive and waits for the next round.
+	next := func() bool {
+		if time.Since(beat) > 15*time.Second {
+			sse.comment()
+			beat = time.Now()
+		}
+		return pollAfter(r.Context().Done(), wake, pollRates{normal: 700 * time.Millisecond, quick: 100 * time.Millisecond}, &woke)
+	}
 	for {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		var info struct {
@@ -1066,10 +1074,23 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 				status = "blocked"
 			}
 		} else if err != nil {
-			if _, e := s.herdr.Read(ctx, id, "visible", "text", 1); e != nil {
+			// No agent here (a shell, one still starting), or no answer at
+			// all: the latter is tried again, not shown as a shell.
+			e := err
+			if notFound(err) {
+				_, e = s.herdr.Read(ctx, id, "visible", "text", 1)
+			}
+			if notFound(e) {
 				cancel()
 				send("gone", map[string]any{"error": e.Error()})
 				return
+			}
+			if e != nil {
+				cancel()
+				if !next() {
+					return
+				}
+				continue
 			}
 		}
 
@@ -1140,11 +1161,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 			beat = time.Now()
 		}
 
-		if time.Since(beat) > 15*time.Second {
-			sse.comment()
-			beat = time.Now()
-		}
-		if !pollAfter(r.Context().Done(), wake, pollRates{normal: 700 * time.Millisecond, quick: 100 * time.Millisecond}, &woke) {
+		if !next() {
 			return
 		}
 	}
