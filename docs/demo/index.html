@@ -27,6 +27,10 @@
       } catch { /* storage blocked or unreadable: keep the defaults */ }
       root.dataset.theme = t === "light" || t === "dark" ? t : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
       if (typeof s === "string" && s !== "default") root.dataset.skin = s;
+      if (s === "linear") { // its web font (skins.css), fetched with the stylesheets
+        const l = Object.assign(document.createElement("link"), { rel: "preload", as: "font", type: "font/woff2", crossOrigin: "", href: "fonts/InterVariable-latin.woff2" });
+        document.head.appendChild(l);
+      }
       if (x === "small" || x === "large") root.dataset.text = x;
       const bg = getComputedStyle(root).getPropertyValue("--bg").trim();
       if (bg) document.querySelectorAll('meta[name="theme-color"]').forEach((m) => { m.removeAttribute("media"); m.content = bg; });
@@ -192,7 +196,7 @@
     <section class="view" id="v-auto" hidden>
       <header class="d-head">
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
-        <div class="d-title"><div class="d-name">自动化</div><div class="d-meta muted">Always-on：事件进来，Collie 决定谁去做</div></div>
+        <div class="d-title"><div class="d-name">自动化</div><div class="d-meta muted page-desc">Always-on：事件进来，Collie 决定谁去做</div></div>
       </header>
       <div class="tabs" id="auto-tabs">
         <button data-tab="inbox" class="on">收件箱</button>
@@ -209,7 +213,7 @@
     <section class="view" id="v-devices" hidden>
       <header class="d-head">
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
-        <div class="d-title"><div class="d-name">设备</div><div class="d-meta muted">这台 hub 管着哪些电脑，谁能连进来</div></div>
+        <div class="d-title"><div class="d-name">设备</div><div class="d-meta muted page-desc">这台 hub 管着哪些电脑，谁能连进来</div></div>
       </header>
       <div class="tabs" id="dev-tabs">
         <button data-tab="connect">连接</button>
@@ -255,7 +259,7 @@
     <section class="view" id="v-prefs" hidden>
       <header class="d-head">
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
-        <div class="d-title"><div class="d-name">偏好设置</div><div class="d-meta muted">只影响这台设备上的这个浏览器</div></div>
+        <div class="d-title"><div class="d-name">偏好设置</div><div class="d-meta muted page-desc">只影响这台设备上的这个浏览器</div></div>
       </header>
       <div class="auto-body" id="prefs-body"></div>
     </section>

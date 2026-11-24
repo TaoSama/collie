@@ -3,17 +3,54 @@
    [data-theme="light"] and [data-theme="dark"] so neither leaks into the
    other. 默认 has no block here. */
 
+/* Inter (SIL OFL, web/fonts/Inter-LICENSE.txt), Latin subset with the wght
+   axis. Only downloaded when a skin uses it; index.html preloads it then. */
+@font-face {
+  font-family: "Inter Variable";
+  src: local("Inter Variable"), url("fonts/InterVariable-latin.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* Skins never synthesize their own bold. */
+:where(:root[data-skin]) :is(b, strong) { font-weight: var(--fw-bold); }
+
 .skin-swatch.default { background: linear-gradient(135deg, #ffffff 50%, #111111 50%); }
 
 /* ─── Codex: quiet gray with ink buttons, pill controls, a floating composer
    and soft user bubbles; color only for status. */
 :root[data-skin="codex"] {
   --round: 1.25;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  /* System UI font with its own family first where installed; no font files. */
+  --sans: "OpenAI Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
   --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", "MesloLGS NF", "Symbols Nerd Font Mono", monospace;
+  /* 12 / 13 / 14 scale, body weight 430, relaxed 1.625 reading rhythm,
+     no tracking, 16px icons with a light stroke. */
+  --fs-micro: 11px; --fs-tiny: 12px; --fs-small: 12px; --fs-meta: 13px; --fs-body: 14px;
+  --fs-lead: 16px; --fs-title: 18px; --fs-msg: 14px; --fs-msg-m: 14px;
+  --fs-page: var(--fs-meta); --fw-page: var(--fw-medium); --fs-row-title: var(--fs-meta); --fs-row-desc: var(--fs-meta);
+  --fs-item: var(--fs-meta); --fw-item: var(--fw-normal);
+  --fs-group: var(--fs-body); --fw-group: var(--fw-medium); --tt-group: none; --fs-proj: var(--fs-body);
+  --fs-card-h: var(--fs-body); --fw-card-h: var(--fw-medium);
+  /* Ink by role: titles and body in full ink, explanations in secondary
+     (65%), only metadata, section titles and quiet icons in tertiary.
+     No intro paragraphs under page titles, no second line under sessions. */
+  --t-secondary: var(--fg-2); --t-desc: var(--fg-2); --t-meta: var(--fg-3);
+  --t-group: var(--fg-3); --t-proj: var(--fg-3); --t-icon: var(--fg-3); --t-hint: var(--fg-3);
+  --t-empty: color-mix(in srgb, var(--fg-3) 50%, transparent);
+  --marker: var(--fg-2);
+  --intro: none; --item-sub: none;
+  --fw-normal: 430; --fw-medium: 500; --fw-strong: 600; --fw-bold: 600;
+  --lh-ui: 1.5; --lh-msg: 1.625; --lh-code: 1.65;
+  --ls-ui: 0; --ls-title: 0; --ls-caps: 0;
+  --icon: 16px; --stroke: 1.1;
+  --btn-h: 32px; --btn-px: 12px; --btn-fs: var(--fs-meta); --btn-fw: var(--fw-normal);
+  --seg-h: 32px; --seg-px: 10px; --input-h: 32px;
+  --row-py: 5px; --row-px: 8px; --card-py: 8px; --card-px: 16px;
+  --bubble-py: 8px; --bubble-px: 12px;
+  --side-w: 275px; --col: 768px;
   --btn-radius: 999px;
   --seg-radius: 999px;
-  --user-bg: color-mix(in oklab, var(--fg) 6%, transparent);
+  --user-bg: color-mix(in oklab, var(--fg) 5%, transparent);
   --user-fg: var(--fg);
   --user-radius: 16px;
   --composer-line: var(--line);
@@ -24,7 +61,7 @@
 :root[data-skin="codex"][data-theme="light"] {
   --bg: #ffffff; --bg-2: #f6f6f6; --bg-3: #eaeaea;
   --line: #ededee; --line-2: #dcdcdd;
-  --fg: #1a1c1f; --fg-2: #606163; --fg-3: #808183;
+  --fg: #1a1c1f; --fg-2: #6a6b6d; --fg-3: #8e8f90;
   --accent: #1a1c1f; --on-accent: #ffffff;
   --attn: #b9480d; --attn-soft: #fff5f0; --on-attn: #ffffff;
   --ok: #008635; --danger: #ba2623; --pin: #0169cc;
@@ -41,7 +78,7 @@
 :root[data-skin="codex"][data-theme="dark"] {
   --bg: #181818; --bg-2: #141414; --bg-3: #262626;
   --line: #2b2b2b; --line-2: #3c3c3c;
-  --fg: #dfdfdf; --fg-2: #bcbcbc; --fg-3: #8b8b8b;
+  --fg: #dfdfdf; --fg-2: #999999; --fg-3: #8b8b8b;
   --accent: #dfdfdf; --on-accent: #1d1d1d;
   --attn: #ff8549; --attn-soft: #38271f; --on-attn: #181818;
   --ok: #40c977; --danger: #fa423e; --pin: #83c3ff;
@@ -60,8 +97,22 @@
 /* ─── Linear: cool graphite with one indigo accent, tight corners, dense. */
 :root[data-skin="linear"] {
   --round: .75;
-  --sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", Roboto, sans-serif;
-  --mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", "MesloLGS NF", "Symbols Nerd Font Mono", Menlo, Consolas, monospace;
+  --sans: "Inter Variable", "SF Pro Display", -apple-system, BlinkMacSystemFont, system-ui, "PingFang SC", "Hiragino Sans GB", "Segoe UI", Roboto, sans-serif;
+  --mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, "MesloLGS NF", "Symbols Nerd Font Mono", monospace;
+  --font-features: "cv01", "ss03";
+  /* Caption 13, Label 12, Micro 11, Tiny 10. Emphasis is 500 rather than 510:
+     above 500 the Chinese fallback snaps to semibold. */
+  --fs-micro: 10px; --fs-tiny: 11px; --fs-small: 12px; --fs-meta: 13px; --fs-body: 14px;
+  --fs-lead: 16px; --fs-title: 20px; --fs-msg: 15px; --fs-msg-m: 15px;
+  --fw-normal: 400; --fw-medium: 500; --fw-strong: 590; --fw-bold: 590;
+  --lh-ui: 1.5; --lh-msg: 1.6; --lh-code: 1.5;
+  --ls-ui: -.01em; --ls-title: -.012em; --ls-caps: 0;
+  --icon: 16px; --stroke: .95;
+  --btn-h: 30px; --btn-px: 12px; --btn-fs: var(--fs-small); --btn-fw: var(--fw-medium);
+  --seg-h: 30px; --seg-px: 10px; --input-h: 32px;
+  --row-py: 7px; --row-px: 8px; --card-py: 11px; --card-px: 16px;
+  --bubble-py: 8px; --bubble-px: 12px;
+  --btn-radius: 6px;
   --user-bg: var(--bg-3);
   --user-fg: var(--fg);
   --user-radius: calc(12px * var(--round));
@@ -106,10 +157,25 @@
 
 /* ─── Kami: warm paper and ink blue, soft contrast, rounder; for long reading. */
 :root[data-skin="kami"] {
-  --round: 1.2;
+  --round: .85;
+  /* Serif only: the same family for text and labels; Chinese stack first. */
+  --sans: "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Noto Serif SC", "Songti SC", "STSong", Charter, Georgia, serif;
+  --mono: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, Monaco, "MesloLGS NF", "Symbols Nerd Font Mono", "Source Han Serif SC", "Songti SC", monospace;
+  /* Body 14 with .35px CN tracking, dense 13, caption and label 12 at 500;
+     only weights 400 and 500, no italic, en-dash bullets in ink. */
+  --fs-micro: 11px; --fs-tiny: 11.5px; --fs-small: 12px; --fs-meta: 13px; --fs-body: 14px;
+  --fs-lead: 17px; --fs-title: 22px; --fs-msg: 15px; --fs-msg-m: 15.5px;
+  --fs-page: var(--fs-lead); --fw-page: var(--fw-medium);
+  --fw-normal: 400; --fw-medium: 500; --fw-strong: 500; --fw-bold: 500;
+  --lh-ui: 1.45; --lh-msg: 1.55; --lh-code: 1.55;
+  --ls-ui: .35px; --ls-title: 0; --ls-caps: .4px;
+  --em-style: normal; --bullet: "\2013  "; --marker: var(--accent);
+  --btn-radius: 8px; --btn-h: 32px; --btn-px: 14px; --btn-fs: var(--fs-small); --btn-ls: .4px;
+  --seg-h: 32px; --seg-px: 12px; --input-h: 34px;
+  --row-py: 9px; --row-px: 10px; --card-py: 14px; --card-px: 20px;
+  --bubble-py: 10px; --bubble-px: 16px;
   --sel-bg: var(--bg-3);
   --sel-ring: none;
-  --sans: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Segoe UI", system-ui, sans-serif;
 }
 :root[data-skin="kami"][data-theme="light"] {
   --bg: #faf9f5; --bg-2: #f5f4ed; --bg-3: #e8e6dc;
@@ -123,10 +189,10 @@
   --code-bg: #f3f1e9; --code-fg: #1f1e1c; --code-ln: #959288;
   --hl-c: #716e65; --hl-k: #8c2f5b; --hl-fn: #1f4e8c; --hl-ty: #2d6a6a; --hl-s: #4d6b1f;
   --hl-n: #a4500f; --hl-pr: #2d5a8a; --hl-m: #8a5a12; --hl-add: #3b6d1f; --hl-del: #b53333;
-  --shadow-sm: 0 1px 2px rgba(20,20,19,.05);
-  --shadow: 0 0 0 1px rgba(20,20,19,.04), 0 4px 24px rgba(20,20,19,.05);
-  --shadow-pop: 0 2px 10px rgba(20,20,19,.07), 0 1px 2px rgba(20,20,19,.04);
-  --shadow-lg: 0 2px 6px rgba(20,20,19,.05), 0 18px 48px rgba(20,20,19,.10);
+  --shadow-sm: none;
+  --shadow: 0 4px 24px rgba(20,20,19,.05);
+  --shadow-pop: 0 4px 24px rgba(20,20,19,.08);
+  --shadow-lg: 0 4px 24px rgba(20,20,19,.10);
 }
 :root[data-skin="kami"][data-theme="dark"] {
   --bg: #1b1a17; --bg-2: #22201c; --bg-3: #36332d;
@@ -141,9 +207,9 @@
   --code-bg: #22201c; --code-fg: #e8e6dc; --code-ln: #6b675f;
   --hl-c: #87867f; --hl-k: #d98aa6; --hl-fn: #9fbbe0; --hl-ty: #8cc5c0; --hl-s: #a9c58a;
   --hl-n: #e0a96d; --hl-pr: #a9c1dd; --hl-m: #d8b56a; --hl-add: #a9c58a; --hl-del: #ef8b80;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
-  --shadow: 0 0 0 1px rgba(250,249,245,.04), 0 12px 32px rgba(0,0,0,.45);
-  --shadow-pop: 0 3px 12px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.35);
-  --shadow-lg: 0 2px 6px rgba(0,0,0,.4), 0 18px 48px rgba(0,0,0,.55);
+  --shadow-sm: none;
+  --shadow: 0 4px 24px rgba(0,0,0,.35);
+  --shadow-pop: 0 4px 24px rgba(0,0,0,.45);
+  --shadow-lg: 0 4px 24px rgba(0,0,0,.55);
 }
 .skin-swatch.kami { background: linear-gradient(135deg, #f5f4ed 50%, #1b365d 50%); }
