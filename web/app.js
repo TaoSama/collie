@@ -17,7 +17,11 @@
   const composing = (e) => e.isComposing || e.keyCode === 229;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const tilde = (p) => (p || "").replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, "~");
-  const hhmm = (t) => { const d = new Date(t); return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+  // Built once: toLocale*String with options makes a formatter per call.
+  const HHMM = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+  const FULL_TIME = new Intl.DateTimeFormat([], { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const MONTH_DAY = new Intl.DateTimeFormat([], { month: "numeric", day: "numeric" });
+  const hhmm = (t) => { const d = new Date(t); return isNaN(d) ? "" : HHMM.format(d); };
   // 21:52 today, 昨天 18:30, 11月18日 18:30 before that.
   const sepTime = (t) => {
     const d = new Date(t), now = new Date(), y = new Date(now - 86400e3);
@@ -25,11 +29,11 @@
     if (d.toDateString() === y.toDateString()) return "昨天 " + hhmm(t);
     return `${d.getMonth() + 1}月${d.getDate()}日 ${hhmm(t)}`;
   };
-  const fullTime = (t) => new Date(t).toLocaleString([], { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const fullTime = (t) => { const d = new Date(t); return isNaN(d) ? "" : FULL_TIME.format(d); };
   const when = (t) => {
     const d = new Date(t); if (isNaN(d)) return "";
     const today = new Date().toDateString() === d.toDateString();
-    return today ? hhmm(t) : d.toLocaleDateString([], { month: "numeric", day: "numeric" }) + " " + hhmm(t);
+    return today ? hhmm(t) : MONTH_DAY.format(d) + " " + hhmm(t);
   };
 
   // ───────────────────────────── icons & labels
@@ -1878,7 +1882,7 @@
     if (e) setReply(e);
   });
 
-  async function sendSuper(text, re, restoreRe) {
+  async function sendSuper(text, re, restoreRe, ready = text) {
     // Only what was picked here goes along; the hub fills in its current defaults.
     const t = targetNow(), p = target || {};
     const { model, effort } = modelNow(t);
@@ -1890,6 +1894,7 @@
     renderSuper({ force: true, scrollBottom: true });
     let r;
     try {
+      text = mine.text = await ready;
       r = await api("/api/super/say", { body: { text, re: re?.entry || "",
       machine: "machine" in p ? (t.machine || "local") : "",
       kind: "kind" in p ? t.kind : "",
@@ -1950,10 +1955,10 @@
     if (ev.key === "Escape" && pendingOpen && !document.querySelector("dialog[open]")) { pendingOpen = false; renderPendingBar(); }
   });
 
-  bindComposer($("#super-composer"), $("#super-input"), async (text) => {
+  bindComposer($("#super-composer"), $("#super-input"), async (draft, ready) => {
     const re = replyTo;
     setReply(null);
-    await sendSuper(text, re, true);
+    await sendSuper(draft, re, true, ready);
   }, () => targetNow().machine);
 
   // ───────────────────────────── tabs in a page
@@ -2973,11 +2978,13 @@
       $("#x-note").textContent = e.read_only + "。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里接着同一个会话继续。";
     }
   }
-  bindComposer($("#x-composer"), $("#x-input"), async (text) => {
+  bindComposer($("#x-composer"), $("#x-input"), (draft, ready) => {
     const e = ext.find((x) => x.id === extCur);
     if (!e) throw new Error("这个会话已经结束了");
-    const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body: { text } });
-    if (r.note) toast(r.note, "attn");
+    return trackSend("x:" + e.id, draft, ready, async (text) => {
+      const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body: { text } });
+      if (r.note) toast(r.note, "attn");
+    });
   }, () => { // files go to the computer it runs on (through its hub, if another)
     const e = ext.find((x) => x.id === extCur);
     return e?.hub ? tagged(e.machine || "", e.hub) : e?.machine || "";
@@ -3200,7 +3207,7 @@
         if (!ext.some((e) => e.id === id)) loadExternal();
         if (mine() && !JSON.parse(ev.data).structured) el.innerHTML = `<div class="thread-empty">还没有找到这个会话的记录。</div>`;
       });
-      const show = (msgs) => { keepThread("x:" + id, msgs); if (mine()) { drawThread(msgs, el, "这个会话还没有消息。"); extWorking(); } };
+      const show = (msgs) => { keepThread("x:" + id, msgs); if (mine()) { drawThread(withSending("x:" + id, msgs), el, "这个会话还没有消息。"); extWorking(); } };
       el._redraw = () => show(threadMsgs(el));
       es.addEventListener("patch", (ev) => mine() && show(applyPatch(el, JSON.parse(ev.data))));
       es.addEventListener("messages", (ev) => { el._msgs = null; el._older = null; show(JSON.parse(ev.data)); }); // an older computer
@@ -4064,11 +4071,11 @@
     const th = $("#thread");
     resetEarlier(th, (c) => paneURL(id, "earlier") + "?before=" + c);
     th._restore = restore && !restore.atBottom ? restore : null;
-    th._redraw = () => alive() && drawThread(threadMsgs(th));
+    th._redraw = () => alive() && drawThread(withSending("p:" + id, threadMsgs(th)));
     if (!th._msgs) primeThread(th, "p:" + id);
-    const showPane = (msgs) => { keepThread("p:" + id, msgs); drawThread(msgs); };
+    const showPane = (msgs) => { keepThread("p:" + id, msgs); drawThread(withSending("p:" + id, msgs)); };
     stream.addEventListener("patch", (e) => alive() && showPane(applyPatch(th, JSON.parse(e.data))));
-    stream.addEventListener("messages", (e) => alive() && drawThread(JSON.parse(e.data))); // an older computer
+    stream.addEventListener("messages", (e) => alive() && drawThread(withSending("p:" + id, JSON.parse(e.data)))); // an older computer
     stream.addEventListener("log", (e) => alive() && drawFallback(JSON.parse(e.data).text));
     stream.addEventListener("live", (e) => alive() && drawLive(JSON.parse(e.data)));
     stream.addEventListener("gone", () => { $("#gone").hidden = false; closeStream(); });
@@ -4102,6 +4109,64 @@
   }
   // A thread's messages: the older ones loaded on request, then the live view.
   const threadMsgs = (el) => (el._older || []).concat(el._msgs || []);
+
+  // What you sent shows at the end of its thread at once, dimmed, until the
+  // agent's own record of it arrives (keyed "p:<pane>" or "x:<session>").
+  // One whose record never matches (the agent rewrote it) goes once sent
+  // and given time to show up.
+  const SENDING_STALE_MS = 20000;
+  const sendingByKey = new Map();
+  const normMsg = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  const userCount = (msgs, t) => msgs.reduce((n, m) => n + (m.kind === "user" && normMsg(m.text) === t ? 1 : 0), 0);
+  function sendingThread(key) {
+    if (view === "pane" && key === "p:" + current && curMode() === "chat") return $("#thread");
+    if (view === "ext" && key === "x:" + extCur) return $("#x-thread");
+    return null;
+  }
+  function redrawSending(key, bottom) {
+    const el = sendingThread(key);
+    if (!el?._redraw) return;
+    if (bottom) { el._restore = null; el._fresh = true; }
+    el._redraw();
+  }
+  // The record it waits for is one more than those already there, and
+  // than the same text still on its way.
+  function setSendingText(mine, text) {
+    const t = normMsg(text), el = sendingThread(mine.key);
+    mine.text = text;
+    mine.base = userCount(el ? threadMsgs(el) : threadCache.get(mine.key) || [], t)
+      + (sendingByKey.get(mine.key) || []).filter((m) => m !== mine && normMsg(m.text) === t).length;
+  }
+  function dropSending(mine) {
+    const left = (sendingByKey.get(mine.key) || []).filter((m) => m !== mine);
+    if (left.length) sendingByKey.set(mine.key, left); else sendingByKey.delete(mine.key);
+    redrawSending(mine.key);
+  }
+  // Shows a message in thread `key` at once, then posts its final text.
+  async function trackSend(key, draft, ready, post) {
+    const mine = { key, sent: 0 };
+    setSendingText(mine, draft);
+    sendingByKey.set(key, (sendingByKey.get(key) || []).concat(mine));
+    redrawSending(key, true);
+    try {
+      const text = await ready;
+      setSendingText(mine, text);
+      await post(text);
+    } catch (err) {
+      dropSending(mine);
+      throw err;
+    }
+    mine.sent = Date.now();
+    setTimeout(() => redrawSending(key), SENDING_STALE_MS + 100);
+  }
+  function withSending(key, msgs) {
+    const list = sendingByKey.get(key);
+    if (!list) return msgs;
+    const now = Date.now();
+    const left = list.filter((m) => userCount(msgs, normMsg(m.text)) <= m.base && !(m.sent && now - m.sent > SENDING_STALE_MS));
+    if (left.length) sendingByKey.set(key, left); else sendingByKey.delete(key);
+    return left.length ? msgs.concat(left.map((m) => ({ kind: "user", text: m.text, sending: true }))) : msgs;
+  }
   const earlierCursor = (el) => (el._older ? el._olderEarlier : el._liveEarlier) || 0;
   function resetEarlier(el, url) {
     el._older = null; el._olderEarlier = 0; el._liveEarlier = 0; el._earlierURL = url;
@@ -4243,7 +4308,7 @@
         i++;
         continue;
       }
-      html += m.kind === "user" ? `<div class="msg user">${userText(m.text)}</div>` : `<div class="msg assistant">${md(m.text)}</div>`;
+      html += m.kind === "user" ? `<div class="msg user${m.sending ? " sending" : ""}">${userText(m.text)}</div>` : `<div class="msg assistant">${md(m.text)}</div>`;
       cut();
       i++;
     }
@@ -6179,15 +6244,17 @@
     if (data.length === 1 && data.charCodeAt(0) < 27) return sendKeys(["ctrl+" + String.fromCharCode(data.charCodeAt(0) + 96)]);
     sendText(data);
   }
-  // Keystrokes go out one request at a time, in order; text typed while one
-  // is on its way rides along in the next.
+  // Keystrokes go out one request at a time, in order; text or keys typed
+  // while one is on its way ride along in the next (a request a round trip
+  // each would trail far behind fast typing on a slow link).
+  const MAX_KEYS = 64; // the server's limit (sendKeys)
   let sendChain = Promise.resolve(), sendTail = null;
   function sendToPane(kind, body) {
     if (!current) return;
     const url = paneURL(current, kind);
-    if (kind === "text" && sendTail && sendTail.url === url && !sendTail.started) {
-      sendTail.body.text += body.text;
-      return sendTail.done;
+    if (sendTail && sendTail.url === url && !sendTail.started) {
+      if (kind === "text") { sendTail.body.text += body.text; return sendTail.done; }
+      if (sendTail.body.keys.length + body.keys.length <= MAX_KEYS) { sendTail.body.keys.push(...body.keys); return sendTail.done; }
     }
     const op = { url, body, started: false };
     op.done = sendChain = sendChain.then(() => {
@@ -6195,7 +6262,7 @@
       if (sendTail === op) sendTail = null;
       return api(url, { body: op.body });
     }).catch((e) => toast(e.message));
-    sendTail = kind === "text" ? op : null;
+    sendTail = op;
     return op.done;
   }
   const sendKeys = (keys) => sendToPane("keys", { keys });
@@ -6208,7 +6275,16 @@
   });
   $("#keys").addEventListener("mousedown", (e) => e.preventDefault());
 
-  function grow(el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, innerHeight * 0.4) + "px"; }
+  // Sizing a box from scratch (height auto, then measure) lays out the whole
+  // page around it. Typing that stays within the lines it has, or grows
+  // past the cap, needs none of that; only text that overflows or went away.
+  function grow(el) {
+    const max = innerHeight * 0.4, len = el.value.length, longer = len >= (el._len ?? 0);
+    el._len = len;
+    if (longer && (el.scrollHeight <= el.clientHeight || el.offsetHeight >= Math.floor(max))) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, max) + "px";
+  }
   // Files go to the machine where the agent runs, then their paths ride
   // along in the message (agents read images and files by path).
   const RETRY_SVG = `<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>`;
@@ -6236,12 +6312,12 @@
         f.path = d.path;
       }).catch((err) => { f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
     };
-    // ready: every file uploaded, the failed ones tried once more; a retry
-    // clicked meanwhile is waited for too.
-    form._filesReady = async () => {
-      form._files.filter((f) => f.err).forEach(upload);
-      do await Promise.all(form._files.map((f) => f.done));
-      while (form._files.some((f) => !f.path && !f.err));
+    // ready: every file in a message uploaded, the failed ones tried once
+    // more; a retry clicked meanwhile is waited for too.
+    form._filesReady = async (files) => {
+      files.filter((f) => f.err).forEach(upload);
+      do await Promise.all(files.map((f) => f.done));
+      while (files.some((f) => !f.path && !f.err));
     };
     const add = (list) => {
       for (const file of list) {
@@ -6274,12 +6350,14 @@
       if (!e.dataTransfer?.files?.length) return;
       e.preventDefault(); add([...e.dataTransfer.files]);
     });
-    form._clearFiles = () => { form._files.forEach((f) => f.thumb && URL.revokeObjectURL(f.thumb)); form._files = []; draw(); };
+    // A message being sent takes its files along; a failed one puts them back.
+    form._takeFiles = () => { const t = form._files; form._files = []; draw(); return t; };
+    form._restoreFiles = (files) => { form._files = files.concat(form._files); draw(); };
+    form._dropFiles = (files) => files.forEach((f) => f.thumb && URL.revokeObjectURL(f.thumb));
   }
-  async function withFiles(form, text) {
-    const files = form._files || [];
+  async function withFiles(form, files, text) {
     if (!files.length) return text;
-    await form._filesReady();
+    await form._filesReady(files);
     if (files.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
     return (text.trim() ? text.trim() + "\n\n" : "") + "附件：\n" + files.map((f) => f.path).join("\n");
   }
@@ -6309,7 +6387,7 @@
       + (rest.length ? `<span class="att">${rest.map((p) => `<a ${fileLinkAttrs(p, esc(p), esc(p))}>📎 ${esc(name(p))}</a>`).join("")}</span>` : "");
   }
 
-  function bindComposer(form, input, send, machine) {
+  function bindComposer(form, input, send, machine, onEmpty) {
     if (machine) bindFiles(form, machine);
     input.addEventListener("input", () => grow(input));
     input.addEventListener("keydown", (e) => {
@@ -6318,36 +6396,47 @@
       // "mod": Enter makes a new line and ⌘/Ctrl+Enter sends.
       if (prefs.sendKey() === "mod" ? mod : !mod) { e.preventDefault(); form.requestSubmit(); }
     });
-    form.addEventListener("submit", async (e) => {
+    // Sending never waits on the network: the box empties at once and
+    // send(draft, ready) shows the message; ready gives its final text (with
+    // the files' paths) once the ones before it are out. A failed message
+    // goes back into the box, in the order sent, ahead of anything typed since.
+    let last = Promise.resolve(), restored = 0;
+    form.addEventListener("submit", (e) => {
       e.preventDefault();
-      const btn = $(".send", form);
-      btn.disabled = true;
-      try {
-        const text = await withFiles(form, input.value);
-        await send(text);
-        input.value = ""; grow(input); form._clearFiles?.();
-      }
-      catch (err) { toast(err.message, "attn"); }
-      finally { btn.disabled = false; }
+      if (!input.value.trim() && !form._files?.length) { onEmpty?.(); return; }
+      const draft = input.value, files = form._takeFiles?.() || [];
+      input.value = ""; grow(input); restored = 0;
+      const prev = last;
+      const ready = prev.then(() => withFiles(form, files, draft));
+      last = Promise.resolve(send(draft, ready)).then(() => form._dropFiles?.(files), (err) => {
+        const v = input.value, head = v.slice(0, restored), tail = v.slice(restored).replace(/^\n/, "");
+        const front = head ? head + "\n" + draft : draft;
+        input.value = tail.trim() ? front + "\n" + tail : front; grow(input);
+        restored = front.length;
+        if (files.length) form._restoreFiles(files);
+        toast(err.message, "attn");
+      });
     });
   }
 
-  bindComposer($("#composer"), $("#input"), async (text) => {
-    if (!current) return;
-    let v = find(current);
-    if (!v) {
-      // The page may be behind (e.g. the hub restarted); look again before giving up.
-      try { setLocalState(await api("/api/state")); renderSide(); } catch {}
-      v = find(current) || { pane_id: current, is_agent: false };
-    }
-    if (!text.trim()) { sendKeys(["enter"]); return; }
-    try {
-      if (v.is_agent) await api(`/api/agents/${encodeURIComponent(current)}/prompt`, { body: { text } });
-      else await api(paneURL(current, "text"), { body: { text, enter: true } });
-    } catch (err) {
-      throw new Error(err.message.includes("blocked") ? "agent 正在等你确认，先处理上面的确认卡片" : err.message);
-    }
-  }, () => (current || "").includes("@") ? current.slice(current.lastIndexOf("@") + 1) : "");
+  bindComposer($("#composer"), $("#input"), (draft, ready) => {
+    const id = current;
+    if (!id) throw new Error("没有选中会话");
+    return trackSend("p:" + id, draft, ready, async (text) => {
+      let v = find(id);
+      if (!v) {
+        // The page may be behind (e.g. the hub restarted); look again before giving up.
+        try { setLocalState(await api("/api/state")); renderSide(); } catch {}
+        v = find(id) || { pane_id: id, is_agent: false };
+      }
+      try {
+        if (v.is_agent) await api(`/api/agents/${encodeURIComponent(id)}/prompt`, { body: { text } });
+        else await api(paneURL(id, "text"), { body: { text, enter: true } });
+      } catch (err) {
+        throw new Error(err.message.includes("blocked") ? "agent 正在等你确认，先处理上面的确认卡片" : err.message);
+      }
+    });
+  }, () => (current || "").includes("@") ? current.slice(current.lastIndexOf("@") + 1) : "", () => sendKeys(["enter"]));
 
   // ───────────────────────────── menus
   document.addEventListener("click", (e) => {

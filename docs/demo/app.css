@@ -433,6 +433,8 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   align-self: flex-end; max-width: min(84%, 620px); background: var(--accent); color: var(--on-accent);
   padding: 10px 16px; border-radius: 20px 20px 6px 20px; white-space: pre-wrap; line-height: 1.6;
 }
+/* Sent, not yet in the agent's record. */
+.msg.user.sending { opacity: .6; }
 .msg.assistant { align-self: stretch; }
 .msg.assistant > :first-child { margin-top: 0; }
 .msg.assistant > :last-child { margin-bottom: 0; }

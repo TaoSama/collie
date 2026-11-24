@@ -40,6 +40,7 @@ type Server struct {
 
 	aliases aliasBook   // hub only: launcher aliases each computer has
 	sysmon  *sysMonitor // this computer's load and tokens; nil in tests
+	wakes   paneWake    // streams to nudge when input reaches a pane
 }
 
 func (s *Server) markStarted(pane string) {
@@ -429,10 +430,11 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	interval := 200 * time.Millisecond
+	interval, quick := 200*time.Millisecond, 50*time.Millisecond
 	if mode == "log" {
-		interval = 700 * time.Millisecond
+		interval, quick = 700*time.Millisecond, 100*time.Millisecond
 	}
+	var fastUntil time.Time
 	var lastText string
 	var lastSize Rect
 	var sizeAt time.Time
@@ -483,10 +485,8 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 			sse.comment()
 			beat = time.Now()
 		}
-		select {
-		case <-r.Context().Done():
+		if !s.pollAfter(r.Context().Done(), id, interval, quick, &fastUntil) {
 			return
-		case <-time.After(interval):
 		}
 	}
 }
@@ -546,6 +546,7 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.wakes.wake(id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -564,6 +565,7 @@ func (s *Server) sendKeys(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.wakes.wake(r.PathValue("id"))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -582,6 +584,7 @@ func (s *Server) promptAgent(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.wakes.wake(r.PathValue("target"))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

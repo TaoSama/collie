@@ -1040,6 +1040,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		lastMeta          string
 		beat              = time.Now()
 		ms                msgSync
+		fastUntil         time.Time
 	)
 	send := func(ev string, v any) bool {
 		b, _ := json.Marshal(v)
@@ -1131,10 +1132,8 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 			sse.comment()
 			beat = time.Now()
 		}
-		select {
-		case <-r.Context().Done():
+		if !s.pollAfter(r.Context().Done(), id, 700*time.Millisecond, 100*time.Millisecond, &fastUntil) {
 			return
-		case <-time.After(700 * time.Millisecond):
 		}
 	}
 }
