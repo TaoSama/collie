@@ -52,6 +52,7 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("GET /api/super/search", s.superSearch)
 	api("GET /api/super/memory", s.superMemory)
 	api("POST /api/super/memory", s.superSaveMemory)
+	api("POST /api/super/memory/delete", s.superDeleteMemory)
 	api("POST /api/super/dream", s.superDream)
 	api("POST /api/super/router/restart", s.superRestartRouter)
 	mux.HandleFunc("POST /hooks/{source}", s.webhook)

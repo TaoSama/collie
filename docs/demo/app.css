@@ -1512,12 +1512,21 @@ a.url:hover { text-decoration-color: currentColor; }
 .dirs li::before { content: "▸ "; color: var(--t-icon); }
 .form-error { margin: 0; padding: 0 20px; color: var(--attn); font-size: var(--fs-meta); min-height: 1em; }
 .sheet-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px 20px; border-top: var(--bw) solid var(--line); background: var(--bg); }
-/* the app's own confirm and prompt */
-@media (min-width: 761px) and (min-height: 501px), (min-width: 761px) and (not (pointer: coarse)) { .sheet.ask { width: min(420px, calc(100vw - 32px)); } }
-.ask-text { margin: 0; padding: 4px 20px 8px; color: var(--t-secondary); font-size: var(--fs-body); line-height: calc(var(--lh-ui) + 0.15); white-space: pre-line; }
+/* the app's own confirm and prompt: centered on every screen (above the
+   keyboard on a phone), OK over cancel, each a full-width pill */
+.sheet.ask {
+  width: min(400px, calc(100vw - 48px)); max-width: none; max-height: calc(var(--vh) - 48px);
+  margin: auto; inset: 0 0 max(0px, calc(100dvh - var(--vh) - var(--vtop, 0px)));
+  border: var(--bw) solid var(--line); border-radius: calc(28px * var(--round)); padding: 0;
+}
+.ask .sheet-head { padding: 24px 24px 4px; }
+.ask-text { margin: 0; padding: 6px 24px 4px; color: var(--t-secondary); font-size: var(--fs-body); line-height: calc(var(--lh-ui) + 0.15); white-space: pre-line; }
+.ask .field { padding: 10px 24px 4px; }
 .ask .field input { width: 100%; }
-.ask .sheet-foot { border-top: 0; }
+.ask .sheet-foot { flex-direction: column; gap: 10px; padding: 20px 18px 18px; border-top: 0; }
+.ask .sheet-foot .btn { width: 100%; height: 48px; padding: 0 20px; border-radius: 999px; font-size: var(--fs-lead); font-weight: var(--fw-medium); }
 .btn.primary.warn { background: var(--attn); border-color: var(--attn); color: var(--on-attn); }
+.btn.warn:not(.primary) { color: var(--attn); }
 
 /* ─── toasts ─── */
 .toasts { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translateX(-50%); display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); }

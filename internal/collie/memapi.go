@@ -1,9 +1,12 @@
 package collie
 
 import (
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -76,8 +79,8 @@ func (s *Server) superSaveMemory(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	rel := filepath.Clean(filepath.FromSlash(body.Path))
-	if !strings.HasSuffix(rel, ".md") || filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") || rel == "messages.md" {
+	rel, ok := memRel(body.Path)
+	if !ok {
 		writeJSON(w, 400, map[string]any{"error": "只能改 memory/ 里的 .md 文件"})
 		return
 	}
@@ -93,6 +96,63 @@ func (s *Server) superSaveMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// memRel is a memory file's path relative to memory/, if the page may change it.
+func memRel(path string) (string, bool) {
+	rel := filepath.Clean(filepath.FromSlash(path))
+	ok := strings.HasSuffix(rel, ".md") && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, "..") && rel != "messages.md"
+	return rel, ok
+}
+
+// superDeleteMemory removes a memory file, and a note's line in notes/index.md.
+func (s *Server) superDeleteMemory(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	rel, ok := memRel(body.Path)
+	if !ok {
+		writeJSON(w, 400, map[string]any{"error": "只能删 memory/ 里的 .md 文件"})
+		return
+	}
+	dir := s.sup.memDir()
+	if err := os.Remove(filepath.Join(dir, rel)); err != nil {
+		fail(w, err)
+		return
+	}
+	if index := filepath.Join("notes", "index.md"); filepath.Dir(rel) == "notes" && rel != index {
+		if err := dropIndexLine(filepath.Join(dir, index), filepath.Base(rel)); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// dropIndexLine removes the lines of an index that name file ("agents.md",
+// "notes/agents.md", "[x](agents.md)"), not ones naming "codex-agents.md".
+func dropIndexLine(index, file string) error {
+	b, err := os.ReadFile(index)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	re := regexp.MustCompile(`(^|[^\w.-])` + regexp.QuoteMeta(file) + `($|[^\w-])`)
+	lines := strings.Split(string(b), "\n")
+	kept := lines[:0]
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "#") || !re.MatchString(l) {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) == len(lines) {
+		return nil
+	}
+	return os.WriteFile(index, []byte(strings.Join(kept, "\n")), 0o600)
 }
 
 func (s *Server) superDream(w http.ResponseWriter, r *http.Request) {

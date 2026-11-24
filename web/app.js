@@ -2479,7 +2479,7 @@
       return `<details class="mem-fold" ${o.open ? "open" : ""} data-path="${esc(f.name)}"><summary>
           <span class="mono mem-name">${esc(o.label || f.name)}</span><span class="grow mem-sub">${esc(sub)}</span><span class="muted mem-size">${kb(f.size)}</span></summary>
         <div class="mem-body msg assistant" data-view>${md(f.text)}</div>
-        ${edit ? `<div class="mem-tools">${o.crew ? crew(f) : ""}<span class="muted grow">${esc(dayTime(f.mod))} 更新</span><button class="btn small" data-act="mem-edit">编辑</button></div>
+        ${edit ? `<div class="mem-tools">${o.crew ? crew(f) : ""}<span class="muted grow">${esc(dayTime(f.mod))} 更新</span><button class="btn small" data-act="mem-edit">编辑</button><button class="btn small warn" data-act="mem-del">删除</button></div>
         <form class="mem-edit" hidden><textarea name="text" spellcheck="false">${esc(f.text)}</textarea>
           <div class="form-actions"><span class="muted grow">Collie 下次读这个文件时生效。</span><button type="button" class="btn small" data-act="mem-cancel">取消</button><button class="btn primary small">保存</button></div></form>` : ""}
       </details>`;
@@ -2934,6 +2934,17 @@
       box.querySelector(".mem-tools").hidden = memEditing;
       if (memEditing) box.querySelector("textarea").focus();
       else { $("#auto-body")._memSig = ""; loadAuto(); }
+      return;
+    }
+    if (t.dataset.act === "mem-del") {
+      const path = t.closest("[data-path]").dataset.path;
+      const note = /^notes\/[^/]+\.md$/.test(path) && path !== "notes/index.md";
+      if (!(await ask({ title: `删除「${path}」？`, text: note ? "notes/index.md 里对应的那一行也会删掉。" : "", ok: "删除", warn: true }))) return;
+      try {
+        await api("/api/super/memory/delete", { body: { path } });
+        toast("已删除");
+        loadAuto();
+      } catch (err) { toast(err.message, "attn"); }
       return;
     }
     if (t.dataset.act === "alias-refresh") {
