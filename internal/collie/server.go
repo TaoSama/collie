@@ -131,6 +131,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("POST /api/uploads", wrap(s.upload))
 	mux.Handle("GET /api/titles", wrap(s.getTitles))
 	mux.Handle("GET /api/models", wrap(s.listModels))
+	mux.Handle("GET /api/commands", wrap(s.listCommands))
 	mux.Handle("GET /api/aliases", wrap(s.getAliases))
 	mux.Handle("GET /api/sysmon", wrap(s.getSysmon))
 	mux.Handle("POST /api/trust", wrap(s.trustFolder))

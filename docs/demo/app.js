@@ -16,6 +16,7 @@
   // An Enter or Escape that belongs to the input method, not the page.
   const composing = (e) => e.isComposing || e.keyCode === 229;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const tilde = (p) => (p || "").replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, "~");
   // Built once: toLocale*String with options makes a formatter per call.
   const HHMM = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
@@ -1170,7 +1171,7 @@
       const text = String(snippet || "");
       const terms = [...new Set(String(q || "").trim().split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length);
       if (!terms.length || !text) return esc(text);
-      const re = new RegExp("(" + terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+      const re = new RegExp("(" + terms.map(reEsc).join("|") + ")", "gi");
       let out = "", pos = 0;
       for (const m of text.matchAll(re)) {
         if (m.index > pos) out += esc(text.slice(pos, m.index));
@@ -1763,6 +1764,139 @@
   const aliasOpts = (list, want) => `<option value="">-</option>`
     + (want && !list.some((a) => a.name === want) ? `<option value="${esc(want)}" data-sub="这台电脑上没读到" selected>${esc(want)}</option>` : "")
     + list.map((a) => `<option value="${esc(a.name)}" data-glyph="${esc(a.kind)}" data-sub="${esc(aliasSub(a) || KIND_LABEL[a.kind] || a.kind)}" ${a.name === want ? "selected" : ""}>${esc(a.name)}</option>`).join("");
+  // ───────────────────────────── slash commands
+  // "/" at the start of a line or after a space lists what the agent at the
+  // other end takes: its built-in commands, skills and prompts, as the
+  // computer it runs on has them (Codex skills go by "$name"). Each session's
+  // list is fetched when it opens, so the menu shows from memory.
+  const SLASH_FRESH = 60e3, SLASH_RETRY = 15e3, SLASH_MAX = 60, SLASH_WORD = 64;
+  const SLASH_SRC = { builtin: "内置", skill: "技能", command: "命令", prompt: "prompt", plugin: "插件", project: "项目" };
+  const slashLists = new Map(); // slashKey -> { at, list, p }
+  const slashKey = (c) => [c.machine, c.kind, c.cwd].join("|");
+  function slashList(c) {
+    const key = slashKey(c);
+    let e = slashLists.get(key);
+    if (!e || Date.now() - e.at > SLASH_FRESH) {
+      const q = new URLSearchParams({ kind: c.kind });
+      if (c.cwd) q.set("cwd", c.cwd);
+      if (c.machine) q.set("machine", c.machine);
+      const n = { at: Date.now(), list: e?.list || null };
+      // An old node, or a computer that is away: no menu, and a while before asking again.
+      n.p = api("/api/commands?" + q).then((d) => (n.list = d.commands || []), () => {
+        n.at = Date.now() - SLASH_FRESH + SLASH_RETRY;
+        return (n.list ||= []);
+      });
+      slashLists.set(key, e = n);
+    }
+    return e;
+  }
+  // The session a composer talks to, as { machine, kind, cwd, builtins }: a
+  // CLI's own commands only work typed into its terminal, not relayed.
+  const slashCtx = (machine, kind, cwd, builtins) => (kind = shortKind(kind)) in AGENT_LABEL ? { machine: machine || "", kind, cwd: cwd || "", builtins } : null;
+  // Best first: the name starts with it, has it, has its letters in order; then the description.
+  function slashScore(c, q, word) {
+    if (!q) return 1;
+    const n = c.name.toLowerCase();
+    if (n.startsWith(q)) return 5000 - n.length;
+    const at = n.search(word);
+    if (at >= 0) return 4000 - at;
+    if (n.includes(q)) return 3000 - n.indexOf(q);
+    let j = 0;
+    for (const ch of n) if (ch === q[j]) j++;
+    if (j === q.length) return 2000 - n.length;
+    return (c.desc || "").toLowerCase().includes(q) ? 1000 : 0;
+  }
+  const slashPop = document.createElement("div");
+  slashPop.className = "pick-pop slash-pop"; slashPop.hidden = true; slashPop.setAttribute("role", "listbox");
+  let slash = null; // { input, key, start, q, items, i }
+  function slashClose() {
+    if (!slash) return;
+    slash = null;
+    slashPop.hidden = true;
+  }
+  function slashRender() {
+    const { items, i } = slash;
+    slashPop.innerHTML = items.map((c, k) => `<button type="button" class="po${k === i ? " act" : ""}" role="option" aria-selected="${k === i}" data-k="${k}" tabindex="-1"${c.desc ? ` title="${esc(c.desc)}"` : ""}>
+      <span class="pl"><span><b class="sn">${esc((c.sigil || "/") + c.name)}</b>${c.hint ? ` <i class="sh">${esc(c.hint)}</i>` : ""}</span>${c.desc ? `<small>${esc(c.desc)}</small>` : ""}</span>
+      <span class="ss">${esc(c.plugin || SLASH_SRC[c.src] || c.src || "")}</span></button>`).join("");
+    $(".po.act", slashPop)?.scrollIntoView({ block: "nearest" });
+  }
+  // The word being typed at the caret, if it is a command being started.
+  function slashWord(input) {
+    const v = input.value, pos = input.selectionStart;
+    if (pos !== input.selectionEnd) return null;
+    let s = pos;
+    while (s > 0 && pos - s <= SLASH_WORD && !/\s/.test(v[s - 1])) s--;
+    if (s > 0 && !/\s/.test(v[s - 1])) return null;
+    const sig = v[s], q = v.slice(s + 1, pos);
+    if ((sig !== "/" && sig !== "$") || /[/$]/.test(q)) return null;
+    return { start: s, sig, q: q.toLowerCase() };
+  }
+  function slashUpdate(input, ctx) {
+    const w = slashWord(input), c = w && ctx();
+    if (!c || (w.sig === "$" && c.kind !== "codex")) { if (slash?.input === input) slashClose(); return; }
+    const e = slashList(c);
+    if (!e.list) {
+      if (!e.waiting) e.waiting = e.p.then(() => { if (document.activeElement === input) slashUpdate(input, ctx); });
+      return;
+    }
+    const word = new RegExp("(^|[:_-])" + reEsc(w.q));
+    const items = e.list.filter((x) => (c.builtins || x.src !== "builtin") && (w.sig === "/" || x.sigil === "$"))
+      .map((x, k) => [slashScore(x, w.q, word), k, x]).filter((r) => r[0] > 0)
+      .sort((a, b) => b[0] - a[0] || a[1] - b[1]).slice(0, SLASH_MAX).map((r) => r[2]);
+    if (!items.length) { slashClose(); return; }
+    // The highlight stays put only while the word does (a caret move, a fresh list).
+    const keep = slash?.input === input && slash.start === w.start && slash.q === w.q ? slash.items[slash.i] : null;
+    slash = { input, key: slashKey(c), start: w.start, q: w.q, items, i: Math.max(0, items.indexOf(keep)) };
+    const box = input.closest(".cbox");
+    if (slashPop.parentNode !== box) box.append(slashPop);
+    slashPop.hidden = false;
+    slashRender();
+  }
+  function slashPick(k) {
+    const { input, start, items } = slash, c = items[k];
+    slashClose();
+    if (!c) return;
+    const v = input.value;
+    let end = input.selectionStart;
+    while (end < v.length && !/\s/.test(v[end])) end++;
+    const ins = (c.sigil || "/") + c.name + " ", rest = v.slice(end).replace(/^ /, "");
+    input.value = v.slice(0, start) + ins + rest;
+    input.focus();
+    input.setSelectionRange(start + ins.length, start + ins.length);
+    input.dispatchEvent(new Event("input"));
+  }
+  // A tap on the menu keeps the keyboard up; picking puts "/name " in.
+  slashPop.addEventListener("mousedown", (e) => e.preventDefault());
+  slashPop.addEventListener("click", (e) => {
+    const b = e.target.closest(".po[data-k]");
+    if (b && slash) slashPick(+b.dataset.k);
+  });
+  function bindSlash(input, ctx) {
+    // Also run when the composer's session may have changed: a menu for another one goes.
+    const prefetch = () => {
+      const c = ctx();
+      if (slash?.input === input && (!c || slashKey(c) !== slash.key)) slashClose();
+      if (c) slashList(c);
+    };
+    input.addEventListener("focus", prefetch);
+    input.addEventListener("input", () => slashUpdate(input, ctx));
+    input.addEventListener("click", () => slashUpdate(input, ctx));
+    input.addEventListener("keyup", (e) => { if (/^(Arrow(Left|Right)|Home|End)$/.test(e.key)) slashUpdate(input, ctx); });
+    input.addEventListener("blur", () => setTimeout(() => { if (slash?.input === input && document.activeElement !== input) slashClose(); }, 150));
+    // Registered ahead of the composer's own Enter: a pick doesn't send.
+    input.addEventListener("keydown", (e) => {
+      if (slash?.input !== input || composing(e)) return;
+      const n = slash.items.length;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") slash.i = (slash.i + (e.key === "ArrowDown" ? 1 : -1) + n) % n, slashRender();
+      else if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey)) slashPick(slash.i);
+      else if (e.key === "Escape") slashClose();
+      else return;
+      e.preventDefault(); e.stopImmediatePropagation();
+    });
+    return prefetch;
+  }
+
   // "派到": where this message's work runs. Shows the defaults from
   // 自动化 → 设置 (read again whenever this view opens); target holds only
   // what was picked here, so a message never carries a stale default.
@@ -1795,6 +1929,7 @@
     kSel._pick?.classList.toggle("changed", t.kind !== targetDefault.kind);
     renderAliasChip();
     renderModelChips();
+    $("#super-input")._slashPrefetch?.();
   }
   // This computer's aliases for this agent; none listed, no chip. The default
   // alias goes with the default kind, as the model does.
@@ -1959,7 +2094,7 @@
     const re = replyTo;
     setReply(null);
     await sendSuper(draft, re, true, ready);
-  }, () => targetNow().machine);
+  }, () => targetNow().machine, null, () => { const t = targetNow(); return slashCtx(t.machine, t.kind, "", false); });
 
   // ───────────────────────────── tabs in a page
   // Picking a tab keeps where the last one was scrolled and opens the new one
@@ -2069,7 +2204,7 @@
     const crew = (f) => {
       const latest = new Map(); // a name can be reused: the newest one
       for (const w of sup.workers) if (!latest.has(w.name) || new Date(w.created_at) > new Date(latest.get(w.name).created_at)) latest.set(w.name, w);
-      const ws = [...latest.values()].filter((w) => new RegExp(`(^|[^\\w-])${w.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(f.text));
+      const ws = [...latest.values()].filter((w) => new RegExp(`(^|[^\\w-])${reEsc(w.name)}(?![\\w-])`).test(f.text));
       if (!ws.length) return "";
       return `<span class="mem-crew">${ws.map((w) => {
         const pane = !w.ended && paneOf(w.name), past = !pane && workerHist(w.name, w.created_at);
@@ -2971,6 +3106,7 @@
       // It takes messages where it runs: no need to take it over.
       $("#x-tag").textContent = "可对话";
       $("#x-composer").hidden = false;
+      $("#x-input")._slashPrefetch?.();
       $("#x-takeover").className = "btn small";
       $("#x-hint").textContent = e.kind === "agy" ? "经 Antigravity 送达" : e.app === "Codex 桌面版" ? "经 Codex App 送达" : e.kind === "codex" ? "经 Codex 后台送达" : "经会话收件箱送达";
       $("#x-note").textContent = "";
@@ -2988,6 +3124,9 @@
   }, () => { // files go to the computer it runs on (through its hub, if another)
     const e = ext.find((x) => x.id === extCur);
     return e?.hub ? tagged(e.machine || "", e.hub) : e?.machine || "";
+  }, null, () => {
+    const e = ext.find((x) => x.id === extCur);
+    return e ? slashCtx(e.hub ? tagged(e.machine || "", e.hub) : e.machine, e.kind, e.cwd, false) : null;
   });
   function closeExt() { extStream?.close(); extStream = null; }
   $(".side-scroll").addEventListener("click", (ev) => {
@@ -3734,6 +3873,7 @@
     // The pane may have shown up before the page knew what it is (a fresh
     // terminal): once it does, switch to the view that fits.
     if (view === "pane" && $("#viewer").dataset.mode && $("#viewer").dataset.mode !== curMode()) { closeStream(); resetChat(); resetScreen(); openStream(); }
+    $("#input")._slashPrefetch?.();
     $("#input").placeholder = isLocalRouter(v) ? "直接在 Collie 的终端里输入…" : v.is_agent ? `给 ${KIND_LABEL[v.kind] || v.kind} 发消息…` : "输入命令…";
   }
 
@@ -6458,8 +6598,9 @@
       + (rest.length ? `<span class="att">${rest.map((p) => `<a ${fileLinkAttrs(p, esc(p), esc(p))}>📎 ${esc(name(p))}</a>`).join("")}</span>` : "");
   }
 
-  function bindComposer(form, input, send, machine, onEmpty) {
+  function bindComposer(form, input, send, machine, onEmpty, slashOf) {
     if (machine) bindFiles(form, machine);
+    if (slashOf) input._slashPrefetch = bindSlash(input, slashOf);
     input.addEventListener("input", () => grow(input));
     input.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || e.shiftKey || composing(e)) return;
@@ -6507,7 +6648,10 @@
         throw new Error(err.message.includes("blocked") ? "agent 正在等你确认，先处理上面的确认卡片" : err.message);
       }
     });
-  }, () => (current || "").includes("@") ? current.slice(current.lastIndexOf("@") + 1) : "", () => sendKeys(["enter"]));
+  }, () => (current || "").includes("@") ? current.slice(current.lastIndexOf("@") + 1) : "", () => sendKeys(["enter"]), () => {
+    const v = find(current);
+    return v?.is_agent ? slashCtx(v.machine, v.kind, v.cwd, true) : null;
+  });
 
   // ───────────────────────────── menus
   document.addEventListener("click", (e) => {

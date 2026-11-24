@@ -581,6 +581,13 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if (p === "/api/version") return json({ version: "v0.2.41", latest: "v0.2.41", outdated: [] });
     if (p === "/api/local-app") return json({ url: "" });
     if (p === "/api/models") return json(models[q.get("kind")] || { models: [], efforts: [] });
+    if (p === "/api/commands") {
+      const b = (name, desc, hint) => ({ name, desc, hint, src: "builtin" });
+      const common = [b("compact", "Free up context by summarizing the conversation so far", "[instructions]"), b("model", "Choose what model and reasoning effort to use"), b("review", "Review my current changes and find issues")];
+      const skills = [["deploy", "把当前分支部署到预发环境并跑冒烟测试"], ["db-migrate", "生成并检查数据库迁移脚本"], ["release-notes", "根据合并的 PR 整理发布说明"]];
+      const codex = q.get("kind") === "codex";
+      return json({ kind: q.get("kind"), commands: common.concat(skills.map(([name, desc]) => ({ name, desc, src: "skill", ...(codex ? { sigil: "$" } : {}) }))) });
+    }
     if (p === "/api/file") {
       const fp = q.get("path") || "", mach = q.get("machine") || "", dl = q.get("download") === "1";
       const dlHead = (name) => dl ? { "Content-Disposition": `attachment; filename="${name}"` } : {};
