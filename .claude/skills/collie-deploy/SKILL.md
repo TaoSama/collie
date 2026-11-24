@@ -22,16 +22,24 @@ description: |
 ## 0. 前提
 
 - **只部署 `origin/main` 上已推送的提交**。`git fetch origin && TARGET=$(git rev-parse origin/main)`，本地未推送、未合并的改动不上线。
-- **同一时间只有一个 agent 部署**。多人同时改代码时，由一个 agent 在大家都推完后统一部署一次。并发部署会反复重启 hub。开始前用 `collie list` 看有没有别的部署 worker 在跑，有就停下来报告。
+- **同一时间只有一个 agent 部署**。多人同时改代码时，由一个 agent 在大家都推完后统一部署一次。并发部署会反复重启 hub。开始前先查两处：
+  - `collie list` 看有没有别的 worker 正在部署；
+  - `gh release list --repo TaoSama/collie --limit 3` 看最近有没有新发的版本。
+
+  有人在部署，或者刚发了版但线上还没升完，就由发版的人部署到底，你不要再发版或切换 hub。等它完成后，只做第 4 步的核对。你的提交如果不在它发的版本里，就告诉它（`collie send`），或在报告里写明还需要再部署一次。
 - 只改了 `docs/`、`.claude/`、`*.md` 的提交不需要部署。
 
 ## 1. 构建与发布 Release
 
 node 的 `/api/update` 从 GitHub Release 下载二进制（`internal/collie/updates.go` 的 `selfUpdate`），所以必须先发布 Release，node 才能升级。
 
+在 `/tmp` 下用全新 clone 构建，不要用 worktree：
+
 ```sh
-WT=.claude/worktrees/deploy-$TARGET
-git worktree add --detach "$WT" "$TARGET" && cd "$WT"
+WT=/tmp/collie-deploy-$TARGET
+git clone -q . "$WT" && cd "$WT"
+git remote set-url origin "$(git -C "$OLDPWD" remote get-url origin)"   # release.sh 要把标签推到 GitHub
+git fetch -q origin main && git checkout -q --detach "$TARGET"   # 本地 main 可能落后于 TARGET
 go build ./... && go vet ./... && go test ./... -count=1 && node --check web/app.js
 
 # 版本号 vYYYY.MMDD.N：N 取当天已有标签的下一个
@@ -42,7 +50,10 @@ sh scripts/release.sh "$V" --dry
 go version -m dist/collie-linux-amd64 | grep -E 'vcs\.(revision|modified)'
 ```
 
-- `vcs.revision` 必须等于 `$TARGET`，`vcs.modified` 必须是 `false`，有一项不符就停下。不要在主工作区构建，那里可能有别人未提交的改动。
+- `vcs.revision` 必须等于 `$TARGET`，`vcs.modified` 必须是 `false`，有一项不符或没有输出就停下。
+- 不要在主工作区构建，那里可能有别人未提交的改动。也不要用 worktree 构建，Go 会把提交记错：
+  - 在 `.claude/worktrees/` 下的 worktree 里，Go 认不出 worktree 的 `.git` 文件，会往上找到主仓库，把主工作区的 HEAD 记成 `vcs.revision`；
+  - 放在 `/tmp` 下的 worktree 则完全不记录提交。
 - 确认后正式发布：`cp dist/checksums.txt /tmp/checksums.dry && sh scripts/release.sh "$V"`。脚本会重新构建、打标签、推送标签并建 Release（需要 `gh` 已登录）。重新构建的产物应和 dry 的一致：`diff /tmp/checksums.dry dist/checksums.txt`。
 
 ## 2. 切换 hub
@@ -120,5 +131,5 @@ api '/api/update?machine=<id>' POST   # 期望 {"ok":true,"from":…,"version":"
 
 ## 5. 收尾
 
-- `git worktree remove "$WT"`，删掉 `/tmp/checksums.dry` 和私钥临时文件。
+- `rm -rf "$WT"`，删掉 `/tmp/checksums.dry` 和私钥临时文件。
 - 报告内容：`$V`、`$TARGET`、hub 切换前后的 PID、每台 node 的结果，以及第 4 步四项核对的输出。
