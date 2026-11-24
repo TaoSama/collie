@@ -789,7 +789,9 @@ func (s *Server) superSettings(w http.ResponseWriter, r *http.Request) {
 // the notifications' link.
 func (s *Server) superSeen(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		URL string `json:"url"`
+		URL  string `json:"url"`
+		Page string `json:"page"` // which page, so it can say it went to the background
+		Away bool   `json:"away"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -797,7 +799,7 @@ func (s *Server) superSeen(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(body.URL, "http://") && !strings.HasPrefix(body.URL, "https://") || len(body.URL) > 200 {
 		body.URL = ""
 	}
-	s.sup.Seen(body.URL)
+	s.sup.seenPage(clip(body.Page, 40), body.URL, body.Away)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

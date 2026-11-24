@@ -47,6 +47,31 @@ async function fromShell(key, req) {
   return res;
 }
 
+// A push from the hub (push.go): a decision that needs you, shown even when
+// every page is closed. A page in front of you already shows it. Buttons
+// answer it as on the page's own notifications, when all its choices fit.
+self.addEventListener("push", (e) => {
+  let n = {};
+  try { n = e.data ? e.data.json() : {}; } catch (err) { console.warn("push payload:", err); }
+  e.waitUntil(pushed(n));
+});
+
+const NOTE_CHOICE = 24; // a choice's length on a button (clipNote in app.js)
+const clipNote = (s) => (s.length > NOTE_CHOICE ? s.slice(0, NOTE_CHOICE - 1) + "…" : s);
+
+async function pushed(n) {
+  const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (wins.some((c) => c.visibilityState === "visible" && c.focused)) return;
+  const choices = n.choices || [];
+  const max = (self.Notification && Notification.maxActions) || 0;
+  const fit = !!n.answer && choices.length > 0 && choices.length <= max;
+  await self.registration.showNotification(n.title || "Collie", {
+    body: n.body || "", icon: "/icon.svg", tag: n.tag || "", renotify: !!n.tag,
+    data: { url: location.origin + "/" + (n.hash || ""), answer: fit ? n.answer : null, choices: fit ? choices : [] },
+    actions: fit ? choices.map((c, i) => ({ action: String(i), title: clipNote(c) })) : [],
+  });
+}
+
 // A notification opens what it is about (data.url, a #/d/… decision link):
 // in the open page if there is one, else a new window (an installed app
 // starts cold). One of its buttons answers the decision from here; when that

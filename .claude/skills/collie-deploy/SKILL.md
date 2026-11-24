@@ -40,7 +40,7 @@ WT=/tmp/collie-deploy-$TARGET
 git clone -q . "$WT" && cd "$WT"
 git remote set-url origin "$(git -C "$OLDPWD" remote get-url origin)"   # release.sh 要把标签推到 GitHub
 git fetch -q origin main && git checkout -q --detach "$TARGET"   # 本地 main 可能落后于 TARGET
-go build ./... && go vet ./... && go test ./... -count=1 && node --check web/app.js
+go build ./... && go vet ./... && go test ./... -count=1 && node --check web/app.js && node --test scripts/test/*.test.mjs
 
 # 版本号 vYYYY.MMDD.N：N 取当天已有标签的下一个
 git tag -l "v$(date +%Y.%m%d).*"

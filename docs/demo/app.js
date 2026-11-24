@@ -130,7 +130,7 @@
     if (r.hub) headers.Authorization = "Bearer " + r.hub.token;
     const res = await fetch(r.url, {
       method: opts.body ? "POST" : (opts.method || "GET"),
-      headers, body: r.body, signal: opts.signal,
+      headers, body: r.body, signal: opts.signal, keepalive: !!opts.keepalive,
       credentials: r.hub ? "omit" : "same-origin",
     });
     if (!r.hub) noteBuild(res.headers.get("X-Collie-Web"));
@@ -320,6 +320,7 @@
     } catch (err) { $("#login-error").textContent = /^[A-Z2-7]{8}$/i.test(v) ? err.message : "令牌不对"; }
   });
   $("#logout").addEventListener("click", async () => {
+    await dropPush();
     await fetch("/api/logout", { method: "POST" });
     $("#app").hidden = true; // nothing left for pagehide to save
     await dropSnap(true);
@@ -460,7 +461,7 @@
     if (a.pane_id !== current || document.hidden) {
       toast(msg, kind);
       if (document.hidden && canNotify()) {
-        if (a.status === "blocked") notifyAsk(a);
+        if (a.status === "blocked") { if (!pushedHere(a.pane_id)) notifyAsk(a); }
         else systemNotify({ body: msg, tag: a.pane_id, hash: "#/p/" + encodeURIComponent(a.pane_id) });
       }
     }
@@ -515,13 +516,67 @@
     for (const p of list) {
       if (notified.has(p.id)) continue;
       notified.add(p.id); changed = true;
-      if (fresh || !document.hidden || !canNotify()) continue;
+      if (fresh || !document.hidden || !canNotify() || pushSub) continue;
       const opts = p.options || [];
       const body = needLine(p.task || "Collie", opts, true) + (p.summary ? "\n" + p.summary : "");
       systemNotify({ body, tag: "d:" + p.id, hash: "#/d/" + encodeURIComponent(p.id), choices: opts.length ? opts : ["已看"], answer: { id: p.id } });
     }
     if (changed) store.set("notified", [...notified].slice(-NOTIFIED_KEEP));
   }
+  // ───────────────────────────── push
+  // With a push subscription the hub sends this browser the decisions that
+  // need you (push.go), and sw.js shows them with every page closed or the
+  // phone locked; the page then leaves those to it, except for the sessions
+  // of another hub, which pushes to its own pages.
+  let pushSub = null; // this browser's subscription, once the hub has it
+  let pushWhy = "";   // why there is none
+  const pushedHere = (pane) => !!pushSub && !hubOf(pane);
+  const pushable = () => "serviceWorker" in navigator && "PushManager" in window && isSecureContext;
+  const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const unb64url = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  const SW_WAIT = 10e3;
+  async function swReady() {
+    if (!pushable()) return null;
+    return Promise.race([navigator.serviceWorker.ready, new Promise((ok) => setTimeout(() => ok(null), SW_WAIT))]);
+  }
+  // Subscribes (or renews: the hub's key changed, the browser dropped it)
+  // whenever notifications are on, and tells the hub.
+  async function syncPush() {
+    pushSub = null; pushWhy = "";
+    if (!canNotify()) return;
+    if (!pushable()) { pushWhy = "这个浏览器不支持推送"; return; }
+    try {
+      const reg = await swReady();
+      if (!reg) { pushWhy = "后台脚本没有启动，刷新页面再试"; return; }
+      let sub = await reg.pushManager.getSubscription();
+      const { key, subscribed } = await api("/api/push?" + new URLSearchParams({ endpoint: sub?.endpoint || "" }));
+      if (sub && sub.options.applicationServerKey && b64url(sub.options.applicationServerKey) !== key) {
+        await api("/api/push/unsubscribe", { body: { endpoint: sub.endpoint } }).catch(() => {});
+        await sub.unsubscribe();
+        sub = null;
+      }
+      if (!sub || !subscribed) {
+        sub ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64url(key) });
+        await api("/api/push/subscribe", { body: sub.toJSON() });
+      }
+      pushSub = sub;
+    } catch (err) {
+      pushWhy = err.message || String(err);
+      console.warn("push subscription:", err);
+    }
+    if (view === "prefs") renderPrefs();
+  }
+  // Notifications turned off here, or signing out: the hub stops pushing.
+  async function dropPush() {
+    pushSub = null; pushWhy = "";
+    const reg = pushable() ? await navigator.serviceWorker.getRegistration().catch(() => null) : null;
+    const sub = await reg?.pushManager.getSubscription().catch(() => null);
+    if (!sub) return;
+    try { await api("/api/push/unsubscribe", { body: { endpoint: sub.endpoint } }); }
+    catch (err) { console.warn("forgetting the push subscription:", err); }
+    await sub.unsubscribe().catch((err) => console.warn("unsubscribing:", err));
+  }
+
   // A click on a notification while a page is open comes here (sw.js).
   navigator.serviceWorker?.addEventListener("message", (e) => {
     if (e.data?.type !== "open") return;
@@ -531,10 +586,14 @@
   });
 
   // Tell the hub a page of Collie is in front of you: it holds back
-  // notifications while you can see them here.
-  const seen = () => { if (!document.hidden && document.hasFocus()) api("/api/super/seen", { body: { url: location.origin } }).catch(() => {}); };
+  // notifications while you can see them here, and sends them as soon as
+  // the page goes to the background.
+  const pageId = Math.random().toString(36).slice(2);
+  const seen = () => { if (!document.hidden && document.hasFocus()) api("/api/super/seen", { body: { url: location.origin, page: pageId } }).catch(() => {}); };
+  const away = () => api("/api/super/seen", { body: { page: pageId, away: true }, keepalive: true }).catch(() => {});
   setInterval(seen, 30e3);
-  document.addEventListener("visibilitychange", seen);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) away(); else seen(); });
+  addEventListener("pagehide", away);
   addEventListener("focus", seen);
 
   // Optimistic pin toggles before the hub's next stream frame lands: id -> { pinned, item }.
@@ -3728,6 +3787,9 @@
       </div>
       <div class="card"><div class="card-h">通知</div>
         ${row("浏览器通知", esc(perm), sw("notify", prefs.notify() && (!("Notification" in window) || Notification.permission !== "denied")))}
+        ${prefs.notify() ? row("后台推送", esc(pushSub ? "已开：需要你选或确认的事由 hub 推送，页面关掉、锁屏也能收到"
+          : pushWhy ? "没开成：" + pushWhy : "正在连接…"), pushSub ? '<button type="button" class="btn small" data-act="push-test">发一条试试</button>'
+          : pushWhy ? '<button type="button" class="btn small" data-act="push-retry">重试</button>' : "") : ""}
       </div>
       <p class="panel-intro">Collie 本身的设置（它自己用哪个 agent、派活默认在哪台电脑、通知机器人）在 <a href="#/auto" data-auto-tab="settings">自动化 → 设置</a>；电脑和手机的连接在 <a href="#/devices">设备</a>。</p>
     </div>`;
@@ -3736,6 +3798,13 @@
   $("#prefs-body").addEventListener("click", async (e) => {
     const link = e.target.closest("a[data-auto-tab]");
     if (link) autoTab = link.dataset.autoTab;
+    const act = e.target.closest("button[data-act]")?.dataset.act;
+    if (act === "push-test") {
+      try { await api("/api/push/test", { body: { endpoint: pushSub?.endpoint || "" } }); toast("已推送，看看通知栏"); }
+      catch (err) { toast("推送失败：" + err.message, "attn"); }
+      return;
+    }
+    if (act === "push-retry") { await syncPush(); return; }
     const b = e.target.closest(".seg[data-pref] button, button.switch[data-pref]");
     if (!b) return;
     if (b.classList.contains("switch")) {
@@ -3746,6 +3815,10 @@
       }
       store.set(key, on);
       if (key === "showReadOnly") renderSessions();
+      if (key === "notify") {
+        renderPrefs();
+        await (on ? syncPush() : dropPush());
+      }
     } else {
       const key = b.closest("[data-pref]").dataset.pref, v = b.dataset.v;
       if (key === "mode2") setMode(v); else store.set(key, v);
@@ -7342,6 +7415,7 @@
     extTimer = setInterval(() => { loadExternal(); if (++tick % 3 === 0) loadHistory(); }, 3000);
     offerLocalApp();
     registerSW();
+    syncPush();
     setTimeout(saveSnap, 5000);
   }
 

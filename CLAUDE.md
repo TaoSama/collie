@@ -24,7 +24,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 ```
 
 - Go 检查运行 `go build ./...`、`go vet ./...`、`go test ./... -count=1`。
-- 前端检查运行 `node --check web/app.js`。改了 `web/` 后运行 `sh scripts/demo.sh` 重建 `docs/demo/`，随源码一起提交。
+- 前端检查运行 `node --check web/app.js` 和 `node --test scripts/test/*.test.mjs`。改了 `web/` 后运行 `sh scripts/demo.sh` 重建 `docs/demo/`，随源码一起提交。
 - 在仓库内运行 `sh docs/install.sh hub` 会用源码构建并安装服务。安装 node 用 `sh docs/install.sh node --hub URL --code CODE`，已配对后可只传 `node`。Linux 后台服务日志用 `journalctl --user -u collie-hub -f`，node 服务名为 `collie-node`。macOS 日志在 `~/Library/Logs/collie-hub.log` 和 `~/Library/Logs/collie-node.log`。
 - 发布前可运行 `sh scripts/release.sh v2026.1124.1 --dry`，交叉编译和校验和输出到 `dist/`。正式版本号格式为 `vYYYY.MMDD.N`。
 - 部署上线（发布 Release、切换 hub、逐台升级 node、线上核对）按 `collie-deploy` 技能做（`.claude/skills/collie-deploy/SKILL.md`）。
@@ -36,6 +36,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 - **会话**。对话流来自 Agent 会话记录，终端请求直接走 herdr。外部会话按进程、会话 ID 或工作目录定位记录，具体方式随 Agent 和桌面应用而异。决策卡片从终端状态识别问题和选项，再把选择转换成对应的终端输入。
 - **Router 和 worker**。聊天、Webhook、定时器和 worker 状态作为 Trigger 入队。先按来源策略（`respond` / `candidate` / `ignore`）处理，再交给 Router 或订阅该线程的 worker。会话忙时排队，空闲后可批量投递。超过 700 字符的投递正文可用 `collie show ID` 取回。
 - **调度 CLI**。Router 用 `collie spawn`、`send`、`subscribe`、`stop`、`answer` 和 `reply` 分派及反馈。worker 用 `collie report` 回报，对应 pane 由 `HERDR_PANE_ID` 识别。用 `collie list` 查看 worker，用 `collie hook SOURCE TEXT` 模拟外部事件。参数和 Router 手册见 [cli.go](internal/collie/cli.go)。
+- **Web Push**。hub 用 VAPID 把需要你处理的通知推送到订阅过的浏览器，sw.js 负责显示，页面关掉也能收到（`docs/pitfall/notifications.md`）。
 - **通知直达决策**。需要人处理的通知（worker 的对话框、`--opt` / `--check`）链接到 `#/d/<entry id>`，任意会话的对话框链接到 `#/d/pane/<pane id>`，页面用 `GET /api/super/decision` 定位并高亮卡片。通知正文只写任务名和选项，不放屏幕内容（`docs/pitfall/notifications.md`）。
 - **持久化**。默认数据目录是 `~/.collie`（`COLLIE_HOME` 可覆盖）。`herd.db` 保存事件、线程、worker、对话、定时器、设置和配对令牌哈希。hub 的 `token` 和 `addr` 供 CLI 发现本机服务，node 用 `node.json` 保存 hub 地址和设备令牌。Router 的 `router/` 目录保存生成的手册与 `memory/`。`go run` 启动时会写出稳定的 CLI 路径 `bin/collie`，供 Agent 调用。
 - **运行参数**。用 `collie --help` 和 `collie node --help` 查看参数。hub 支持 `COLLIE_ADDR`、`HERDR_SOCKET_PATH`、`COLLIE_TOKEN` 和 `COLLIE_URL`。node 的 `--ui` 控制本机界面监听地址，传 `off` 可关闭。
@@ -57,7 +58,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 | `main.go` | 入口，包含版本号和 `collie.Main` |
 | `internal/collie/` | hub（`hub.go`）、node（`node.go`）、herdr 客户端（`herdr.go`）与多机路由（`fleet.go`） |
 | `internal/collie/` 会话 | HTTP 与 SSE（`server.go`）、对话（`chat.go`、`agy.go`）、外部会话与接管（`external.go`、`desktop.go`、`handover.go`）、输入框 `/` 补全（`commands*.go`，`docs/pitfall/slash-commands.md`） |
-| `internal/collie/` 调度 | 调度（`super.go`）、API 与 Webhook（`superapi.go`）、CLI（`cli.go`）、数据与持久化（`store.go`、`db.go`） |
+| `internal/collie/` 调度 | 调度（`super.go`）、API 与 Webhook（`superapi.go`）、Web Push（`webpush.go`、`push.go`、`pushapi.go`）、CLI（`cli.go`）、数据与持久化（`store.go`、`db.go`） |
 | `web/` | 原生 HTML/CSS/JS，由 [embed.go](web/embed.go) 打进二进制；样式变量和皮肤见 `docs/design/DESIGN_SYSTEM.md` |
 | `scripts/` | `release.sh` 交叉编译和发布，`demo.sh` 用真实前端和 `scripts/demo/demo.js` 的示例数据生成在线体验 |
 | `docs/` | 项目文档（[文档索引](docs/README.md)）及 GitHub Pages 站点（`index.html`、`install.sh`、`demo/`、`img/`） |

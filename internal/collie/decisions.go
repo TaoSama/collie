@@ -327,6 +327,7 @@ func (sp *Super) answerPane(ctx context.Context, pane, sig, by string, pick func
 	}
 	sp.settleAskLocked(pane, label, by)
 	sp.mu.Unlock()
+	sp.push.answered(pane)
 	return label, nil
 }
 
@@ -442,6 +443,7 @@ func (s *Server) superDecided(w http.ResponseWriter, r *http.Request) {
 	}
 	sp := s.sup
 	choice := clip(oneLine(body.Choice), 80)
+	sp.push.answered(body.Pane)
 	sp.mu.Lock()
 	if e := sp.lastAskLocked(body.Pane); e != nil && e.Ask.Done != nil {
 		sp.settleAskLocked(body.Pane, choice, byYou)

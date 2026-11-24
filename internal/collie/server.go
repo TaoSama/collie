@@ -106,6 +106,7 @@ func (s *Server) Routes() http.Handler {
 	api("GET /api/events", s.streamState)
 	s.machineRoutes(mux, func(h http.HandlerFunc) http.Handler { return s.auth(s.routed(h)) })
 	s.superRoutes(mux)
+	s.pushRoutes(mux)
 	s.hubRoutes(mux)
 	return securityHeaders(compress(cors(mux)))
 }
