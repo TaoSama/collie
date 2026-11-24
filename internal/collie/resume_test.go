@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -186,5 +187,52 @@ func TestDreamFixLine(t *testing.T) {
 	}
 	if journalName(time.Date(2026, 11, 21, 18, 32, 0, 0, time.Local)) != "2026-11-21-1832" {
 		t.Error("journal name")
+	}
+}
+
+func TestResumeCarriesAlias(t *testing.T) {
+	ccx, none := "ccx", ""
+	old := &Worker{Name: "w", Kind: "claude", Cwd: "/w", Machine: "m1", Model: "opus", Thread: "t1", Session: "s-1", Alias: &ccx}
+	b := spawnBody{Task: "go on"}
+	if s := b.carryOver(old); s != "s-1" || b.Alias == nil || *b.Alias != "ccx" || b.Kind != "claude" || b.Model != "opus" || *b.Machine != "m1" || b.Name != "w" || b.Thread != "t1" {
+		t.Fatalf("carried: %q %+v", s, b)
+	}
+	b = spawnBody{Task: "go on", Alias: &none, Model: "sonnet"}
+	b.carryOver(old)
+	if *b.Alias != "" || b.Model != "sonnet" {
+		t.Errorf("asked for no alias and another model: %+v", b)
+	}
+	b = spawnBody{Task: "go on"}
+	if b.carryOver(&Worker{Kind: "claude", Session: "s-2"}); b.Alias != nil {
+		t.Errorf("a worker from before keeps the default alias: %v", *b.Alias)
+	}
+}
+
+func TestFailedWorkerLeavesNoTerminal(t *testing.T) {
+	f := newFakeHerdr(t)
+	sp := newRouterTestSuper(t, f)
+	sp.st.Settings.WorkerKind, sp.st.Settings.WorkerAlias = "claude", ""
+	// Another pane holds the name: the start fails after its workspace exists.
+	f.add("w0", "other", "dup", "claude", "/")
+	none := ""
+	w, started, err := sp.Spawn(SpawnSpec{Kind: "claude", Cwd: "/", Task: "x", Name: "dup", Alias: &none})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-started; err == nil {
+		t.Fatal("want a start error")
+	}
+	if _, ok := f.ws["wN1"]; ok || f.count("workspace.close") != 1 {
+		t.Errorf("its workspace is left: %v", f.ws)
+	}
+	if w.Alias == nil || *w.Alias != "" {
+		t.Errorf("launch alias not recorded: %v", w.Alias)
+	}
+
+	// An agent that quit back to its shell: the shell goes too.
+	f.add("w9", "quit", "", "", "/")
+	sp.workerDead(context.Background(), &Worker{Name: "q", Kind: "claude", PaneID: "w9:p1", WorkspaceID: "w9", Thread: mainThread})
+	if _, ok := f.ws["w9"]; ok {
+		t.Error("the quit worker's shell is left")
 	}
 }

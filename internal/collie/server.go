@@ -121,6 +121,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("POST /api/panes/{id}/text", wrap(s.sendText))
 	mux.Handle("POST /api/panes/{id}/keys", wrap(s.sendKeys))
 	mux.Handle("POST /api/panes/{id}/model", wrap(s.switchModel))
+	mux.Handle("POST /api/panes/{id}/close", wrap(s.closePane))
 	mux.Handle("POST /api/workspaces/{id}/close", wrap(s.closeWorkspace))
 	mux.Handle("POST /api/uploads", wrap(s.upload))
 	mux.Handle("GET /api/titles", wrap(s.getTitles))
@@ -756,6 +757,15 @@ func (s *Server) herdrStart(ctx context.Context, paneID, name, herdrKind string,
 		time.Sleep(600 * time.Millisecond)
 	}
 	return err
+}
+
+// closePane closes one terminal; herdr closes its workspace with its last pane.
+func (s *Server) closePane(w http.ResponseWriter, r *http.Request) {
+	if err := s.herdr.Call(r.Context(), "pane.close", map[string]any{"pane_id": r.PathValue("id")}, nil); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) closeWorkspace(w http.ResponseWriter, r *http.Request) {

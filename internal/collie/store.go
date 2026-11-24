@@ -47,6 +47,10 @@ type Worker struct {
 	CreatedAt   time.Time `json:"created_at"`
 	Model       string    `json:"model,omitempty"`  // asked for when spawned (empty: the default)
 	Effort      string    `json:"effort,omitempty"` // likewise
+	// Alias is the shell alias it was launched through ("" none; nil for
+	// workers from before). A resume goes through it again: an alias may
+	// point the agent at another config directory, where its conversation is.
+	Alias *string `json:"alias,omitempty"`
 	// Run is the model and effort it was launched with, settings' defaults
 	// applied; "" is the agent's own default. Nil for workers from before.
 	Run        *[2]string `json:"run,omitempty"`

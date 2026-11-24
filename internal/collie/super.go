@@ -635,23 +635,40 @@ func indent(s, p string) string {
 	return p + strings.ReplaceAll(s, "\n", "\n"+p)
 }
 
+// paneTail is the last non-blank lines on a pane's screen ("" if unreadable).
+func (sp *Super) paneTail(ctx context.Context, pane string) string {
+	res, err := sp.s.herdr.Read(ctx, pane, "recent_unwrapped", "text", 40)
+	if err != nil {
+		return ""
+	}
+	var keep []string
+	for _, l := range strings.Split(res.Text, "\n") {
+		if l = strings.TrimRight(l, " "); strings.TrimSpace(l) != "" {
+			keep = append(keep, l)
+		}
+	}
+	if len(keep) > 12 {
+		keep = keep[len(keep)-12:]
+	}
+	return strings.Join(keep, "\n")
+}
+
+// closeWorkspace closes a herdr workspace, logging a failure.
+func (sp *Super) closeWorkspace(ctx context.Context, ws string) {
+	if err := sp.s.herdr.Call(ctx, "workspace.close", map[string]any{"workspace_id": ws}, nil); err != nil {
+		log.Printf("close workspace %s: %v", ws, err)
+	}
+}
+
 // workerSettled turns a worker reaching done/blocked into a router trigger,
 // carrying a short summary from the worker's transcript or screen.
 // workerDead tells the router and the human that a worker's agent isn't
 // running, with what its screen says (usually the error it died with).
 func (sp *Super) workerDead(ctx context.Context, w *Worker) {
-	tail := ""
-	if res, err := sp.s.herdr.Read(ctx, w.PaneID, "recent_unwrapped", "text", 40); err == nil {
-		var keep []string
-		for _, l := range strings.Split(res.Text, "\n") {
-			if l = strings.TrimRight(l, " "); strings.TrimSpace(l) != "" {
-				keep = append(keep, l)
-			}
-		}
-		if len(keep) > 12 {
-			keep = keep[len(keep)-12:]
-		}
-		tail = strings.Join(keep, "\n")
+	tail := sp.paneTail(ctx, w.PaneID)
+	// Its screen is in the messages below; the shell it left goes.
+	if w.WorkspaceID != "" {
+		sp.closeWorkspace(ctx, w.WorkspaceID)
 	}
 	why := deathReason(tail)
 	if len([]rune(why)) > 160 {
@@ -679,7 +696,8 @@ func deathReason(screen string) string {
 		t := strings.TrimSpace(l)
 		low := strings.ToLower(t)
 		if strings.Contains(low, "error:") || strings.HasPrefix(low, "fatal") || strings.Contains(low, "panic:") ||
-			strings.Contains(low, "command not found") || strings.Contains(low, "no such file") {
+			strings.Contains(low, "command not found") || strings.Contains(low, "no such file") ||
+			strings.HasPrefix(low, "no conversation found") {
 			return t
 		}
 		if loose == "" && strings.Contains(low, "error") {
@@ -1135,7 +1153,7 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 			effort = sp.st.Settings.WorkerEffort
 		}
 	}
-	w.Run = &[2]string{model, effort}
+	w.Run, w.Alias = &[2]string{model, effort}, &aliasName
 	ask := sp.st.Settings.AskPermissions
 	sp.mu.Unlock()
 	wargs := withBypass(modelArgs(kind, model, effort), kind, ask)
@@ -1167,16 +1185,31 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		if pane != "" {
 			sp.s.herdr.RememberRun(pane, model, effort)
 		}
-		sp.mu.Lock()
-		w.PaneID, w.WorkspaceID = pane, ws
 		var he *HerdrError
 		blocked := err != nil && errors.As(err, &he) && he.Code == "agent_not_ready"
-		if err != nil && !blocked {
-			w.Status, w.Ended, w.Note = "failed", true, err.Error()
-			sp.addEntryLocked("event", thread, name+" 启动失败："+err.Error(), name, "error")
+		failed, msg := err != nil && !blocked, ""
+		if failed {
+			// The start may have used up ctx; cleaning up gets its own time.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer cancel()
+			// What its terminal said goes with the error; the terminal itself
+			// is closed, not left behind as an empty shell.
+			msg = err.Error()
+			if ws != "" {
+				if why := deathReason(sp.paneTail(ctx, pane)); why != "" && !strings.Contains(msg, why) {
+					msg += "（终端里：" + why + "）"
+				}
+				sp.closeWorkspace(ctx, ws)
+			}
+		}
+		sp.mu.Lock()
+		w.PaneID, w.WorkspaceID = pane, ws
+		if failed {
+			w.Status, w.Ended, w.Note = "failed", true, msg
+			sp.addEntryLocked("event", thread, name+" 启动失败："+msg, name, "error")
 			sp.mu.Unlock()
 			if !tell(err) {
-				sp.Ingest("worker", thread, name, fmt.Sprintf("worker %s failed to start: %v", name, err), "", "", name)
+				sp.Ingest("worker", thread, name, fmt.Sprintf("worker %s failed to start: %s", name, msg), "", "", name)
 			}
 			return
 		}

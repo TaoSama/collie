@@ -236,7 +236,7 @@ func cliSpawn(args []string) error {
 	alias := fs.String("alias", "", "start it through this shell alias on that computer (default from settings for the default kind)")
 	noAlias := fs.Bool("no-alias", false, "start the agent's own command, not the default alias")
 	sub := fs.Bool("subscribe", false, "route later events of --thread straight to this worker")
-	resume := fs.String("resume", "", "a stopped worker to carry on from: its computer, directory and conversation")
+	resume := fs.String("resume", "", "a stopped worker to carry on from: its computer, directory, alias and conversation")
 	fs.Parse(args)
 	t, err := textArg(fs)
 	if err != nil {
@@ -515,8 +515,8 @@ sessions and tidies memory/. Its journal is in dreams/.
 - ` + "`{{BIN}} subscribe WORKER THREAD`" + ` — route a thread's future events straight to that worker
   (e.g. its GitHub PR thread). chat:main always stays with you.
 - ` + "`{{BIN}} stop WORKER`" + ` — stop a worker and close its terminal. Its conversation is kept:
-  ` + "`{{BIN}} spawn --resume WORKER \"what next\"`" + ` opens it again on the same computer and
-  directory, so a follow-up on earlier work carries on with everything it knew. Spawn
+  ` + "`{{BIN}} spawn --resume WORKER \"what next\"`" + ` opens it again on the same computer,
+  directory and alias, so a follow-up on earlier work carries on with everything it knew. Spawn
   fresh for a new job.
 - ` + "`{{BIN}} list`" + ` — workers, threads, timers.
 - ` + "`{{BIN}} show ID`" + ` — expand any id (trigger t12, thread github:org/repo#4, worker name).

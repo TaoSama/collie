@@ -641,6 +641,11 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       const t = decodeURIComponent(m[1]), id = agents.find((a) => a.pane_id === t || a.name === t)?.pane_id || t;
       promptPane(id, body.text || body.prompt || ""); return json({ ok: true });
     }
+    if ((m = /^\/api\/panes\/([^/]+)\/close$/.exec(p))) {
+      const i = shells.findIndex((x) => x.pane_id === decodeURIComponent(m[1]));
+      if (i >= 0) shells.splice(i, 1);
+      pushAll(); return json({ ok: true });
+    }
     if ((m = /^\/api\/panes\/([^/]+)\/(earlier|last)$/.exec(p))) return json({ messages: [], earlier: 0, text: "" });
     if (p === "/api/agents" && method === "POST") {
       const n = agents.length + 10, pane = `w${n}:p1${body.machine ? "@" + body.machine : ""}`;

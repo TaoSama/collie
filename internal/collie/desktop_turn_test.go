@@ -32,4 +32,7 @@ func TestDeathReason(t *testing.T) {
 	if got := deathReason("zsh: command not found: claude"); got != "zsh: command not found: claude" {
 		t.Fatalf("got %q", got)
 	}
+	if got := deathReason("❯ claude --resume 0d1\nNo conversation found with session ID: 0d1\n❯"); got != "No conversation found with session ID: 0d1" {
+		t.Fatalf("got %q", got)
+	}
 }

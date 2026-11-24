@@ -2768,8 +2768,8 @@
       const v = m?.unread && a.status === "idle" ? { ...a, status: "done" } : a;
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
-      return { id: a.pane_id, src: "pane", html: itemHTML(v, term ? "" : rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd,
-        key, mark: m, session: a.session || "", name: term ? "" : title(a), status: a.status, ws: a.workspace_id, live: true };
+      return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd,
+        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? a.workspace_label || base(tilde(a.cwd)) : "", status: a.status, ws: a.workspace_id, live: true };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -2842,7 +2842,7 @@
   function renderSessions() {
     const all = sideRows();
     readOnOpen(all);
-    sideByRow = new Map(all.filter((r) => r.kind && r.bucket !== "term").map((r) => [r.id, r]));
+    sideByRow = new Map(all.filter((r) => r.kind || r.term).map((r) => [r.id, r]));
     const kindOf = (r) => r.bucket === "term" ? "term" : r.kind;
     const nOn = {};
     for (const r of all) nOn[r.machine] = (nOn[r.machine] || 0) + 1;
@@ -3034,6 +3034,7 @@
   // Right-click a session (or hold it on a touch screen): rename it, mark it
   // unread, copy its id, archive it. Renaming and archiving go to its own
   // agent (session_menu.go); Claude Code has no archive, so Collie hides it.
+  // A terminal's menu only closes it.
   const ctxPop = document.createElement("div");
   ctxPop.className = "pick-pop ctx-menu"; ctxPop.hidden = true; ctxPop.setAttribute("role", "menu");
   const ctxBack = document.createElement("div");
@@ -3046,21 +3047,23 @@
     read: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
     copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
     archive: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></svg>',
+    close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   };
+  const CTX_DANGER = new Set(["archive", "close"]);
   // A running Claude Code renames itself by its /rename; the others by their own API.
   const typesRename = (r) => r.src === "pane" && r.kind === "claude";
   function openCtx(row, x, y) {
     closePick();
     ctxRow = row;
     const unread = !!row.mark?.unread;
-    const items = [
+    const items = row.term ? [["close", "关闭", false]] : [
       ["rename", "重命名", !typesRename(row) && !row.session],
       [unread ? "read" : "unread", unread ? "标记为已读" : "标记为未读", !row.key],
       ["copy", "复制对话 ID", !row.session],
       ["archive", "归档", !row.session],
     ];
-    ctxPop.innerHTML = `<div class="ph">${esc(row.name)}</div>` + items.map(([act, label, off]) =>
-      `<button type="button" class="po${act === "archive" ? " danger" : ""}" role="menuitem" data-ctx="${act}" ${off ? "disabled" : ""}><span class="pi">${CTX_ICONS[act]}</span><span class="pl"><span>${label}</span></span></button>`).join("");
+    ctxPop.innerHTML = `<div class="ph">${esc(row.term || row.name)}</div>` + items.map(([act, label, off]) =>
+      `<button type="button" class="po${CTX_DANGER.has(act) ? " danger" : ""}" role="menuitem" data-ctx="${act}" ${off ? "disabled" : ""}><span class="pi">${CTX_ICONS[act]}</span><span class="pl"><span>${label}</span></span></button>`).join("");
     const sheet = narrow();
     ctxPop.classList.toggle("sheet", sheet);
     ctxBack.hidden = !sheet;
@@ -3131,6 +3134,7 @@
     else if (act === "unread" || act === "read") await setMark(r.key, { unread: act === "unread" });
     else if (act === "rename") await renameRow(r);
     else if (act === "archive") await archiveRow(r);
+    else if (act === "close") await closeTerm(r);
   }
   async function renameRow(r) {
     const name = (await ask({ title: "重命名", value: r.name, ok: "改名" }))?.replace(/\s+/g, " ").trim();
@@ -3162,6 +3166,14 @@
     if (own) await api(`/api/sessions/${sessionPath(r)}/archive`, { body: { kind: r.kind, just_closed: running } });
     if (r.src === "ext") loadExternal();
     toast("已归档");
+  }
+  async function closeTerm(r) {
+    if (!await ask({ title: `关闭终端「${r.term}」？`, text: "里面在跑的进程会被结束。", ok: "关闭", warn: true })) return;
+    await api(paneURL(r.id, "close"), { body: {} });
+    state = { ...state, shells: state.shells.filter((a) => a.pane_id !== r.id) };
+    if (view === "pane" && current === r.id) goBack(true);
+    renderSessions();
+    toast("已关闭");
   }
   async function openExt(id, restore = null) {
     closeExt();

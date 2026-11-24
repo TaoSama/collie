@@ -365,21 +365,46 @@ func replyLen(s string) int {
 
 // ---------------------------------------------------------------- workers
 
-func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Kind      string  `json:"kind"`
-		Cwd       string  `json:"cwd"`
-		Task      string  `json:"task"`
-		Thread    string  `json:"thread"`
-		Name      string  `json:"name"`
-		By        string  `json:"by"`
-		Machine   *string `json:"machine"`
-		Model     string  `json:"model"`
-		Effort    string  `json:"effort"`
-		Alias     *string `json:"alias"` // absent: the default; "": none
-		Subscribe *bool   `json:"subscribe"`
-		Resume    string  `json:"resume"` // a stopped worker to carry on from
+// spawnBody is what `collie spawn` sends.
+type spawnBody struct {
+	Kind      string  `json:"kind"`
+	Cwd       string  `json:"cwd"`
+	Task      string  `json:"task"`
+	Thread    string  `json:"thread"`
+	Name      string  `json:"name"`
+	By        string  `json:"by"`
+	Machine   *string `json:"machine"`
+	Model     string  `json:"model"`
+	Effort    string  `json:"effort"`
+	Alias     *string `json:"alias"` // absent: the default; "": none
+	Subscribe *bool   `json:"subscribe"`
+	Resume    string  `json:"resume"` // a stopped worker to carry on from
+}
+
+// carryOver fills in what a resumed worker keeps from old, unless asked
+// otherwise, and returns the conversation to open.
+func (b *spawnBody) carryOver(old *Worker) (session string) {
+	// Its own computer, directory, agent and alias: that is where the conversation is.
+	b.Kind, b.Cwd = old.Kind, old.Cwd
+	m := old.Machine
+	b.Machine = &m
+	if b.Alias == nil {
+		b.Alias = old.Alias
 	}
+	if b.Name == "" {
+		b.Name = old.Name
+	}
+	if b.Model == "" && b.Effort == "" {
+		b.Model, b.Effort = old.Model, old.Effort
+	}
+	if b.Thread == "" {
+		b.Thread = old.Thread
+	}
+	return old.Session
+}
+
+func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
+	var body spawnBody
 	if !decode(w, r, &body) {
 		return
 	}
@@ -390,19 +415,7 @@ func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]any{"error": err.Error()})
 			return
 		}
-		// Its own computer, directory and agent: that is where the conversation is.
-		body.Kind, body.Cwd, session = old.Kind, old.Cwd, old.Session
-		m := old.Machine
-		body.Machine = &m
-		if body.Name == "" {
-			body.Name = old.Name
-		}
-		if body.Model == "" && body.Effort == "" {
-			body.Model, body.Effort = old.Model, old.Effort
-		}
-		if body.Thread == "" {
-			body.Thread = old.Thread
-		}
+		session = body.carryOver(old)
 	}
 	if strings.TrimSpace(body.Task) == "" {
 		writeJSON(w, 400, map[string]any{"error": "task is required"})
