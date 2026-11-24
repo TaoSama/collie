@@ -5851,8 +5851,8 @@
   const lightbox = $("#lightbox"), lbStage = $("#lb-stage"), lbImg = $("#lb-img");
   const lbName = $("#lb-name"), lbCount = $("#lb-count"), lbMeta = $("#lb-meta"), lbStatus = $("#lb-status");
   const lbZoomBtn = $("#lb-zoom"), lbZoomPct = $("#lb-zoom-pct"), lbOpenLink = $("#lb-open"), lbDlLink = $("#lb-dl");
-  const lbPrevBtn = $("#lb-prev"), lbNextBtn = $("#lb-next"), lbCloseBtn = $("#lb-close");
-  let lbItems = [], lbIdx = 0, lbSeq = 0, lbTempUrl = "", lbCurMeta = null;
+  const lbPrevBtn = $("#lb-prev"), lbNextBtn = $("#lb-next"), lbCloseBtn = $("#lb-close"), lbEditBtn = $("#lb-edit");
+  let lbItems = [], lbIdx = 0, lbSeq = 0, lbTempUrl = "", lbCurMeta = null, lbEditRefocus = false;
   let lbScale = 1, lbX = 0, lbY = 0, lbSavedScroll = null;
   const lbTabProtected = new Set();
 
@@ -5901,6 +5901,11 @@
     lbMeta.textContent = parts.join(" · ");
   }
   function setLbReady(ready, url = "", dlName = "") {
+    // focus waits on Close while the edited picture loads, then goes back
+    if (!ready && document.activeElement === lbEditBtn) { lbCloseBtn?.focus({ preventScroll: true }); lbEditRefocus = true; }
+    lbEditBtn.disabled = !ready;
+    if (ready && lbEditRefocus && document.activeElement === lbCloseBtn && !lbEditBtn.hidden) lbEditBtn.focus({ preventScroll: true });
+    if (ready) lbEditRefocus = false;
     if (lbZoomBtn) {
       if (!ready && document.activeElement === lbZoomBtn) lbCloseBtn?.focus({ preventScroll: true });
       lbZoomBtn.disabled = !ready;
@@ -6017,6 +6022,7 @@
     lbScale = 1; lbX = 0; lbY = 0;
     applyLbTransform(true);
     const multi = lbItems.length > 1;
+    lbEditBtn.hidden = !item.edit;
     lbPrevBtn.hidden = !multi;
     lbNextBtn.hidden = !multi;
     lbCount.hidden = !multi;
@@ -6182,6 +6188,13 @@
       lbSavedScroll = null;
     });
     lbCloseBtn?.addEventListener("click", () => closeLightbox());
+    // the edited picture takes the original's place in the preview
+    lbEditBtn.addEventListener("click", async () => {
+      const item = lbItems[lbIdx], shown = await item?.edit?.();
+      if (!shown || !lightbox.open || !lbItems.includes(item)) return;
+      Object.assign(item, shown);
+      showLbSlide(lbItems.indexOf(item));
+    });
     lbZoomBtn?.addEventListener("click", () => toggleLbZoom());
     lbOpenLink?.addEventListener("click", (ev) => {
       if (lbOpenLink.getAttribute("aria-disabled") === "true") { ev.preventDefault(); return; }
@@ -6193,7 +6206,7 @@
     lbPrevBtn?.addEventListener("click", () => showLbSlide(lbIdx - 1));
     lbNextBtn?.addEventListener("click", () => showLbSlide(lbIdx + 1));
     document.addEventListener("keydown", (ev) => {
-      if (!lightbox.open || lightbox.hasAttribute("data-closing") || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (!lightbox.open || lightbox.hasAttribute("data-closing") || window.collieImageEditor?.isOpen() || ev.metaKey || ev.ctrlKey || ev.altKey) return;
       if (ev.key === "ArrowLeft" && lbItems.length > 1) { ev.preventDefault(); showLbSlide(lbIdx - 1); }
       else if (ev.key === "ArrowRight" && lbItems.length > 1) { ev.preventDefault(); showLbSlide(lbIdx + 1); }
       else if (ev.key === "+" || ev.key === "=") { ev.preventDefault(); if (!lbImg.hidden) zoomLbTo(lbScale * 1.35); }
@@ -6898,22 +6911,25 @@
     const draw = () => {
       box.hidden = !form._files.length;
       box.innerHTML = form._files.map((f, i) => `<span class="file ${f.err ? "err" : f.path ? "" : "busy"}" title="${esc(f.err || f.path || "上传中…")}">
-        ${f.thumb ? `<img src="${f.thumb}" alt="">` : `<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>`}
+        ${f.thumb ? `<button type="button" class="fthumb" data-view="${i}" aria-label="${esc("预览 " + f.name)}" title="预览"><img src="${f.thumb}" alt=""></button>` : `<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>`}
         <span class="fn">${esc(f.name)}</span><span class="fs">${f.err ? "失败" : f.path ? fmtSize(f.size) : "上传中"}</span>
         ${f.err ? `<button type="button" data-retry="${i}" title="重新上传">${RETRY_SVG}</button>` : ""}<button type="button" data-rm="${i}" title="移除">×</button></span>`).join("");
     };
     const upload = (f) => {
       f.err = "";
-      const m = machine();
+      f.path = "";
+      // an edit uploads the picture again: the earlier upload is dropped
+      f.abort?.abort();
+      const ctl = f.abort = new AbortController(), m = machine();
       const up = routeReq(`/api/uploads?name=${encodeURIComponent(f.name)}${m ? "&machine=" + encodeURIComponent(m) : ""}`);
       f.done = fetch(up.url, {
-        method: "POST", body: f.file, credentials: up.hub ? "omit" : "same-origin",
+        method: "POST", body: f.file, signal: ctl.signal, credentials: up.hub ? "omit" : "same-origin",
         headers: up.hub ? { Authorization: "Bearer " + up.hub.token } : {},
       }).then(async (res) => {
         const d = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(d.error || res.statusText);
-        f.path = d.path;
-      }).catch((err) => { f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
+        if (f.abort === ctl) f.path = d.path;
+      }).catch((err) => { if (f.abort !== ctl) return; f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
     };
     // ready: every file in a message uploaded, the failed ones tried once
     // more; a retry clicked meanwhile is waited for too.
@@ -6932,13 +6948,47 @@
     };
     $(".attach", form).addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => { add([...picker.files]); picker.value = ""; });
+    // A picture opens in the preview, where it can be edited: the edited one
+    // takes its place (and is uploaded in its place), its source and edits
+    // kept so it opens again where the editing stopped.
+    const edit = (f) => window.collieImageEditor.open(f.orig?.thumb || f.thumb, f.edits, (msg) => toast(msg, "attn")).then((r) => {
+        if (!r || !form._files.includes(f)) return null;
+        if (!r.blob && !f.orig) return null; // never edited, nothing done
+        f.edits = r.state;
+        f.orig ||= { file: f.file, name: f.name, size: f.size, thumb: f.thumb, path: f.path };
+        if (f.thumb !== f.orig.thumb) URL.revokeObjectURL(f.thumb);
+        if (r.blob) {
+          const ext = r.blob.type === "image/jpeg" ? ".jpg" : ".png";
+          const name = f.orig.name.replace(/\.[^./]*$/, "") + ext;
+          Object.assign(f, { file: new File([r.blob], name, { type: r.blob.type }), name, size: r.blob.size, thumb: URL.createObjectURL(r.blob) });
+          upload(f);
+        } else {
+          // all of it undone: the picture as it came
+          const o = f.orig;
+          Object.assign(f, { file: o.file, name: o.name, size: o.size, thumb: o.thumb });
+          if (o.path) { f.abort?.abort(); Object.assign(f, { path: o.path, err: "", done: Promise.resolve() }); } else upload(f);
+        }
+        draw();
+        return { url: f.thumb, alt: f.name };
+      });
+    const release = (f) => {
+      if (f.thumb) URL.revokeObjectURL(f.thumb);
+      if (f.orig && f.orig.thumb !== f.thumb) URL.revokeObjectURL(f.orig.thumb);
+    };
     box.addEventListener("click", (e) => {
+      const shown = form._files[e.target.closest("[data-view]")?.dataset.view];
+      if (shown) {
+        const pics = form._files.filter((f) => f.thumb);
+        const items = pics.map((f) => ({ url: f.thumb, alt: f.name, edit: () => edit(f) }));
+        openLightbox(items, pics.indexOf(shown));
+        return;
+      }
       const again = form._files[e.target.closest("[data-retry]")?.dataset.retry];
       if (again) { upload(again); draw(); return; }
       const i = e.target.closest("[data-rm]")?.dataset.rm;
       if (i == null) return;
       const [f] = form._files.splice(+i, 1);
-      if (f?.thumb) URL.revokeObjectURL(f.thumb);
+      if (f) release(f);
       draw();
     });
     const ta = $("textarea", form);
@@ -6956,7 +7006,7 @@
     // A message being sent takes its files along; a failed one puts them back.
     form._takeFiles = () => { const t = form._files; form._files = []; draw(); return t; };
     form._restoreFiles = (files) => { form._files = files.concat(form._files); draw(); };
-    form._dropFiles = (files) => files.forEach((f) => f.thumb && URL.revokeObjectURL(f.thumb));
+    form._dropFiles = (files) => files.forEach(release);
   }
   async function withFiles(form, files, text) {
     if (!files.length) return text;

@@ -497,6 +497,9 @@
       <div class="lb-meta" id="lb-meta"></div>
     </div>
     <div class="lb-actions">
+      <button type="button" class="lb-btn" id="lb-edit" aria-label="编辑" title="编辑" hidden disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>
+      </button>
       <button type="button" class="lb-btn lb-zoom-btn" id="lb-zoom" aria-label="放大查看细节" title="放大查看细节" aria-pressed="false" disabled>
         <svg class="ic-zoom-in" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.2 4.2M11 8.5v5M8.5 11h5"/></svg>
         <svg class="ic-zoom-out" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.2 4.2M8.5 11h5"/></svg>
@@ -525,10 +528,63 @@
   </button>
 </dialog>
 
+<!-- ───────────── image editor (an attached picture, from its preview) ───────────── -->
+<dialog class="imgedit" id="imgedit" aria-label="编辑图片">
+  <header class="ie-bar">
+    <button type="button" class="ie-text" data-ie="cancel">取消</button>
+    <div class="ie-hist">
+      <button type="button" class="lb-btn" data-ie="undo" aria-label="撤销" title="撤销 (⌘Z)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+      </button>
+      <button type="button" class="lb-btn" data-ie="redo" aria-label="重做" title="重做 (⇧⌘Z)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+      </button>
+    </div>
+    <button type="button" class="ie-done" data-ie="done">完成</button>
+  </header>
+  <div class="ie-stage">
+    <canvas></canvas>
+    <div class="lb-status loading" hidden>读取图片中…</div>
+  </div>
+  <footer class="ie-tools">
+    <div class="ie-row ie-marks">
+      <span class="ie-inks"></span>
+      <select data-ie="width" data-pick="compact" data-title="粗细" title="粗细"><option value="0">细</option><option value="1">中</option><option value="2">粗</option></select>
+    </div>
+    <div class="ie-row ie-crop" hidden>
+      <button type="button" class="ie-tool" data-ie="rotate">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v5h5"/><path d="M4.6 9A8 8 0 1 1 4 13"/></svg><span>旋转</span>
+      </button>
+      <select data-ie="shape" data-pick="compact" data-title="比例" title="比例">
+        <option value="free">自由</option><option value="original">原始比例</option><option value="square">正方形</option>
+        <option value="4:3">4:3</option><option value="3:4">3:4</option><option value="16:9">16:9</option><option value="9:16">9:16</option>
+      </select>
+      <span class="ie-gap"></span>
+      <button type="button" class="ie-tool" data-ie="reset"><span>还原</span></button>
+    </div>
+    <div class="ie-row">
+      <button type="button" class="ie-tool" data-tool="box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/></svg><span>框选</span>
+      </button>
+      <button type="button" class="ie-tool" data-tool="pen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg><span>画笔</span>
+      </button>
+      <button type="button" class="ie-tool" data-tool="crop">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg><span>裁剪</span>
+      </button>
+      <span class="ie-gap"></span>
+      <button type="button" class="lb-btn ie-round" data-ie="clear" aria-label="清除" title="清除">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>
+      </button>
+    </div>
+  </footer>
+</dialog>
+
 <div class="toasts" id="toasts"></div>
 
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/katex/katex.min.js"></script>
+<script src="/imgedit.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
