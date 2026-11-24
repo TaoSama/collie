@@ -3,6 +3,7 @@ package collie
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"database/sql"
 	"encoding/json"
 	"io"
@@ -19,6 +20,9 @@ import (
 type ctxUsage struct {
 	Used   int `json:"used"`
 	Window int `json:"window"`
+	// ran: the model (as asked for, "[1m]" and all) and effort of Claude's
+	// latest reply.
+	ran [2]string
 }
 
 func (u ctxUsage) Pct() int {
@@ -91,7 +95,10 @@ func readUsage(path, format string, size int64) ctxUsage {
 			var e struct {
 				Type      string `json:"type"`
 				Sidechain bool   `json:"isSidechain"`
+				Asked     string `json:"requestedModel"`
+				Effort    string `json:"effort"`
 				Message   struct {
+					Model string `json:"model"`
 					Usage *struct {
 						In     int `json:"input_tokens"`
 						Read   int `json:"cache_read_input_tokens"`
@@ -106,6 +113,9 @@ func readUsage(path, format string, size int64) ctxUsage {
 			u := e.Message.Usage
 			if n := u.In + u.Read + u.Create + u.Out; n > 0 {
 				last.Used = n
+			}
+			if m := cmp.Or(e.Asked, e.Message.Model); m != "" && m != "<synthetic>" {
+				last.ran = [2]string{m, e.Effort}
 			}
 		case "codex":
 			if !bytes.Contains(line, []byte(`"token_count"`)) {

@@ -121,6 +121,9 @@ type paneSession struct {
 	Title   string     `json:"title,omitempty"`
 	Session string     `json:"session,omitempty"` // id to resume it by
 	Run     *[2]string `json:"run,omitempty"`     // model, effort it was started with
+	// Ran: the model and effort its latest reply used, from its own log. It
+	// beats Run: the agent may have been started elsewhere, or switched since.
+	Ran *[2]string `json:"ran,omitempty"`
 }
 
 // localSessions maps this machine's agent panes (local ids) to their sessions.
@@ -174,11 +177,35 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 			t = cleanTitle(tt)
 		}
 		run, _ := s.herdr.Run(local)
-		if t != "" || sess != "" || run != nil {
-			out[local] = paneSession{Title: t, Session: sess, Run: run}
+		var ran *[2]string
+		if kind == "claude" && sess != "" {
+			ran = s.claudeRan(sess)
+		}
+		if t != "" || sess != "" || run != nil || ran != nil {
+			out[local] = paneSession{Title: t, Session: sess, Run: run, Ran: ran}
 		}
 	}
 	return out
+}
+
+// claudeLogs remembers where each session's log is, so the titles refresh
+// doesn't search every project folder for it again every few seconds.
+var claudeLogs sync.Map
+
+// claudeRan is the model and effort a Claude session's latest reply used.
+func (s *Server) claudeRan(session string) *[2]string {
+	known, _ := claudeLogs.Load(session)
+	path, _ := known.(string)
+	if !isFile(path) {
+		if path, _ = s.findTranscript("claude", "", session, "", ""); path == "" {
+			return nil
+		}
+		claudeLogs.Store(session, path)
+	}
+	if r := contextUsage(path, "claude", 0).ran; r[0] != "" {
+		return &r
+	}
+	return nil
 }
 
 func (s *Server) getTitles(w http.ResponseWriter, r *http.Request) {

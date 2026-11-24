@@ -675,8 +675,7 @@ func (s *Server) findTranscript(kind, sessKind, value, pane, cwd string) (path, 
 		if value == "" {
 			return "", ""
 		}
-		root := envOr("CLAUDE_CONFIG_DIR", filepath.Join(s.home, ".claude"))
-		if m, _ := filepath.Glob(filepath.Join(root, "projects", "*", value+".jsonl")); len(m) > 0 {
+		if m, _ := filepath.Glob(filepath.Join(claudeRoot(s.home), "projects", "*", value+".jsonl")); len(m) > 0 {
 			return m[0], "claude"
 		}
 	case "codex":

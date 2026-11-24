@@ -1723,7 +1723,11 @@
   // Settings and the launcher call antigravity by its long name.
   const aliasKind = (k) => (k === "agy" ? "antigravity" : k);
   // A model id without its provider ("openrouter/x" → "x").
-  const shortModel = (id) => id.split("/").pop();
+  // "claude-opus-5-5[1m]" reads as "Opus 5.5"; other ids lose their provider prefix.
+  const shortModel = (id) => {
+    const m = /^claude-([a-z]+)-(\d+)-(\d+)(?:-\d{8})?(?:\[1m\])?$/.exec(id);
+    return m ? `${m[1][0].toUpperCase() + m[1].slice(1)} ${m[2]}.${m[3]}` : id.split("/").pop();
+  };
   const aliasPins = (a) => [a.model, a.effort && (EFFORT_LABEL[a.effort] || a.effort)];
   const aliasSub = (a) => [...aliasPins(a), a.base_url].filter(Boolean).join(" · ");
   const aliasesOfKind = (list, kind) => list.filter((a) => aliasKind(a.kind) === kind);
@@ -3728,7 +3732,7 @@
     eSel.innerHTML = (effs.includes(effort) ? "" : effOpt(effort, effort ? "" : "disabled")) + effs.map((e) => effOpt(e, `data-sub="${esc(e)}"`)).join("");
     mSel.value = model; eSel.value = effort;
     eSel.hidden = !effs.length;
-    sess = { key, pane: v.pane_id, kind, machine, model, effort: run[1], tip: own ? "agent 自己的设置" : run[0] + (run[1] ? "，思考 " + run[1] : ""),
+    sess = { key, pane: v.pane_id, kind, machine, model, effort: run[1], tip: own ? "agent 自己的设置" : shortModel(run[0]) + (run[1] ? "，思考 " + (EFFORT_LABEL[run[1]] || run[1]) : ""),
       fixed: kind === "claude" ? "Claude Code 在会话里换模型会顺带改掉以后所有新会话的默认，这里只显示"
         : remote ? "另一个 hub 上的会话，到那边去换"
         : !list.length ? "没读到这台电脑上这个 agent 的模型列表"
@@ -3740,7 +3744,7 @@
     const mSel = $("#p-model"), eSel = $("#p-effort");
     if (!sess?.pane) return;
     const why = sess.fixed || (sessBusy ? "正在换…" : SWITCH_OK.has(find(sess.pane)?.status) ? "" : "agent 正在忙，停下来再换");
-    const title = why || `换这个会话的模型（启动时用的：${sess.tip}）`;
+    const title = why || `换这个会话的模型（现在用的：${sess.tip}）`;
     if (mSel.disabled === !!why && mSel.title === title) return;
     mSel.disabled = eSel.disabled = !!why;
     mSel.title = title;
@@ -6168,6 +6172,7 @@
   function grow(el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, innerHeight * 0.4) + "px"; }
   // Files go to the machine where the agent runs, then their paths ride
   // along in the message (agents read images and files by path).
+  const RETRY_SVG = `<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>`;
   const fmtSize = (n) => n < 1024 ? n + " B" : n < 1 << 20 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB";
   function bindFiles(form, machine) {
     const box = $(".files", form), picker = $('input[type="file"]', form);
@@ -6177,21 +6182,32 @@
       box.innerHTML = form._files.map((f, i) => `<span class="file ${f.err ? "err" : f.path ? "" : "busy"}" title="${esc(f.err || f.path || "上传中…")}">
         ${f.thumb ? `<img src="${f.thumb}" alt="">` : `<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>`}
         <span class="fn">${esc(f.name)}</span><span class="fs">${f.err ? "失败" : f.path ? fmtSize(f.size) : "上传中"}</span>
-        <button type="button" data-rm="${i}" title="移除">×</button></span>`).join("");
+        ${f.err ? `<button type="button" data-retry="${i}" title="重新上传">${RETRY_SVG}</button>` : ""}<button type="button" data-rm="${i}" title="移除">×</button></span>`).join("");
+    };
+    const upload = (f) => {
+      f.err = "";
+      const m = machine();
+      const up = routeReq(`/api/uploads?name=${encodeURIComponent(f.name)}${m ? "&machine=" + encodeURIComponent(m) : ""}`);
+      f.done = fetch(up.url, {
+        method: "POST", body: f.file, credentials: up.hub ? "omit" : "same-origin",
+        headers: up.hub ? { Authorization: "Bearer " + up.hub.token } : {},
+      }).then(async (res) => {
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || res.statusText);
+        f.path = d.path;
+      }).catch((err) => { f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
+    };
+    // ready: every file uploaded, the failed ones tried once more; a retry
+    // clicked meanwhile is waited for too.
+    form._filesReady = async () => {
+      form._files.filter((f) => f.err).forEach(upload);
+      do await Promise.all(form._files.map((f) => f.done));
+      while (form._files.some((f) => !f.path && !f.err));
     };
     const add = (list) => {
       for (const file of list) {
-        const f = { name: file.name || "粘贴的图片.png", size: file.size, thumb: file.type.startsWith("image/") ? URL.createObjectURL(file) : "" };
-        const m = machine();
-        const up = routeReq(`/api/uploads?name=${encodeURIComponent(f.name)}${m ? "&machine=" + encodeURIComponent(m) : ""}`);
-        f.done = fetch(up.url, {
-          method: "POST", body: file, credentials: up.hub ? "omit" : "same-origin",
-          headers: up.hub ? { Authorization: "Bearer " + up.hub.token } : {},
-        }).then(async (res) => {
-          const d = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(d.error || res.statusText);
-          f.path = d.path;
-        }).catch((err) => { f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
+        const f = { file, name: file.name || "粘贴的图片.png", size: file.size, thumb: file.type.startsWith("image/") ? URL.createObjectURL(file) : "" };
+        upload(f);
         form._files.push(f);
       }
       draw();
@@ -6199,6 +6215,8 @@
     $(".attach", form).addEventListener("click", () => picker.click());
     picker.addEventListener("change", () => { add([...picker.files]); picker.value = ""; });
     box.addEventListener("click", (e) => {
+      const again = form._files[e.target.closest("[data-retry]")?.dataset.retry];
+      if (again) { upload(again); draw(); return; }
       const i = e.target.closest("[data-rm]")?.dataset.rm;
       if (i == null) return;
       const [f] = form._files.splice(+i, 1);
@@ -6222,8 +6240,8 @@
   async function withFiles(form, text) {
     const files = form._files || [];
     if (!files.length) return text;
-    await Promise.all(files.map((f) => f.done));
-    if (files.some((f) => f.err)) throw new Error("有文件没传上去，移除后再发");
+    await form._filesReady();
+    if (files.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
     return (text.trim() ? text.trim() + "\n\n" : "") + "附件：\n" + files.map((f) => f.path).join("\n");
   }
   // Images a Collie message points at (a screenshot a worker took) show
