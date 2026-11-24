@@ -374,7 +374,6 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .d-meta .mono { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .d-meta > * { white-space: nowrap; flex: none; }
 .d-meta > .mono { flex: 0 1 auto; min-width: 0; }
-@media (max-width: 700px) { #d-model { display: none; } }
 
 .seg { display: inline-flex; align-items: center; height: 32px; padding: 2px; border-radius: 8px; background: var(--bg-3); flex: none; }
 .seg button { display: inline-flex; align-items: center; height: 28px; border: 0; background: transparent; padding: 0 11px; border-radius: 6px; font-size: 13px; color: var(--fg-2); white-space: nowrap; transition: background .12s, color .12s; }
@@ -1594,6 +1593,7 @@ select.picked { display: none; }
 .pick.chip .pv { flex: 0 1 auto; gap: 5px; }
 .pick.chip:hover, .pick.chip[aria-expanded="true"] { background: var(--bg-2); color: var(--fg); border-color: transparent; box-shadow: none; }
 .pick.chip.changed { color: var(--fg); background: var(--bg-2); border-color: var(--line); }
+.pick.chip.ro, .pick.chip.ro:hover { cursor: default; background: transparent; color: var(--fg-2); }
 .pick.chip .pc { width: 13px; height: 13px; }
 .pick.chip .pi { width: 15px; height: 15px; }
 .pick.chip .pi svg { width: 14px; height: 14px; }

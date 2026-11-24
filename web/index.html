@@ -259,7 +259,7 @@
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
         <div class="d-title">
           <div class="d-name"><span id="d-name"></span><span class="kind" id="d-kind"></span><span class="tag" id="d-worker" hidden></span></div>
-          <div class="d-meta"><span class="status" id="d-status"></span><span class="muted" id="d-model" hidden></span><span class="muted mono" id="d-cwd"></span></div>
+          <div class="d-meta"><span class="status" id="d-status"></span><span class="muted mono" id="d-cwd"></span></div>
         </div>
         <div class="seg" id="mode-seg">
           <button data-mode="chat">对话</button>
@@ -319,6 +319,11 @@
             <button type="button" class="icon-btn kbd-toggle" id="kbd-toggle" title="按键">
               <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>
             </button>
+            <div class="chips">
+            <span class="pick chip ro" id="p-kind" title="这个会话的 agent，换不了" hidden></span>
+            <select id="p-model" data-pick="chip" data-title="换这个会话的模型" hidden></select>
+            <select id="p-effort" data-pick="chip" data-title="换这个会话的思考强度" hidden></select>
+            </div>
             <span class="spacer"></span>
             <button class="send" type="submit" title="发送 (Enter)"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
           </div>

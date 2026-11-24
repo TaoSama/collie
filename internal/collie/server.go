@@ -119,6 +119,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("GET /api/panes/{id}/ask", wrap(s.paneAsk))
 	mux.Handle("POST /api/panes/{id}/text", wrap(s.sendText))
 	mux.Handle("POST /api/panes/{id}/keys", wrap(s.sendKeys))
+	mux.Handle("POST /api/panes/{id}/model", wrap(s.switchModel))
 	mux.Handle("POST /api/workspaces/{id}/close", wrap(s.closeWorkspace))
 	mux.Handle("POST /api/uploads", wrap(s.upload))
 	mux.Handle("GET /api/titles", wrap(s.getTitles))

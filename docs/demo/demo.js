@@ -618,6 +618,11 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     });
     if (p === "/api/pair/new") return json({ code: "DEMO2026", expires: new Date(Date.now() + 600000).toISOString(), kind: body.kind });
     if ((m = /^\/api\/panes\/([^/]+)\/ask$/.exec(p))) { const id = decodeURIComponent(m[1]); return json(approvals[id] && agents.find((a) => a.pane_id === id)?.status === "blocked" ? { asking: true, approval: approvals[id] } : { asking: false }); }
+    if ((m = /^\/api\/panes\/([^/]+)\/model$/.exec(p))) {
+      const a = agents.find((x) => x.pane_id === decodeURIComponent(m[1]));
+      if (a) a.run = [body.model || "", body.effort || ""];
+      return json({ ok: true });
+    }
     if ((m = /^\/api\/panes\/([^/]+)\/(keys|text)$/.exec(p))) {
       const id = decodeURIComponent(m[1]);
       if (approvals[id]) answerApproval(id); else if (m[2] === "text" && body.text) promptPane(id, body.text);

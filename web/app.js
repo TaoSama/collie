@@ -141,6 +141,7 @@
     b.querySelector(".pv").innerHTML = o ? optIcon(o) + `<span class="pt">${esc(o.dataset.short || o.textContent)}</span>` : "";
     b.disabled = sel.disabled;
     b.hidden = sel.hidden;
+    if (sel.title) b.title = sel.title;
   }
   function enhance(sel) {
     if (sel._pick || "native" in sel.dataset) return;
@@ -1705,6 +1706,8 @@
     }
     return modelInfo[key];
   }
+  // The levels a model offers, else the agent's.
+  const effortsOf = (info, m) => m?.efforts?.length ? m.efforts : (info.efforts || []);
   // Launcher aliases from each computer's shell rc file, as the hub last read them.
   let aliasInfo = null;
   function loadAliases(fresh) {
@@ -1799,7 +1802,7 @@
     if (mSel._html !== html) { mSel._html = html; mSel.innerHTML = html; }
     mSel.value = model;
     const cur = list.find((m) => m.id === model);
-    const effs = cur?.efforts?.length ? cur.efforts : (info.efforts || []);
+    const effs = effortsOf(info, cur);
     const eff = effs.includes(effort) ? effort : "";
     const defE = d.effort || info.default_effort || "";
     let ehtml = `<option value="" data-short="思考 · ${esc(EFFORT_LABEL[defE] || defE || "默认")}" data-sub="${esc(d.effort ? "派活默认" : "agent 自己的设置")}">默认（${esc(EFFORT_LABEL[defE] || defE || "agent 自己定")}）</option>`;
@@ -2255,7 +2258,7 @@
     delete modelSel.dataset.value;
     const fillEffort = () => {
       const m = list.find((x) => x.id === modelSel.value);
-      const effs = m?.efforts?.length ? m.efforts : (info.efforts || []);
+      const effs = effortsOf(info, m);
       const cur = effSel.dataset.value ?? effSel.value;
       effSel.innerHTML = `<option value="" data-sub="${esc(info.default_effort ? "现在是 " + (EFFORT_LABEL[info.default_effort] || info.default_effort) : "用 agent 自己的设置")}">默认</option>`
         + effs.map((e) => `<option value="${esc(e)}" data-sub="${esc(e)}" ${e === cur ? "selected" : ""}>${esc(EFFORT_LABEL[e] || e)}</option>`).join("");
@@ -3251,13 +3254,14 @@
 
   // A newer release: the footer says so, the devices page says where and how.
   const INSTALL = "curl -fsSL https://taosama.github.io/collie/install.sh | sh -s --";
-  const isOld = (have, latest) => {
-    const p = (v) => /^v\d+\.\d+\.\d+$/.test(v || "") ? v.slice(1).split(".").map(Number) : null;
-    const a = p(have), b = p(latest);
-    if (!a || !b) return false;
-    for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i];
-    return false;
+  // cmpVer orders dotted version numbers: <0, 0 or >0.
+  const cmpVer = (x, y) => {
+    const a = String(x).split(".").map(Number), b = String(y).split(".").map(Number);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0);
+    return 0;
   };
+  const RELEASE = /^v\d+\.\d+\.\d+$/;
+  const isOld = (have, latest) => RELEASE.test(have || "") && RELEASE.test(latest || "") && cmpVer(have.slice(1), latest.slice(1)) < 0;
   async function checkUpdates() {
     try {
       const r = await api("/api/version");
@@ -3616,41 +3620,110 @@
     const home = ms.find((m) => m.id === (v.machine || ""))?.home;
     const cwd = home && (v.cwd || "").startsWith(home) ? "~" + v.cwd.slice(home.length) : tilde(v.cwd);
     $("#d-cwd").textContent = (ms.length > 1 ? machineName(v.machine) + " · " : "") + cwd;
-    renderWorkerModel(v);
+    renderSessionChips(v);
     // The pane may have shown up before the page knew what it is (a fresh
     // terminal): once it does, switch to the view that fits.
     if (view === "pane" && $("#viewer").dataset.mode && $("#viewer").dataset.mode !== curMode()) { closeStream(); resetChat(); resetScreen(); openStream(); }
     $("#input").placeholder = v.name === ROUTER ? "直接在 Collie 的终端里输入…" : v.is_agent ? `给 ${KIND_LABEL[v.kind] || v.kind} 发消息…` : "输入命令…";
   }
 
-  // What model an agent was started with, recorded when Collie (the launcher
-  // or a spawn) started it. Agents started by hand elsewhere show nothing.
-  async function renderWorkerModel(v) {
-    const el = $("#d-model");
-    const w = !v.run && isWorker(v.name) ? sup.workers.find((x) => x.name === v.name && !x.ended) : null;
-    const run = v.run || w?.run;
-    const kind = v.run ? v.kind : shortKind(w?.kind);
-    const machine = v.run ? v.machine : w?.machine;
-    const key = run ? [v.pane_id, kind, machine, ...run].join("|") : "";
-    if (el._key === key) return;
-    el._key = key;
-    if (!key) { el.hidden = true; el.textContent = ""; return; }
-    let [model, effort] = run;
-    const own = !model;
-    const info = hubOf(v.pane_id) ? {} : await modelsFor(kind, machine || "").catch(() => ({}));
-    if (own) model = info.default || "";
-    if (el._key !== key) return;
-    // The model list's own name ("Gemini 4 Neon (XHigh)"), its bracket read
-    // as the thinking level when the id carries one, as Antigravity's do.
-    let name = (info.models || []).find((m) => m.id === model)?.label || shortModel(model);
-    const b = name.match(/^(.*\S)\s*\(([^)]+)\)$/);
-    if (b && EFFORT_LABEL[b[2].toLowerCase()]) { name = b[1]; effort ||= b[2].toLowerCase(); }
-    const parts = [model ? name + (own ? "（默认）" : "") : "默认模型"];
-    if (effort) parts.push("思考 " + (EFFORT_LABEL[effort] || effort));
-    el.textContent = parts.join(" · ");
-    el.title = `启动时用的模型：${model || "agent 自己的设置"}${effort ? "，思考强度 " + effort : ""}（之后在 agent 里换过的话这里不会变）`;
-    el.hidden = false;
+  // Every agent session shows its agent, model and thinking level under the
+  // input. The agent is fixed; Codex's and Antigravity's model and level
+  // change in place, by their own slash commands. Claude Code's would also
+  // become the default of every new session, so it only shows them. What a
+  // session was started with is known when Collie started it; otherwise the
+  // agent's configured default stands in.
+  const CODEX_INLINE_MODEL = "0.164"; // codex's /model takes a model and --reasoning from here on
+  const SWITCH_OK = new Set(["idle", "done", "unknown"]); // a command typed mid-turn would be read as a message
+  const VERSIONS_KEEP_MS = 10 * 60e3;
+  const agentVers = new Map(); // machine → { t, p: its agents' versions }
+  function agentVersions(machine) {
+    const have = sysm.get(machine)?.r?.versions;
+    if (have) return have;
+    const at = agentVers.get(machine);
+    if (at && Date.now() - at.t < VERSIONS_KEEP_MS) return at.p;
+    const p = api(`/api/sysmon?machine=${encodeURIComponent(machine)}&since=${Math.ceil(Date.now() / 1000)}`)
+      .then((r) => r.versions || {}, () => { agentVers.delete(machine); return {}; });
+    agentVers.set(machine, { t: Date.now(), p });
+    return p;
   }
+  // sess: what the chips show and for which pane; fixed says why they can't
+  // change whatever the agent is doing.
+  let sess = null, sessSeq = 0, sessBusy = false;
+  async function renderSessionChips(v) {
+    const kSel = $("#p-kind"), mSel = $("#p-model"), eSel = $("#p-effort");
+    const w = !v.run && isWorker(v.name) ? sup.workers.find((x) => x.name === v.name && !x.ended) : null;
+    const run = v.run || w?.run || ["", ""];
+    const kind = shortKind(v.kind), machine = v.machine || "", remote = !!hubOf(v.pane_id);
+    const show = v.is_agent && v.name !== ROUTER && AGENT_KINDS.some(([k]) => k === kind);
+    const key = show ? [v.pane_id, kind, machine, ...run].join("|") : "";
+    if (sess?.key === key) return lockSession();
+    const seq = ++sessSeq;
+    sess = { key };
+    kSel.hidden = mSel.hidden = eSel.hidden = !show;
+    mSel.disabled = eSel.disabled = true;
+    for (const s of [mSel, eSel]) syncPick(s);
+    if (!show) return;
+    kSel.innerHTML = `<span class="pv"><span class="pi">${GLYPHS[kind] || GLYPHS.agent}</span><span class="pt">${esc(KIND_LABEL[kind] || kind)}</span></span>`;
+    const [info, vers] = await Promise.all([remote ? {} : modelsFor(kind, machine), kind === "codex" && !remote ? agentVersions(machine) : {}]);
+    if (seq !== sessSeq) return;
+    const own = !run[0], model = run[0] || info.default || "", effort = run[1] || info.default_effort || "";
+    const list = [...(info.models || [])];
+    if (model && !list.some((m) => m.id === model)) list.unshift({ id: model });
+    const label = (m) => m.label && m.label.length <= 24 ? m.label : shortModel(m.id);
+    mSel.innerHTML = (model ? "" : `<option value="" data-short="默认模型" disabled>agent 自己的设置</option>`)
+      + list.map((m) => `<option value="${esc(m.id)}" data-short="${esc(label(m))}" data-sub="${esc([m.label && m.label !== m.id ? m.id : "", m.id === model && own ? "agent 自己的设置" : ""].filter(Boolean).join(" · "))}">${esc(m.label || m.id)}</option>`).join("");
+    const effs = effortsOf(info, list.find((m) => m.id === model));
+    const effOpt = (e, extra = "") => `<option value="${esc(e)}" data-short="思考 · ${esc(EFFORT_LABEL[e] || e || "默认")}" ${extra}>${esc(EFFORT_LABEL[e] || e || "agent 自己定")}</option>`;
+    eSel.innerHTML = (effs.includes(effort) ? "" : effOpt(effort, effort ? "" : "disabled")) + effs.map((e) => effOpt(e, `data-sub="${esc(e)}"`)).join("");
+    mSel.value = model; eSel.value = effort;
+    eSel.hidden = !effs.length;
+    sess = { key, pane: v.pane_id, kind, machine, model, effort: run[1], tip: own ? "agent 自己的设置" : run[0] + (run[1] ? "，思考 " + run[1] : ""),
+      fixed: kind === "claude" ? "Claude Code 在会话里换模型会顺带改掉以后所有新会话的默认，这里只显示"
+        : remote ? "另一个 hub 上的会话，到那边去换"
+        : !list.length ? "没读到这台电脑上这个 agent 的模型列表"
+        : kind === "codex" && cmpVer(vers.codex || "0", CODEX_INLINE_MODEL) < 0 ? `Codex ${CODEX_INLINE_MODEL} 起才能在会话里直接换，这台是 ${vers.codex || "未知版本"}` : "" };
+    lockSession();
+  }
+  // The chips change only while the agent rests and no switch is under way.
+  function lockSession() {
+    const mSel = $("#p-model"), eSel = $("#p-effort");
+    if (!sess?.pane) return;
+    const why = sess.fixed || (sessBusy ? "正在换…" : SWITCH_OK.has(find(sess.pane)?.status) ? "" : "agent 正在忙，停下来再换");
+    const title = why || `换这个会话的模型（启动时用的：${sess.tip}）`;
+    if (mSel.disabled === !!why && mSel.title === title) return;
+    mSel.disabled = eSel.disabled = !!why;
+    mSel.title = title;
+    eSel.title = why || "换这个会话的思考强度";
+    for (const s of [mSel, eSel]) syncPick(s);
+  }
+  async function switchSession(change) {
+    const s = sess;
+    if (!s?.pane || sessBusy) return;
+    const to = { model: change.model ?? s.model, effort: change.effort ?? s.effort };
+    // A new model may not have the old level; its own default then.
+    if (change.model && to.effort) {
+      const info = await modelsFor(s.kind, s.machine);
+      const effs = effortsOf(info, (info.models || []).find((m) => m.id === to.model));
+      if (effs.length && !effs.includes(to.effort)) to.effort = effs.includes(info.default_effort) ? info.default_effort : effs[0];
+    }
+    sessBusy = true; lockSession();
+    try {
+      await api(paneURL(s.pane, "model"), { body: { kind: s.kind, ...to, from: [s.model, s.effort || ""] } });
+      const v = find(s.pane);
+      if (v) v.run = [to.model, to.effort];
+      toast(`已在会话里切到 ${shortModel(to.model)}${to.effort ? " · 思考 " + (EFFORT_LABEL[to.effort] || to.effort) : ""}`);
+    } catch (err) {
+      toast(err.message, "attn");
+      if (sess === s) sess = { key: "" }; // show what it was again
+    } finally {
+      sessBusy = false;
+      const v = find(current);
+      if (v) renderSessionChips(v);
+    }
+  }
+  $("#p-model").addEventListener("change", (e) => switchSession({ model: e.target.value }));
+  $("#p-effort").addEventListener("change", (e) => switchSession({ effort: e.target.value }));
 
   // ───────────────────────────── one agent: streams
   let mode = store.get("mode2", "chat");
@@ -6005,7 +6078,7 @@
   function fillLaunchEfforts(info, want) {
     const eSel = $("#l-effort");
     const cur = (info.models || []).find((m) => m.id === $("#l-model").value);
-    const effs = cur?.efforts?.length ? cur.efforts : (info.efforts || []);
+    const effs = effortsOf(info, cur);
     const defE = info.default_effort || "";
     eSel.innerHTML = `<option value="" data-short="思考 · ${esc(EFFORT_LABEL[defE] || defE || "默认")}">默认（${esc(EFFORT_LABEL[defE] || defE || "agent 自己定")}）</option>` +
       effs.map((e) => `<option value="${esc(e)}" data-short="思考 · ${esc(EFFORT_LABEL[e] || e)}">${esc(EFFORT_LABEL[e] || e)}</option>`).join("");
