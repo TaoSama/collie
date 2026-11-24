@@ -30,7 +30,7 @@
   <form class="login-card" id="login-form">
     <img src="icon.svg" alt="" class="login-mark">
     <h1>Collie</h1>
-    <p class="muted">手机：扫 hub 终端里的二维码，或在已登录的设备上打开「设备 → 连接手机」。<br>也可以输入配对码或访问令牌。</p>
+    <p class="muted">手机：扫 hub 终端里的二维码，或在已登录的设备上打开「设备 → 连接」。<br>也可以输入配对码或访问令牌。</p>
     <input id="login-token" type="password" autocomplete="current-password" placeholder="配对码或访问令牌" required>
     <button class="btn primary block" type="submit">进入</button>
     <p class="login-error" id="login-error"></p>
@@ -200,6 +200,12 @@
         <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
         <div class="d-title"><div class="d-name">设备</div><div class="d-meta muted">这台 hub 管着哪些电脑，谁能连进来</div></div>
       </header>
+      <div class="tabs" id="dev-tabs">
+        <button data-tab="machines">电脑</button>
+        <button data-tab="browsers">手机和浏览器</button>
+        <button data-tab="hubs">其他 hub</button>
+        <button data-tab="connect">连接</button>
+      </div>
       <div class="auto-body" id="devices-body"></div>
     </section>
 

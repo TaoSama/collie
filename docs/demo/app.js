@@ -597,7 +597,7 @@
   function routeKeyFor(v, id) {
     if (v === "collie") return "collie";
     if (v === "auto") return "auto:" + autoTab;
-    if (v === "devices") return "devices";
+    if (v === "devices") return "devices:" + devTab;
     if (v === "prefs") return "prefs";
     if (v === "file") return "file:" + (id || "");
     if (v === "ext") return "ext:" + (id || "");
@@ -1886,18 +1886,26 @@
     await sendSuper(text, re, true);
   }, () => targetNow().machine);
 
+  // ───────────────────────────── tabs in a page
+  // Picking a tab keeps where the last one was scrolled and opens the new one
+  // where it was left; get/set hold which tab is open.
+  function bindTabs(bar, page, body, get, set, open) {
+    $(bar).addEventListener("click", (e) => {
+      const t = e.target.closest("button")?.dataset.tab;
+      if (!t || t === get()) return;
+      if (view === page) captureViewScroll(page, null, navCur);
+      set(t);
+      const saved = scrollByRoute.get(page + ":" + t) || null;
+      if (!saved) { markProgrammaticScroll(); $(body).scrollTop = 0; }
+      open(saved);
+    });
+  }
+  const markTab = (bar, cur) => $$(bar + " button").forEach((b) => b.classList.toggle("on", b.dataset.tab === cur));
+
   // ───────────────────────────── automation view
   let autoTab = store.get("autoTab", "inbox");
   let autoTimer;
-  $("#auto-tabs").addEventListener("click", (e) => {
-    const t = e.target.closest("button")?.dataset.tab;
-    if (!t) return;
-    if (view === "auto") captureViewScroll("auto", null, navCur);
-    autoTab = t; store.set("autoTab", t);
-    const saved = scrollByRoute.get("auto:" + autoTab) || null;
-    if (!saved) { markProgrammaticScroll(); $("#auto-body").scrollTop = 0; }
-    openAuto(saved);
-  });
+  bindTabs("#auto-tabs", "auto", "#auto-body", () => autoTab, (t) => { autoTab = t; store.set("autoTab", t); }, (saved) => openAuto(saved));
 
   // The follow-up line under 自动化 opens the open tasks (top of 记忆).
   $("#nav-auto-sub").addEventListener("click", () => {
@@ -1911,7 +1919,7 @@
   function openAuto(restore = null) {
     memEditing = false;
     $("#auto-body")._memSig = "";
-    $$("#auto-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === autoTab));
+    markTab("#auto-tabs", autoTab);
     if (restore) restoreSimpleScroll($("#auto-body"), restore);
     clearInterval(autoTimer);
     loadAuto(restore);
@@ -2997,7 +3005,14 @@
   let devAddr = store.get("pairAddr", "");
   let pairing = { browser: null, machine: null }; // {code, expires}
 
+  // The devices page by what you came for: the computers (and how they are
+  // doing), phones and browsers, other hubs, or connecting a new one.
+  let devTab = store.get("devTab", "machines");
+  bindTabs("#dev-tabs", "devices", "#devices-body", () => devTab, (t) => { devTab = t; store.set("devTab", t); }, (saved) => openDevices(saved));
+
   function openDevices(restore = null) {
+    if (!(devTab in DEV_VIEW)) devTab = "machines";
+    markTab("#dev-tabs", devTab);
     clearInterval(devTimer);
     if (restore) restoreSimpleScroll($("#devices-body"), restore);
     loadDevices(restore);
@@ -3193,30 +3208,46 @@
     return list.map((m) => machineCard(m, r.latest)).join("");
   }
 
-  async function loadDevices(restore = null) {
-    const body = $("#devices-body");
-    const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
-    let r;
-    try { r = await api("/api/devices"); } catch (err) { body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; return; }
-    if (view !== "devices") return;
-    const addrs = r.addresses || [];
-    if (!addrs.includes(devAddr)) devAddr = addrs[0] || location.origin;
-    const fresh = (k) => pairing[k] && pairing[k].expires - Date.now() > 15000;
-    if (!fresh("browser")) await newCode("browser").catch(() => {});
-    const pb = pairing.browser;
-    const phoneURL = pb ? `${devAddr}/?pair=${pb.code}` : "";
-    const pm = fresh("machine") ? pairing.machine : null;
-    const nodeCmd = pm ? `collie node --hub ${devAddr} --code ${pm.code}` : "";
-    const installCmd = pm ? `curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub ${devAddr} --code ${pm.code}` : "";
-    lastDevices = r;
-    if (Date.now() - sysmAt > 9000) pollSysmon(["", ...r.devices.filter((d) => d.kind === "machine" && d.online).map((d) => d.id)]);
-    const browsers = r.devices.filter((d) => d.kind !== "machine");
-    const addrSel = addrs.length > 1 ? `<label class="addr-pick">用这个地址<select id="dev-addr" data-pick="compact">${addrs.map((a) => `<option ${a === devAddr ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";
-    const keepOpen = (pickOpen && pickOpen.id === "dev-addr") || document.activeElement?.id === "dev-addr" || document.activeElement?.closest?.("#add-hub");
-    if (keepOpen) return; // don't redraw under an open select or a half-typed form
-    const typed = [...document.querySelectorAll("#add-hub input")].map((i) => i.value);
-
-    $("#devices-body").innerHTML = `
+  // What each tab shows, from /api/devices (the hubs tab needs none: other
+  // hubs are this browser's own list).
+  const DEV_VIEW = {
+    machines: (r) => `<div class="mc-list" id="dev-machines">${machineCards(r)}</div>`,
+    browsers: (r) => {
+      const browsers = r.devices.filter((d) => d.kind !== "machine");
+      return `
+      <div class="card"><ul class="rows">
+        ${browsers.length ? browsers.map((d) => `<li class="row dev-row">
+          <span class="dot unknown"></span>
+          <div><div class="meta"><b>${esc(d.name)}</b>${d.current ? '<span class="tag">当前</span>' : ""}<span>最近 ${when(d.last_seen)}</span></div></div>
+          <button class="btn ghost small" data-del-dev="${esc(d.id)}" data-name="${esc(d.name)}">移除</button></li>`).join("")
+        : `<li class="empty-row">还没有配对过的手机。用访问令牌登录的浏览器不在这里列出。</li>`}
+      </ul></div>`;
+    },
+    hubs: () => `
+      <div class="card"><p class="pair-hint">别的网络里的 Collie hub（云电脑、家里的电脑）。和这台 hub 不通也没关系：只要这个浏览器能打开它，它的会话就会出现在侧栏里。</p>
+        <ul class="rows">${hubs.map((h) => { const on = remote.get(h.key)?.online; return `<li class="row dev-row">
+          <span class="dot ${on ? "online" : "offline"}"></span>
+          <div><div class="meta"><b>${esc(h.name)}</b><span>${on ? "在线" : "连不上"}</span></div><div class="text mono">${esc(h.url)}</div></div>
+          <button class="btn ghost small" data-del-hub="${esc(h.key)}" data-name="${esc(h.name)}">移除</button></li>`; }).join("")}
+        </ul>
+        <form id="add-hub" class="hub-add">
+          <input name="link" required autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="粘贴那个 hub「设备 → 连接」里手机的链接">
+          <input name="name" autocomplete="off" placeholder="叫它什么（可选）">
+          <button class="btn primary small">添加</button>
+        </form>
+        <p class="pair-hint muted">那个 hub 也要是 v0.2.4 以后的版本。</p>
+      </div>`,
+    connect: (r) => {
+      const addrs = r.addresses || [];
+      if (!addrs.includes(devAddr)) devAddr = addrs[0] || location.origin;
+      const fresh = (k) => pairing[k] && pairing[k].expires - Date.now() > 15000;
+      const pb = pairing.browser;
+      const phoneURL = pb ? `${devAddr}/?pair=${pb.code}` : "";
+      const pm = fresh("machine") ? pairing.machine : null;
+      const nodeCmd = pm ? `collie node --hub ${devAddr} --code ${pm.code}` : "";
+      const installCmd = pm ? `curl -fsSL https://taosama.github.io/collie/install.sh | sh -s -- node --hub ${devAddr} --code ${pm.code}` : "";
+      const addrSel = addrs.length > 1 ? `<label class="addr-pick">用这个地址<select id="dev-addr" data-pick="compact">${addrs.map((a) => `<option ${a === devAddr ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";
+      return `
       <p class="panel-intro">Collie 适合放在一台常开的开发机上当 hub：手机、平板和浏览器只连 hub；你的 Mac 等电脑运行 <code>collie node</code> 主动连上来，hub 就能在上面开 agent、看对话、处理确认。不用开端口，也不需要 SSH。</p>
 
       <div class="pair-grid">
@@ -3238,32 +3269,32 @@
              : `<button class="btn primary small" id="new-node-code">生成连接命令</button>`}
           <p class="pair-hint muted">需要这台电脑能访问上面的地址（同一内网或 VPN）。</p>
         </div>
-      </div>
+      </div>`;
+    },
+  };
 
-      <div class="mc-sec"><div class="mc-sec-h">电脑</div><div class="mc-list" id="dev-machines">${machineCards(r)}</div></div>
-
-      <div class="card"><div class="card-h">其他 hub</div>
-        <p class="pair-hint">别的网络里的 Collie hub（云电脑、家里的电脑）。和这台 hub 不通也没关系：只要这个浏览器能打开它，它的会话就会出现在侧栏里。</p>
-        <ul class="rows">${hubs.map((h) => { const on = remote.get(h.key)?.online; return `<li class="row dev-row">
-          <span class="dot ${on ? "online" : "offline"}"></span>
-          <div><div class="meta"><b>${esc(h.name)}</b><span>${on ? "在线" : "连不上"}</span></div><div class="text mono">${esc(h.url)}</div></div>
-          <button class="btn ghost small" data-del-hub="${esc(h.key)}" data-name="${esc(h.name)}">移除</button></li>`; }).join("")}
-        </ul>
-        <form id="add-hub" class="hub-add">
-          <input name="link" required autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="粘贴那个 hub「设备 → 连接手机或平板」里的链接">
-          <input name="name" autocomplete="off" placeholder="叫它什么（可选）">
-          <button class="btn primary small">添加</button>
-        </form>
-        <p class="pair-hint muted">那个 hub 也要是 v0.2.4 以后的版本。</p>
-      </div>
-
-      <div class="card"><div class="card-h">手机和浏览器</div><ul class="rows">
-        ${browsers.length ? browsers.map((d) => `<li class="row dev-row">
-          <span class="dot unknown"></span>
-          <div><div class="meta"><b>${esc(d.name)}</b>${d.current ? '<span class="tag">当前</span>' : ""}<span>最近 ${when(d.last_seen)}</span></div></div>
-          <button class="btn ghost small" data-del-dev="${esc(d.id)}" data-name="${esc(d.name)}">移除</button></li>`).join("")
-        : `<li class="empty-row">还没有配对过的手机。用访问令牌登录的浏览器不在这里列出。</li>`}
-      </ul></div>`;
+  let devSeq = 0;
+  async function loadDevices(restore = null) {
+    const seq = ++devSeq, tab = devTab, body = $("#devices-body");
+    const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
+    let r = null;
+    try {
+      if (tab !== "hubs") r = await api("/api/devices");
+      const pb = pairing.browser;
+      if (tab === "connect" && !(pb && pb.expires - Date.now() > 15000)) await newCode("browser").catch(() => {});
+    } catch (err) {
+      if (seq === devSeq) body.innerHTML = body._html = `<p class="panel-intro">${esc(err.message)}</p>`;
+      return;
+    }
+    // An answer for a tab since left, or a page since closed, draws nothing.
+    if (seq !== devSeq || view !== "devices") return;
+    if (r) lastDevices = r;
+    if (tab === "machines" && Date.now() - sysmAt > 9000) pollSysmon(["", ...r.devices.filter((d) => d.kind === "machine" && d.online).map((d) => d.id)]);
+    const keepOpen = (pickOpen && pickOpen.id === "dev-addr") || document.activeElement?.id === "dev-addr" || document.activeElement?.closest?.("#add-hub");
+    if (keepOpen) return; // don't redraw under an open select or a half-typed form
+    const typed = [...document.querySelectorAll("#add-hub input")].map((i) => i.value);
+    const html = DEV_VIEW[tab](r);
+    if (body._html !== html) body.innerHTML = body._html = html;
     document.querySelectorAll("#add-hub input").forEach((i, n) => { i.value = typed[n] || ""; });
     if (restore) restoreSimpleScroll(body, restore);
     else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
@@ -3282,7 +3313,7 @@
     let u;
     try { u = new URL(f.link.value.trim()); } catch { toast("链接不对：要以 http:// 或 https:// 开头", "attn"); return; }
     const code = u.searchParams.get("pair");
-    if (!code) { toast("链接里没有配对码（?pair=…），在那个 hub 的「设备」页复制「连接手机或平板」下面的链接", "attn"); return; }
+    if (!code) { toast("链接里没有配对码（?pair=…），在那个 hub 的「设备 → 连接」里复制手机的链接", "attn"); return; }
     const url = (u.origin + u.pathname).replace(/\/+$/, "");
     if (url === location.origin) { toast("这就是当前这个 hub", "attn"); return; }
     if (location.protocol === "https:" && u.protocol === "http:") { toast("这个页面是 https，浏览器不让它连 http 的 hub", "attn"); return; }
