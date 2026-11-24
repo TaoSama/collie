@@ -14,6 +14,9 @@
   const narrowMQ = matchMedia("(max-width: 760px), (max-height: 500px) and (pointer: coarse)");
   const shortMQ = matchMedia("(max-height: 500px) and (pointer: coarse)");
   const narrow = () => narrowMQ.matches;
+  // A touch screen with no hover: a phone or tablet, where Enter in a message
+  // box makes a new line and the send button sends.
+  const touchMQ = matchMedia("(hover: none) and (pointer: coarse)");
   const AGENT_LABEL = { claude: "Claude Code", codex: "Codex", agy: "Antigravity" };
   // "上下文 12% · 120k / 1000k": how full a session's context window is. A
   // phone header drops the token counts (.ctx-n), the narrowest the label too.
@@ -6880,8 +6883,10 @@
     if (machine) bindFiles(form, machine);
     if (slashOf) input._slashPrefetch = bindSlash(input, slashOf);
     input.addEventListener("input", () => grow(input));
+    const hint = () => { input.enterKeyHint = touchMQ.matches ? "enter" : "send"; };
+    hint(); touchMQ.addEventListener("change", hint);
     input.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" || e.shiftKey || composing(e)) return;
+      if (e.key !== "Enter" || e.shiftKey || composing(e) || touchMQ.matches) return;
       const mod = e.metaKey || e.ctrlKey;
       // "mod": Enter makes a new line and ⌘/Ctrl+Enter sends.
       if (prefs.sendKey() === "mod" ? mod : !mod) { e.preventDefault(); form.requestSubmit(); }
