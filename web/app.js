@@ -194,6 +194,7 @@
   }
   function openPick(sel) {
     closePick();
+    closeAttach();
     pickOpen = sel;
     // A modal <dialog> sits in the top layer, above any z-index: the menu has
     // to live inside it to show.
@@ -3547,6 +3548,7 @@
   const typesRename = (r) => r.src === "pane" && r.kind === "claude";
   function openCtx(row, x, y) {
     closePick();
+    closeAttach();
     ctxRow = row;
     const unread = !!row.mark?.unread;
     const items = row.term ? [["close", "关闭", false]] : [
@@ -6901,6 +6903,97 @@
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, max) + "px";
   }
+  // The "+" menu of a message box.
+  const attachPop = document.createElement("div");
+  attachPop.className = "pick-pop ctx-menu attach-menu"; attachPop.hidden = true; attachPop.setAttribute("role", "menu");
+  attachPop.innerHTML = [
+    ["camera", "拍照", '<svg viewBox="0 0 24 24"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.5"/></svg>'],
+    ["photos", "上传照片", '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 15.5l-5-5-8.5 8.5"/></svg>'],
+    ["files", "上传文件", '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>'],
+  ].map(([act, label, icon]) => `<button type="button" class="po" role="menuitem" data-attach="${act}"><span class="pi">${icon}</span><span class="pl"><span>${label}</span></span></button>`).join("");
+  document.body.append(attachPop);
+  // A computer with no camera can't take a photo (a phone's file input asks the system).
+  const camItem = $('[data-attach="camera"]', attachPop);
+  const checkCamera = () => {
+    if (touchMQ.matches) { camItem.disabled = false; return; }
+    camItem.disabled = true;
+    navigator.mediaDevices?.enumerateDevices().then((ds) => { camItem.disabled = !ds.some((d) => d.kind === "videoinput"); }, () => {});
+  };
+  checkCamera();
+  navigator.mediaDevices?.addEventListener?.("devicechange", checkCamera);
+  touchMQ.addEventListener("change", checkCamera);
+  let attachOpen = null; // { btn, pickers }
+  function openAttach(btn, pickers) {
+    if (attachOpen?.btn === btn) { closeAttach(true); return; }
+    closeAttach();
+    closePick();
+    closeCtx();
+    attachOpen = { btn, pickers };
+    attachPop.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    const r = btn.getBoundingClientRect(), w = attachPop.offsetWidth, h = attachPop.offsetHeight;
+    attachPop.style.left = Math.min(Math.max(8, r.left), innerWidth - w - 8) + "px";
+    // above the box, or below the button when there is no room above it
+    attachPop.style.top = (r.top - h - 6 >= 8 ? r.top - h - 6 : Math.min(r.bottom + 6, innerHeight - h - 8)) + "px";
+    $(".po:not([disabled])", attachPop)?.focus({ preventScroll: true });
+  }
+  function closeAttach(refocus) {
+    if (!attachOpen) return;
+    const { btn } = attachOpen;
+    attachOpen = null;
+    attachPop.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    if (refocus) btn.focus({ preventScroll: true });
+  }
+  attachPop.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-attach]");
+    if (!b || !attachOpen) return;
+    const pick = attachOpen.pickers[b.dataset.attach];
+    closeAttach(true);
+    pick(); // still inside the tap: a file picker only opens from one
+  });
+  attachPop.addEventListener("keydown", (e) => {
+    const items = $$(".po:not([disabled])", attachPop), i = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
+    else if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); closeAttach(true); }
+  });
+  document.addEventListener("pointerdown", (e) => { if (attachOpen && !attachPop.contains(e.target) && !attachOpen.btn.contains(e.target)) closeAttach(); });
+  addEventListener("resize", () => closeAttach());
+  document.addEventListener("scroll", (e) => { if (attachOpen && !attachPop.contains(e.target)) closeAttach(); }, true);
+  // A photo from a computer's camera: its picture live, 拍照 keeps a frame.
+  const camDlg = $("#cam"), camVideo = $("#cam video");
+  let camDone = null;
+  async function takePhoto() {
+    if (camDone) return null;
+    let stream;
+    camDone = () => {};
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (err) {
+      camDone = null;
+      toast(err.name === "NotAllowedError" ? "浏览器没允许使用摄像头" : "打不开摄像头：" + err.message, "attn");
+      return null;
+    }
+    try {
+      camVideo.srcObject = stream;
+      const shot = await new Promise((done) => { camDone = done; camDlg.showModal(); });
+      return shot && new File([shot], "照片.jpg", { type: "image/jpeg" });
+    } finally {
+      camDone = null;
+      stream.getTracks().forEach((t) => t.stop());
+      camVideo.srcObject = null;
+    }
+  }
+  camDlg.addEventListener("close", () => camDone?.(null));
+  $('[data-cam="cancel"]', camDlg).addEventListener("click", () => camDlg.close());
+  $('[data-cam="shoot"]', camDlg).addEventListener("click", () => {
+    if (!camVideo.videoWidth) return; // no picture yet
+    const c = document.createElement("canvas");
+    c.width = camVideo.videoWidth; c.height = camVideo.videoHeight;
+    c.getContext("2d").drawImage(camVideo, 0, 0);
+    c.toBlob((b) => { const done = camDone; camDone = null; done?.(b); camDlg.close(); }, "image/jpeg", 0.92);
+  });
+
   // Files go to the machine where the agent runs, then their paths ride
   // along in the message (agents read images and files by path).
   const RETRY_SVG = `<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>`;
@@ -6946,7 +7039,22 @@
       }
       draw();
     };
-    $(".attach", form).addEventListener("click", () => picker.click());
+    // "+" opens a menu: a photo taken now, pictures from the gallery, any file.
+    const input = (accept, capture) => {
+      const i = Object.assign(document.createElement("input"), { type: "file", hidden: true, accept, multiple: !capture });
+      if (capture) i.setAttribute("capture", capture);
+      i.addEventListener("change", () => { add([...i.files]); i.value = ""; });
+      form.append(i);
+      return i;
+    };
+    const camera = input("image/*", "environment"), photos = input("image/*");
+    const pickers = {
+      // a phone's camera comes from the file input; a computer's from the page
+      camera: () => touchMQ.matches ? camera.click() : takePhoto().then((f) => f && add([f]), (err) => toast("打不开摄像头：" + err.message, "attn")),
+      photos: () => photos.click(),
+      files: () => picker.click(),
+    };
+    $(".attach", form).addEventListener("click", (e) => openAttach(e.currentTarget, pickers));
     picker.addEventListener("change", () => { add([...picker.files]); picker.value = ""; });
     // A picture opens in the preview, where it can be edited: the edited one
     // takes its place (and is uploaded in its place), its source and edits

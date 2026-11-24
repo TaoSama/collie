@@ -1507,6 +1507,7 @@ dialog.imgedit::backdrop { background: #000; }
 .ie-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; }
 .ie-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 .ie-stage canvas.marking { cursor: crosshair; }
+.cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .ie-stage .lb-status { position: relative; }
 .ie-tools {
   flex: none; display: flex; flex-direction: column; gap: 12px;
@@ -1826,6 +1827,9 @@ select.picked { display: none; }
 .ctx-menu .po.danger, .ctx-menu .po.danger .pi { color: var(--attn); }
 .ctx-menu .pi svg { fill: none; stroke: currentColor; stroke-width: calc(1.7 * var(--stroke)); stroke-linecap: round; stroke-linejoin: round; }
 .ctx-menu .po .ck { display: none; }
+.attach-menu { min-width: 168px; }
+.attach-menu .po { gap: 10px; padding: 8px 10px; }
+@media (pointer: coarse) { .attach-menu .po { padding: 12px 12px; font-size: calc(var(--fs-lead) - 0.5px); } .attach-menu .pi, .attach-menu .pi svg { width: 18px; height: 18px; } }
 /* holding a session opens its menu, not the system's link preview */
 .item[data-row] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 @keyframes pick-up { from { transform: translateY(24px); opacity: 0; } }
