@@ -246,8 +246,17 @@ func (s *Server) externalSessions() []*External {
 		}
 		list = append(list, e)
 	}
-	// The desktop apps' conversations, running or resting (desktop.go).
+	// The desktop apps' conversations, running or resting (desktop.go),
+	// less those listed already: here, or running in a herdr pane (a Codex
+	// in herdr on the shared daemon shows in the App too).
 	listed := map[string]bool{}
+	if s.herdr != nil {
+		for _, pane := range s.titlesFor("", context.Background()) {
+			if pane.Session != "" {
+				listed[pane.Session] = true
+			}
+		}
+	}
 	for _, e := range list {
 		e.CanTakeOver = e.Session != ""
 		if e.Session != "" {

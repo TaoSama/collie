@@ -342,7 +342,7 @@ func (s *Server) codexAppRows() []desktopRow {
 		return nil
 	}
 	defer db.Close()
-	q := `SELECT id, COALESCE(NULLIF(name,''), NULLIF(title,''), first_user_message), cwd, rollout_path,
+	q := `SELECT id, COALESCE(NULLIF(name,''), NULLIF(title,''), first_user_message), COALESCE(first_user_message, ''), cwd, rollout_path,
 		COALESCE(created_at_ms, created_at*1000), COALESCE(updated_at_ms, updated_at*1000), COALESCE(originator, '')
 		FROM threads WHERE archived = 0 AND source = 'vscode' AND updated_at > ? ORDER BY updated_at DESC LIMIT ?`
 	res, err := db.Query(q, time.Now().Add(-desktopWindow).Unix(), desktopMax)
@@ -352,9 +352,14 @@ func (s *Server) codexAppRows() []desktopRow {
 	defer res.Close()
 	var rows []desktopRow
 	for res.Next() {
-		var id, title, cwd, rollout, originator string
+		var id, title, first, cwd, rollout, originator string
 		var created, updated int64
-		if res.Scan(&id, &title, &cwd, &rollout, &created, &updated, &originator) != nil {
+		if res.Scan(&id, &title, &first, &cwd, &rollout, &created, &updated, &originator) != nil {
+			continue
+		}
+		// A Collie worker's thread, named by Codex after its task: listed
+		// as Collie's, not as the App's.
+		if collieSession(first) {
 			continue
 		}
 		app := codexClient(originator, cwd)
