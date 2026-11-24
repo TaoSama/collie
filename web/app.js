@@ -1388,11 +1388,11 @@
     $("#router-kind").textContent = KIND_LABEL[r.kind] || r.kind || "";
     // Where it runs, once there is more than one computer to run on.
     const where = $("#router-where"), on = (state.machines || []).length > 1 ? machineName(r.machine) : "";
-    const whereText = [on && "在 " + on, r.alias && "alias " + r.alias].filter(Boolean).join(" · ");
+    const tags = [on, r.alias && "alias " + r.alias].filter(Boolean), whereText = tags.join("|");
     if (where._key !== whereText) {
       where._key = whereText;
       where.hidden = !whereText;
-      where.textContent = whereText;
+      where.innerHTML = tags.map((t) => `<span class="kind">${esc(t)}</span>`).join("");
       where.title = whereText ? `Collie 自己${[on && "跑在 " + on + " 上", r.alias && "用 alias " + r.alias + " 启动"].filter(Boolean).join("，")}（自动化 → 设置 → Collie 自己）` : "";
     }
     const st = $("#router-status");
