@@ -168,7 +168,7 @@ func (s *Server) claudeModels(info *ModelInfo) {
 	}
 	// Aliases first, showing what each points to when a gateway remaps them.
 	for _, a := range []struct{ id, env string }{{"opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"}, {"haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}} {
-		add(ModelOpt{ID: a.id, Label: strings.Title(a.id), Note: cfg.env(a.env)})
+		add(ModelOpt{ID: a.id, Label: aliasLabel(a.id), Note: cfg.env(a.env)})
 	}
 	// A gateway declares its models and what they support:
 	// "model=effort,xhigh_effort,max_effort;other=effort".
@@ -195,7 +195,18 @@ func (s *Server) claudeModels(info *ModelInfo) {
 	for _, o := range gw {
 		add(o)
 	}
-	add(ModelOpt{ID: cfg.Model})
+	add(ModelOpt{ID: cfg.Model, Label: aliasLabel(cfg.Model)})
+}
+
+var bareAlias = regexp.MustCompile(`^[a-z]+$`)
+
+// aliasLabel names a bare model alias ("fable") the way the built-in ones are
+// named; a full model id is shown as it is.
+func aliasLabel(id string) string {
+	if !bareAlias.MatchString(id) {
+		return ""
+	}
+	return strings.ToUpper(id[:1]) + id[1:]
 }
 
 func (s *Server) codexModels(ctx context.Context, info *ModelInfo) {

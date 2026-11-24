@@ -1560,6 +1560,13 @@ select.picked { display: none; }
 .pick .pi, .pick-pop .pi { width: 16px; height: 16px; display: grid; place-items: center; flex: none; color: var(--fg-2); }
 .pick .pi svg, .pick-pop .pi svg { width: 15px; height: 15px; }
 .pick:disabled { opacity: .5; cursor: default; }
+.pick.editing { display: none; }
+.pick-input {
+  width: 100%; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--fg-2); border-radius: 8px;
+  background: var(--bg); color: var(--fg); font: 13px var(--mono); outline: none;
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.pick-input::placeholder { color: var(--fg-3); font-family: var(--sans); }
 /* the quiet chip in the composer bar */
 .pick.chip { display: inline-flex; width: auto; height: 28px; max-width: 42vw; gap: 3px; padding: 0 6px 0 8px; border-color: transparent; border-radius: 999px; background: transparent; color: var(--fg-2); font-size: 12.5px; }
 .pick.chip .pv { flex: 0 1 auto; gap: 5px; }

@@ -36,6 +36,10 @@
     shell: '<svg viewBox="0 0 32 32"><rect x="4" y="6" width="24" height="20" rx="3"/><path d="M9 13l4 3-4 3M15 20h7"/></svg>',
     collie: '<img src="icon.svg" alt="" style="width:20px;height:20px">',
   };
+  // The agents Collie starts, as the pickers name them; settings call agy
+  // "antigravity".
+  const AGENT_KINDS = [["claude", "Claude"], ["codex", "Codex"], ["agy", "Antigravity"]];
+  const shortKind = (k) => (k === "antigravity" ? "agy" : k || "");
   const KIND_LABEL = { claude: "claude", codex: "codex", agy: "antigravity", antigravity: "antigravity" };
   const STATUS_LABEL = {
     idle: "空闲", working: "工作中", waiting: "在等后台任务", blocked: "等你确认", done: "已完成", unknown: "运行中", shell: "终端",
@@ -826,7 +830,7 @@
     if (el._key === key) return;
     el._key = key;
     let model = r.model;
-    if (!model && r.kind) model = (await modelsFor(r.kind === "antigravity" ? "agy" : r.kind, "")).default || "";
+    if (!model && r.kind) model = (await modelsFor(shortKind(r.kind), "")).default || "";
     if (el._key !== key) return;
     const parts = [];
     if (model) parts.push(esc(model.split("/").pop()) + (r.model ? "" : "（默认）"));
@@ -1720,7 +1724,7 @@
     if (!targetDefault || fresh) {
       try {
         const s = (await api("/api/super/settings")).settings;
-        targetDefault = { machine: s.worker_machine || "", kind: s.worker_kind === "antigravity" ? "agy" : s.worker_kind || "claude", model: s.worker_model || "", effort: s.worker_effort || "" };
+        targetDefault = { machine: s.worker_machine || "", kind: shortKind(s.worker_kind) || "claude", model: s.worker_model || "", effort: s.worker_effort || "" };
       } catch { targetDefault ||= { machine: "", kind: "claude", model: "", effort: "" }; }
     }
     // What was picked here over the defaults: picking only an agent leaves the
@@ -1732,7 +1736,7 @@
     fill(mSel, ms.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}"
       data-sub="${m.local ? "hub" : m.os || ""}${m.id === targetDefault.machine ? " · 默认" : ""}" ${m.id === t.machine ? "selected" : ""}>${esc(m.name)}</option>`).join(""));
     const have = ms.find((m) => m.id === t.machine)?.agents;
-    fill(kSel, [["claude", "Claude"], ["codex", "Codex"], ["agy", "Antigravity"]].map(([k, l]) => {
+    fill(kSel, AGENT_KINDS.map(([k, l]) => {
       const missing = Array.isArray(have) && !have.includes(k);
       const sub = [missing ? "这台电脑没装" : "", k === targetDefault.kind ? "默认" : ""].filter(Boolean).join(" · ");
       return `<option value="${k}" data-glyph="${k}" data-short="${KIND_LABEL[k]}" ${sub ? `data-sub="${sub}"` : ""} ${missing && k !== t.kind ? "disabled" : ""} ${k === t.kind ? "selected" : ""}>${l}</option>`;
@@ -2211,14 +2215,43 @@
       effSel.disabled = effs.length === 0;
     };
     fillEffort();
-    modelSel.onchange = () => {
-      if (modelSel.value === "__custom") {
-        const v = (prompt("模型名（照 agent 的 --model 参数写）") || "").trim();
-        if (v) modelSel.add(new Option(v, v, true, true), 1);
-        else modelSel.value = "";
-      }
-      fillEffort();
+    let prev = modelSel.value;
+    const onchange = modelSel.onchange = () => {
+      if (modelSel.value !== "__custom") { prev = modelSel.value; fillEffort(); return; }
+      modelSel.value = prev;
+      customModel(modelSel, (v) => {
+        // The list may have been refilled (agent or computer changed) meanwhile.
+        if (!v || modelSel.onchange !== onchange) return;
+        if (![...modelSel.options].some((o) => o.value === v)) modelSel.add(new Option(v, v), 1);
+        modelSel.value = prev = v;
+        syncPick(modelSel);
+        fillEffort();
+      });
     };
+  }
+  // A model name typed in place of the picker, styled like it: Enter keeps
+  // it, Esc or leaving it empty goes back to the list.
+  function customModel(sel, done) {
+    const b = sel._pick, input = document.createElement("input");
+    input.className = "pick-input";
+    input.placeholder = "模型名，照 --model 参数写";
+    input.autocomplete = "off"; input.spellcheck = false;
+    input.setAttribute("autocapitalize", "off");
+    b.classList.add("editing");
+    b.after(input);
+    input.focus();
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== "Escape") return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === "Escape") input.value = "";
+      input.blur();
+    });
+    input.addEventListener("blur", () => {
+      input.remove();
+      b.classList.remove("editing");
+      done(input.value.trim());
+      b.focus({ preventScroll: true });
+    });
   }
   const formMachine = (form, who) => (form[who + "_machine"] ? form[who + "_machine"].value : "");
   async function fillAliases(form, who) {
@@ -2582,7 +2615,7 @@
   let extAll = store.get("extAll", false);
   let sideBy = store.get("sideBy", "status"), sideOnly = store.get("sideOnly", "all");
   if (!["status", "machine", "repo", "project"].includes(sideBy)) sideBy = "status";
-  if (!["all", "done", "term"].includes(sideOnly)) sideOnly = "all";
+  if (!["all", "done", "term", ...AGENT_KINDS.map(([k]) => k)].includes(sideOnly)) sideOnly = "all";
   const sideFold = store.get("sideFold", {});
   const EXT_STATE = { working: "在干活", waiting: "在等后台任务", idle: "开着，在等你", blocked: "等电脑那边确认" };
   const RANK = { working: 0, waiting: 0.5, starting: 1, blocked: 2, done: 3, unknown: 4, idle: 4 };
@@ -2614,7 +2647,7 @@
     const pane = (a, term) => {
       const rank = RANK[a.status] ?? 3;
       const bucket = term ? "term" : a.status === "blocked" ? "attn" : a.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
-      return { id: a.pane_id, src: "pane", html: itemHTML(a), bucket, rank, t: 0, machine: a.machine || "", cwd: a.cwd, ws: a.workspace_id, wsLabel: a.workspace_label };
+      return { id: a.pane_id, src: "pane", html: itemHTML(a), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd, ws: a.workspace_id, wsLabel: a.workspace_label };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -2628,11 +2661,11 @@
       ...state.agents.filter((a) => a.name !== ROUTER || a.status === "blocked").map((a) => pane(a, false)),
       ...state.shells.map((a) => pane(a, true)),
       ...ext.filter((e) => !readOnlyHidden(e)).map((e) => ({
-        id: e.id, src: "ext", html: extRow(e), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
+        id: e.id, src: "ext", html: extRow(e), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
         t: new Date(e.updated || e.started), machine: machineOf(e), cwd: e.cwd, ws: "", wsLabel: "",
       })),
       ...hist.filter((h) => !collieRan(h.name)).map((h) => ({
-        id: "h:" + h.id, src: "hist", html: histRow(h), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine: machineOf(h), cwd: h.cwd, ws: "", wsLabel: "",
+        id: "h:" + h.id, src: "hist", html: histRow(h), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine: machineOf(h), cwd: h.cwd, ws: "", wsLabel: "",
       })),
     ];
   }
@@ -2667,10 +2700,15 @@
   }
   function renderSessions() {
     const all = sideRows();
-    const n = { done: all.filter((r) => r.bucket === "done").length, term: all.filter((r) => r.bucket === "term").length };
+    // A filter is a bucket or an agent; their names don't overlap.
+    const only = (r, v) => r.bucket === v || r.kind === v;
+    const n = {};
+    for (const r of all) for (const v of [r.bucket, r.kind]) if (v) n[v] = (n[v] || 0) + 1;
     // A filter never hides what needs you.
-    const rows = sideOnly === "all" ? all : all.filter((r) => r.bucket === sideOnly || r.bucket === "attn");
-    const chips = [["all", "全部", 0], ["done", "完成未看", n.done], ["term", "终端", n.term]].filter(([v, , c]) => v === "all" || c || v === sideOnly);
+    const rows = sideOnly === "all" ? all : all.filter((r) => only(r, sideOnly) || r.bucket === "attn");
+    const chips = [["all", "全部"], ...AGENT_KINDS, ["done", "完成未看"], ["term", "终端"]]
+      .map(([v, label]) => [v, label, v === "all" ? 0 : n[v] || 0])
+      .filter(([v, , c]) => v === "all" || c || v === sideOnly);
     const chipsHTML = chips.length < 2 ? "" : chips.map(([v, label, c]) =>
       `<button type="button" data-only="${v}" class="${v === sideOnly ? "on" : ""}">${label}${v === "all" ? "" : ` <span class="k">${c}</span>`}</button>`).join("");
 
@@ -2694,7 +2732,7 @@
     // 进行中 is always there when nothing runs, to say how to start one.
     const groups = sideGroups(rows).filter((g) => g.rows.length || (g.key === "going" && sideOnly === "all"
       && !rows.some((r) => ["done", "going", "idle"].includes(r.bucket))));
-    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${{ done: "没有完成未看的会话。", term: "没有开着的终端。" }[sideOnly] || "没有会话。"}</p>`;
+    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${{ all: "没有会话。", done: "没有完成未看的会话。", term: "没有开着的终端。" }[sideOnly] ?? "没有这个 agent 的会话。"}</p>`;
     const box = $("#side-groups"), bar = $("#side-only");
     if (box._html !== html) box.innerHTML = box._html = html;
     if (bar._html !== chipsHTML) bar.innerHTML = bar._html = chipsHTML;
@@ -3177,7 +3215,7 @@
     const el = $("#d-model");
     const w = !v.run && isWorker(v.name) ? sup.workers.find((x) => x.name === v.name && !x.ended) : null;
     const run = v.run || w?.run;
-    const kind = v.run ? v.kind : w?.kind === "antigravity" ? "agy" : w?.kind;
+    const kind = v.run ? v.kind : shortKind(w?.kind);
     const machine = v.run ? v.machine : w?.machine;
     const key = run ? [v.pane_id, kind, machine, ...run].join("|") : "";
     if (el._key === key) return;
@@ -5582,7 +5620,7 @@
   function markKinds() {
     const have = (state.machines || []).find((m) => m.id === pickMachine)?.agents;
     for (const r of $$("input[name=kind]")) {
-      const k = r.value === "antigravity" ? "agy" : r.value;
+      const k = shortKind(r.value);
       const card = r.closest(".kind-card"), small = card.querySelector("small");
       small.dataset.cmd ||= small.textContent;
       const missing = Array.isArray(have) && k in AGENT_LABEL && !have.includes(k);
