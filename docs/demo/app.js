@@ -10,6 +10,9 @@
   };
   const narrow = () => matchMedia("(max-width: 760px)").matches;
   const AGENT_LABEL = { claude: "Claude Code", codex: "Codex", agy: "Antigravity" };
+  // "上下文 12% · 120k / 1000k": how full a session's context window is.
+  const fmtTokens = (n) => Math.round(n / 1000) + "k";
+  const ctxText = (pct, used, window) => `上下文 ${pct}%` + (used && window ? ` · ${fmtTokens(used)} / ${fmtTokens(window)}` : "");
   // An Enter or Escape that belongs to the input method, not the page.
   const composing = (e) => e.isComposing || e.keyCode === 229;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -834,14 +837,18 @@
     const key = [r.kind, r.model, r.effort, r.pending, r.machine, r.alias].join("|");
     if (el._key === key) return;
     el._key = key;
-    let model = r.model;
-    if (!model && r.kind) model = (await modelsFor(shortKind(r.kind), r.machine || "")).default || "";
+    let model = r.model, effort = r.effort;
+    if ((!model || !effort) && r.kind) {
+      const info = await modelsFor(shortKind(r.kind), r.machine || "");
+      model ||= info.default || "";
+      effort ||= info.default_effort || "";
+    }
     if (el._key !== key) return;
     const parts = [];
     if (model) parts.push(esc(shortModel(model)) + (r.model ? "" : "（默认）"));
-    if (r.effort) parts.push("思考 " + esc(EFFORT_LABEL[r.effort] || r.effort));
+    if (effort) parts.push("思考 " + esc(EFFORT_LABEL[effort] || effort) + (r.effort ? "" : "（默认）"));
     el.innerHTML = parts.join(" · ") + (r.pending ? ` <button type="button" class="pending" data-act="router-restart" title="Collie 的模型设置改过了，点这里重启 Collie">重启后生效</button>` : "");
-    el.title = `Collie 自己用的模型${model ? "：" + model : ""}${r.effort ? "，思考强度 " + r.effort : ""}（自动化 → 设置 → Collie 自己）`;
+    el.title = `Collie 自己用的模型${model ? "：" + model : ""}${effort ? "，思考强度 " + effort : ""}（自动化 → 设置 → Collie 自己）`;
   }
   // A worker's comings and goings: its spawn line shows where it stands, and
   // a dialog waiting on the human shows as a card below. Reports and errors stay.
@@ -1412,7 +1419,7 @@
     wk.hidden = !busy;
     $("#router-queue").textContent = sup.paused ? "已暂停投递" : routerQueued() ? `${routerQueued()} 条事件排队中` : "";
     const cx = $("#router-ctx");
-    cx.textContent = r.handover ? "正在交接记忆…" : r.alive && r.context ? `上下文 ${r.context}%` : "";
+    cx.textContent = r.handover ? "正在交接记忆…" : r.alive && r.context ? ctxText(r.context, r.used, r.window) : "";
     cx.classList.toggle("warn", !!r.handover || (r.rotate_at > 0 && r.context >= r.rotate_at - 10));
     cx.title = r.rotate_at > 0 ? `用到 ${r.rotate_at}% 时，Collie 会把要记住的事写进 memory/，然后换一个新会话` : "自动换会话已关闭（自动化 → 设置）";
     renderRouterModel(r);
@@ -3655,6 +3662,8 @@
   }
 
   // ───────────────────────────── one agent: header
+  // CTX_WARN_PCT: a session this full is close to compacting.
+  const CTX_WARN_PCT = 80;
   function renderHead() {
     const v = find(current);
     if (!v) return;
@@ -3674,6 +3683,9 @@
     const home = ms.find((m) => m.id === (v.machine || ""))?.home;
     const cwd = home && (v.cwd || "").startsWith(home) ? "~" + v.cwd.slice(home.length) : tilde(v.cwd);
     $("#d-cwd").textContent = (ms.length > 1 ? machineName(v.machine) + " · " : "") + cwd;
+    const u = v.context, pct = u?.window ? Math.floor(u.used * 100 / u.window) : 0;
+    $("#d-ctx").textContent = pct ? ctxText(pct, u.used, u.window) : "";
+    $("#d-ctx").classList.toggle("warn", pct >= CTX_WARN_PCT);
     renderSessionChips(v);
     // The pane may have shown up before the page knew what it is (a fresh
     // terminal): once it does, switch to the view that fits.

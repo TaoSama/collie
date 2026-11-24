@@ -124,6 +124,8 @@ type paneSession struct {
 	// Ran: the model and effort its latest reply used, from its own log. It
 	// beats Run: the agent may have been started elsewhere, or switched since.
 	Ran *[2]string `json:"ran,omitempty"`
+	// Context: how full its context window is, from the same log.
+	Context *ctxUsage `json:"context,omitempty"`
 }
 
 // localSessions maps this machine's agent panes (local ids) to their sessions.
@@ -177,35 +179,48 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 			t = cleanTitle(tt)
 		}
 		run, _ := s.herdr.Run(local)
-		var ran *[2]string
-		if kind == "claude" && sess != "" {
-			ran = s.claudeRan(sess)
+		ps := paneSession{Title: t, Session: sess, Run: run}
+		if (kind == "claude" || kind == "codex") && sess != "" {
+			if u := s.sessionUsage(kind, sess); u != nil {
+				if u.Model != "" {
+					ps.Ran = &[2]string{u.Model, u.Effort}
+				}
+				if u.Used > 0 {
+					ps.Context = &ctxUsage{Used: u.Used, Window: u.Window}
+				}
+			}
 		}
-		if t != "" || sess != "" || run != nil || ran != nil {
-			out[local] = paneSession{Title: t, Session: sess, Run: run, Ran: ran}
+		if t != "" || sess != "" || run != nil || ps.Context != nil {
+			out[local] = ps
 		}
 	}
 	return out
 }
 
-// claudeLogs remembers where each session's log is, so the titles refresh
-// doesn't search every project folder for it again every few seconds.
-var claudeLogs sync.Map
+// sessionLogs remembers where each session's log is, so the titles refresh
+// doesn't search for it again every few seconds.
+var sessionLogs sync.Map
 
-// claudeRan is the model and effort a Claude session's latest reply used.
-func (s *Server) claudeRan(session string) *[2]string {
-	known, _ := claudeLogs.Load(session)
+// sessionUsage is how full a Claude or Codex session's context is, and for
+// Claude the model and effort its latest reply used.
+func (s *Server) sessionUsage(kind, session string) *ctxUsage {
+	key := kind + "\x00" + session
+	known, _ := sessionLogs.Load(key)
 	path, _ := known.(string)
 	if !isFile(path) {
-		if path, _ = s.findTranscript("claude", "", session, "", ""); path == "" {
+		if path, _ = s.findTranscript(kind, "", session, "", ""); path == "" {
 			return nil
 		}
-		claudeLogs.Store(session, path)
+		sessionLogs.Store(key, path)
 	}
-	if r := contextUsage(path, "claude", 0).ran; r[0] != "" {
-		return &r
+	u := contextUsage(path, kind, 0)
+	if kind == "claude" {
+		u.Window = s.claudeWindowFor(u.Model)
 	}
-	return nil
+	if u.Used == 0 && u.Model == "" {
+		return nil
+	}
+	return &u
 }
 
 func (s *Server) getTitles(w http.ResponseWriter, r *http.Request) {

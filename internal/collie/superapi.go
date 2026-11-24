@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -61,6 +62,8 @@ type routerView struct {
 	Kind   string `json:"kind"`
 	// How full its context is (percent), and when it rotates to a fresh session.
 	Context  int  `json:"context,omitempty"`
+	Used     int  `json:"used,omitempty"`   // tokens in its window now
+	Window   int  `json:"window,omitempty"` // of how many
 	RotateAt int  `json:"rotate_at"`
 	Handover bool `json:"handover,omitempty"`
 	Dreaming bool `json:"dreaming,omitempty"`
@@ -118,7 +121,9 @@ func (s *Server) superState(ctx context.Context) superView {
 	} else if sp.routerLaunching {
 		v.Router.Status = "starting"
 	}
-	v.Router.Context, v.Router.RotateAt, v.Router.Handover = sp.routerUsage.Pct(), sp.rotateAtLocked(), sp.handover != nil
+	u := sp.routerUsage
+	v.Router.Context, v.Router.Used, v.Router.Window = u.Pct(), u.Used, u.Window
+	v.Router.RotateAt, v.Router.Handover = sp.rotateAtLocked(), sp.handover != nil
 	v.Router.Dreaming = sp.dream != nil
 	st := sp.st.Settings
 	v.Router.Model, v.Router.Effort = st.RouterModel, st.RouterEffort
@@ -129,6 +134,11 @@ func (s *Server) superState(ctx context.Context) superView {
 		if run := sp.routerRunLocked(); run != nil {
 			v.Router.Model, v.Router.Effort = run[0], run[1]
 			v.Router.Pending = *run != [2]string{st.RouterModel, st.RouterEffort} || kinds[v.Router.Kind] != kinds[st.RouterKind] || l != routerLaunch{Machine: st.RouterMachine, Alias: st.RouterAlias}
+		}
+		// What its latest reply used, when it says: an alias or the agent's
+		// own default may pick what the settings leave open.
+		if u.Model != "" {
+			v.Router.Model, v.Router.Effort = u.Model, cmp.Or(u.Effort, v.Router.Effort)
 		}
 	}
 	if sp.dream != nil {

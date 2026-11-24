@@ -1673,7 +1673,7 @@ select.picked { display: none; }
 .detail:not(.chat-mode) .cbar .spacer { display: none; }
 
 /* Collie's context gauge in its header */
-#router-ctx.warn { color: var(--attn, #b7791f); }
+#router-ctx.warn, #d-ctx.warn { color: var(--attn, #b7791f); }
 
 /* memory tab */
 .mem-dream { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; padding: 14px 16px; font-size: 13px; color: var(--fg-2); }

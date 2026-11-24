@@ -20,9 +20,9 @@ import (
 type ctxUsage struct {
 	Used   int `json:"used"`
 	Window int `json:"window"`
-	// ran: the model (as asked for, "[1m]" and all) and effort of Claude's
-	// latest reply.
-	ran [2]string
+	// The model (as asked for, "[1m]" and all) and effort of Claude's latest reply.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 func (u ctxUsage) Pct() int {
@@ -115,7 +115,7 @@ func readUsage(path, format string, size int64) ctxUsage {
 				last.Used = n
 			}
 			if m := cmp.Or(e.Asked, e.Message.Model); m != "" && m != "<synthetic>" {
-				last.ran = [2]string{m, e.Effort}
+				last.Model, last.Effort = m, e.Effort
 			}
 		case "codex":
 			if !bytes.Contains(line, []byte(`"token_count"`)) {

@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log"
@@ -53,23 +54,20 @@ func (sp *Super) rotateAtLocked() int {
 // CLAUDE_CODE_MAX_CONTEXT_TOKENS, in settings.json's env); otherwise 1M for a
 // "[1m]" model, 200k for the rest.
 func (s *Server) claudeWindow(args []string) int {
+	model, _ := launchModel("claude", args)
+	return s.claudeWindowFor(model)
+}
+
+// claudeWindowFor is claudeWindow for a session known to run model ("" =
+// the one settings.json or the environment names).
+func (s *Server) claudeWindowFor(model string) int {
 	cfg := s.readClaudeSettings()
 	for _, k := range []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"} {
 		if n, err := strconv.Atoi(strings.TrimSpace(cfg.env(k))); err == nil && n >= 8000 {
 			return n
 		}
 	}
-	model := cfg.Model
-	for i, a := range args {
-		if a == "--model" && i+1 < len(args) {
-			model = args[i+1]
-		} else if strings.HasPrefix(a, "--model=") {
-			model = strings.TrimPrefix(a, "--model=")
-		}
-	}
-	if model == "" {
-		model = os.Getenv("ANTHROPIC_MODEL")
-	}
+	model = cmp.Or(model, cfg.Model, os.Getenv("ANTHROPIC_MODEL"))
 	if strings.Contains(strings.ToLower(model), "[1m]") {
 		return 1000000
 	}
@@ -99,6 +97,10 @@ func (sp *Super) checkHandover(ctx context.Context, live map[string]liveAgent, q
 	var u ctxUsage
 	if a.Session != "" || kind == "agy" {
 		u = sp.routerContext(ctx, machine, kind, a.Session, a.Pane, window)
+	}
+	if kind == "claude" && u.Model != "" {
+		// Its log names the model it runs; an alias may have picked a [1m] one.
+		u.Window = sp.s.claudeWindowFor(u.Model)
 	}
 	sp.mu.Lock()
 	sp.routerUsage = u

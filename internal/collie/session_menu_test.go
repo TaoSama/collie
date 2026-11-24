@@ -69,7 +69,9 @@ func TestMarksSetAndClear(t *testing.T) {
 	}
 }
 
-func TestClaudeRanReadsLatestReply(t *testing.T) {
+func TestSessionUsageReadsLatestReply(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "")
+	t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "")
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	dir := filepath.Join(home, ".claude", "projects", "-repo")
@@ -87,10 +89,11 @@ func TestClaudeRanReadsLatestReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{home: home}
-	if got := s.claudeRan("abc"); got == nil || *got != [2]string{"claude-opus-5-5[1m]", "medium"} {
-		t.Fatalf("claudeRan = %v, want the latest real reply's model and effort", got)
+	got := s.sessionUsage("claude", "abc")
+	if got == nil || got.Model != "claude-opus-5-5[1m]" || got.Effort != "medium" || got.Window != 1000000 {
+		t.Fatalf("sessionUsage = %+v, want the latest real reply's model and effort, and its 1M window", got)
 	}
-	if got := s.claudeRan("missing"); got != nil {
+	if got := s.sessionUsage("claude", "missing"); got != nil {
 		t.Fatalf("no log should give nothing, got %v", got)
 	}
 }

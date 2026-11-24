@@ -44,10 +44,10 @@
   const agent = (o) => ({ workspace_label: o.name, title: "", is_agent: true, machine: o.pane_id.includes("@") ? o.pane_id.split("@")[1] : "", session: "0193a1c2-" + o.workspace_id.replace(/\W/g, "") + "-demo", ...o });
   const agents = [
     agent({ pane_id: "w1:p1", workspace_id: "w1", name: "collie", kind: "claude", status: "idle", cwd: "/home/alex/.collie/router" }),
-    agent({ pane_id: "w2:p1@macbook", workspace_id: "w2@macbook", name: "claude-1", kind: "claude", status: "working", cwd: "/Users/alex/code/shop-web", topic: "首页加暗色模式", run: ["opus", "high"] }),
-    agent({ pane_id: "w3:p1", workspace_id: "w3", name: "codex-1", kind: "codex", status: "blocked", cwd: "/home/alex/code/shop-api", topic: "修复 /orders 分页的边界问题", run: ["gpt-6.1-sol", "high"] }),
+    agent({ pane_id: "w2:p1@macbook", workspace_id: "w2@macbook", name: "claude-1", kind: "claude", status: "working", cwd: "/Users/alex/code/shop-web", topic: "首页加暗色模式", run: ["claude-opus-5-5[1m]", "high"], context: { used: 120000, window: 1000000 } }),
+    agent({ pane_id: "w3:p1", workspace_id: "w3", name: "codex-1", kind: "codex", status: "blocked", cwd: "/home/alex/code/shop-api", topic: "修复 /orders 分页的边界问题", run: ["gpt-6.1-sol", "high"], context: { used: 214000, window: 272000 } }),
     agent({ pane_id: "w4:p1", workspace_id: "w4", name: "agy-1", kind: "agy", status: "waiting", cwd: "/home/alex/code/shop-api", topic: "整理数据库迁移脚本", run: ["", ""] }),
-    agent({ pane_id: "w5:p1", workspace_id: "w5", name: "fix-flaky-test", kind: "codex", status: "working", cwd: "/home/alex/code/shop-api", run: ["gpt-6.1-sol", "medium"] }),
+    agent({ pane_id: "w5:p1", workspace_id: "w5", name: "fix-flaky-test", kind: "codex", status: "working", cwd: "/home/alex/code/shop-api", run: ["gpt-6.1-sol", "medium"], context: { used: 48000, window: 272000 } }),
     agent({ pane_id: "w8:p1", workspace_id: "w8", name: "codex-2", kind: "codex", status: "done", cwd: "/home/alex/code/shop-api/.claude/worktrees/orders-index", topic: "给订单列表加复合索引", run: ["gpt-6.1-sol", "high"] }),
     agent({ pane_id: "w6:p1@macbook", workspace_id: "w6@macbook", name: "release-notes", kind: "claude", status: "done", cwd: "/Users/alex/code/shop-web", run: ["sonnet", "low"] }),
     agent({ pane_id: "w9:p1", workspace_id: "w9", name: "codex-3", kind: "codex", status: "idle", cwd: "/home/alex/code/shop-web", topic: "在 Linux 上跑一遍 e2e 回归", run: ["gpt-6.1-sol", "medium"] }),
@@ -126,7 +126,7 @@
     return out;
   }
   const sup = () => ({
-    router: { alive: true, status: routerStatus, pane_id: "w1:p1", kind: "claude", context: 23, rotate_at: 70, machine: "macbook", alias: "ccl5" },
+    router: { alive: true, status: routerStatus, pane_id: "w1:p1", kind: "claude", context: 23, used: 230000, window: 1000000, effort: "medium", rotate_at: 70, machine: "macbook", alias: "ccl5" },
     entries, pending: computePending(), pinned: computePinned(), workers, queued: 0, queued_router: 0, paused: false, earlier: true,
     follow: { next: new Date(new Date().setHours(33, 0, 0, 0)).toISOString(), next_text: "复查首页暗色模式的回归测试" }, // a check-again tomorrow 09:00
   });
