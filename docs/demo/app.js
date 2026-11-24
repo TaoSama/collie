@@ -720,7 +720,7 @@
       if (v && isCollieOwned(v)) return "#/collie";
     } else if (view === "ext" && extCur?.startsWith("h:")) {
       const h = hist.find((x) => x.id === extCur.slice(2));
-      if (h && (h.name === ROUTER || sup.workers.some((w) => w.name === h.name))) return "#/collie";
+      if (h && (h.name === ROUTER || sup.workers.some((w) => w.name === h.name || (h.session && w.session === h.session)))) return "#/collie";
     }
     return "#/";
   }
@@ -2735,7 +2735,10 @@
     // still open. Collie's own ended sessions are reached from its conversation.
     const going = (e) => e.live && e.status !== "idle" && e.status !== "unknown";
     const workers = new Set(sup.workers.map((w) => w.name));
-    const collieRan = (name) => name === ROUTER || workers.has(name);
+    // A worker's session is Collie's by its id: its title can change (Codex
+    // names threads, anyone can rename them).
+    const workerSessions = new Set(sup.workers.map((w) => w.session).filter(Boolean));
+    const collieRan = (name, session) => name === ROUTER || workers.has(name) || workerSessions.has(session);
     // Another hub's own computer has no machine id: it is that hub.
     const machineOf = (x) => x.hub ? tagged(x.machine || "", x.hub) : x.machine || "";
     const rest = (r) => {
@@ -2746,12 +2749,12 @@
     return [
       ...state.agents.filter((a) => a.name !== ROUTER || a.status === "blocked").map((a) => pane(a, false)),
       ...state.shells.map((a) => pane(a, true)),
-      ...ext.filter((e) => !readOnlyHidden(e)).map((e) => {
+      ...ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
         const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
         return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
           t: new Date(e.updated || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
       }),
-      ...hist.filter((h) => !collieRan(h.name)).map((h) => {
+      ...hist.filter((h) => !collieRan(h.name, h.session)).map((h) => {
         const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
         return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine, cwd: h.cwd,
           key, mark: m, session: h.session || "", name: m?.title || histName(h), live: false });
