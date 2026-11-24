@@ -2605,18 +2605,22 @@
     goBack(true);
   });
   const extName = (e) => e.title || (e.cwd ? e.cwd.split("/").filter(Boolean).pop() : "") || KIND_LABEL[e.kind] || e.kind;
-  // The sidebar, by what you need: what needs you, what just finished, what
-  // is going on now (herdr agents, yours and Collie's, and other apps'
-  // running sessions), what rests, then what you did lately (other apps'
-  // resting conversations and ended herdr sessions, merged). Or the same
-  // sessions by computer, repository or herdr workspace; what needs you
-  // stays on top either way.
+  // The sidebar lists sessions by project (the repository they run in), what
+  // needs you on top. The view shows them all, one computer's, or by what
+  // you need: what needs you, what just finished, what is going on now
+  // (herdr agents, yours and Collie's, and other apps' running sessions),
+  // what rests, then what you did lately (other apps' resting conversations
+  // and ended herdr sessions, merged). A kind narrows to one agent or the
+  // terminals.
   const RECENT_N = 8;
+  const FOLDER_SVG = '<svg class="gico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>';
+  const SIDE_KINDS = [...AGENT_KINDS, ["term", "终端"]];
   let extAll = store.get("extAll", false);
-  let sideBy = store.get("sideBy", "status"), sideOnly = store.get("sideOnly", "all");
-  if (!["status", "machine", "repo", "project"].includes(sideBy)) sideBy = "status";
-  if (!["all", "done", "term", ...AGENT_KINDS.map(([k]) => k)].includes(sideOnly)) sideOnly = "all";
-  const sideFold = store.get("sideFold", {});
+  let sideView = store.get("sideView", "all"), sideKind = store.get("sideKind", "");
+  if (!(sideView === "all" || sideView === "status" || sideView.startsWith("m:"))) sideView = "all";
+  if (!SIDE_KINDS.some(([k]) => k === sideKind)) sideKind = "";
+  // Folds of groupings that are gone are dropped.
+  const sideFold = Object.fromEntries(Object.entries(store.get("sideFold", {})).filter(([k]) => /^(status|p):/.test(k)));
   const EXT_STATE = { working: "在干活", waiting: "在等后台任务", idle: "开着，在等你", blocked: "等电脑那边确认" };
   const RANK = { working: 0, waiting: 0.5, starting: 1, blocked: 2, done: 3, unknown: 4, idle: 4 };
   const ENDED_RANK = 9; // ended and resting sessions sort after anything open
@@ -2647,7 +2651,7 @@
     const pane = (a, term) => {
       const rank = RANK[a.status] ?? 3;
       const bucket = term ? "term" : a.status === "blocked" ? "attn" : a.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
-      return { id: a.pane_id, src: "pane", html: itemHTML(a), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd, ws: a.workspace_id, wsLabel: a.workspace_label };
+      return { id: a.pane_id, src: "pane", html: itemHTML(a), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -2662,82 +2666,90 @@
       ...state.shells.map((a) => pane(a, true)),
       ...ext.filter((e) => !readOnlyHidden(e)).map((e) => ({
         id: e.id, src: "ext", html: extRow(e), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
-        t: new Date(e.updated || e.started), machine: machineOf(e), cwd: e.cwd, ws: "", wsLabel: "",
+        t: new Date(e.updated || e.started), machine: machineOf(e), cwd: e.cwd,
       })),
       ...hist.filter((h) => !collieRan(h.name)).map((h) => ({
-        id: "h:" + h.id, src: "hist", html: histRow(h), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine: machineOf(h), cwd: h.cwd, ws: "", wsLabel: "",
+        id: "h:" + h.id, src: "hist", html: histRow(h), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine: machineOf(h), cwd: h.cwd,
       })),
     ];
   }
-  // [{ key, label, title, mono, rows }], in the order they are listed.
+  // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {
-    if (sideBy === "status") return STATUS_GROUPS.map(([key, label]) => ({ key, label, rows: rows.filter((r) => r.bucket === key) }));
-    const machines = (state.machines || []).map((m) => m.id);
-    const keyOf = {
-      machine: (r) => [r.machine, machineName(r.machine)],
-      repo: (r) => { const p = repoOf(r.cwd); return [p, tilde(p) || "~"]; },
-      project: (r) => r.ws ? [r.ws, r.wsLabel || r.ws] : r.src === "hist" ? ["~ended", "已结束"] : ["~ext", "其他终端"],
-    }[sideBy];
+    if (sideView === "status") return STATUS_GROUPS.map(([key, label]) => ({ key, label, rows: rows.filter((r) => r.bucket === key) }));
     const by = new Map();
     for (const r of rows) {
       if (r.bucket === "attn") continue;
-      const [key, label] = keyOf(r);
-      if (!by.has(key)) by.set(key, { key: "g:" + key, id: key, label, rows: [], best: Infinity, last: 0 });
+      const path = repoOf(r.cwd), key = r.machine + "\n" + path;
+      if (!by.has(key)) by.set(key, { key, machine: r.machine, path, label: path ? base(path) : "其他", title: tilde(path), project: true, rows: [], best: Infinity, last: 0 });
       const g = by.get(key);
       g.rows.push(r); g.best = Math.min(g.best, r.rank); g.last = Math.max(g.last, +r.t || 0);
     }
-    const at = (g) => machines.indexOf(g.id) + 1 || machines.length + 1;
-    const groups = [...by.values()].sort(sideBy === "machine" ? (x, y) => at(x) - at(y)
-      : (x, y) => x.best - y.best || y.last - x.last || x.label.localeCompare(y.label));
+    const groups = [...by.values()].sort((x, y) => x.best - y.best || y.last - x.last || x.label.localeCompare(y.label));
     for (const g of groups) {
-      // A repository or workspace on more than one computer says which.
-      const on = [...new Set(g.rows.map((r) => r.machine))];
-      if (sideBy !== "machine" && on.length > 1) g.title = on.map(machineName).join("、");
-      if (sideBy === "repo") g.mono = true;
+      // Projects of the same name say where they are: the computer, or the
+      // path when they share one.
+      const twins = groups.filter((o) => o !== g && o.label === g.label);
+      if (twins.length) g.on = twins.some((o) => o.machine === g.machine) ? g.title : machineName(g.machine);
       g.rows.sort((x, y) => x.rank - y.rank || y.t - x.t);
     }
     return [{ key: "attn", label: "需要你", rows: rows.filter((r) => r.bucket === "attn") }, ...groups];
   }
+  // Narrowed to a kind, the status groups show open.
+  const sideFoldable = () => !(sideView === "status" && sideKind);
   function renderSessions() {
     const all = sideRows();
-    // A filter is a bucket or an agent; their names don't overlap.
-    const only = (r, v) => r.bucket === v || r.kind === v;
-    const n = {};
-    for (const r of all) for (const v of [r.bucket, r.kind]) if (v) n[v] = (n[v] || 0) + 1;
+    const kindOf = (r) => r.bucket === "term" ? "term" : r.kind;
+    const nOn = {};
+    for (const r of all) nOn[r.machine] = (nOn[r.machine] || 0) + 1;
+    const ms = state.machines || [];
+    const online = (id) => { const m = ms.find((x) => x.id === id); return m ? (m.local ? state.ok : m.online) : undefined; };
+    let on = sideView.startsWith("m:") ? sideView.slice(2) : null;
+    const ids = [...new Set([...ms.filter((m) => !m.hub).map((m) => m.id), ...all.map((r) => r.machine)])]
+      .filter((id) => nOn[id] || id === on);
+    // A computer that is gone (not even offline) leaves the view on all.
+    if (on !== null && !ids.includes(on)) { on = null; sideView = "all"; }
+    const inView = (r) => on === null || r.machine === on;
     // A filter never hides what needs you.
-    const rows = sideOnly === "all" ? all : all.filter((r) => only(r, sideOnly) || r.bucket === "attn");
-    const chips = [["all", "全部"], ...AGENT_KINDS, ["done", "完成未看"], ["term", "终端"]]
-      .map(([v, label]) => [v, label, v === "all" ? 0 : n[v] || 0])
-      .filter(([v, , c]) => v === "all" || c || v === sideOnly);
-    const chipsHTML = chips.length < 2 ? "" : chips.map(([v, label, c]) =>
-      `<button type="button" data-only="${v}" class="${v === sideOnly ? "on" : ""}">${label}${v === "all" ? "" : ` <span class="k">${c}</span>`}</button>`).join("");
+    const viewRows = all.filter((r) => inView(r) || r.bucket === "attn");
+    const rows = sideKind ? viewRows.filter((r) => kindOf(r) === sideKind || r.bucket === "attn") : viewRows;
+    const nKind = {};
+    for (const r of all) if (inView(r)) nKind[kindOf(r)] = (nKind[kindOf(r)] || 0) + 1;
+    const viewList = [["all", "全部"], ["status", "状态"], ...(ids.length > 1 || on !== null ? ids.map((id) => ["m:" + id, machineName(id), online(id)]) : [])];
+    const viewHTML = viewList.map(([v, label, up]) =>
+      `<button type="button" data-view="${esc(v)}" class="${v === sideView ? "on" : ""}">${up === undefined ? "" : `<span class="dot ${up ? "online" : "offline"}"></span>`}${esc(label)}</button>`).join("");
+    const kinds = SIDE_KINDS.filter(([v]) => nKind[v] || v === sideKind);
+    const chipsHTML = kinds.length < 2 && !sideKind ? "" : kinds.map(([v, label]) =>
+      `<button type="button" data-kind="${v}" class="${v === sideKind ? "on" : ""}">${label} <span class="k">${nKind[v] || 0}</span></button>`).join("");
 
     const groupHTML = (g) => {
       const open = g.rows.filter((r) => r.rank < ENDED_RANK), ended = g.rows.filter((r) => r.rank >= ENDED_RANK);
       let shown = extAll ? ended : ended.slice(0, RECENT_N);
       const cur = view === "ext" && extCur && ended.find((r) => r.id === extCur && !shown.includes(r));
       if (cur) shown = [...shown, cur];
-      const fk = sideBy + ":" + g.key;
-      const folded = sideOnly === "all" && (fk in sideFold ? sideFold[fk] : fk === "status:term");
+      // A project rests folded unless something in it runs or is open here.
+      const here = g.rows.some((r) => view === "ext" ? r.id === extCur : view === "pane" && r.id === current);
+      const fk = (g.project ? "p:" : "status:") + g.key, dflt = g.project ? !open.length && !here : g.key === "term";
+      const folded = sideFoldable() && (fk in sideFold ? sideFold[fk] : dflt);
       const busy = g.key === "going" ? g.rows.filter((r) => r.rank <= 1).length : 0;
       const count = busy ? `${busy} 个在跑` : g.rows.length || "";
       const empty = g.key === "going" && !g.rows.length
         ? `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Collie 派一个。</li>` : "";
-      return `<details class="group" data-fold="${esc(fk)}" ${folded ? "" : "open"}>
-        <summary${g.title ? ` title="${esc(g.title)}"` : ""}><h2><span class="gname ${g.mono ? "mono" : ""} ${sideBy === "status" ? "" : "named"}">${esc(g.label)}</span><span class="count">${esc(count)}</span>${g.title ? `<span class="gon">${esc(g.title)}</span>` : ""}</h2></summary>
+      return `<details class="group ${g.project ? "proj" : ""}" data-fold="${esc(fk)}" data-dflt="${dflt ? 1 : 0}" ${folded ? "" : "open"}>
+        <summary${g.title ? ` title="${esc(g.title)}"` : ""}><h2>${g.project ? FOLDER_SVG : ""}<span class="gname">${esc(g.label)}</span>${g.on ? `<span class="gon">${esc(g.on)}</span>` : ""}<span class="count">${esc(count)}</span></h2></summary>
         <ul class="list ${g.key === "attn" ? "attn" : ""}">${[...open, ...shown].map((r) => r.html).join("")}${empty}${ended.length > RECENT_N
           ? `<li><button type="button" class="more-row" data-act="ext-more">${extAll ? "收起" : `还有 ${ended.length - RECENT_N} 个`}</button></li>` : ""}</ul>
       </details>`;
     };
     // 进行中 is always there when nothing runs, to say how to start one.
-    const groups = sideGroups(rows).filter((g) => g.rows.length || (g.key === "going" && sideOnly === "all"
+    const groups = sideGroups(rows).filter((g) => g.rows.length || (g.key === "going" && !sideKind
       && !rows.some((r) => ["done", "going", "idle"].includes(r.bucket))));
-    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${{ all: "没有会话。", done: "没有完成未看的会话。", term: "没有开着的终端。" }[sideOnly] ?? "没有这个 agent 的会话。"}</p>`;
-    const box = $("#side-groups"), bar = $("#side-only");
+    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${sideKind === "term" ? "没有开着的终端。"
+      : sideKind ? "没有这个 agent 的会话。" : on !== null ? "这台电脑上没有会话。" : "没有会话。点右上角 + 新建，或让 Collie 派一个。"}</p>`;
+    const box = $("#side-groups"), views = $("#side-view"), bar = $("#side-only");
     if (box._html !== html) box.innerHTML = box._html = html;
+    if (views._html !== viewHTML) views.innerHTML = views._html = viewHTML;
     if (bar._html !== chipsHTML) bar.innerHTML = bar._html = chipsHTML;
     bar.hidden = !chipsHTML;
-    $$("#side-by button").forEach((b) => b.classList.toggle("on", b.dataset.v === sideBy));
   }
   // Look up the open session again in a moment (a few times at most).
   let extSoonT = null, extSoonN = 0;
@@ -2828,18 +2840,18 @@
   });
   function closeExt() { extStream?.close(); extStream = null; }
   $(".side-scroll").addEventListener("click", (ev) => {
-    const by = ev.target.closest("#side-by button"), only = ev.target.closest("[data-only]");
-    const fold = ev.target.closest("summary")?.parentElement.dataset.fold;
-    if (by) { sideBy = by.dataset.v; store.set("sideBy", sideBy); }
-    else if (only) { sideOnly = only.dataset.only; store.set("sideOnly", sideOnly); }
+    const v = ev.target.closest("[data-view]"), k = ev.target.closest("[data-kind]");
+    const det = ev.target.closest("summary")?.parentElement, fold = det?.dataset.fold;
+    if (v) { sideView = v.dataset.view; store.set("sideView", sideView); }
+    // A kind is on or off: tapping it again shows every kind.
+    else if (k) { sideKind = k.dataset.kind === sideKind ? "" : k.dataset.kind; store.set("sideKind", sideKind); }
     else if (fold) {
       // Re-rendered on every update: the open state lives here, not in the
-      // DOM; only what differs from the default is kept. A filter shows its
-      // groups open.
+      // DOM; only what differs from the default is kept.
       ev.preventDefault();
-      if (sideOnly !== "all") return;
-      const folded = ev.target.closest("details").open;
-      if (folded === (fold === "status:term")) delete sideFold[fold]; else sideFold[fold] = folded;
+      if (!sideFoldable()) return;
+      const folded = det.open;
+      if (folded === (det.dataset.dflt === "1")) delete sideFold[fold]; else sideFold[fold] = folded;
       store.set("sideFold", sideFold);
     } else if (ev.target.closest("[data-act=ext-more]")) {
       ev.preventDefault();

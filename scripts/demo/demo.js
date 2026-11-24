@@ -50,6 +50,7 @@
     agent({ pane_id: "w5:p1", workspace_id: "w5", name: "fix-flaky-test", kind: "codex", status: "working", cwd: "/home/alex/code/shop-api", run: ["gpt-6.1-sol", "medium"] }),
     agent({ pane_id: "w8:p1", workspace_id: "w8", name: "codex-2", kind: "codex", status: "done", cwd: "/home/alex/code/shop-api/.claude/worktrees/orders-index", topic: "给订单列表加复合索引", run: ["gpt-6.1-sol", "high"] }),
     agent({ pane_id: "w6:p1@macbook", workspace_id: "w6@macbook", name: "release-notes", kind: "claude", status: "done", cwd: "/Users/alex/code/shop-web", run: ["sonnet", "low"] }),
+    agent({ pane_id: "w9:p1", workspace_id: "w9", name: "codex-3", kind: "codex", status: "idle", cwd: "/home/alex/code/shop-web", topic: "在 Linux 上跑一遍 e2e 回归", run: ["gpt-6.1-sol", "medium"] }),
   ];
   const shells = [
     { pane_id: "w7:p1", workspace_id: "w7", workspace_label: "logs", name: "logs", kind: "", status: "shell", cwd: "/home/alex/code/shop-api", title: "", is_agent: false, machine: "" },
@@ -167,6 +168,11 @@
       { kind: "assistant", text: "50 次里挂 3 次。测试在同一秒内插入多条订单，而查询只按 `created_at` 排序，同一秒的顺序数据库不保证。加上 `id` 作为第二排序键。" },
       tool("Edit", "internal/orders/list.go", "+1 −1"),
       tool("Bash", "go test -run TestOrdersPagination -count=200 ./internal/orders"),
+    ],
+    "w9:p1": [
+      { kind: "user", text: "在 Linux 上跑一遍 e2e 回归，看看暗色模式有没有影响" },
+      tool("Bash", "pnpm test:e2e", "42 passed"),
+      { kind: "assistant", text: "42 个 e2e 用例都过了，暗色模式的改动还没合进来，合并后再跑一次。" },
     ],
     "w6:p1@macbook": [
       { kind: "user", text: "[collie] 根据 v1.3..main 的提交写 v1.4 发布说明。完成后 collie report。" },
