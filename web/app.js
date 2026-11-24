@@ -2286,7 +2286,7 @@
   }
 
   function inboxHTML(ts) {
-    return `<p class="panel-intro intro">你的消息、外部事件、定时器，以及派出的 agent 完成或卡住，都会进这里。先按来源策略过滤；订阅了线程的 agent 直接收到，其余交给 Collie 判断。对方正忙时事件会先攒着，空闲后一次送过去。</p>
+    return `<p class="panel-intro">你的消息、外部事件、定时器，以及派出的 agent 完成或卡住，都会进这里。先按来源策略过滤；订阅了线程的 agent 直接收到，其余交给 Collie 判断。对方正忙时事件会先攒着，空闲后一次送过去。</p>
       <div class="card"><ul class="rows">${ts.length ? ts.map((t) => `<li class="row">
         <span class="badge ${esc(t.status === "queued" ? "queued" : t.status === "ignored" ? "ignored" : t.action === "candidate" ? "candidate" : "")}">${esc({ queued: "排队", delivered: "已投递", ignored: "已忽略" }[t.status] || t.status)}</span>
         <div><div class="meta"><b>#${esc(t.id)}</b><span>${esc(SOURCE_LABEL[t.source] || t.source)}</span><span>${esc(t.thread)}</span>${t.from ? `<span>from ${esc(t.from === ROUTER ? "Collie" : t.from)}</span>` : ""}${t.targets?.length ? `<span>→ ${esc(t.targets.map((x) => x === ROUTER ? "Collie" : x).join(", "))}</span>` : ""}${t.action === "candidate" ? "<span>candidate</span>" : ""}</div>
@@ -2295,7 +2295,7 @@
   }
 
   function threadsHTML(ths) {
-    return `<p class="panel-intro intro">同一个对话、Issue/PR 或群聊话题里的连续事件构成一条线程。Collie 派出的 agent 订阅线程后，后续事件直达它，不再经过 Collie。chat:main 始终由 Collie 自己处理。</p>
+    return `<p class="panel-intro">同一个对话、Issue/PR 或群聊话题里的连续事件构成一条线程。Collie 派出的 agent 订阅线程后，后续事件直达它，不再经过 Collie。chat:main 始终由 Collie 自己处理。</p>
       <div class="card"><ul class="rows">${ths.length ? ths.map((th) => `<li class="row">
         <span class="badge">${th.triggers?.length || 0}</span>
         <div><div class="meta"><b>${esc(th.id)}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Collie</span>"}</div></div>
@@ -2380,7 +2380,7 @@
         <div><div class="meta"><b title="${esc(t.spec)}">${esc(describeSpec(t.spec))}</b><span>→ ${esc(t.target || "Collie")}</span>${t.enabled ? `<span>下次 ${when(t.next_run)}</span>` : t.last_run ? `<span>上次 ${when(t.last_run)}</span>` : ""}${t.owner ? `<span>${t.owner === "you" ? "你设的" : esc(t.owner) + " 设的"}</span>` : ""}</div>
         <div class="text">${esc(t.text)}</div></div>
         <button class="btn ghost small" data-del-timer="${esc(t.id)}">删除</button></li>`;
-    return `<p class="panel-intro intro">到点会给 Collie（或某个 agent）发一条消息：每天的例行检查、过一会儿的跟进提醒。Collie 自己也会设定时来跟进。</p>
+    return `<p class="panel-intro">到点会给 Collie（或某个 agent）发一条消息：每天的例行检查、过一会儿的跟进提醒。Collie 自己也会设定时来跟进。</p>
       <div class="card"><div class="card-h">新建定时</div>
         <form class="form tm-form" id="timer-form" data-mode="weekdays">
           <div class="tm-field">
@@ -2428,7 +2428,7 @@
   function hooksHTML(r) {
     const base = location.origin + "/hooks/";
     const url = (src) => `${base}${src}?key=${r.hook_key}`;
-    return `<p class="panel-intro intro">把外部事件接进来。Webhook 立即返回 202，过滤和路由在收件箱里异步完成。未经请求的事件默认是 <b>candidate</b>：只有 Collie 的记忆或你的规则覆盖到时才会行动，否则保持安静。</p>
+    return `<p class="panel-intro">把外部事件接进来。Webhook 立即返回 202，过滤和路由在收件箱里异步完成。未经请求的事件默认是 <b>candidate</b>：只有 Collie 的记忆或你的规则覆盖到时才会行动，否则保持安静。</p>
       <div class="card"><div class="card-h">Webhook 地址</div><div class="form">
         <label>GitHub <small>Settings → Webhooks，Content type 选 application/json</small><div class="code"><span>${esc(url("github"))}</span><button class="icon-btn" data-copy="${esc(url("github"))}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></label>
         <label>飞书 / Lark <small>事件订阅的请求地址，已支持 url_verification</small><div class="code"><span>${esc(url("feishu"))}</span><button class="icon-btn" data-copy="${esc(url("feishu"))}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></label>
@@ -3478,7 +3478,7 @@
       <div class="card"><div class="card-h">通知</div>
         ${row("浏览器通知", esc(perm), sw("notify", prefs.notify() && (!("Notification" in window) || Notification.permission !== "denied")))}
       </div>
-      <p class="panel-intro intro">Collie 本身的设置（它自己用哪个 agent、派活默认在哪台电脑、通知机器人）在 <a href="#/auto" data-auto-tab="settings">自动化 → 设置</a>；电脑和手机的连接在 <a href="#/devices">设备</a>。</p>
+      <p class="panel-intro">Collie 本身的设置（它自己用哪个 agent、派活默认在哪台电脑、通知机器人）在 <a href="#/auto" data-auto-tab="settings">自动化 → 设置</a>；电脑和手机的连接在 <a href="#/devices">设备</a>。</p>
     </div>`;
     if (restore) restoreSimpleScroll($("#prefs-body"), restore);
   }
@@ -3756,7 +3756,7 @@
       const installCmd = pm ? `${INSTALL} node --hub ${devAddr} --code ${pm.code}` : "";
       const addrSel = addrs.length > 1 ? `<label class="addr-pick">用这个地址<select id="dev-addr" data-pick="compact">${addrs.map((a) => `<option ${a === devAddr ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";
       return `
-      <p class="panel-intro intro">Collie 适合放在一台常开的开发机上当 hub：手机、平板和浏览器只连 hub；你的 Mac 等电脑运行 <code>collie node</code> 主动连上来，hub 就能在上面开 agent、看对话、处理确认。不用开端口，也不需要 SSH。</p>
+      <p class="panel-intro">Collie 适合放在一台常开的开发机上当 hub：手机、平板和浏览器只连 hub；你的 Mac 等电脑运行 <code>collie node</code> 主动连上来，hub 就能在上面开 agent、看对话、处理确认。不用开端口，也不需要 SSH。</p>
 
       <div class="pair-grid">
         <div class="card pair-card">

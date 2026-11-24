@@ -307,7 +307,6 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .name { font-size: var(--fs-item); font-weight: var(--fw-item); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { font-size: var(--fs-small); color: var(--t-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item .sub { font-family: var(--mono); }
-.group .item .sub { display: var(--item-sub, block); } /* kind, machine and folder under a session */
 .nav-right { display: inline-flex; align-items: center; gap: 7px; }
 .count-pill { font: var(--fw-strong) var(--fs-tiny)/1 var(--sans); font-variant-numeric: tabular-nums; min-width: 18px; text-align: center; padding: 4px 6px; border-radius: 999px; background: var(--fg); color: var(--bg); }
 .count-pill.attn {
@@ -453,6 +452,8 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .viewer[data-mode="chat"] { background: var(--bg); }
 .viewer[data-mode="chat"] ~ .keys:not(.open) { display: none; }
 .screen { position: absolute; inset: 0; overflow: auto; overscroll-behavior-y: contain; overflow-anchor: none; scrollbar-gutter: stable; padding: 14px 16px 28px; outline: none; }
+/* The terminal is a character grid: a skin's tracking must not reach it. */
+.screen .xterm { letter-spacing: normal; }
 .screen .xterm { width: max-content; }
 .screen .xterm-viewport { background: transparent !important; overflow: hidden !important; }
 .log {
@@ -1052,10 +1053,6 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .auto-body { flex: 1; overflow: auto; padding: 20px max(16px, calc((100% - 820px) / 2)) 40px; }
 /* Computer cards fill a wide window, as many to a row as fit. */
 .auto-body:has(> .mc-list) { padding-inline: max(16px, calc((100% - 1720px) / 2)); }
-/* Explanations a skin may leave out (--intro, --item-sub: none): page intros,
-   the launch form's note, the terminal's typing hint, the line under a session. */
-.panel-intro.intro { display: var(--intro, block); }
-.d-meta.page-desc { display: var(--intro, flex); }
 .panel-intro { margin: 0 0 16px; color: var(--t-desc); font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.2); }
 .card { border: var(--bw) solid var(--line); border-radius: calc(14px * var(--round)); background: var(--bg); overflow: hidden; margin-bottom: 16px; }
 .card-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: var(--card-py) var(--card-px); border-bottom: var(--bw) solid var(--line); font-weight: var(--fw-card-h); font-size: var(--fs-card-h); }
@@ -1106,7 +1103,6 @@ dialog.sheet > form { flex: 1 1 auto; min-height: 0; max-height: none; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 6px; }
 .sheet-head h3 { margin: 0; font-size: calc(var(--fs-lead) + 1px); letter-spacing: var(--ls-title); }
 .sheet-body { overflow: auto; flex: 1; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
-#launch-note { display: var(--intro, block); }
 .sheet-note { margin: 0; padding: 0 20px 4px; font-size: var(--fs-small); line-height: calc(var(--lh-ui) + 0.1); }
 .sheet .field { padding: 10px 20px; }
 /* file viewer: a third column on wide screens that grows open, full screen
@@ -2009,7 +2005,7 @@ select.picked { display: none; }
   display: none; position: absolute; right: 14px; bottom: 12px; padding: 4px 10px; border-radius: 999px;
   font-size: var(--fs-small); color: var(--t-meta); background: var(--bg); border: var(--bw) solid var(--line); pointer-events: none;
 }
-.viewer[data-mode="screen"]:not(.typing):not(:has(> .jump:not([hidden]))) > .screen-hint { display: var(--intro, block); }
+.viewer[data-mode="screen"]:not(.typing):not(:has(> .jump:not([hidden]))) > .screen-hint { display: block; }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) { .screen { padding: 8px 10px 44px; } } /* the last line clears the hint pill */
 /* xterm parks its input at the cursor, which Collie never places (herdr
    doesn't report it): keep it fixed in the corner so focusing or typing

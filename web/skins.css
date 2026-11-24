@@ -32,13 +32,11 @@
   --fs-group: var(--fs-body); --fw-group: var(--fw-medium); --tt-group: none; --fs-proj: var(--fs-body);
   --fs-card-h: var(--fs-body); --fw-card-h: var(--fw-medium);
   /* Ink by role: titles and body in full ink, explanations in secondary
-     (65%), only metadata, section titles and quiet icons in tertiary.
-     No intro paragraphs under page titles, no second line under sessions. */
+     (65%), only metadata, section titles and quiet icons in tertiary. */
   --t-secondary: var(--fg-2); --t-desc: var(--fg-2); --t-meta: var(--fg-3);
   --t-group: var(--fg-3); --t-proj: var(--fg-3); --t-icon: var(--fg-3); --t-hint: var(--fg-3);
   --t-empty: color-mix(in srgb, var(--fg-3) 50%, transparent);
   --marker: var(--fg-2);
-  --intro: none; --item-sub: none;
   --fw-normal: 430; --fw-medium: 500; --fw-strong: 600; --fw-bold: 600;
   --lh-ui: 1.5; --lh-msg: 1.625; --lh-code: 1.65;
   --ls-ui: 0; --ls-title: 0; --ls-caps: 0;
