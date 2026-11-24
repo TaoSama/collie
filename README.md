@@ -273,3 +273,7 @@ scripts/demo.sh      构建在线体验（docs/demo/）：真实前端 + scripts
 - `chat.go` / `agy.go`：会话记录解析（Claude / Codex / Antigravity）、决策卡片识别、对话 SSE
 - `store.go` / `db.go`：super-agent 的数据模型和 SQLite 持久化
 - `super.go` / `superapi.go` / `cli.go`：Router 与 worker 的调度循环、HTTP API、webhook、CLI 与 Router 手册
+
+## 上游
+
+本仓库 fork 自 [lihuanyu0w0/collie](https://github.com/lihuanyu0w0/collie)，并定期合并上游的改动。

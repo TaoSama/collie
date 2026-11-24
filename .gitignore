@@ -3,3 +3,34 @@ bin/
 /collie
 /collie-*
 dist/
+
+# Claude Code - track settings.json, commands, rules, skills, agents
+.claude/*
+!.claude/settings.json
+!.claude/commands/
+!.claude/rules/
+!.claude/skills/
+!.claude/agents/
+
+# Codex CLI - track .codex/AGENTS.md, config.toml, skills
+.codex/*
+!.codex/AGENTS.md
+!.codex/config.toml
+!.codex/skills
+
+# Machine- and account-specific instructions
+CLAUDE.local.md
+
+# Local change-verification working area
+docs/changes/
+
+.env
+.env.*
+!.env.example
+
+# ---- Auto: Go ----
+/bin/
+*.exe
+*.test
+*.out
+coverage.html
