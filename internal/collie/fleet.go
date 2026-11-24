@@ -380,6 +380,15 @@ func (h *Herdr) namedFor(pane string) string {
 	return h.named[pane]
 }
 
+// hasName: some agent has name, as of the last agent.list (the tick lists
+// every couple of seconds).
+func (h *Herdr) hasName(name string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.names[name]
+	return ok
+}
+
 func (h *Herdr) paneOfName(ctx context.Context, name string) string {
 	h.mu.RLock()
 	p, ok := h.names[name]

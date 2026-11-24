@@ -83,6 +83,9 @@ var kinds = map[string]string{
 	"agy":         "agy",
 }
 
+// maxNameLen bounds an agent's name (nameRe).
+const maxNameLen = 32
+
 var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 func (s *Server) Routes() http.Handler {

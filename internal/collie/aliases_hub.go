@@ -227,8 +227,14 @@ func (sp *Super) launchAlias(ctx context.Context, machine, name, herdrKind, who 
 	}
 	a, err := sp.s.aliasOn(ctx, machine, name, herdrKind)
 	if err != nil {
+		log.Printf("%s: alias %s: %v; starting %s itself", who, name, err, herdrKind)
+		if who != routerName && who != dreamName {
+			// The Router can respawn it through another alias, or tell the human.
+			sp.Ingest("worker", mainThread, who, fmt.Sprintf("worker %s did not start through alias %s (%v), so it runs plain %s, without what the alias adds.", who, name, err, herdrKind), "", "", who)
+			return nil
+		}
 		sp.mu.Lock()
-		sp.addEntryLocked("event", mainThread, fmt.Sprintf("%s 没用 alias %s 启动：%v。直接启动 %s", who, name, err, herdrKind), who, "error")
+		sp.addEntryLocked("event", mainThread, fmt.Sprintf("Collie 没用 alias %s 启动：%v。先直接启动 %s；检查这台电脑的 alias，或在 自动化 → 设置 → Collie 自己 里换一个", name, err, herdrKind), who, "error")
 		sp.mu.Unlock()
 		return nil
 	}

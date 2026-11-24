@@ -494,6 +494,7 @@ sessions and tidies memory/. Its journal is in dreams/.
   so it stays in their pending reminder; leave ` + "`--check`" + ` off for plain updates or closed items.
 - ` + "`{{BIN}} spawn [--cwd DIR] [--machine M] [--kind K] [--model ID] [--effort E] [--alias A | --no-alias] [--thread T] [--name N] \"task brief\"`" + `
   starts a worker in the background and returns at once. Defaults: kind {{WKIND}}, cwd {{WCWD}}.
+  If --name is taken, the worker gets a spare one: the result's "worker" is its name.
   ` + "`{{BIN}} list`" + ` shows the connected computers. Use --machine when the human names a
   computer or the code lives there (cwd is then a path on that computer; "~" is its home).
   The brief is complete and self-contained: goal, context, constraints, what "done" means

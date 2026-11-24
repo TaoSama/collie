@@ -27,6 +27,7 @@ type fakePane struct {
 	ws, name, kind, cwd string
 	// screen is what pane.read shows; ⇧← turns it into unfolded.
 	screen, unfolded string
+	status           string // "" is idle
 }
 
 func newFakeHerdr(t *testing.T) *fakeHerdr {
@@ -61,7 +62,11 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		return nil
 	}
 	agentView := func(id string, p *fakePane) map[string]any {
-		v := map[string]any{"pane_id": id, "workspace_id": p.ws, "cwd": p.cwd, "agent_status": "idle", "interactive_ready": true}
+		status := p.status
+		if status == "" {
+			status = "idle"
+		}
+		v := map[string]any{"pane_id": id, "workspace_id": p.ws, "cwd": p.cwd, "agent_status": status, "interactive_ready": true}
 		if p.kind != "" {
 			v["agent"] = p.kind
 		}

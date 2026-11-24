@@ -467,6 +467,9 @@ func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
 	}
 	res := map[string]any{"worker": wk.Name, "kind": wk.Kind, "status": status, "thread": wk.Thread,
 		"note": "its agent is starting; you will get a [collie] event when it reports, finishes, gets blocked or fails. Tell the human it is on its way, not that it is done"}
+	if body.Name != "" && wk.Name != cleanWorkerName(body.Name) {
+		res["renamed"] = fmt.Sprintf("%q was taken, so this worker is %s: use that name to send to it, stop it or resume it", body.Name, wk.Name)
+	}
 	writeJSON(w, 202, res)
 }
 

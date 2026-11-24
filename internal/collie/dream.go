@@ -21,6 +21,9 @@ import (
 const (
 	dreamName  = "collie-dream"
 	dreamLabel = "collie · dream"
+	// dreamRetryAfter keeps a dream that failed from being tried again on
+	// every tick of the night.
+	dreamRetryAfter = 30 * time.Minute
 )
 
 type dreamRun struct {
@@ -113,7 +116,7 @@ func (sp *Super) checkDream(ctx context.Context, live map[string]liveAgent, queu
 	}
 	a, alive := live[routerName]
 	sp.mu.Lock()
-	busy := sp.handover != nil || sp.st.Settings.Paused || queued || !sp.routerAskedAt.IsZero() ||
+	busy := sp.handover != nil || sp.st.Settings.Paused || now.Sub(sp.dreamFailAt) < dreamRetryAfter || queued || !sp.routerAskedAt.IsZero() ||
 		(alive && a.Status != "idle" && a.Status != "done")
 	happened := sp.somethingHappenedLocked(sp.lastDream())
 	sp.mu.Unlock()
@@ -150,8 +153,8 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		fail := func(err error) {
 			log.Printf("dream: %v", err)
 			sp.mu.Lock()
-			sp.dream = nil
-			sp.addEntryLocked("event", mainThread, "整理记忆没能开始："+err.Error(), "", "error")
+			sp.dream, sp.dreamFailAt = nil, time.Now()
+			sp.addEntryLocked("event", mainThread, "这次没能整理记忆，过一会儿再试", "", "info")
 			sp.mu.Unlock()
 		}
 		// Collie's current session ends here; its log is part of what gets reviewed.
@@ -285,7 +288,8 @@ func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
 	sp.routerLaunchAt = time.Time{}
 	switch {
 	case !ok:
-		sp.addEntryLocked("event", mainThread, "这次整理记忆没有完成，Collie 先醒过来了", "", "error")
+		sp.dreamFailAt = time.Now()
+		sp.addEntryLocked("event", mainThread, "这次整理记忆没有完成，Collie 先醒过来了，过一会儿再试", "", "info")
 	case summary != "":
 		sp.addEntryLocked("event", mainThread, "Collie 醒了。整理记忆："+summary, "", "info")
 	default:

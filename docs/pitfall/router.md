@@ -9,3 +9,13 @@ hub 的 `agent.list` 跨机器合并：没连上（或这次没答）的电脑�
 - 实际 herdr 名字记在 kv `router_on` 的 `name`；`liveAgents` 把它映射回逻辑名 `routerName`，发消息用 `routerAgent()` 取真实名字。别再直接 `Prompt(ctx, routerName, …)`。
 
 代码：`internal/collie/router_name.go`、`ensureRouter`（`internal/collie/super.go`）。
+
+## 系统错误先给能处理的一方
+
+人只该看到要他做决定或动手的错误。新加往聊天里发 `"error"` 条目（会推送）之前，先想谁能处理：
+
+- 会自己过去的（电脑重连、名字被占）：程序重试。Router 起不来时每次只记日志，连续失败 `routerFailsToTell` 次才对人说一次；没装 agent 这种重试没用的立刻说。
+- 要判断的（worker 没起来、agent 报额度/登录错误、alias 用不了）：作为 spawn 的返回或 `ingest` 事件交给 Router，Router 重试或用一句话告诉人。
+- spawn 的名字被 herdr 里别的 agent 占了：自动换 `名字-2`…，返回里的 `worker` 是实际名字；被正在跑的 worker 占了就报错并给出可用名字。
+
+代码：`internal/collie/self_heal.go`。

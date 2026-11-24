@@ -48,6 +48,9 @@ type Super struct {
 	routerAskedAt   time.Time // last delivery to the router not yet followed by a reply or check
 	routerRetries   int       // turns in a row that ended on an API error, each retried
 	routerNudged    bool      // the watchdog interrupted this turn once already
+	routerFails     int       // Router launches in a row that failed, each retried by a later tick
+	routerFailTold  bool      // the human heard about this run of failures
+	dreamFailAt     time.Time // the last dream that failed; the next waits a while
 	routerUsage     ctxUsage
 	// The model and effort the running router was launched with (unknown after a hub restart).
 	routerRun      *[2]string
@@ -662,8 +665,8 @@ func (sp *Super) closeWorkspace(ctx context.Context, ws string) {
 
 // workerSettled turns a worker reaching done/blocked into a router trigger,
 // carrying a short summary from the worker's transcript or screen.
-// workerDead tells the router and the human that a worker's agent isn't
-// running, with what its screen says (usually the error it died with).
+// workerDead tells the router that a worker's agent isn't running, with what
+// its screen says (usually the error it died with).
 func (sp *Super) workerDead(ctx context.Context, w *Worker) {
 	tail := sp.paneTail(ctx, w.PaneID)
 	// Its screen is in the messages below; the shell it left goes.
@@ -671,21 +674,13 @@ func (sp *Super) workerDead(ctx context.Context, w *Worker) {
 		sp.closeWorkspace(ctx, w.WorkspaceID)
 	}
 	why := deathReason(tail)
-	if len([]rune(why)) > 160 {
-		why = string([]rune(why)[:160]) + "…"
-	}
-	log.Printf("worker %s: no agent in its pane %s; marked failed", w.Name, w.PaneID)
+	log.Printf("worker %s: no agent in its pane %s; marked failed: %s", w.Name, w.PaneID, why)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf(
 		"worker %s failed: %s isn't running in its pane (it never started, or it quit), so its task was not delivered. Last lines on its screen:\n%s\nFix the cause or tell the human; spawn a new worker to retry.",
 		w.Name, w.Kind, tail), "", "", w.Name)
-	msg := w.Name + " 的 " + w.Kind + " 没有跑起来（或已退出），任务没发出去"
-	if why != "" {
-		msg += "：" + why
-	}
-	sp.addEntryLocked("event", w.Thread, msg, w.Name, "error")
-	sp.changed()
+	// The Router retries it or tells the human; the spawn line shows it ended.
 }
 
 // deathReason picks the line that says why: "Error: …" over a stack frame
@@ -735,7 +730,7 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		// the turn ended, the work did not.
 		sp.ingestLocked("worker", w.Thread, w.Name,
 			fmt.Sprintf("worker %s stopped on an error from its agent, not because it was done:\n%s\nLast message before it:\n%s\nIf this is a usage limit, a login or an outage, it won't get better by itself soon: hand the job to another kind of agent (spawn a fresh one with the brief and what this one got done; --resume only works with the same agent), then tell the human in one line what happened and who carries on.", w.Name, msg, summary), "", "", w.Name)
-		sp.addEntryLocked("event", w.Thread, w.Name+" 出错了："+msg, w.Name, "error")
+		log.Printf("worker %s stopped on an agent error: %s", w.Name, msg)
 		return
 	}
 	sp.ingestLocked("worker", w.Thread, w.Name,
@@ -844,6 +839,7 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 	keep := func(name string) {
 		sp.mu.Lock()
 		defer sp.mu.Unlock()
+		sp.routerLaunchOKLocked()
 		if prevRun != nil {
 			sp.setRouterRun(*prevRun)
 		}
@@ -904,13 +900,12 @@ func (sp *Super) ensureRouter(ctx context.Context) {
 		}
 		var he *HerdrError
 		if err != nil && !(errors.As(err, &he) && he.Code == "agent_not_ready") {
-			msg := "Collie 启动失败：" + err.Error()
-			if strings.Contains(err.Error(), "没装") {
-				msg += "。装上它，或在 自动化 → 设置 → Collie 自己 里换一个 agent"
+			if msg := sp.routerLaunchFailedLocked(machine, err); msg != "" {
+				sp.addEntryLocked("event", mainThread, msg, routerName, "error")
 			}
-			sp.addEntryLocked("event", mainThread, msg, routerName, "error")
 			return
 		}
+		sp.routerLaunchOKLocked()
 		sp.routerFresh = true
 		sp.addEntryLocked("event", mainThread, "Collie 已唤醒（"+kind+"）", routerName, "info")
 	}()
@@ -1026,6 +1021,10 @@ func (sp *Super) writeRouterFiles() error {
 
 var workerNameRe = regexp.MustCompile(`[^a-z0-9_-]+`)
 
+func cleanWorkerName(name string) string {
+	return strings.Trim(workerNameRe.ReplaceAllString(strings.ToLower(name), "-"), "-")
+}
+
 // Spawn starts a worker session asynchronously (start() returns at once; the
 // outcome arrives later as a trigger — the async ReAct pattern).
 // model and effort are launch choices for this worker; "" falls back to the
@@ -1066,6 +1065,13 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		return nil, nil, fmt.Errorf("machine %q is not connected", machine)
 	}
 	sp.mu.Lock()
+	// takenLocked: herdr wants each agent's name its own, so one another
+	// agent has (a session of the human's, an old worker's pane) goes to a
+	// spare name. Called with sp.mu held.
+	takenLocked := func(n string) bool {
+		w := sp.st.Workers[n]
+		return (w != nil && !w.Ended) || sp.s.herdr.hasName(n) || n == routerName || n == sp.routerAgentLocked()
+	}
 	if kind == "" {
 		kind = sp.st.Settings.WorkerKind
 	}
@@ -1094,21 +1100,25 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 			base = "agy"
 		}
 		for i := 1; ; i++ {
-			n := fmt.Sprintf("%s-%d", base, i)
-			if w := sp.st.Workers[n]; w == nil || w.Ended {
+			if n := fmt.Sprintf("%s-%d", base, i); !takenLocked(n) {
 				name = n
 				break
 			}
 		}
 	}
-	name = strings.Trim(workerNameRe.ReplaceAllString(strings.ToLower(name), "-"), "-")
+	name = cleanWorkerName(name)
 	if !nameRe.MatchString(name) || name == routerName {
 		sp.mu.Unlock()
 		return nil, nil, fmt.Errorf("invalid worker name %q", name)
 	}
 	if w := sp.st.Workers[name]; w != nil && !w.Ended {
 		sp.mu.Unlock()
-		return nil, nil, fmt.Errorf("worker %s already exists", name)
+		return nil, nil, fmt.Errorf("worker %s is still running: `collie send %s …` to give it more, or spawn under another name such as %s", name, name, spareName(name, takenLocked))
+	}
+	if takenLocked(name) {
+		n := spareName(name, takenLocked)
+		log.Printf("spawn: %q is taken in herdr; the worker is %q", name, n)
+		name = n
 	}
 	dir := expandIn(m.Home, cwd)
 	if m.Local && !isDir(dir) {
@@ -1189,6 +1199,11 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		blocked := err != nil && errors.As(err, &he) && he.Code == "agent_not_ready"
 		failed, msg := err != nil && !blocked, ""
 		if failed {
+			if nameTaken(err) {
+				sp.mu.Lock()
+				err = fmt.Errorf("%w (spawn again under another name such as %s)", err, spareName(name, takenLocked))
+				sp.mu.Unlock()
+			}
 			// The start may have used up ctx; cleaning up gets its own time.
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 			defer cancel()
@@ -1205,8 +1220,11 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		sp.mu.Lock()
 		w.PaneID, w.WorkspaceID = pane, ws
 		if failed {
+			// The Router hears it (as the spawn's result, or as an event) and
+			// retries, or tells the human; the spawn line shows it ended.
+			log.Printf("worker %s failed to start: %s", name, msg)
 			w.Status, w.Ended, w.Note = "failed", true, msg
-			sp.addEntryLocked("event", thread, name+" 启动失败："+msg, name, "error")
+			sp.changed()
 			sp.mu.Unlock()
 			if !tell(err) {
 				sp.Ingest("worker", thread, name, fmt.Sprintf("worker %s failed to start: %s", name, msg), "", "", name)
