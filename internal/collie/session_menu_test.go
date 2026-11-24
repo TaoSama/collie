@@ -68,3 +68,29 @@ func TestMarksSetAndClear(t *testing.T) {
 		t.Fatalf("a mark with nothing left should go: %+v", m)
 	}
 }
+
+func TestClaudeRanReadsLatestReply(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	dir := filepath.Join(home, ".claude", "projects", "-repo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := `{"type":"assistant","requestedModel":"fable","effort":"high","message":{"model":"claude-fable-5-1","usage":{"input_tokens":1}}}
+{"type":"user","message":{"content":"/model"}}
+{"type":"assistant","requestedModel":"claude-opus-5-5[1m]","effort":"medium","message":{"model":"claude-opus-5-5","usage":{"input_tokens":1}}}
+{"type":"assistant","isSidechain":true,"requestedModel":"haiku","message":{"model":"claude-haiku-4-5","usage":{"input_tokens":1}}}
+{"type":"assistant","message":{"model":"<synthetic>","usage":{"input_tokens":0}}}
+{"type":"user"}
+`
+	if err := os.WriteFile(filepath.Join(dir, "abc.jsonl"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{home: home}
+	if got := s.claudeRan("abc"); got == nil || *got != [2]string{"claude-opus-5-5[1m]", "medium"} {
+		t.Fatalf("claudeRan = %v, want the latest real reply's model and effort", got)
+	}
+	if got := s.claudeRan("missing"); got != nil {
+		t.Fatalf("no log should give nothing, got %v", got)
+	}
+}

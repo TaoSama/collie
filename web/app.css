@@ -957,6 +957,8 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .file.err { border-color: color-mix(in srgb, var(--attn) 40%, var(--line)); }
 .file.err .fs { color: var(--attn); }
 .file button { border: 0; background: none; color: var(--fg-3); width: 20px; height: 20px; border-radius: 6px; font-size: 15px; line-height: 1; cursor: pointer; }
+.file button svg { width: 14px; height: 14px; padding: 0; border-radius: 0; stroke-width: 2; vertical-align: middle; }
+.file [data-retry] { color: var(--attn); }
 .file button:hover { background: var(--bg-3); color: var(--fg); }
 .detail.shell .attach { display: none; }
 .msg.user .att { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

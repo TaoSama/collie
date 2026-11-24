@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -195,11 +194,11 @@ func (s *Server) claudeRename(session, name string) error {
 	if strings.ContainsAny(session, `/\`) {
 		return errors.New("会话 id 不对")
 	}
-	files, _ := filepath.Glob(filepath.Join(claudeRoot(s.home), "projects", "*", session+".jsonl"))
-	if len(files) == 0 {
+	path, _ := s.findTranscript("claude", "", session, "", "")
+	if path == "" {
 		return errors.New("这台电脑上找不到这个 Claude 会话的记录")
 	}
-	f, err := os.OpenFile(files[0], os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
