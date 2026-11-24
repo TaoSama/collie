@@ -3956,12 +3956,16 @@
     </section>`;
   }
 
-  // The hub's own computer first, then the paired ones.
+  // Computers by name, with the hub's first when it has any agent CLI and last when it has none.
+  function machineOrder(list, isHub) {
+    const hub = list.filter(isHub), rest = list.filter((m) => !isHub(m)).sort((a, b) => a.name.localeCompare(b.name));
+    return hub.some((m) => m.agents?.length) ? [...hub, ...rest] : [...rest, ...hub];
+  }
+
   function machineCards(r) {
     for (const id of mcOpen) if (id && !r.devices.some((d) => d.id === id)) mcOpen.delete(id);
-    // The computers by name, the hub after them.
-    const list = [...r.devices.filter((d) => d.kind === "machine").sort((a, b) => a.name.localeCompare(b.name)),
-      { id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home }];
+    const list = machineOrder([...r.devices.filter((d) => d.kind === "machine"),
+      { id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home }], (m) => m.hub);
     return list.map((m) => machineCard(m, r.latest)).join("");
   }
 
@@ -7072,7 +7076,7 @@
   let pickMachine = "";
   const recentKey = () => "recentDirs" + (pickMachine ? ":" + pickMachine : "");
   function renderMachinePick() {
-    const ms = (state.machines || []).filter((m) => m.local ? state.ok : m.online);
+    const ms = machineOrder((state.machines || []).filter((m) => m.local ? state.ok : m.online), (m) => m.local);
     $("#l-machine-field").hidden = ms.length < 2;
     if (!ms.some((m) => m.id === pickMachine)) pickMachine = ms[0]?.id || "";
     $("#l-machines").innerHTML = ms.map((m) => `<button type="button" class="${m.id === pickMachine ? "on" : ""}" data-m="${esc(m.id)}">
