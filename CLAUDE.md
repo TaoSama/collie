@@ -27,6 +27,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 - 前端检查运行 `node --check web/app.js`。改了 `web/` 后运行 `sh scripts/demo.sh` 重建 `docs/demo/`，随源码一起提交。
 - 在仓库内运行 `sh docs/install.sh hub` 会用源码构建并安装服务。安装 node 用 `sh docs/install.sh node --hub URL --code CODE`，已配对后可只传 `node`。Linux 后台服务日志用 `journalctl --user -u collie-hub -f`，node 服务名为 `collie-node`。macOS 日志在 `~/Library/Logs/collie-hub.log` 和 `~/Library/Logs/collie-node.log`。
 - 发布前可运行 `sh scripts/release.sh v2026.1124.1 --dry`，交叉编译和校验和输出到 `dist/`。正式版本号格式为 `vYYYY.MMDD.N`。
+- 部署上线（发布 Release、切换 hub、逐台升级 node、线上核对）按 `collie-deploy` 技能做（`.claude/skills/collie-deploy/SKILL.md`）。
 
 ## 架构与调试
 
