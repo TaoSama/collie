@@ -36,11 +36,12 @@ import (
 //     so it runs in the App window that owns the thread.
 //   - Antigravity: its conversation index, ~/.gemini/antigravity/conversation_summaries.db.
 
+// No age window: the apps list their old conversations too, so each app's
+// newest ones are kept, however old.
 const (
-	desktopWindow = 7 * 24 * time.Hour
-	desktopMax    = 20 // per app
+	desktopMax = 20 // per app
 	// The Codex App lists every thread it has, so take more of them; the
-	// threads its automations write to show however old they are.
+	// threads its automations write to show on top of those.
 	codexMax = 100
 )
 
@@ -279,7 +280,6 @@ var claudeDesktopFiles = struct {
 
 func (s *Server) claudeDesktopRows() []desktopRow {
 	var rows []desktopRow
-	cutoff := time.Now().Add(-desktopWindow)
 	claudeDesktopFiles.Lock()
 	defer claudeDesktopFiles.Unlock()
 	for _, dir := range s.claudeDesktopDirs() {
@@ -303,7 +303,7 @@ func (s *Server) claudeDesktopRows() []desktopRow {
 			if v.Activity == 0 {
 				last = fi.ModTime()
 			}
-			if v.CliSessionID == "" || v.Archived || last.Before(cutoff) {
+			if v.CliSessionID == "" || v.Archived {
 				continue
 			}
 			local := strings.TrimPrefix(v.SessionID, "local_")
@@ -351,24 +351,17 @@ func (s *Server) codexAppRows() []desktopRow {
 		return nil
 	}
 	defer db.Close()
-	args := []any{time.Now().Add(-desktopWindow).Unix()}
-	recent := "updated_at > ?"
-	ids := s.codexAutomationThreads()
 	automation := map[string]bool{}
-	if len(ids) > 0 {
-		recent = "(updated_at > ? OR id IN (?" + strings.Repeat(", ?", len(ids)-1) + "))"
-		for _, id := range ids {
-			args = append(args, id)
-			automation[id] = true
-		}
+	for _, id := range s.codexAutomationThreads() {
+		automation[id] = true
 	}
 	// No LIMIT: Collie's own workers are told apart in Go below, and they
 	// mustn't take the places of the App's threads; nor may the newer
 	// threads push out an automation's.
 	q := `SELECT id, COALESCE(NULLIF(name,''), NULLIF(title,''), first_user_message), COALESCE(first_user_message, ''), cwd, rollout_path,
 		COALESCE(created_at_ms, created_at*1000), COALESCE(updated_at_ms, updated_at*1000), COALESCE(originator, '')
-		FROM threads WHERE archived = 0 AND source = 'vscode' AND ` + recent + ` ORDER BY updated_at DESC`
-	res, err := db.Query(q, args...)
+		FROM threads WHERE archived = 0 AND source = 'vscode' ORDER BY updated_at DESC`
+	res, err := db.Query(q)
 	if err != nil {
 		return nil
 	}
@@ -404,8 +397,8 @@ func (s *Server) codexAppRows() []desktopRow {
 }
 
 // codexAutomationThreads: the threads the App's active automations write to,
-// <CODEX_HOME>/automations/<id>/automation.toml's target_thread_id. A monthly
-// one runs less than once a week, and its thread still belongs in the list.
+// <CODEX_HOME>/automations/<id>/automation.toml's target_thread_id. However far
+// down the list its thread is, it belongs there.
 func (s *Server) codexAutomationThreads() []string {
 	paths, _ := filepath.Glob(filepath.Join(s.codexHome(), "automations", "*", "automation.toml"))
 	var ids []string
@@ -636,8 +629,8 @@ func (s *Server) agyDesktopRows() []desktopRow {
 		source = "source"
 	}
 	res, err := db.Query(`SELECT conversation_id, title, preview, workspace_uris, status, not_fully_idle, last_modified_time, last_user_input_time, `+source+`
-		FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0 AND last_modified_time > ?
-		ORDER BY last_modified_time DESC LIMIT ?`, time.Now().Add(-desktopWindow).UTC().Format("2006-01-02 15:04:05"), desktopMax)
+		FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0
+		ORDER BY last_modified_time DESC LIMIT ?`, desktopMax)
 	if err != nil {
 		return nil
 	}

@@ -2,9 +2,11 @@ package collie
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -65,8 +67,7 @@ func TestCodexAppRowsWorkersTakeNoPlaces(t *testing.T) {
 	}
 }
 
-// An active automation's thread shows past the week and past the cap; a
-// paused one's doesn't.
+// An active automation's thread shows past the cap; a paused one's doesn't.
 func TestCodexAppRowsKeepAutomationThreads(t *testing.T) {
 	home, add := codexStateFixture(t)
 	old := time.Now().Add(-30 * 24 * time.Hour)
@@ -89,6 +90,69 @@ func TestCodexAppRowsKeepAutomationThreads(t *testing.T) {
 	rows := (&Server{home: home}).codexAppRows()
 	if len(rows) != codexMax+1 || rows[codexMax].session != "monthly" {
 		t.Fatalf("got %d rows ending %q, want %d recent ones and the active automation's thread", len(rows), rows[len(rows)-1].session, codexMax)
+	}
+}
+
+// The apps list their old conversations too: so does Collie, up to each cap.
+func TestCodexAppRowsKeepOldThreads(t *testing.T) {
+	home, add := codexStateFixture(t)
+	add("new", "看看日志", time.Now())
+	add("old", "上个月的事", time.Now().Add(-60*24*time.Hour))
+	rows := (&Server{home: home}).codexAppRows()
+	if len(rows) != 2 || rows[1].session != "old" {
+		t.Fatalf("rows = %+v, want the new thread and the old one", rows)
+	}
+}
+
+func TestClaudeDesktopRowsKeepOldSessions(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the Claude desktop app's index is read on macOS")
+	}
+	home := t.TempDir()
+	dir := filepath.Join(home, "Library", "Application Support", "Claude", "claude-code-sessions", "a", "b")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-60 * 24 * time.Hour).UnixMilli()
+	for i := range desktopMax + 2 {
+		v := map[string]any{"sessionId": fmt.Sprintf("local_s%d", i), "cliSessionId": fmt.Sprintf("c%d", i), "cwd": "/root",
+			"title": "旧会话", "createdAt": old, "lastActivityAt": old - int64(i)*60_000, "isArchived": i == 0}
+		b, _ := json.Marshal(v)
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("local_s%d.json", i)), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := (&Server{home: home}).claudeDesktopRows()
+	if len(rows) != desktopMax || rows[0].session != "c1" {
+		t.Fatalf("got %d rows starting %+v, want the %d newest unarchived ones however old", len(rows), rows, desktopMax)
+	}
+}
+
+func TestAgyDesktopRowsKeepOldConversations(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".gemini", "antigravity")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "conversation_summaries.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE conversation_summaries (conversation_id TEXT, title TEXT, preview TEXT, workspace_uris TEXT, status TEXT,
+		not_fully_idle NUMERIC, last_modified_time DATETIME, last_user_input_time DATETIME, nesting_depth INTEGER, killed NUMERIC)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := range desktopMax + 2 {
+		at := time.Now().Add(-60*24*time.Hour - time.Duration(i)*time.Minute).UTC().Format("2006-01-02 15:04:05")
+		if _, err := db.Exec(`INSERT INTO conversation_summaries VALUES (?, '旧对话', '', '["file:///root"]', '', 0, ?, ?, 0, 0)`,
+			fmt.Sprintf("g%d", i), at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := (&Server{home: home}).agyDesktopRows()
+	if len(rows) != desktopMax || rows[0].session != "g0" {
+		t.Fatalf("got %d rows, want the %d newest however old", len(rows), desktopMax)
 	}
 }
 
