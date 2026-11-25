@@ -168,6 +168,18 @@ func TestCodexSurface(t *testing.T) {
 	}
 }
 
+func TestCodexClient(t *testing.T) {
+	// The CLI's threads read as herdr's CLI rows do; others by their client.
+	for originator, want := range map[string]string{"codex-tui": "codex", "codex_cli_rs": "codex", "some-ide": "some-ide（Codex）"} {
+		if got := codexClient(originator, ""); got != want {
+			t.Errorf("codexClient(%q) = %q, want %q", originator, got, want)
+		}
+	}
+	if got := codexClient("Codex Desktop", ""); !isCodexApp(got) {
+		t.Errorf("codexClient(Codex Desktop) = %q, want the App", got)
+	}
+}
+
 func TestAgySurface(t *testing.T) {
 	for source, want := range map[string]string{
 		"CORTEX_TRAJECTORY_SOURCE_CLI": surfaceCLI, "CORTEX_TRAJECTORY_SOURCE_VSCODE": "", "": "",

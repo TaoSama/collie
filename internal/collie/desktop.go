@@ -733,8 +733,8 @@ func codexClient(originator, cwd string) string {
 			return appCodexRemote // the App on another computer opened it here over SSH
 		}
 		return appCodex
-	case "codex-tui":
-		return "Codex 终端"
+	case "codex-tui", "codex_cli_rs":
+		return "codex" // the CLI: named as herdr's CLI rows are
 	}
 	return originator + "（Codex）"
 }
