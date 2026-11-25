@@ -1420,7 +1420,7 @@
     renderPendingBar();
     const sel = `#v-collie .msg[data-id="${CSS.escape(id)}"]`;
     // Folded into a run, or in the run open beside: show it there.
-    const inRun = () => runs.folded.has(id) || runs.member.get(id) === runOpen?.root;
+    const inRun = () => runs.folded.has(id) || (!!runOpen && runs.member.get(id) === runOpen.root);
     if (inRun()) { openRun(runs.member.get(id), id); return; }
     let m = document.querySelector(sel);
     let guards = 0;
