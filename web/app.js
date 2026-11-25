@@ -5614,10 +5614,13 @@
     dropDirectMachine(machine);
     return null;
   }
-  // Where the message came from first, then the hub, then every other computer.
+  // Where the message came from first, then the computer this browser runs
+  // on (reached directly: no need to wait on the others' "not here"), then
+  // the hub, then every other computer.
   const fileTries = () => {
     const ms = (state.machines || []).filter((m) => !m.hub && (m.local || m.online)).map((m) => m.local ? "" : m.id);
-    return [...new Set([fileContextMachine() ?? "", "", ...ms])];
+    const from = fileContextMachine();
+    return [...new Set([...(from == null ? [] : [from]), ...ms.filter((m) => directOfMachine(m)), "", ...ms])];
   };
   // Every computer is asked at once (one after another took a round trip
   // each); the first in `tries` order that has the file wins, or for a name
