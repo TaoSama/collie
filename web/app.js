@@ -2107,6 +2107,7 @@
   }
   // Model display names from every list asked for, any agent, any computer.
   const CLAUDE_MODEL = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/, BARE_ALIAS = /^[a-z]+$/;
+  const MODEL_LEVEL = /^(.+)-(minimal|low|medium|high|xhigh|max|ultra)$/, VENDOR_MODEL = /^(gemini|gpt)-(\d[\w.-]*)$/;
   const modelLabels = new Map();
   let modelGen = 0, renaming = false;
   function learnModels(info) {
@@ -2146,8 +2147,16 @@
     const newest = BARE_ALIAS.test(base) && claudeNewest(base);
     if (newest) return modelName(newest);
     if (modelLabels.has(base)) return modelLabels.get(base);
-    return BARE_ALIAS.test(base) ? base[0].toUpperCase() + base.slice(1) : id;
+    // A listed model at a thinking level ("gemini-4-neon-high": Antigravity
+    // lists the model and its levels apart), else a Gemini or GPT id no list
+    // has yet, by its words ("gpt-6.2-astra" → "GPT-6.2 Astra").
+    const lv = MODEL_LEVEL.exec(base);
+    if (lv && modelLabels.has(lv[1])) return modelLabels.get(lv[1]) + " " + capital(lv[2]);
+    const v = VENDOR_MODEL.exec(base);
+    if (v) return (v[1] === "gpt" ? "GPT-" : "Gemini ") + v[2].split("-").filter(Boolean).map(capital).join(" ");
+    return BARE_ALIAS.test(base) ? capital(base) : id;
   };
+  const capital = (w) => w[0].toUpperCase() + w.slice(1);
   // The newest "claude-<family>-…" id some list has, or "".
   function claudeNewest(family) {
     let best = null;

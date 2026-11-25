@@ -15,7 +15,10 @@ eq("claude-opus-5", "Opus 5");
 eq("claude-haiku-4-5-20251001", "Haiku 4.5");
 eq("claude-opus-4-20250514", "Opus 4");
 eq("fable", "Fable"); // no list says which Fable yet
-eq("gpt-6.2-sol", "gpt-6.2-sol");
+eq("gpt-6.2-astra[1m]", "GPT-6.2 Astra"); // a Gemini or GPT id no list has: by its words
+eq("gemini-4-neon-high[1m]", "Gemini 4 Neon High");
+eq("gpt-5.5", "GPT-5.5");
+eq("traex/gpt-5.5[1m]", "traex/gpt-5.5[1m]"); // a gateway's route stays visible
 eq("openrouter/some-model", "openrouter/some-model");
 eq("", "");
 
@@ -38,6 +41,8 @@ eq("gpt-6.2-sol", "GPT-6.2 Sol");
 eq("gemini-3.8-flash-high[1m]", "Gemini 3.8 Flash High");
 eq("gemini-4-neon", "Gemini 4 Neon");
 eq("gemini-4-hydrogen", "Gemini 4 Hydrogen");
+eq("gemini-4-neon-high[1m]", "Gemini 4 Neon High"); // a listed model at a level
+eq("gemini-4-hydrogen-xhigh", "Gemini 4 Hydrogen Xhigh");
 eq("claude-fable-5-2[1m]", "Fable 5.2"); // newer than any list
 eq("auto", "Auto (best for the task)"); // another agent's lowercase id keeps its label
 eq("seed-unknown[1m]", "seed-unknown[1m]");
