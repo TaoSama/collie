@@ -2,7 +2,10 @@ module github.com/TaoSama/collie
 
 go 1.25.0
 
-require modernc.org/sqlite v1.34.5
+require (
+	github.com/klauspost/compress v1.18.2
+	modernc.org/sqlite v1.34.5
+)
 
 require (
 	github.com/coder/websocket v1.8.15 // indirect

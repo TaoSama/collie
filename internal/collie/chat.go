@@ -720,9 +720,13 @@ func (s *Server) findTranscript(kind, sessKind, value, pane, cwd string) (path, 
 		if value == "" {
 			return "", ""
 		}
-		root := envOr("CODEX_HOME", filepath.Join(s.home, ".codex"))
-		if m, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*"+value+".jsonl")); len(m) > 0 {
-			return m[len(m)-1], "codex"
+		root := s.codexHome()
+		for _, ext := range []string{".jsonl", ".jsonl" + codexZstSuffix} {
+			if m, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*"+value+ext)); len(m) > 0 {
+				if p := codexRollout(strings.TrimSuffix(m[len(m)-1], codexZstSuffix)); p != "" {
+					return p, "codex"
+				}
+			}
 		}
 	case "agy":
 		brain := filepath.Join(s.agyCLIHome(), "brain")

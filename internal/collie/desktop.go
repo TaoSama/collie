@@ -391,9 +391,9 @@ func (s *Server) codexAppRows() []desktopRow {
 		}
 		app := codexClient(originator, cwd)
 		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, surface: codexSurface(originator), session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated)}
-		if isFile(rollout) {
-			d.path, d.format = rollout, "codex"
-			d.running = codexTurnRunning(rollout)
+		if p := codexRollout(rollout); p != "" {
+			d.path, d.format = p, "codex"
+			d.running = codexTurnRunning(p)
 		}
 		rows = append(rows, d)
 	}
