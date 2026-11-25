@@ -50,7 +50,7 @@ const (
 	appClaude = "Claude 桌面版"
 	appCodex  = "Codex 桌面版"
 	appAgy    = "Antigravity 桌面版"
-	appAgyCLI = "Antigravity 终端" // a CLI conversation the app lists too
+	appAgyCLI = "antigravity" // a CLI conversation the app lists too: named as herdr's CLI rows are
 )
 
 const (

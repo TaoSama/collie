@@ -177,3 +177,35 @@ func TestAgySurface(t *testing.T) {
 		}
 	}
 }
+
+func TestAgyDesktopRowsNameTheirClient(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".gemini", "antigravity")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "conversation_summaries.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE conversation_summaries (conversation_id TEXT, title TEXT, preview TEXT, workspace_uris TEXT, status TEXT,
+		not_fully_idle NUMERIC, last_modified_time DATETIME, last_user_input_time DATETIME, nesting_depth INTEGER, killed NUMERIC, source TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Format("2006-01-02 15:04:05")
+	for id, source := range map[string]string{"cli": "CORTEX_TRAJECTORY_SOURCE_CLI", "app": "CORTEX_TRAJECTORY_SOURCE_VSCODE"} {
+		if _, err := db.Exec(`INSERT INTO conversation_summaries VALUES (?, '对话', '', '["file:///root"]', '', 0, ?, ?, 0, 0, ?)`, id, at, at, source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]string{}
+	for _, r := range (&Server{home: home}).agyDesktopRows() {
+		got[r.session] = r.app
+	}
+	// The CLI's reads as herdr's CLI rows do ("antigravity", like "claude"
+	// and "codex"); the app's as the other apps' do.
+	if got["cli"] != "antigravity" || got["app"] != "Antigravity 桌面版" {
+		t.Fatalf("apps = %v, want cli: antigravity, app: Antigravity 桌面版", got)
+	}
+}
