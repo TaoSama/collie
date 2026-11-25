@@ -91,14 +91,10 @@ func cliExtDo(args []string) error {
 	fs.Var(&kv, "arg", "a param, key=value (repeatable)")
 	raw := fs.String("json", "", "params as a JSON object")
 	asJSON := fs.Bool("raw", false, "print the whole result as JSON")
-	pos, rest := []string{}, args
-	for len(rest) > 0 && !strings.HasPrefix(rest[0], "-") && len(pos) < 2 {
-		pos, rest = append(pos, rest[0]), rest[1:]
-	}
-	if err := fs.Parse(rest); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
-	pos = append(pos, fs.Args()...)
+	pos := fs.Args()
 	if len(pos) != 2 {
 		return fmt.Errorf("%s", extUsage)
 	}

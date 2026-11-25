@@ -60,7 +60,9 @@ func cliWB(args []string) error {
 		fs.Usage = func() {
 			fmt.Fprintln(fs.Output(), "usage: collie wb read <module>\n\nPrints the module's data now, as markdown.")
 		}
-		fs.Parse(args[1:])
+		if err := parseArgs(fs, args[1:]); err != nil {
+			return err
+		}
 		if fs.NArg() != 1 {
 			return errors.New(wbUsage)
 		}
