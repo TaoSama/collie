@@ -171,10 +171,17 @@ func (sp *Super) appendEntryLocked(e *Entry) *Entry {
 
 const maxReplyOptions = 6
 
+// maxOptionRunes: a quick reply is sent back as the human's answer, so an
+// option keeps its whole text up to this many characters, with no "…".
+const maxOptionRunes = 240
+
 func cleanOptions(raw []string) []string {
 	var out []string
 	for _, s := range raw {
-		s = clip(oneLine(s), 80)
+		s = oneLine(s)
+		if r := []rune(s); len(r) > maxOptionRunes {
+			s = strings.TrimSpace(string(r[:maxOptionRunes]))
+		}
 		if s == "" || slices.Contains(out, s) {
 			continue
 		}

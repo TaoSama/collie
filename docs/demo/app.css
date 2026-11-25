@@ -391,13 +391,19 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .dot.done { background: var(--fg); }
 .dot.failed { background: var(--fg-3); }
 .dot.working, .dot.starting { box-shadow: inset 0 0 0 1.5px var(--fg); }
-.dot.working::after, .dot.starting::after {
-  content: ""; position: absolute; inset: -4px; border-radius: 50%;
-  border: 1.5px solid transparent; border-top-color: var(--fg); animation: spin .9s linear infinite;
+@media (prefers-reduced-motion: no-preference) {
+  .dot.working::after, .dot.starting::after {
+    content: ""; position: absolute; inset: -4px; border-radius: 50%;
+    border: 1.5px solid transparent; border-top-color: var(--fg); animation: spin .9s linear infinite;
+  }
 }
 /* waiting: a dashed ring turning slowly, like a timer: nothing to do
    right now, something still running. */
-.dot.waiting { box-sizing: border-box; border: 1.5px dashed var(--fg-3); animation: spin 6s linear infinite; }
+.dot.waiting { box-sizing: border-box; border: 1.5px dashed var(--fg-3); }
+@media (prefers-reduced-motion: no-preference) { .dot.waiting { animation: spin 6s linear infinite; } }
+/* running: busy, but another dot on screen already spins for it (a spawn
+   line in the timeline, whose worker spins in the sidebar). */
+.dot.running { box-shadow: inset 0 0 0 1.5px var(--fg); }
 .dot.blocked { background: var(--attn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--attn) 22%, transparent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* How much a dot moves says how alive it is: spinning = busy, breathing =
@@ -646,14 +652,14 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   #v-collie .msg.flash, #v-collie .say .msg.flash { animation-duration: .8s; }
 }
 /* Quick-reply choices under a Collie question: first is the recommended pick. */
-.reply-opts { display: flex; flex-wrap: wrap; gap: 8px; margin: -2px 0 6px; }
+.reply-opts { display: flex; flex-wrap: wrap; gap: 8px; margin: -2px 0 6px; min-width: 0; }
 .thumbs + .reply-opts { margin-top: 8px; }
 .reply-opt {
   display: inline-flex; align-items: center; justify-content: center;
   min-block-size: 32px; min-inline-size: 32px; max-inline-size: 100%;
   padding: 5px 13px; border: var(--bw) solid var(--line-2); border-radius: calc(16px * var(--round));
   background: var(--bg); color: var(--t-secondary); font-size: var(--fs-meta); line-height: calc(var(--lh-ui) - 0.1);
-  text-align: left; overflow-wrap: break-word;
+  white-space: normal; text-align: left; overflow-wrap: anywhere;
   transition: background .14s, border-color .14s, color .14s, transform .1s, opacity .14s;
 }
 .reply-opt:first-child {
@@ -686,7 +692,7 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 }
 @media (prefers-reduced-motion: reduce) { .reply-ack { transition: none; } }
 .time-sep { margin: 18px 0 6px; text-align: center; font-size: var(--fs-tiny); color: var(--t-meta); font-variant-numeric: tabular-nums; }
-.say { display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start; }
+.say { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; align-items: start; }
 .avatar { width: 26px; height: 26px; border-radius: calc(8px * var(--round)); border: var(--bw) solid var(--line); display: grid; place-items: center; background: var(--bg); margin-top: 2px; }
 .avatar img { width: 20px; height: 20px; }
 
@@ -914,7 +920,13 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .crew:empty { display: none; }
 .chip {
   flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 10px;
-  border: var(--bw) solid var(--line); border-radius: 999px; font-size: var(--fs-small); text-decoration: none; background: var(--bg);
+  border: var(--bw) solid var(--line); border-radius: 999px; font-size: var(--fs-small); white-space: nowrap; text-decoration: none; background: var(--bg);
+}
+/* With the sidebar showing, it spins for these workers; the strip stays still.
+   The query is the phone layout's, inverted: change them together. */
+@media (min-width: 761px) and (min-height: 501px), (min-width: 761px) and (not (pointer: coarse)) {
+  .crew .dot.working::after, .crew .dot.starting::after { content: none; }
+  .crew .dot.waiting { animation: none; }
 }
 .chip:hover { border-color: var(--line-2); }
 .chip .k { color: var(--t-meta); font-family: var(--mono); font-size: var(--fs-tiny); }

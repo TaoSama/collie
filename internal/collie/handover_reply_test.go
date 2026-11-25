@@ -235,6 +235,15 @@ func TestLarkNotifyOptionsInQuietMode(t *testing.T) {
 	}
 }
 
+func TestCleanOptionsKeepsWholeText(t *testing.T) {
+	long := strings.Repeat("先在本地修好再发版升级所有电脑，", 4) // 64 characters, 192 bytes
+	got := cleanOptions([]string{"  修并\n升级 ", long, "修并 升级", "", strings.Repeat("长", 300)})
+	want := []string{"修并 升级", long, strings.Repeat("长", maxOptionRunes)}
+	if !slices.Equal(got, want) {
+		t.Errorf("cleanOptions = %q", got)
+	}
+}
+
 func TestCLIReplyOptParsingAndCall(t *testing.T) {
 	body, err := parseReply([]string{"--re", "t12", "--opt", "修并升级", "--opt", "先只改本地", "--opt", "不用了", "要怎么处理？"}, nil, true)
 	if err != nil {

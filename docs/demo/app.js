@@ -683,9 +683,10 @@
     const named = v.is_agent && !isLocalRouter(v) && (!isWorker(v.name) || byTopic()) && v.name && !autoName(v.name) && v.topic && v.topic !== v.name ? v.name + " · " : "";
     const sub = isLocalRouter(v) ? "Collie 停在一个对话框上"
       : v.is_agent ? `${named}${KIND_LABEL[v.kind] || v.kind} · ${where}${base(tilde(v.cwd))}` : where + tilde(v.cwd);
-    return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}">
+    const name = v.is_agent ? title(v) : termName(v);
+    return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}" title="${esc(name)}">
       <span class="glyph">${glyph(v)}</span>
-      <span class="body"><div class="name">${isCollieOwned(v) && !isLocalRouter(v) ? `<span class="nm">${esc(title(v))}</span><span class="by-collie">Collie 派出</span>` : esc(v.is_agent ? title(v) : termName(v))}</div><div class="sub">${esc(sub)}</div></span>
+      <span class="body"><div class="name">${isCollieOwned(v) && !isLocalRouter(v) ? `<span class="nm">${esc(name)}</span><span class="by-collie">Collie 派出</span>` : esc(name)}</div><div class="sub">${esc(sub)}</div></span>
       <span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span></a></li>`;
   }
 
@@ -1867,11 +1868,12 @@
           const tag = hid ? `a href="#/h/${encodeURIComponent(hid)}" title="${hTitle}"`
             : past ? `a href="#/h/${encodeURIComponent(past.id)}" title="看它的完整记录"`
             : pane ? `a href="#/p/${encodeURIComponent(pane)}"` : "div";
-          // A spawn line spins only while that worker is still at it; history stays still.
+          // A spawn line stays still while its worker runs: the sidebar spins
+          // for it and the line says 还在跑.
           const w = e.tone === "spawn" ? sup.workers.find((x) => x.name === e.ref) : null;
           const busy = w && workerBusy(w);
           const stuck = w && !w.ended && w.status === "blocked";
-          const tone = e.tone === "blocked" ? "blocked" : e.tone === "done" ? "done" : e.tone === "spawn" ? (busy ? "working" : stuck ? "blocked" : "unknown") : e.tone === "error" ? "failed" : "unknown";
+          const tone = e.tone === "blocked" ? "blocked" : e.tone === "done" ? "done" : e.tone === "spawn" ? (busy ? "running" : stuck ? "blocked" : "unknown") : e.tone === "error" ? "failed" : "unknown";
           // A spawn line carries its worker's state, in place of a line per change.
           const state = w ? (w.ended ? "已结束" : busy ? "还在跑" : stuck ? "等你确认" : "") : "";
           html += `<${tag} class="event ${e.tone === "error" ? "error" : ""}"><span class="dot ${tone}"></span><span class="when">${hhmm(e.at)}</span><span>${esc(e.text)}</span>${state ? `<span class="wstate">${state}</span>` : ""}</${tag.split(" ")[0]}>`;
@@ -2472,6 +2474,9 @@
     try {
       await sendSuper(text, e ? { entry: e.id, who: "Collie", text: e.text } : { entry: id, who: "Collie", text: "" }, false);
     } catch (err) {
+      // Not sent: the choices must work again even if the thread was not redrawn.
+      delete grp.dataset.busy;
+      grp.querySelectorAll("button").forEach((x) => { x.disabled = false; });
       toast(err.message, "attn");
     }
   });
@@ -3377,15 +3382,17 @@
       const open = e.live && e.status === "idle";
       const where = [e.app || KIND_LABEL[e.kind] || e.kind, many && e.machine ? machineName(e.machine) : "", e.live && !open ? "" : ago(e.updated || e.started)].filter(Boolean).join(" · ");
       const dot = e.live ? `<span class="dot ${esc(e.status || "unknown")}" title="${esc(EXT_STATE[e.status] || "正在运行")}"></span>` : m?.unread ? unreadDot : "";
-      return `<li><a class="item ${e.live ? "" : "ended"} ${view === "ext" && extCur === e.id ? "active" : ""}"${rowAttrs(e.id, m)} href="#/x/${encodeURIComponent(e.id)}">
+      const name = m?.title || extName(e);
+      return `<li><a class="item ${e.live ? "" : "ended"} ${view === "ext" && extCur === e.id ? "active" : ""}"${rowAttrs(e.id, m)} href="#/x/${encodeURIComponent(e.id)}" title="${esc(name)}">
         <span class="glyph">${sessionGlyph(e.kind, e.surface)}</span>
-        <span class="body"><div class="name">${esc(m?.title || extName(e))}</div><div class="sub">${esc(where)}</div></span>${dot}</a></li>`;
+        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(where)}</div></span>${dot}</a></li>`;
     };
     const histRow = (h, key, m) => {
       const sub = [KIND_LABEL[h.kind] || h.kind, many ? machineName(h.machine) : "", ago(h.ended)].filter(Boolean).join(" · ");
-      return `<li><a class="item ended ${view === "ext" && extCur === "h:" + h.id ? "active" : ""}"${rowAttrs("h:" + h.id, m)} href="#/h/${encodeURIComponent(h.id)}">
+      const name = m?.title || histName(h);
+      return `<li><a class="item ended ${view === "ext" && extCur === "h:" + h.id ? "active" : ""}"${rowAttrs("h:" + h.id, m)} href="#/h/${encodeURIComponent(h.id)}" title="${esc(name)}">
         <span class="glyph">${sessionGlyph(h.kind, "cli")}</span>
-        <span class="body"><div class="name">${esc(m?.title || histName(h))}</div><div class="sub">${esc(sub)}</div></span>${m?.unread ? unreadDot : ""}</a></li>`;
+        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(sub)}</div></span>${m?.unread ? unreadDot : ""}</a></li>`;
     };
     const pane = (a, term) => {
       const key = term ? "" : markKey(a.machine, a.kind, a.session), m = marks[key];
