@@ -1827,7 +1827,7 @@ select.picked { display: none; }
 .ctx-menu .po.danger, .ctx-menu .po.danger .pi { color: var(--attn); }
 .ctx-menu .pi svg { fill: none; stroke: currentColor; stroke-width: calc(1.7 * var(--stroke)); stroke-linecap: round; stroke-linejoin: round; }
 .ctx-menu .po .ck { display: none; }
-/* the sidebar's menu: centered on every screen over the scrim, as wide as the app's confirm */
+/* the sidebar's menu on a phone or touch screen: centered over the scrim, as wide as the app's confirm */
 .ctx-menu.center {
   inset: 0; margin: auto; width: min(400px, calc(100vw - 48px)); height: fit-content; max-width: none; max-height: calc(var(--vh) - 48px);
   padding: 8px; border-radius: calc(28px * var(--round));

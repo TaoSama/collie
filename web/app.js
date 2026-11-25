@@ -3530,7 +3530,7 @@
   // agent (session_menu.go); Claude Code has no archive, so Collie hides it.
   // A terminal's menu only closes it.
   const ctxPop = document.createElement("div");
-  ctxPop.className = "pick-pop ctx-menu center"; ctxPop.hidden = true; ctxPop.setAttribute("role", "menu");
+  ctxPop.className = "pick-pop ctx-menu"; ctxPop.hidden = true; ctxPop.setAttribute("role", "menu");
   const ctxBack = document.createElement("div");
   ctxBack.className = "pick-back"; ctxBack.hidden = true;
   document.body.append(ctxBack, ctxPop);
@@ -3546,7 +3546,7 @@
   const CTX_DANGER = new Set(["archive", "close"]);
   // A running Claude Code renames itself by its /rename; the others by their own API.
   const typesRename = (r) => r.src === "pane" && r.kind === "claude";
-  function openCtx(row) {
+  function openCtx(row, x, y) {
     closePick();
     closeAttach();
     ctxRow = row;
@@ -3559,8 +3559,19 @@
     ];
     ctxPop.innerHTML = `<div class="ph">${esc(row.term || row.name)}</div>` + items.map(([act, label, off]) =>
       `<button type="button" class="po${CTX_DANGER.has(act) ? " danger" : ""}" role="menuitem" data-ctx="${act}" ${off ? "disabled" : ""}><span class="pi">${CTX_ICONS[act]}</span><span class="pl"><span>${label}</span></span></button>`).join("");
-    ctxBack.hidden = false;
+    // A phone or a touch screen (an unfolded phone is wider than narrow())
+    // gets it in the middle, as the app's confirm; a mouse, at the pointer.
+    const center = narrow() || touchMQ.matches;
+    ctxPop.classList.toggle("center", center);
+    ctxBack.hidden = !center;
     ctxPop.hidden = false;
+    if (center) ctxPop.style.cssText = "";
+    else {
+      ctxPop.style.minWidth = "180px";
+      const w = ctxPop.offsetWidth, h = ctxPop.offsetHeight;
+      ctxPop.style.left = Math.min(Math.max(8, x), innerWidth - w - 8) + "px";
+      ctxPop.style.top = Math.min(Math.max(8, y), innerHeight - h - 8) + "px";
+    }
     $(".po:not([disabled])", ctxPop)?.focus({ preventScroll: true });
   }
   function closeCtx() { ctxPop.hidden = true; ctxBack.hidden = true; ctxRow = null; }
@@ -3576,7 +3587,7 @@
     e.preventDefault();
     dropHold();
     if (hold) hold.fired = true;
-    openCtx(row);
+    openCtx(row, e.clientX, e.clientY);
   });
   sideBox.addEventListener("pointerdown", (e) => {
     hold = null;
@@ -3587,7 +3598,7 @@
       const row = sideByRow.get(a.dataset.row);
       if (!hold || !row) return;
       hold.fired = true;
-      openCtx(row);
+      openCtx(row, hold.x, hold.y);
     }, HOLD_MS);
   });
   sideBox.addEventListener("pointermove", (e) => {
