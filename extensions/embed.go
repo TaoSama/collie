@@ -8,3 +8,9 @@ import "embed"
 //
 //go:embed */collie-extension.json
 var Manifests embed.FS
+
+// Bundled is the files a packaged extension carries in Collie itself, its
+// pkg/ directory: installed next to the ones its source pins.
+//
+//go:embed */pkg
+var Bundled embed.FS

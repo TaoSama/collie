@@ -34,3 +34,5 @@ docs/changes/
 *.test
 *.out
 coverage.html
+__pycache__/
+!extensions/*/pkg/bin/

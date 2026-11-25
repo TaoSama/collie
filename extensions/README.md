@@ -6,7 +6,7 @@
 
 | 目录 | 扩展 | 形态 |
 | --- | --- | --- |
-| `larkx/` | 飞书（以你本人的身份） | 下载包：安装时从上游拉取锁定版本，本仓库只放清单和说明 |
+| `larkx/` | 飞书（以你本人的身份） | 下载包：上游按锁定 commit 逐个文件下载，一行不改；适配层（Python）在 `larkx/pkg/`，随 collie 打包 |
 | `wechat/` | 微信（iLink bot） | 内置：Go 代码在本目录，编进 collie 二进制，作为 `collie ext-wechat` 子进程运行 |
 
 自带的只有这两个，其他扩展都从扩展市场安装（第 9 节），开发时也可以放进本地目录。
@@ -23,6 +23,7 @@ extensions/<id>/
   README.md               给使用者：它做什么、风险、怎么登录；给开发者：怎么测试
   *.go                    只有内置扩展有：package <id>，入口 func Main(args []string) int
   *_test.go               内置扩展的测试
+  pkg/                    只有下载包可以有：自己的代码，随 collie 打包，装在下载的文件旁边（第 9 节）
 ```
 
 装到某台电脑上以后：
@@ -155,7 +156,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.logout` | `{}` | `{}`，同时删掉自己存的登录态（`connector.secrets.delete`） |
 | `connector.archive.changes` | `{cursor?, limit?}` | `{batches:[{chat:{id,name,kind,updated_at,muted?}, messages:[{id,sender_id,sender_name,mine?,type,text,at,media?}]}], next, more}`。`next` 是下次的游标，`more` 表示还有 |
 | `connector.actions.do` | `{name, args, request_id}` | `{text, files?: [{path, mime?}], items?: […]}`。`files` 是扩展所在电脑上的本地路径，`items` 是结构化结果，Collie 原样转给调用方。**同一个 `request_id` 最多执行一次**；结果不明时不再执行，回错误 |
-| `channel.send` | `{ref, chat, text, kind, reply_to?, images?, files?, link?}` | `{message_id?}`，或 `{deferred:true, reason}`（暂时发不了，扩展自己排队，之后用 `channel.delivery` 报告）。**同一个 `ref` 最多发一次** |
+| `channel.send` | `{ref, chat, text, footer?, kind, reply_to?, images?, files?, link?}`（`text` 以尾标 `footer` 结尾，想把尾标排成别的样子的扩展可以拆开） | `{message_id?}`，或 `{deferred:true, reason}`（暂时发不了，扩展自己排队，之后用 `channel.delivery` 报告）。**同一个 `ref` 最多发一次** |
 | `channel.interest` | `{chats:[chat_id…]}` | `{}`。哪些会话有启用中的定时任务或待发结果；有 `interest` 能力的扩展据此决定要不要提醒续期。Collie 每 30 秒发一次 |
 
 `kind`：`answer`（回复一条消息）、`progress`（处理中的进度）、`result`（定时任务或后台任务的结果）、`push`（你明确要求推送）。
@@ -177,7 +178,7 @@ COLLIE_HOME/ext/<id>/
 
 1. Collie 给每次发送一个 `ref`，重试时用同一个 `ref`。
 2. 扩展先把「要发 ref」持久化，再真正发送，成功后记录结果。
-3. 发出去了但不知道成功没有（超时、回执不明、进程崩溃）：标为 `uncertain`，**永不自动重发**。Collie 在界面上提示「可能已发出，去原应用确认」。
+3. 发出去了但不知道成功没有（超时、回执不明、进程崩溃）：标为 `uncertain`，**永不自动重发**。`channel.send` 当场就知道时，用错误码 `uncertain` 回答（`extproto.ErrUncertain`）。Collie 在界面上提示「可能已发出，去原应用确认」。
 4. 平台明确拒绝的，可以有限次重试，用完就标 `failed`。
 
 ### 3.6 动作：agent 怎么调用
@@ -305,7 +306,8 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
       printf '"%s": "%s",\n' "${f#./}" "$(sha256sum "$f" | cut -d' ' -f1)"; done
     ```
 
-  - 安装到 `COLLIE_HOME/ext/<id>/pkg/<version>/`，写 `install.json`。版本不变就不重新下载。
+  - **自带文件**：内置目录里的下载包可以有 `extensions/<id>/pkg/`（比如调用上游的适配代码）。它编进 collie 二进制（`extensions.Bundled`），安装时按原路径写进包目录。和 `files` 里的路径重复就安装失败；它的内容也算进 `install.json` 的来源，collie 升级后内容变了会重装。
+  - 安装到 `COLLIE_HOME/ext/<id>/pkg/<version>/`，写 `install.json`。版本和来源不变就不重新下载。
   - 上游没有许可证的代码，**只在安装时下载，不放进本仓库或 Release**。
 
 ## 10. 测试要求

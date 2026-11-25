@@ -382,15 +382,17 @@ func TestInstallPinned(t *testing.T) {
 	}
 }
 
-// The real larkx package, its fixture backend (no network, no account):
-// set COLLIE_LARKX_PKG to an unpacked extensions/larkx of the pinned commit.
-// It checks the pinned hashes, the handshake, sign-in, the archive and a send.
-func TestLarkxFixture(t *testing.T) {
-	pkg := os.Getenv("COLLIE_LARKX_PKG")
-	if pkg == "" {
-		t.Skip("COLLIE_LARKX_PKG not set")
+// The real larkx package with its fake Feishu (no network, no account):
+// COLLIE_LARKX_UPSTREAM is a folder with LarkAgentX's larkx/ at the pinned
+// commit, COLLIE_LARKX_DEPS one with requirements.txt installed. It checks
+// the pinned hashes and bundled files, the handshake, sign-in, received
+// messages and a send whose footer goes apart.
+func TestLarkxFake(t *testing.T) {
+	upstream, deps := os.Getenv("COLLIE_LARKX_UPSTREAM"), os.Getenv("COLLIE_LARKX_DEPS")
+	if upstream == "" || deps == "" {
+		t.Skip("COLLIE_LARKX_UPSTREAM or COLLIE_LARKX_DEPS not set")
 	}
-	srv := httptest.NewServer(http.StripPrefix("/pkg/", http.FileServer(http.Dir(pkg))))
+	srv := httptest.NewServer(http.StripPrefix("/up/", http.FileServer(http.Dir(upstream))))
 	defer srv.Close()
 	cat, err := extCatalog()
 	if err != nil {
@@ -401,14 +403,14 @@ func TestLarkxFixture(t *testing.T) {
 		if m.ID == "larkx" {
 			cp := *m
 			src := *m.Source
-			src.Base = srv.URL + "/pkg/"
+			src.Base = srv.URL + "/up/"
 			cp.Source = &src
 			real = &cp
 		}
 	}
-	extEnvKeep = append(extEnvKeep, "LARKX_PERSONA_BACKEND")
-	t.Setenv("LARKX_PERSONA_BACKEND", "fixture")
-	sp, h, _ := newExtTestHub(t)
+	extEnvKeep = append(extEnvKeep, "COLLIE_LARKX_FAKE", "COLLIE_LARKX_DEPS")
+	t.Setenv("COLLIE_LARKX_FAKE", "1")
+	sp, h, dir := newExtTestHub(t)
 	h.cat["larkx"] = real
 	r := startExt(t, h, "larkx")
 	ctx := context.Background()
@@ -423,26 +425,37 @@ func TestLarkxFixture(t *testing.T) {
 		}
 	}
 	if !st.Done {
-		t.Fatal("the fixture signs in after two polls")
+		t.Fatal("the fake signs in after two polls")
 	}
 	waitFor(t, "signed in", func() bool {
 		r.refreshStatus(ctx)
 		v := h.view("larkx")
 		return v.Status != nil && v.Status.State == extproto.StateOK
 	})
-	r.signalPull()
-	waitFor(t, "its chats in the inbox", func() bool { return len(h.store.list("larkx")) >= 3 })
+	waitFor(t, "its chats in the inbox", func() bool { return len(h.store.list("larkx")) >= 2 })
 	if len(extTriggers(sp, "ext:larkx")) != 0 {
-		t.Fatal("history never triggers")
+		t.Fatal("a closed conversation never triggers")
 	}
-	h.store.update("larkx:c_dm", func(c *InboxConv) { c.On = true; c.AskMsg = "m4"; c.AskAt = time.Now() })
-	o, err := h.sendOut("ext:larkx:c_dm", "好的", extproto.KindAnswer, runInfo{Agent: "Codex"}, "")
+	h.store.update("larkx:c_dm", func(c *InboxConv) { c.On = true; c.AskMsg = "m1"; c.AskAt = time.Now() })
+	o, err := h.sendOut("ext:larkx:c_dm", "改到 **三点**", extproto.KindAnswer, runInfo{Agent: "Codex"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "sent through larkx_send", func() bool { x := h.store.out(o.Ref); return x != nil && x.State == extproto.DeliverySent })
+	waitFor(t, "sent", func() bool { x := h.store.out(o.Ref); return x != nil && x.State == extproto.DeliverySent })
 	if x := h.store.out(o.Ref); x.MessageID != "m_sent_1" {
-		t.Fatalf("larkx's message id: %+v", x)
+		t.Fatalf("the message id: %+v", x)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "ext", "larkx", "data", "fake-posts.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var post struct {
+		Text, Footer string
+		ReplyTo      string `json:"reply_to"`
+	}
+	json.Unmarshal(b, &post)
+	if post.Text != "改到 **三点**" || !strings.HasPrefix(post.Footer, "🤖 AI 代答") || post.ReplyTo != "m1" {
+		t.Fatalf("the post, its footer apart: %s", b)
 	}
 }
 

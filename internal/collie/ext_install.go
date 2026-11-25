@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/TaoSama/collie/extensions"
 )
 
 // Installing a packaged extension (extensions/README.md §9): download each
@@ -50,7 +54,31 @@ func pinned(m *ExtManifest) (base string, files map[string]string) {
 	return m.Source.Base, m.Source.Files
 }
 
-func sourceKey(m *ExtManifest) string {
+// bundledFiles is what Collie itself carries of a built-in package
+// (extensions/<id>/pkg/): its own code, next to the pinned files.
+func bundledFiles(m *ExtManifest) (map[string][]byte, error) {
+	if m.Market != nil || m.Local {
+		return nil, nil
+	}
+	root := m.ID + "/pkg"
+	if _, err := fs.Stat(extensions.Bundled, root); errors.Is(err, fs.ErrNotExist) {
+		return nil, nil // nothing bundled
+	} else if err != nil {
+		return nil, err
+	}
+	out := map[string][]byte{}
+	err := fs.WalkDir(extensions.Bundled, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(extensions.Bundled, p)
+		out[strings.TrimPrefix(p, root+"/")] = b
+		return err
+	})
+	return out, err
+}
+
+func sourceKey(m *ExtManifest, bundled map[string][]byte) string {
 	base, files := pinned(m)
 	names := make([]string, 0, len(files))
 	for p := range files {
@@ -62,6 +90,14 @@ func sourceKey(m *ExtManifest) string {
 	for _, p := range names {
 		io.WriteString(h, files[p]+"  "+p+"\n")
 	}
+	names = names[:0]
+	for p := range bundled {
+		names = append(names, p)
+	}
+	sort.Strings(names)
+	for _, p := range names {
+		io.WriteString(h, sha256Hex(bundled[p])+"  bundled/"+p+"\n")
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -70,7 +106,11 @@ func ensureInstalled(ctx context.Context, home string, m *ExtManifest) error {
 	if m.Source == nil && m.Market == nil {
 		return nil
 	}
-	dir, key := extPackageDir(home, m), sourceKey(m)
+	bundled, err := bundledFiles(m)
+	if err != nil {
+		return fmt.Errorf("its bundled files: %v", err)
+	}
+	dir, key := extPackageDir(home, m), sourceKey(m, bundled)
 	var have extInstalled
 	if b, err := os.ReadFile(filepath.Join(extDir(home, m.ID), "install.json")); err == nil && json.Unmarshal(b, &have) == nil &&
 		have.Version == m.Version && have.Source == key {
@@ -92,6 +132,14 @@ func ensureInstalled(ctx context.Context, home string, m *ExtManifest) error {
 	for rel, want := range files {
 		if err := fetchPinned(ctx, home, base+rel, want, filepath.Join(tmp, filepath.FromSlash(rel))); err != nil {
 			return fmt.Errorf("%s: %v", rel, err)
+		}
+	}
+	for rel, b := range bundled {
+		if _, dup := files[rel]; dup {
+			return fmt.Errorf("%s is both pinned and bundled", rel)
+		}
+		if err := writePkgFile(filepath.Join(tmp, filepath.FromSlash(rel)), b); err != nil {
+			return err
 		}
 	}
 	if cmd, err := m.command(runtime.GOOS, runtime.GOARCH); err == nil {
@@ -158,6 +206,10 @@ func writePinned(b []byte, want, dst string) error {
 	if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != strings.ToLower(want) {
 		return fmt.Errorf("does not match its pinned sha256")
 	}
+	return writePkgFile(dst, b)
+}
+
+func writePkgFile(dst string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}

@@ -3,43 +3,90 @@
   "id": "larkx",
   "label": "飞书",
   "name": "飞书（以你本人身份）",
-  "version": "0.3.6",
-  "description": "用 LarkAgentX 扫码登录飞书网页版，以你本人的身份收发消息。收件箱列出你的飞书会话，打开某个会话后，发触发词即可交给 agent，回复以你的身份发出并带上尾标。",
+  "version": "0.4.0",
+  "description": "扫码登录飞书网页版，以你本人的身份收发消息。收件箱列出你的飞书会话，打开某个会话后，发触发词即可交给 agent，回复以你的身份发出：Markdown 排成富文本，尾标是末尾的引用。",
   "warning": "走逆向的飞书网页版协议，不是官方接口：飞书升级后可能失效，账号可能被风控。登录凭据是完整的网页会话，只保存在运行它的那台电脑上。公司账号请先确认公司规定。",
   "homepage": "https://github.com/cv-cat/LarkAgentX",
-  "engines": {"collie_protocol": 1},
-  "runtime": {"command": "bin/larkx"},
+  "engines": {
+    "collie_protocol": 1
+  },
+  "runtime": {
+    "command": "bin/larkx"
+  },
   "source": {
-    "base": "https://raw.githubusercontent.com/nwverse/persona-extensions/443ac2675448fb0f904bb78d49f951595b131b3a/extensions/larkx/",
+    "base": "https://raw.githubusercontent.com/cv-cat/LarkAgentX/97ad48e69e34bd8c78ee30f795b7c3759dd81659/",
     "files": {
-      "README.md": "f59c2ef0b7d7e99f4f382b3fd7640caa2d676718dc492562bc12c600cb0afc35",
-      "assets/LICENSE": "401f92d98473d65a34d3b4458ece98ea4f56ee3ec1fb5cc29815e440895798c1",
-      "assets/icon.png": "50fd95485ea08de428ca0c1e61133dbe8a23580f8b09c1ceba721d1d4a26b330",
-      "assistant/instructions.md": "62a22204ca9237bb52328212a489c13b7988f35a6839410eb00e91154eebf6b8",
-      "bin/larkx": "2b9ec5c5341d88840fb577ff6dbae18381d6bcda7e96efdb5c55759adaf00b6a",
-      "persona-extension.json": "b376c372950129dd67dd25f1d7f1b5f459de4da11a11f993e3508e90deb43edd",
-      "requirements.txt": "16bc7d057205d938b46a6cf34bb42388d4d1149e5dd236da30c41cefa1f57e92",
-      "src/larkx_persona/__init__.py": "36f02647a7b1290758c5ad98c043d9d5a6a79b74b2e3716f3e36bf5aa5d4d044",
-      "src/larkx_persona/connector.py": "7eb7166fe060ef45d072bf33d7adc25fa3a5c6c417559c6e771e42933ce937df",
-      "src/larkx_persona/fixture.py": "7991d13ddc37f73c326f26f1f496aaabbad1b2ac90376895c8761518a5992a10",
-      "src/larkx_persona/main.py": "cebfe1072de24333f4947b873de30c77d60d816f2a6f6e6a08d00b256ee541e8",
-      "src/larkx_persona/real.py": "cb01d7ea690aede198877e60b014829c719885d2adfd28765713d2481dc82816",
-      "src/larkx_persona/store.py": "e5589b8b869fab69964ccf1e5e4d1c8c73405d7cc4ff3cb0639ec1463d36e3eb",
-      "src/larkx_persona/upstream.json": "cb77821feb83ce6647c60e6c0eff7828e502a8dd1e96a7a3aa65ea289869f580",
-      "src/larkx_persona/wire.py": "609bd3ab4940be7e2e24049bee5a18dce9b1aba79a5ed16e847c1c95b70a8a00"
+      "larkx/auth.py": "8bdfd3804b1c2e7c3dca29e2bd1a48be7e1b9b3322ceb7564deb3d107186716a",
+      "larkx/client.py": "d81267309c7211d64b55410fcb8bb7f5e1a4836db556f02e44e658dfd7b853b6",
+      "larkx/config.py": "6a2a5abd661cdd33f18fa9fa2e4e38933ce298757eb827cdd8433d44004d0461",
+      "larkx/media.py": "e6def0c0bbb7a8fa363eeb2f7ad3928c35e51e71d12e7a93b4b8d2119b0a9db5",
+      "larkx/proto/__init__.py": "728c212ff2cad359d40cc084655207839dfd09fa2a1ba0bc7231ececebd97d7c",
+      "larkx/proto/builders.py": "a81f5c8066f3648b98004b1aad13f404652067e0c2972e036ab1f3ae06c2c92b",
+      "larkx/proto/cmd_map.json": "f51047047c949f02e6434b73bab98cb7063d57a20e53e3d062c305258fb1ea8d",
+      "larkx/proto/decoders.py": "57fbd2c9a25993d79aa8476995e2eb77ba3f9399eb5d7b6032ffd71c82f744f8",
+      "larkx/proto/gateway.py": "c5a58b4defb3585a7cd146ad81a8d52af8be20ac7842deed30fef6b0822aad82",
+      "larkx/proto/ids.py": "dbb6a57e0d0beecb6016fa8083a5dc9f5ccd1933f66d03313750a48945d22f64",
+      "larkx/proto/lark_all_pb2.py": "a725f6695444c0efbd7fa9aa9b559fa7cb0e8832cab886173d8e3741e0fc1f5a",
+      "larkx/proto/proto_pb2.py": "0f2692f3e62d6a7a8e2dbca3814e891fe9889a4badd067c7dd35cb4b796816d7",
+      "larkx/region.py": "a9072f00d9e5c1614aa4c522cfe92e7068413d86773a6f08e312c241bb6ceb35"
     }
   },
-  "requires": ["python3"],
+  "requires": [
+    "python3"
+  ],
   "contributes": {
-    "connector": {"id": "larkx", "login": "qr", "capabilities": ["status", "login", "archive", "actions"], "send_action": "larkx_send"},
-    "channel": {"format": "markdown", "max_text": 4000, "kinds": ["answer", "result", "push"]}
+    "connector": {
+      "id": "larkx",
+      "login": "qr",
+      "capabilities": [
+        "status",
+        "login",
+        "receive",
+        "send"
+      ]
+    },
+    "channel": {
+      "format": "markdown",
+      "max_text": 4000,
+      "kinds": [
+        "answer",
+        "progress",
+        "result",
+        "push"
+      ]
+    }
   },
   "configuration": {
     "type": "object",
     "properties": {
-      "region": {"type": "string", "title": "站点", "description": "改了要重新扫码：登录凭据只对所属站点有效。", "default": "feishu", "enum": ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"]}
+      "region": {
+        "type": "string",
+        "title": "站点",
+        "description": "改了要重新扫码：登录凭据只对所属站点有效。",
+        "default": "feishu",
+        "enum": [
+          "feishu",
+          "lark"
+        ],
+        "x-labels": [
+          "飞书",
+          "Lark（国际版）"
+        ]
+      }
     }
   },
-  "permissions": {"network": ["*.feishu.cn", "*.larksuite.com", "*.larkoffice.com", "raw.githubusercontent.com", "codeload.github.com", "pypi.org", "files.pythonhosted.org"]},
-  "defaults": {"machine": "router", "handler": "agent", "conversations": "off"}
+  "permissions": {
+    "network": [
+      "*.feishu.cn",
+      "*.larksuite.com",
+      "raw.githubusercontent.com",
+      "pypi.org",
+      "files.pythonhosted.org"
+    ]
+  },
+  "defaults": {
+    "machine": "router",
+    "handler": "agent",
+    "conversations": "off"
+  }
 }

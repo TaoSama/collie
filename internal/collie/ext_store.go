@@ -66,6 +66,7 @@ type OutboxItem struct {
 	Conv      string    `json:"conv"`
 	Kind      string    `json:"kind"`
 	Text      string    `json:"text"`
+	Footer    string    `json:"footer,omitempty"` // the end of Text
 	ReplyTo   string    `json:"reply_to,omitempty"`
 	Trigger   string    `json:"trigger,omitempty"`
 	State     string    `json:"state"` // pending | sent | deferred | uncertain | failed | expired
