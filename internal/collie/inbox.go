@@ -26,7 +26,7 @@ const (
 	extContextMsgs  = 10
 	extContextChars = 4000
 	defaultTrigger  = "/ai"
-	defaultFooter   = "—— 🤖 {agent} · {model} · {elapsed}"
+	defaultFooter   = "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}"
 	handlerCollie   = "collie"
 	handlerAgent    = "agent"
 	convsOwner      = "owner" // manifest defaults.conversations: the bound person's chat is on, no trigger word

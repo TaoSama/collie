@@ -192,13 +192,13 @@ func TestExtArchiveFlow(t *testing.T) {
 		t.Fatalf("only my /AI triggers, with the chat as context: %+v", ts)
 	}
 
-	o, err := h.sendOut(ts[0].Thread, "今天定了三件事", extproto.KindAnswer, runInfo{Agent: "Claude Code", Model: "opus-4-5"}, ts[0].ID)
+	o, err := h.sendOut(ts[0].Thread, "今天定了三件事", extproto.KindAnswer, runInfo{Agent: "Claude Code", Model: "Opus 5.5"}, ts[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the answer sent", func() bool { x := h.store.out(o.Ref); return x != nil && x.State == extproto.DeliverySent })
 	sent := sentLines(dir, "fake")
-	if len(sent) != 1 || sent[0]["reply_to"] != "m4" || !strings.Contains(sent[0]["text"].(string), "今天定了三件事\n\n—— 🤖 Claude Code · opus-4-5 · ") {
+	if len(sent) != 1 || sent[0]["reply_to"] != "m4" || !strings.Contains(sent[0]["text"].(string), "今天定了三件事\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · ") {
 		t.Fatalf("the answer goes under the request with the footer: %+v", sent)
 	}
 	if x := h.store.out(o.Ref); x.MessageID != "m-1" {
@@ -290,14 +290,14 @@ func TestAfterTrigger(t *testing.T) {
 }
 
 func TestFooter(t *testing.T) {
-	got := renderFooter(defaultFooter, map[string]string{"agent": "Codex", "model": "gpt-5", "elapsed": "1分12秒"})
-	if got != "—— 🤖 Codex · gpt-5 · 1分12秒" {
+	got := renderFooter(defaultFooter, map[string]string{"agent": "Codex", "model": "GPT-5", "elapsed": "1分12秒"})
+	if got != "🤖 AI 代答，仅供参考 · Codex · GPT-5 · 1分12秒" {
 		t.Errorf("footer: %q", got)
 	}
 	if renderFooter("{agent} {nope}", map[string]string{"agent": "A"}) != "A {nope}" {
 		t.Error("unknown names stay")
 	}
-	if footerPrefix(defaultFooter) != "—— 🤖 " || footerPrefix("{agent}") != "" {
+	if footerPrefix(defaultFooter) != "🤖 AI 代答，仅供参考 · " || footerPrefix("{agent}") != "" {
 		t.Errorf("prefix %q", footerPrefix(defaultFooter))
 	}
 	for d, want := range map[time.Duration]string{5 * time.Second: "5秒", 72 * time.Second: "1分12秒", 2 * time.Minute: "2分", 3700 * time.Second: "1小时1分"} {
@@ -305,8 +305,19 @@ func TestFooter(t *testing.T) {
 			t.Errorf("elapsed %v = %q, want %q", d, got, want)
 		}
 	}
-	if modelLabel("claude-opus-4-5-20251101") != "opus-4-5" || modelLabel("gpt-5.1-codex") != "gpt-5.1-codex" {
-		t.Error("modelLabel")
+	for id, want := range map[string]string{
+		"claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5[1m]": "Sonnet 5.5", "claude-haiku-5-5-20261101": "Haiku 5.5",
+		"opus": "Opus", "gemini-4-neon-high": "Gemini 4 Neon High", "gpt-6.2-astra": "GPT-6.2 Astra",
+		"gpt-5.1-codex": "GPT-5.1 Codex", "my-local-model": "my-local-model", "": "",
+	} {
+		if got := modelLabel(id); got != want {
+			t.Errorf("modelLabel(%q) = %q, want %q", id, got, want)
+		}
+	}
+	for kind, want := range map[string]string{"claude": "Claude Code", "codex": "Codex", "agy": "Antigravity"} {
+		if got := agentLabel(kind); got != want {
+			t.Errorf("agentLabel(%q) = %q", kind, got)
+		}
 	}
 	if ext, conv, ok := channelOf("ext:larkx:oc_1"); !ok || ext != "larkx" || conv != "larkx:oc_1" {
 		t.Error("channelOf")

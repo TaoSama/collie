@@ -327,11 +327,45 @@ func (sp *Super) workerRunInfo(w *Worker) runInfo {
 	return ri
 }
 
-// modelLabel shortens a model id for the footer: claude-opus-4-5-20251101 → opus-4-5.
+// modelLabel is a model's display name for the footer, by the same rules
+// as the web app's modelName: claude-opus-5-5 → Opus 5.5, opus →
+// Opus, gemini-4-neon-high → Gemini 4 Neon High, gpt-6.2-astra → GPT-6.2
+// Astra; anything else stays as it is.
 func modelLabel(id string) string {
-	id = strings.TrimPrefix(strings.TrimSpace(id), "claude-")
-	if i := strings.LastIndexByte(id, '-'); i > 0 && len(id)-i == 9 {
-		id = id[:i] // a date suffix
+	base := strings.TrimSuffix(strings.TrimSpace(id), "[1m]")
+	if m := claudeModelRe.FindStringSubmatch(base); m != nil {
+		v := m[2]
+		if m[3] != "" {
+			v += "." + m[3]
+		}
+		return capitalize(m[1]) + " " + v
+	}
+	if m := vendorModelRe.FindStringSubmatch(base); m != nil {
+		var words []string
+		for _, w := range strings.Split(m[2], "-") {
+			if w != "" {
+				words = append(words, capitalize(w))
+			}
+		}
+		if m[1] == "gpt" {
+			return "GPT-" + strings.Join(words, " ")
+		}
+		return "Gemini " + strings.Join(words, " ")
+	}
+	if bareAlias.MatchString(base) {
+		return capitalize(base)
 	}
 	return id
+}
+
+var (
+	claudeModelRe = regexp.MustCompile(`^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$`)
+	vendorModelRe = regexp.MustCompile(`^(gemini|gpt)-(\d[\w.-]*)$`)
+)
+
+func capitalize(w string) string {
+	if w == "" {
+		return w
+	}
+	return strings.ToUpper(w[:1]) + w[1:]
 }

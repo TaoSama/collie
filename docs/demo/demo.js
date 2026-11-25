@@ -501,7 +501,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     warning: "走逆向的飞书网页版协议，不是官方接口：飞书升级后可能失效，账号可能被风控。",
     contributes: { connector: { id: "larkx", capabilities: ["status", "login", "archive", "actions"] }, channel: { format: "markdown" } },
     configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] } } } };
-  const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "—— 🤖 {agent} · {model} · {elapsed}",
+  const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}",
     machines: [{ id: "", name: "hub", online: true }, { id: "mini", name: "mac-mini", online: true }],
     extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu" } },
       proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } }] };
@@ -513,7 +513,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
   const inboxMsgs = { "larkx:oc_1": [
     { id: "m1", conv: "larkx:oc_1", at: ago(9), sender_name: "李四", text: "评审定在周五，接口先冻结" },
     { id: "m2", conv: "larkx:oc_1", at: ago(4), sender_name: "张三", mine: true, text: "/ai 帮我总结今天的讨论" },
-    { id: "out:o1", conv: "larkx:oc_1", at: ago(3), mine: true, ref: "o1", text: "今天定了三件事：\n\n1. 周五评审\n2. 接口先冻结\n3. 张三负责发布说明\n\n—— 🤖 Claude Code · opus-4-5 · 58秒" },
+    { id: "out:o1", conv: "larkx:oc_1", at: ago(3), mine: true, ref: "o1", text: "今天定了三件事：\n\n1. 周五评审\n2. 接口先冻结\n3. 张三负责发布说明\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 58秒" },
   ] };
 
   // ───────────────────────────── the API
