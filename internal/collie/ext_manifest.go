@@ -55,12 +55,11 @@ type ExtManifest struct {
 		} `json:"channel"`
 		// UI is reserved for views an extension draws in Collie (not used yet).
 		UI []json.RawMessage `json:"ui,omitempty"`
+		// Workbench: modules the 工作台 shows, as declared (its code reads them).
+		Workbench []json.RawMessage `json:"workbench,omitempty"`
 	} `json:"contributes"`
-	Configuration *struct {
-		Type       string                   `json:"type"`
-		Properties map[string]ExtConfigProp `json:"properties"`
-	} `json:"configuration,omitempty"`
-	Permissions struct {
+	Configuration *ExtConfig `json:"configuration,omitempty"`
+	Permissions   struct {
 		Network []string `json:"network,omitempty"`
 	} `json:"permissions"`
 	Defaults struct {
@@ -73,6 +72,14 @@ type ExtManifest struct {
 	// ("" the hub), not compiled in; Collie doesn't check what it contains.
 	Local   bool   `json:"local,omitempty"`
 	LocalOn string `json:"local_on,omitempty"`
+	// Market: installed from a marketplace repository (ext_market.go).
+	Market *ExtMarketRef `json:"market,omitempty"`
+}
+
+// declarative: nothing to run, only declarations (a 工作台 module): on is
+// enough, no program starts.
+func (m *ExtManifest) declarative() bool {
+	return len(m.Runtime.Command) == 0 && m.Runtime.Builtin == "" && m.Contributes.Connector.ID == ""
 }
 
 // ExtAction is one action an extension offers agents.
@@ -147,6 +154,20 @@ func choices(p ExtConfigProp) string {
 	return " (" + strings.Join(p.Enum, " | ") + ")"
 }
 
+// ExtConfig is the configuration form (§6).
+type ExtConfig struct {
+	Type       string                   `json:"type"`
+	Properties map[string]ExtConfigProp `json:"properties"`
+}
+
+func (c *ExtConfig) propertyOK(k string) (ExtConfigProp, bool) {
+	if c == nil {
+		return ExtConfigProp{}, false
+	}
+	p, ok := c.Properties[k]
+	return p, ok
+}
+
 // ExtConfigProp is one field of the configuration form (§6).
 type ExtConfigProp struct {
 	Type        string   `json:"type"`
@@ -155,6 +176,8 @@ type ExtConfigProp struct {
 	Default     any      `json:"default,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
 	Labels      []string `json:"x-labels,omitempty"`
+	// Secret: kept apart from the config, never shown again (§6).
+	Secret bool `json:"x-secret,omitempty"`
 }
 
 // Connector capabilities (extensions/README.md §2).
@@ -187,6 +210,11 @@ func (m *ExtManifest) validate() error {
 		return fmt.Errorf("bad id %q", m.ID)
 	case m.Name == "" || m.Version == "":
 		return fmt.Errorf("name and version are required")
+	case m.declarative():
+		if len(m.Contributes.Workbench) == 0 {
+			return fmt.Errorf("an extension without a program must declare contributes.workbench")
+		}
+		return nil
 	case m.Engines.CollieProtocol != extproto.Protocol:
 		return fmt.Errorf("speaks protocol %d, collie speaks %d", m.Engines.CollieProtocol, extproto.Protocol)
 	case m.Contributes.Connector.ID == "":
@@ -201,7 +229,7 @@ func (m *ExtManifest) validate() error {
 		return fmt.Errorf("a connector that answers through actions needs send_action")
 	case (m.Runtime.Builtin == "") == (len(m.Runtime.Command) == 0):
 		return fmt.Errorf("runtime needs exactly one of command and builtin")
-	case len(m.Runtime.Command) > 0 && m.Source == nil && !m.Local:
+	case len(m.Runtime.Command) > 0 && m.Source == nil && !m.Local && m.Market == nil:
 		return fmt.Errorf("a packaged extension needs source")
 	}
 	if m.Source != nil {
@@ -262,6 +290,9 @@ func (m *ExtManifest) configWithDefaults(set map[string]any) map[string]any {
 	out := map[string]any{}
 	if m.Configuration != nil {
 		for k, p := range m.Configuration.Properties {
+			if p.Secret {
+				continue
+			}
 			if v, ok := set[k]; ok && validConfigValue(p, v) {
 				out[k] = v
 			} else if p.Default != nil {

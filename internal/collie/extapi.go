@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,6 +30,13 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("POST /api/ext/{id}/login", s.extLogin)
 	api("POST /api/ext/{id}/logout", s.extLogout)
 	api("GET /api/ext-actions", s.extActions)
+	api("GET /api/ext-markets", s.extMarkets)
+	api("POST /api/ext-markets", s.extAddMarket)
+	api("POST /api/ext-markets/remove", s.extRemoveMarket)
+	api("POST /api/ext-markets/install", s.extInstall)
+	api("POST /api/ext/{id}/uninstall", s.extUninstall)
+	// Under /api/super/ so a node's own device token may fetch packages.
+	api("GET /api/super/ext-pkg/{id}/{version}/{path...}", s.extPackageFile)
 	api("POST /api/ext/{id}/do", s.extDo)
 	api("GET /api/inbox", s.inboxList)
 	api("GET /api/inbox/conv", s.inboxConv)
@@ -93,11 +101,19 @@ func (s *Server) extConfigure(w http.ResponseWriter, r *http.Request) {
 		Machine  *string        `json:"machine"`
 		Config   map[string]any `json:"config"`
 		NoWrites *bool          `json:"no_writes"`
+		// ClearSecrets: x-secret fields to forget (an empty value keeps one).
+		ClearSecrets []string `json:"clear_secrets"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	id := r.PathValue("id")
+	if m := s.ext.manifest(id); m != nil && (body.Config != nil || body.ClearSecrets != nil) {
+		if err := s.ext.setConfigSecrets(m, body.Config, body.ClearSecrets); err != nil {
+			writeJSON(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+	}
 	set, err := s.ext.configure(id, func(x *ExtSetting) {
 		if body.Enabled != nil {
 			x.Enabled = *body.Enabled
@@ -245,4 +261,103 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 		s.ext.store.dropMsgs(c.ID) // a closed chat keeps only its preview (§7)
 	}
 	writeJSON(w, 200, map[string]any{"conv": c})
+}
+
+// marketView is a marketplace with what is installed from it.
+type marketView struct {
+	ExtMarket
+	HasToken  bool              `json:"has_token"`
+	Installed map[string]string `json:"installed"` // id → installed version
+}
+
+func (s *Server) marketViews(ms []ExtMarket) []marketView {
+	toks := s.ext.marketTokens()
+	out := []marketView{}
+	for _, m := range ms {
+		v := marketView{ExtMarket: m, HasToken: toks[m.Repo] != "", Installed: map[string]string{}}
+		for _, e := range m.Index {
+			if x := s.ext.manifest(e.ID); x != nil && x.Market != nil && x.Market.Repo == m.Repo {
+				v.Installed[e.ID] = x.Version
+			}
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (s *Server) extMarkets(w http.ResponseWriter, r *http.Request) {
+	ms := s.ext.markets()
+	if r.URL.Query().Has("fresh") {
+		ms = s.ext.refreshMarkets(r.Context())
+	}
+	writeJSON(w, 200, map[string]any{"markets": s.marketViews(ms)})
+}
+
+func (s *Server) extAddMarket(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Repo  string `json:"repo"`
+		Ref   string `json:"ref"`
+		Token string `json:"token"` // kept on the hub only, never sent back
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if _, err := s.ext.addMarket(r.Context(), strings.TrimSpace(body.Repo), strings.TrimSpace(body.Ref), strings.TrimSpace(body.Token)); err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error(), "markets": s.marketViews(s.ext.markets())})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"markets": s.marketViews(s.ext.markets())})
+}
+
+func (s *Server) extRemoveMarket(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Repo string `json:"repo"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	s.ext.removeMarket(body.Repo)
+	writeJSON(w, 200, map[string]any{"markets": s.marketViews(s.ext.markets())})
+}
+
+func (s *Server) extInstall(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Repo string `json:"repo"`
+		ID   string `json:"id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	m, err := s.ext.installFromMarket(r.Context(), body.Repo, body.ID)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"view": s.ext.view(m.ID)})
+}
+
+func (s *Server) extUninstall(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Purge bool `json:"purge"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := s.ext.uninstall(r.Context(), r.PathValue("id"), body.Purge); err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// extPackageFile serves one file of a marketplace package from the hub's
+// copy, only files the package lists.
+func (s *Server) extPackageFile(w http.ResponseWriter, r *http.Request) {
+	m := s.ext.manifest(r.PathValue("id"))
+	rel := r.PathValue("path")
+	if m == nil || m.Market == nil || m.Version != r.PathValue("version") || m.Market.Files[rel] == "" {
+		writeJSON(w, 404, map[string]any{"error": "no such package file"})
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(marketDir(s.ext.home), "pkgs", m.ID, m.Version, filepath.FromSlash(rel)))
 }

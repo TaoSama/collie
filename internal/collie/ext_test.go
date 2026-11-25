@@ -1,7 +1,10 @@
 package collie
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -40,10 +43,7 @@ func fakeManifest(id, mode string) *ExtManifest {
 		m.Contributes.Connector.SendAction = "larkx_send"
 		m.Defaults.Handler = "collie"
 	}
-	m.Configuration = &struct {
-		Type       string                   `json:"type"`
-		Properties map[string]ExtConfigProp `json:"properties"`
-	}{Type: "object", Properties: map[string]ExtConfigProp{"mode": {Type: "string", Default: mode}}}
+	m.Configuration = &ExtConfig{Type: "object", Properties: map[string]ExtConfigProp{"mode": {Type: "string", Default: mode}}}
 	return m
 }
 
@@ -68,7 +68,7 @@ func newExtTestHub(t *testing.T) (*Super, *extHost, string) {
 	srv.ext = h
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
-		for _, id := range []string{"fake", "fakew", "fakea", "loc"} {
+		for _, id := range []string{"fake", "fakew", "fakea", "loc", "tool"} {
 			h.configure(id, func(x *ExtSetting) { x.Enabled = false })
 		}
 		cancel()
@@ -515,3 +515,101 @@ func TestExtLocal(t *testing.T) {
 }
 
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
+
+// A marketplace: add it with a token, read its index, install a package
+// at a pinned commit, run it from the hub's copy, uninstall and purge.
+func TestExtMarket(t *testing.T) {
+	_, h, dir := newExtTestHub(t)
+	self, _ := os.Executable()
+	var tgz bytes.Buffer
+	gz := gzip.NewWriter(&tgz)
+	tw := tar.NewWriter(gz)
+	add := func(name, body string, mode int64) {
+		tw.WriteHeader(&tar.Header{Name: "owner-repo-abc123/" + name, Mode: mode, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(body))
+	}
+	add("exts/tool/collie-extension.json", `{"manifest_version":1,"id":"tool","name":"工具","version":"2.0.0","description":"d",
+	  "engines":{"collie_protocol":1},"runtime":{"command":"bin/run"},
+	  "contributes":{"connector":{"id":"tool","capabilities":["status","actions"],"actions":[{"name":"echo","description":"e","readonly":true,"params":{"text":{"type":"string"}}}]},"channel":{"format":"markdown"}},
+	  "configuration":{"type":"object","properties":{"mode":{"type":"string","default":"actions"},"key":{"type":"string","x-secret":true}}}}`, 0o644)
+	add("exts/tool/bin/run", "#!/bin/sh\nexec "+self+" ext-fake \"$@\"\n", 0o755)
+	add("other/README.md", "not this one", 0o644)
+	tw.Close()
+	gz.Close()
+	var auth string
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/commits/HEAD"):
+			fmt.Fprint(w, "abc123")
+		case strings.HasSuffix(r.URL.Path, "/contents/collie-marketplace.json"):
+			fmt.Fprint(w, `{"name":"私有扩展","extensions":[{"id":"tool","path":"exts/tool","version":"2.0.0","description":"一个工具"}]}`)
+		case strings.HasSuffix(r.URL.Path, "/tarball/abc123"):
+			w.Write(tgz.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer gh.Close()
+	old := marketAPI
+	marketAPI = gh.URL
+	defer func() { marketAPI = old }()
+
+	mk, err := h.addMarket(context.Background(), "owner/repo", "", "tok-1")
+	if err != nil || mk.Commit != "abc123" || len(mk.Index) != 1 || auth != "Bearer tok-1" {
+		t.Fatalf("market: %+v %v %q", mk, err, auth)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "market", "secrets.json")); !strings.Contains(string(b), "tok-1") || strings.Contains(h.store.kv("ext_markets"), "tok-1") {
+		t.Fatal("the token lives in market/secrets.json, not the database")
+	}
+	m, err := h.installFromMarket(context.Background(), "owner/repo", "tool")
+	if err != nil || m.Market == nil || m.Market.Commit != "abc123" || len(m.Market.Files) != 2 {
+		t.Fatalf("install: %+v %v", m, err)
+	}
+	if err := h.setConfigSecrets(m, map[string]any{"key": "s3cret"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	h.configure("tool", func(x *ExtSetting) { x.Config = map[string]any{"key": "s3cret"} })
+	if strings.Contains(h.store.kv("ext_settings"), "s3cret") {
+		t.Fatal("an x-secret value never goes into the settings")
+	}
+	startExt(t, h, "tool")
+	if out, err := h.do(context.Background(), "tool", "echo", map[string]any{"text": "hi"}); err != nil || !strings.HasPrefix(out.Text, "hi") {
+		t.Fatalf("installed tool runs: %+v %v", out, err)
+	}
+	if v, err := h.s.extConfigSecret("tool", "key"); err != nil || v != "s3cret" {
+		t.Fatalf("extConfigSecret: %q %v", v, err)
+	}
+	if err := h.uninstall(context.Background(), "tool", true); err != nil {
+		t.Fatal(err)
+	}
+	if h.manifest("tool") != nil {
+		t.Fatal("uninstalled")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ext", "tool")); !os.IsNotExist(err) {
+		t.Fatal("purged its folder")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "market", "pkgs", "tool")); !os.IsNotExist(err) {
+		t.Fatal("dropped the hub's copy")
+	}
+}
+
+// Only declarations (a 工作台 module): on without a program.
+func TestExtDeclarative(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	m := &ExtManifest{ManifestVersion: 1, ID: "decl", Name: "d", Version: "1.0.0"}
+	m.Contributes.Workbench = []json.RawMessage{json.RawMessage(`{"id":"x","title":"X"}`)}
+	if err := m.validate(); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.cat["decl"] = m
+	h.mu.Unlock()
+	h.configure("decl", func(x *ExtSetting) { x.Enabled = true })
+	if h.run("decl") != nil {
+		t.Fatal("no program for declarations")
+	}
+	if items := h.s.extWorkbench(); len(items) != 1 || items[0].Ext != "decl" {
+		t.Fatalf("workbench items: %+v", items)
+	}
+}

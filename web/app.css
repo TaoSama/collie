@@ -2471,3 +2471,6 @@ select.picked { display: none; }
   .wb-foot { padding: 16px 16px 32px; }
   #wb-edit .sheet-foot { flex-wrap: wrap; }
 }
+.market { border-top: var(--bw) solid var(--line); }
+.market-h { display: flex; align-items: center; gap: 10px; padding: 10px var(--card-px); font-size: var(--fs-meta); }
+.market-h .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

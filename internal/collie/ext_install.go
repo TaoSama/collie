@@ -21,7 +21,7 @@ import (
 // the whole package into place. One file off and nothing is left behind.
 
 const (
-	extFileMost     = 16 << 20
+	extFileMost     = 96 << 20 // a program built for one platform fits
 	extDownloadWait = 5 * time.Minute
 )
 
@@ -35,29 +35,39 @@ type extInstalled struct {
 
 // extPackageDir is where m's package lives once installed ("" for builtins).
 func extPackageDir(home string, m *ExtManifest) string {
-	if m.Source == nil && !m.Local {
+	if m.Source == nil && !m.Local && m.Market == nil {
 		return ""
 	}
 	return filepath.Join(extDir(home, m.ID), "pkg", m.Version)
 }
 
+// pinned is where m's files come from and their sha256s: its source, or
+// the hub's copy of a marketplace package.
+func pinned(m *ExtManifest) (base string, files map[string]string) {
+	if m.Market != nil {
+		return marketSourceHub + m.ID + "/" + m.Version + "/", m.Market.Files
+	}
+	return m.Source.Base, m.Source.Files
+}
+
 func sourceKey(m *ExtManifest) string {
-	names := make([]string, 0, len(m.Source.Files))
-	for p := range m.Source.Files {
+	base, files := pinned(m)
+	names := make([]string, 0, len(files))
+	for p := range files {
 		names = append(names, p)
 	}
 	sort.Strings(names)
 	h := sha256.New()
-	io.WriteString(h, m.Source.Base+"\n")
+	io.WriteString(h, base+"\n")
 	for _, p := range names {
-		io.WriteString(h, m.Source.Files[p]+"  "+p+"\n")
+		io.WriteString(h, files[p]+"  "+p+"\n")
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ensureInstalled installs m on this computer unless that version is there.
 func ensureInstalled(ctx context.Context, home string, m *ExtManifest) error {
-	if m.Source == nil {
+	if m.Source == nil && m.Market == nil {
 		return nil
 	}
 	dir, key := extPackageDir(home, m), sourceKey(m)
@@ -78,8 +88,9 @@ func ensureInstalled(ctx context.Context, home string, m *ExtManifest) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	for rel, want := range m.Source.Files {
-		if err := fetchPinned(ctx, m.Source.Base+rel, want, filepath.Join(tmp, filepath.FromSlash(rel))); err != nil {
+	base, files := pinned(m)
+	for rel, want := range files {
+		if err := fetchPinned(ctx, home, base+rel, want, filepath.Join(tmp, filepath.FromSlash(rel))); err != nil {
 			return fmt.Errorf("%s: %v", rel, err)
 		}
 	}
@@ -98,11 +109,32 @@ func ensureInstalled(ctx context.Context, home string, m *ExtManifest) error {
 	return os.WriteFile(filepath.Join(extDir(home, m.ID), "install.json"), b, 0o600)
 }
 
-// fetchPinned downloads url into dst when its sha256 is want.
-func fetchPinned(ctx context.Context, url, want, dst string) error {
+// fetchPinned downloads url into dst when its sha256 is want. A
+// collie-hub: url is a marketplace package: read from the hub's copy when
+// this is the hub, otherwise downloaded from the hub with this node's token.
+func fetchPinned(ctx context.Context, home, url, want, dst string) error {
+	if rest, ok := strings.CutPrefix(url, marketSourceHub); ok {
+		local := filepath.Join(marketDir(home), "pkgs", filepath.FromSlash(rest))
+		if b, err := os.ReadFile(local); err == nil {
+			return writePinned(b, want, dst)
+		}
+		cfg, ok := loadNodeConfig()
+		if !ok {
+			return fmt.Errorf("not the hub, and not joined to one")
+		}
+		url = strings.TrimRight(cfg.Hub, "/") + "/api/super/ext-pkg/" + rest
+		return fetchURL(ctx, url, "Bearer "+cfg.Token, want, dst)
+	}
+	return fetchURL(ctx, url, "", want, dst)
+}
+
+func fetchURL(ctx context.Context, url, auth, want, dst string) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
+	}
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -119,6 +151,10 @@ func fetchPinned(ctx context.Context, url, want, dst string) error {
 	if len(b) > extFileMost {
 		return fmt.Errorf("larger than %d MB", extFileMost>>20)
 	}
+	return writePinned(b, want, dst)
+}
+
+func writePinned(b []byte, want, dst string) error {
 	if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != strings.ToLower(want) {
 		return fmt.Errorf("does not match its pinned sha256")
 	}

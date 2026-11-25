@@ -58,6 +58,9 @@ type extStartHeader struct {
 	Manifest    *ExtManifest   `json:"manifest"`
 	Config      map[string]any `json:"config"`
 	HostVersion string         `json:"host_version"`
+	// Purge: stop it and delete its folder on this computer, then answer
+	// "purged" and close (uninstalling).
+	Purge bool `json:"purge,omitempty"`
 }
 
 type extProcState struct {
@@ -129,6 +132,21 @@ func (ps *extProcs) serve(conn io.ReadWriteCloser, home string) {
 	if err := json.Unmarshal(line, &h); err != nil || h.Manifest == nil || !extIDRe.MatchString(h.ID) || h.ID != h.Manifest.ID ||
 		(h.Manifest.Local && h.Manifest.Source != nil) {
 		log.Printf("ext: bad start header")
+		return
+	}
+	if h.Purge {
+		ps.mu.Lock()
+		p := ps.byID[h.ID]
+		delete(ps.byID, h.ID)
+		ps.mu.Unlock()
+		if p != nil {
+			p.shutdown()
+		}
+		answer := "purged"
+		if err := os.RemoveAll(extDir(home, h.ID)); err != nil {
+			answer = err.Error()
+		}
+		conn.Write([]byte(answer + "\n"))
 		return
 	}
 	hub := &lineWriter{w: conn}

@@ -9,6 +9,8 @@
 | `larkx/` | 飞书（以你本人的身份） | 下载包：安装时从上游拉取锁定版本，本仓库只放清单和说明 |
 | `wechat/` | 微信（iLink bot） | 内置：Go 代码在本目录，编进 collie 二进制，作为 `collie ext-wechat` 子进程运行 |
 
+自带的只有这两个，其他扩展都从扩展市场安装（第 9 节），开发时也可以放进本地目录。
+
 Collie 侧的实现在 `internal/collie/ext*.go`（宿主、进程、安装）、`internal/collie/inbox.go`（收件箱和触发）和 `internal/extproto/`（协议）。界面在「自动化 → 接入」和「自动化 → 收件箱」。
 
 ## 1. 目录结构
@@ -74,6 +76,7 @@ COLLIE_HOME/ext/<id>/
 | `version` | 是 | `MAJOR.MINOR.PATCH`。下载包的版本变了才重装 |
 | `warning` | 否 | 打开前必须看到的风险说明（非官方协议、封号风险等） |
 | `engines.collie_protocol` | 是 | `1`。和 Collie 的协议版本不同就不能打开 |
+| `contributes.workbench` | 否 | 工作台模块的声明（字段由工作台定义，Collie 原样转交）。只有这一项、没有 `runtime` 和 `connector` 的扩展是**声明式扩展**：打开就算生效，不起进程，也不需要 `engines` |
 | `runtime.command` | 是（二选一） | 包内相对路径，或 `{"<GOOS>-<GOARCH>": 路径}`。不能是绝对路径，不能用 `..` 逃出包目录 |
 | `runtime.builtin` | 是（二选一） | 内置扩展的名字：Collie 用自己的二进制运行 `collie ext-<builtin>` |
 | `runtime.args` | 否 | 追加的参数 |
@@ -250,6 +253,8 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 
 `configuration` 是 JSON Schema 的子集：顶层 `type: object`，`properties` 里每项是 `string`（可带 `enum` 和 `x-labels`）、`boolean` 或 `integer`，带 `title`、`description`、`default`。Collie 按这个表单渲染，补齐默认值后放进 `initialize.config`。不支持嵌套、数组和 `required`。
 
+字段加 `"x-secret": true` 是密钥（API Key、访问令牌）：接入页用密码框，填过的只显示「已设置」；值存在 hub 的 `COLLIE_HOME/ext/<id>/config-secrets.json`（0600），不进 hub 的数据库、不进日志，只在启动程序时放进 `initialize.config`。没有程序的声明式扩展，由 hub 里用到它的功能按 id 和字段名读取。
+
 不要把 Collie 已经统一管理的东西做成扩展配置，比如触发词、尾标、谁能唤起、交给谁。
 
 ## 7. 权限、凭证与安全
@@ -273,7 +278,20 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 ## 9. 打包与安装
 
 - **内置扩展**：代码在 `extensions/<id>/`，`main` 里登记子命令 `ext-<id>`，随 collie 一起发布。不需要安装。
-- **本地扩展**：你自己的扩展不必进本仓库。把整个包（`collie-extension.json` 和程序）放进运行它的那台电脑的 `COLLIE_HOME/ext/<id>/pkg/<version>/`，Collie 每分钟扫描一次 hub 和在线的 node，接入页把它列为「本地扩展」，由你决定是否打开。
+- **市场扩展**：除了自带的飞书（larkx）和微信，其他扩展都从市场安装。市场是一个 GitHub 仓库（可以是私有的），在「接入 → 扩展市场」添加：
+  - 仓库根目录放 `collie-marketplace.json`：
+
+    ```json
+    {"name": "我的扩展", "extensions": [
+      {"id": "notes", "path": "extensions/notes", "version": "1.1.0", "name": "笔记搜索", "description": "让 agent 搜索你自己的笔记服务"}
+    ]}
+    ```
+
+    `path` 指向一个标准的扩展包目录（`collie-extension.json` 加程序，程序可以按平台给多个，见 `runtime.command`）。清单里的 `id`、`version` 必须和索引一致，不能写 `source`、`runtime.builtin`。
+  - **凭证**：私有仓库要一个能读它的 GitHub token，在添加市场时填，只存在 hub 的 `COLLIE_HOME/market/secrets.json`（0600），不显示、不进数据库和日志。运行扩展的 node 不需要它。
+  - **安装**：hub 把分支解析成具体 commit，下载这个目录，记下每个文件的 sha256，放进 `COLLIE_HOME/market/pkgs/<id>/<version>/`。扩展跑在 node 上时，node 用自己的设备令牌从 hub 下载这份包（`/api/super/ext-pkg/…`），逐个校验 sha256。
+  - **更新**：索引里的版本比已装的新时显示「更新」，更新后正在运行的扩展会重启。**卸载**：停掉它，删掉设置和 hub 上的安装包；选「删除数据」时，连它在那台电脑上的 `COLLIE_HOME/ext/<id>/`（数据和登录态）一起删。
+- **本地扩展**：开发时，扩展可以不经过市场。把整个包（`collie-extension.json` 和程序）放进运行它的那台电脑的 `COLLIE_HOME/ext/<id>/pkg/<version>/`，Collie 每分钟扫描一次 hub 和在线的 node，接入页把它列为「本地扩展」，由你决定是否打开。
   - 清单规则不变（协议版本、`runtime.command` 相对路径或按平台的映射、环境变量白名单），但不能写 `source` 或 `runtime.builtin`。目录名必须等于清单的 `id` 和 `version`；同一个 id 有多个版本时取最新的。
   - 它只在找到它的那台电脑上运行，不能换电脑。和内置扩展同名时以内置的为准。
   - 接入页标明「来自本地目录，Collie 不校验其内容」。

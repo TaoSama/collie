@@ -47,13 +47,14 @@ type extHost struct {
 	home  string
 	store *extStore
 
-	cfgMu   sync.Mutex // one configure at a time: an old program stops before a new one starts
-	sending sync.Map   // refs being sent right now
-	mu      sync.Mutex
-	cat     map[string]*ExtManifest
-	sets    map[string]ExtSetting
-	runs    map[string]*extRun
-	ctx     context.Context
+	cfgMu    sync.Mutex // one configure at a time: an old program stops before a new one starts
+	marketMu sync.Mutex // the marketplaces' list and tokens
+	sending  sync.Map   // refs being sent right now
+	mu       sync.Mutex
+	cat      map[string]*ExtManifest
+	sets     map[string]ExtSetting
+	runs     map[string]*extRun
+	ctx      context.Context
 }
 
 // extRun is one enabled extension's connection.
@@ -83,6 +84,7 @@ func newExtHost(s *Server, sp *Super, home string) *extHost {
 	for _, m := range cat {
 		h.cat[m.ID] = m
 	}
+	h.loadMarketInstalled()
 	var sets []ExtSetting
 	if raw := h.store.kv("ext_settings"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &sets); err != nil {
@@ -202,6 +204,9 @@ func sameJSON(a, b any) bool {
 }
 
 func (h *extHost) startLocked(m *ExtManifest, set ExtSetting) {
+	if m.declarative() {
+		return // nothing to run: on is all it takes
+	}
 	ctx, cancel := context.WithCancel(h.ctx)
 	r := &extRun{h: h, man: m, set: set, cancel: cancel, pull: make(chan struct{}, 1)}
 	r.proc = extProcState{State: extStarting}
@@ -273,7 +278,14 @@ func (r *extRun) session(ctx context.Context) error {
 		return err
 	}
 	defer conn.Close()
-	hdr, _ := json.Marshal(extStartHeader{ID: r.man.ID, Manifest: r.man, Config: r.set.Config, HostVersion: version})
+	cfg := map[string]any{}
+	for k, v := range r.set.Config {
+		cfg[k] = v
+	}
+	for k, v := range r.h.configSecrets(r.man.ID) {
+		cfg[k] = v // to the program, never into the hub's database
+	}
+	hdr, _ := json.Marshal(extStartHeader{ID: r.man.ID, Manifest: r.man, Config: cfg, HostVersion: version})
 	if _, err := conn.Write(append(hdr, '\n')); err != nil {
 		return err
 	}
@@ -462,11 +474,13 @@ func (r *extRun) pullArchive(ctx context.Context) {
 
 // view is what the 接入 page shows of an extension.
 type extView struct {
-	Manifest *ExtManifest     `json:"manifest"`
-	Setting  ExtSetting       `json:"setting"`
-	Proc     *extProcState    `json:"proc,omitempty"`
-	Status   *extproto.Status `json:"status,omitempty"`
-	Problem  string           `json:"problem,omitempty"`
+	Manifest *ExtManifest  `json:"manifest"`
+	Setting  ExtSetting    `json:"setting"`
+	Proc     *extProcState `json:"proc,omitempty"`
+	// Secrets: which x-secret fields of its config are set (never their values).
+	Secrets []string         `json:"secrets,omitempty"`
+	Status  *extproto.Status `json:"status,omitempty"`
+	Problem string           `json:"problem,omitempty"`
 }
 
 func (h *extHost) views() []extView {
@@ -489,6 +503,10 @@ func (h *extHost) view(id string) extView {
 	v := extView{Manifest: h.cat[id], Setting: h.settingLocked(id)}
 	r := h.runs[id]
 	h.mu.Unlock()
+	for k := range h.configSecrets(id) {
+		v.Secrets = append(v.Secrets, k)
+	}
+	sort.Strings(v.Secrets)
 	if r != nil {
 		r.mu.Lock()
 		p, st := r.proc, r.status

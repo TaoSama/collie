@@ -595,6 +595,8 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if (p === "/api/super/triggers") return json({ triggers, threads });
     if (p === "/api/ext/settings") { Object.assign(extData, { trigger: body.trigger ?? extData.trigger, footer: body.footer ?? extData.footer }); return json({ trigger: extData.trigger, footer: extData.footer }); }
     if (p === "/api/ext") return json(extData);
+    if (p === "/api/ext-markets") return json({ markets: [{ repo: "owner/collie-extensions", name: "我的扩展", commit: "4f2c9a1d", has_token: true, installed: { notes: "1.0.0" },
+      index: [{ id: "notes", version: "1.1.0", name: "笔记搜索", description: "让 agent 搜索和打开你自己的笔记服务" }, { id: "photos", version: "0.3.0", name: "相册", description: "按日期和地点找照片" }] }] });
     if ((m = p.match(/^\/api\/ext\/([^/]+)$/)) && method === "POST") {
       const v = extData.extensions.find((x) => x.manifest.id === m[1]);
       if (v) Object.assign(v.setting, body.enabled != null ? { enabled: body.enabled } : {}, body.machine != null ? { machine: body.machine } : {});

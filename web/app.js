@@ -2614,7 +2614,7 @@
   // Each tab draws from the last answer to its request at once; the request
   // only refreshes it. The answers ride in the startup snapshot.
   const AUTO_API = { inbox: "inbox", events: "triggers", timers: "timers", memory: "memory", hooks: "settings", settings: "settings" };
-  const AUTO_PATH = { inbox: "/api/inbox", ext: "/api/ext" };
+  const AUTO_PATH = { inbox: "/api/inbox", ext: "/api/ext", markets: "/api/ext-markets" };
   let autoData = {};
   async function fetchAuto(src) {
     const r = await api(AUTO_PATH[src] || "/api/super/" + src);
@@ -2655,6 +2655,7 @@
     try {
       const [r] = await Promise.all([fetchAuto(AUTO_API[tab]),
         tab === "hooks" ? fetchAuto("ext").catch(() => null) : null,
+        tab === "hooks" && !autoData.markets ? fetchAuto("markets").catch(() => null) : null,
         tab === "inbox" && inboxCur ? loadConv() : null,
         tab === "timers" ? fetchAuto("inbox").catch(() => null) : null]);
       if (view !== "auto" || autoTab !== tab) return;
@@ -2703,8 +2704,13 @@
       const sig = JSON.stringify(r);
       if (sig !== body._sig || !body.querySelector("#ext-cards")) {
         body._sig = sig; body._extSig = "";
-        body.innerHTML = `<div id="ext-cards"></div><div id="ext-settings"></div>` + hooksHTML(r);
+        body.innerHTML = `<div id="ext-cards"></div><div id="ext-markets"></div><div id="ext-settings"></div>` + hooksHTML(r);
         applyAfter();
+      }
+      const mSig = JSON.stringify(autoData.markets || null);
+      if (mSig !== body._mSig && !body.querySelector("#ext-markets :focus")) {
+        body._mSig = mSig;
+        $("#ext-markets").innerHTML = collieExt.marketsHTML(autoData.markets);
       }
       if (extSig !== body._extSig && !body.querySelector("#ext-cards :focus")) {
         body._extSig = extSig;
@@ -3209,6 +3215,14 @@
         await api("/api/super/timers", { body: { spec: r.spec, text: f.text.value, target: f.target.value, owner: "you", thread: f.channel?.value || "" } });
         toast(`已添加：${describeSpec(r.spec)}`);
         loadAuto();
+      } else if (f.id === "market-form") {
+        const btn = f.querySelector("button"); btn.disabled = true;
+        try {
+          autoData.markets = await api("/api/ext-markets", { body: { repo: f.repo.value, ref: f.ref.value, token: f.token.value } });
+          f.reset(); toast("市场已添加");
+        } catch (err) { toast(err.message, "attn"); await fetchAuto("markets").catch(() => {}); }
+        btn.disabled = false;
+        drawAuto(autoData.settings);
       } else if (f.hasAttribute("data-ext-secret")) {
         const id = f.closest("[data-ext]").dataset.ext;
         const r = await api(`/api/ext/${encodeURIComponent(id)}/login`, { body: { step: f.dataset.extSecret, secret: f.secret.value } });
@@ -3307,6 +3321,24 @@
     if (b.hasAttribute("data-conv-close")) { inboxCur = ""; inboxDetail = null; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-conv-on")) { setConv({ on: b.getAttribute("aria-checked") !== "true" }); return; }
     if (b.dataset.convSet) { setConv({ [b.dataset.convSet]: b.dataset.convSet === "anyone" ? b.dataset.v === "true" : b.dataset.v }); return; }
+    const market = b.closest("[data-market]")?.dataset.market;
+    if (b.hasAttribute("data-market-refresh")) {
+      b.disabled = true;
+      await fetchAuto("markets").catch(() => {}); await api("/api/ext-markets?fresh").then((r) => { autoData.markets = r; }).catch((err) => toast(err.message, "attn"));
+      drawAuto(autoData.settings); return;
+    }
+    if (market && b.hasAttribute("data-market-remove")) {
+      if (!(await ask({ title: "移除这个市场？", text: "已安装的扩展不受影响，它的 token 会删掉。", ok: "移除" }))) return;
+      autoData.markets = await api("/api/ext-markets/remove", { body: { repo: market } }).catch((err) => { toast(err.message, "attn"); return autoData.markets; });
+      drawAuto(autoData.settings); return;
+    }
+    if (market && b.dataset.marketInstall) {
+      b.disabled = true; b.textContent = "安装中…";
+      try { await api("/api/ext-markets/install", { body: { repo: market, id: b.dataset.marketInstall } }); toast("已安装，打开它就能用"); }
+      catch (err) { toast(err.message, "attn"); }
+      await Promise.all([fetchAuto("markets"), fetchAuto("ext")]).catch(() => {});
+      drawAuto(autoData.settings); return;
+    }
     const card = b.closest("[data-ext]");
     if (!card) return;
     const id = card.dataset.ext;
@@ -3317,6 +3349,13 @@
         if (v?.manifest.warning && !(await ask({ title: "打开" + v.manifest.name + "？", text: v.manifest.warning, ok: "打开" }))) return;
       }
       extConfigure(id, { enabled: on }, on ? "已打开，启动后扫码登录" : "已关闭");
+    } else if (b.hasAttribute("data-ext-uninstall")) {
+      const purge = await ask({ title: "卸载这个扩展？", text: "会停掉它、删掉它的设置和 hub 上的安装包。要连它在那台电脑上的数据和登录态一起删，在下面输入「删除数据」。", value: "", ok: "卸载" });
+      if (purge === false || purge == null) return;
+      try { await api(`/api/ext/${encodeURIComponent(id)}/uninstall`, { body: { purge: purge === "删除数据" } }); toast("已卸载"); }
+      catch (err) { toast(err.message, "attn"); }
+      await Promise.all([fetchAuto("markets"), fetchAuto("ext")]).catch(() => {});
+      drawAuto(autoData.settings);
     } else if (b.hasAttribute("data-ext-writes")) {
       extConfigure(id, { no_writes: b.getAttribute("aria-checked") === "true" }, "已保存");
     } else if (b.hasAttribute("data-ext-login")) {

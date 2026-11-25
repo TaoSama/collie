@@ -28,6 +28,10 @@ func scanLocalExts(home string) []*ExtManifest {
 	}
 	best := map[string]*ExtManifest{}
 	for _, f := range files {
+		id := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(f))))
+		if _, err := os.Stat(filepath.Join(home, "ext", id, "install.json")); err == nil {
+			continue // Collie installed it (built in or from a marketplace): not a local one
+		}
 		m, err := readLocalManifest(f)
 		if err != nil {
 			log.Printf("ext: local %s: %v", f, err)
