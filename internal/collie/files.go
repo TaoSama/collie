@@ -126,13 +126,14 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isImage := as == "image" || as == "thumb"
 	limit := int64(fileTextMax)
-	if as == "image" {
+	if isImage {
 		limit = fileImageMax
 	}
 	b, _ := io.ReadAll(io.LimitReader(f, limit))
 	kind := "text"
-	if as == "image" {
+	if isImage {
 		kind = "image"
 	} else if bytes.IndexByte(b[:min(len(b), 8000)], 0) >= 0 {
 		kind, b = "binary", nil
@@ -141,6 +142,12 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 		kind, b = "binary", nil
 	}
 	h := w.Header()
+	if kind == "image" && as == "thumb" {
+		if t, ok := makeThumb(b); ok {
+			b = t
+			h.Set("X-File-Thumb", "1")
+		}
+	}
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("Content-Disposition", "attachment")
 	h.Set("Content-Security-Policy", "sandbox")

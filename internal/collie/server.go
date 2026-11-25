@@ -946,7 +946,7 @@ func cors(h http.Handler) http.Handler {
 			hd := w.Header()
 			hd.Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 			hd.Add("Vary", "Origin")
-			hd.Set("Access-Control-Expose-Headers", "X-Collie-Web, X-File-Kind, X-File-Size, X-File-Path, Content-Disposition")
+			hd.Set("Access-Control-Expose-Headers", "X-Collie-Web, X-File-Kind, X-File-Size, X-File-Path, X-File-Thumb, Content-Disposition")
 			if r.Method == http.MethodOptions {
 				hd.Set("Access-Control-Allow-Methods", "GET, POST")
 				hd.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")

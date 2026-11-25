@@ -5526,13 +5526,19 @@
       return (id.startsWith("h:") ? hist.find((h) => h.id === id.slice(2)) : ext.find((x) => x.id === id))?.machine;
     }
   }
-  async function fetchFile(path, machine) {
-    const q = `/api/file?path=${encodeURIComponent(path)}${machine ? "&machine=" + encodeURIComponent(machine) : ""}${IMG_EXT.test(path) ? "&as=image" : ""}`;
+  const FILE_IMG_MAX = 20 << 20; // fileImageMax in files.go
+  // thumb: a picture comes shrunk by the computer it is on (X-File-Thumb).
+  async function fetchFile(path, machine, { thumb = false, signal } = {}) {
+    const as = IMG_EXT.test(path) ? (thumb ? "&as=thumb" : "&as=image") : "";
+    const q = `/api/file?path=${encodeURIComponent(path)}${machine ? "&machine=" + encodeURIComponent(machine) : ""}${as}`;
     const r = routeReq(q);
-    const res = await fetch(r.url, { headers: r.hub ? { Authorization: "Bearer " + r.hub.token } : {}, credentials: r.hub ? "omit" : "same-origin" });
+    const res = await fetch(r.url, { headers: r.hub ? { Authorization: "Bearer " + r.hub.token } : {}, credentials: r.hub ? "omit" : "same-origin", signal });
     if (res.status === 404) return null;
     if (!res.ok) { let e = {}; try { e = await res.json(); } catch {} throw new Error(e.error || "打不开这个文件"); }
-    return { kind: res.headers.get("X-File-Kind"), size: +res.headers.get("X-File-Size") || 0,
+    const kind = res.headers.get("X-File-Kind"), size = +res.headers.get("X-File-Size") || 0;
+    // A computer on an older Collie doesn't know as=thumb: ask it for the original.
+    if (thumb && as && kind !== "image" && size <= FILE_IMG_MAX) { res.body?.cancel(); return fetchFile(path, machine, { signal }); }
+    return { kind, size, thumb: res.headers.get("X-File-Thumb") === "1",
       path: decodeURIComponent(res.headers.get("X-File-Path") || path), blob: await res.blob(), machine };
   }
   // Where the message came from first, then the hub, then every other computer.
@@ -5540,9 +5546,22 @@
     const ms = (state.machines || []).filter((m) => !m.hub && (m.local || m.online)).map((m) => m.local ? "" : m.id);
     return [...new Set([fileContextMachine() ?? "", "", ...ms])];
   };
-  async function findFile(path, tries = fileTries()) {
-    for (const m of tries) { const f = await fetchFile(path, m); if (f) return f; }
-    return null;
+  // Every computer is asked at once (one after another took a round trip
+  // each); the first in `tries` order that has the file wins. A computer that
+  // fails only matters when none has it.
+  async function findFile(path, tries = fileTries(), opts = {}) {
+    const ctl = new AbortController();
+    const asks = tries.map((m) => fetchFile(path, m, { ...opts, signal: ctl.signal }).catch((err) => ({ err })));
+    let err = null;
+    try {
+      for (const a of asks) {
+        const f = await a;
+        if (f?.err) err ||= f.err;
+        else if (f) return f;
+      }
+      if (err) throw err;
+      return null;
+    } finally { ctl.abort(); }
   }
   let fileUrl = "", wideFileUrl = "", fileSeq = 0, wideSeq = 0;
   let fvCur = null, rvCur = null;
@@ -5790,25 +5809,82 @@
   // agent's transcript on its computer) show as thumbnails; tap for the lightbox.
   const IMG_TOKEN = /\[image:(~\/\.collie\/images\/[0-9a-f]+\.(?:png|jpe?g|gif|webp|svg))\]\n?/gi;
   const thumbs = new Map();    // path -> object URL, kept so redraws don't refetch
-  const thumbMeta = new Map(); // path -> { size, machine, path }
+  const thumbMeta = new Map(); // path -> { size, machine, path, thumb }
   const IMG_RUN = /(?:\[image:~\/\.collie\/images\/[0-9a-f]+\.(?:png|jpe?g|gif|webp|svg)\]\n?)+/gi;
   const thumbBtn = (p) => `<button type="button" class="thumb" data-img="${esc(p)}" aria-label="${esc("查看大图 " + (p.split("/").pop() || "图片"))}"><img alt=""${thumbs.get(p) ? ` src="${thumbs.get(p)}"` : ""}></button>`;
   const withImages = (html) => html.includes("[image:") ? html.replace(IMG_RUN, (run) => `<span class="thumbs">${run.replace(IMG_TOKEN, (_, p) => thumbBtn(p))}</span>`) : html;
+  // Thumbnails are also kept in Cache Storage, so a reopened app shows them
+  // without asking any computer. Files Collie names itself (pictures saved from
+  // a transcript, uploads) never change; any other path is asked again after
+  // the kept copy shows. Signing out drops the cache with the other collie-*.
+  const IMG_CACHE = "collie-img", IMG_CACHE_MAX = 400, IMG_KEEP_MAX = 5 << 20, IMG_TRIM_EVERY = 20;
+  let imgPuts = IMG_TRIM_EVERY - 1; // trim on the first put, then every 20th
+  const IMG_FIXED = /\/\.collie\/(?:images|uploads)\//;
+  const imgKey = (p) => "/__img?p=" + encodeURIComponent(p);
+  const imgCache = () => (window.caches ? caches.open(IMG_CACHE) : Promise.reject(new Error("no Cache Storage")));
+  async function keptImage(p) {
+    try {
+      const res = await (await imgCache()).match(imgKey(p));
+      if (!res) return null;
+      const h = res.headers;
+      return { blob: await res.blob(), size: +h.get("X-File-Size") || 0, machine: h.get("X-File-Machine") || "",
+        path: h.get("X-File-Path") || p, thumb: h.get("X-File-Thumb") === "1" };
+    } catch (err) { console.warn("kept image:", err); return null; }
+  }
+  async function keepImage(p, f) {
+    if (f.blob.size > IMG_KEEP_MAX) return;
+    try {
+      const c = await imgCache();
+      await c.put(imgKey(p), new Response(f.blob, { headers: { "Content-Type": imgMime(p), "X-File-Size": String(f.size),
+        "X-File-Machine": f.machine || "", "X-File-Path": f.path || p, "X-File-Thumb": f.thumb ? "1" : "" } }));
+      if (++imgPuts % IMG_TRIM_EVERY) return;
+      const ks = await c.keys();
+      for (const k of ks.slice(0, Math.max(0, ks.length - IMG_CACHE_MAX))) await c.delete(k);
+    } catch (err) { console.warn("keep image:", err); }
+  }
+  const sameBlob = async (a, b) => {
+    if (a.size !== b.size) return false;
+    const [x, y] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()]).then((v) => v.map((u) => new Uint8Array(u)));
+    return x.every((v, i) => v === y[i]);
+  };
+  // Show f for p in every thumbnail of it on the page; returns its URL.
+  function showThumb(p, f) {
+    const u = URL.createObjectURL(new Blob([f.blob], { type: imgMime(p) })), old = thumbs.get(p);
+    if (old && lbImg.getAttribute("src") !== old) URL.revokeObjectURL(old);
+    thumbs.set(p, u);
+    thumbMeta.set(p, { size: f.size, machine: f.machine, path: f.path, thumb: f.thumb });
+    for (const el of document.querySelectorAll(".thumb[data-img] img")) {
+      if (el.parentElement.dataset.img === p) { el.src = u; el.parentElement.classList.remove("broken"); }
+    }
+    return u;
+  }
   async function loadThumb(img) {
     const p = img.parentElement.dataset.img;
     if (thumbs.get(p)) { img.src = thumbs.get(p); return; }
     if (thumbs.has(p)) return; // on its way; it fills every copy when it lands
     thumbs.set(p, "");
+    const kept = await keptImage(p);
+    if (kept) showThumb(p, kept);
+    if (kept && IMG_FIXED.test(p)) return;
     try {
-      const f = await findFile(p);
+      const f = await findFile(p, fileTries(), { thumb: true });
       if (!f || f.kind !== "image") throw 0;
-      const u = URL.createObjectURL(new Blob([f.blob], { type: imgMime(p) }));
-      thumbs.set(p, u);
-      thumbMeta.set(p, { size: f.size, machine: f.machine, path: f.path });
-      for (const el of document.querySelectorAll(".thumb[data-img] img")) {
-        if (el.parentElement.dataset.img === p) { el.src = u; el.parentElement.classList.remove("broken"); }
-      }
-    } catch { thumbs.delete(p); img.parentElement.classList.add("broken"); }
+      if (kept && await sameBlob(kept.blob, f.blob)) return;
+      if (thumbMeta.get(p)?.thumb === false) return; // the lightbox brought the original meanwhile
+      showThumb(p, f);
+      keepImage(p, f);
+    } catch {
+      if (kept) return;
+      thumbs.delete(p);
+      img.parentElement.classList.add("broken");
+    }
+  }
+  // A picture you attach shows from your own copy once it is uploaded.
+  function seedImage(p, file, machine) {
+    if (!IMG_EXT.test(p) || !file.type.startsWith("image/")) return;
+    const f = { blob: file, size: file.size, machine: machine || "", path: p, thumb: false };
+    showThumb(p, f);
+    keepImage(p, f);
   }
   // Under each Collie message, on hover: copy, quote, pin, and when it was said.
   const ICON_COPY = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>`;
@@ -6152,47 +6228,52 @@
     }
 
     // 2. Cached in `thumbs`: instant display, zero refetch, never revoked on close.
-    const cached = thumbs.get(item.path);
-    if (cached) {
+    const cached = thumbs.get(item.path), cm = thumbMeta.get(item.path) || {};
+    if (cached && !cm.thumb) {
       lbStatus.hidden = true;
-      const m = thumbMeta.get(item.path) || {};
-      showUrl(cached, { size: m.size || 0, machine: m.machine ?? fileContextMachine() ?? "" });
+      showUrl(cached, { size: cm.size || 0, machine: cm.machine ?? fileContextMachine() ?? "" });
       return;
     }
 
     // 3. Cross-machine fetch via `findFile` (hub / node / remote hub Bearer).
-    lbImg.hidden = true;
-    lbImg.removeAttribute("src");
-    lbStatus.className = "lb-status loading";
-    lbStatus.textContent = "读取原图中…";
-    lbStatus.hidden = false;
-    const tries = fileTries();
+    // A shrunk thumbnail stands in until the original lands.
+    lbImg.onload = lbImg.onerror = null;
+    if (cached) {
+      lbStatus.hidden = true;
+      lbImg.src = cached;
+      lbImg.hidden = false;
+    } else {
+      lbImg.hidden = true;
+      lbImg.removeAttribute("src");
+      lbStatus.className = "lb-status loading";
+      lbStatus.textContent = "读取原图中…";
+      lbStatus.hidden = false;
+    }
+    const tries = cached ? [...new Set([cm.machine ?? "", ...fileTries()])] : fileTries();
+    // Without the original the stand-in stays: better than an error over a picture.
+    const fail = (msg) => { if (!cached) showErr(msg); };
     let f = null;
     try {
       f = await findFile(item.path, tries);
     } catch (err) {
-      showErr(err.message || "打不开这张图片。");
+      fail(err.message || "打不开这张图片。");
       return;
     }
     if (seq !== lbSeq) return;
     if (!f) {
-      showErr(`在${tries.length > 1 ? "各台电脑" : "这台电脑"}上都没找到这张图片。`);
+      fail(`在${tries.length > 1 ? "各台电脑" : "这台电脑"}上都没找到这张图片。`);
       return;
     }
     if (f.kind !== "image") {
-      showErr(f.size > 20 << 20 ? `这张图片有 ${fmtSize(f.size)}（超过 20 MB），没法直接预览。` : "这个文件不是受支持的图片格式。");
+      fail(f.size > 20 << 20 ? `这张图片有 ${fmtSize(f.size)}（超过 20 MB），没法直接预览。` : "这个文件不是受支持的图片格式。");
       return;
     }
-    const blobUrl = URL.createObjectURL(new Blob([f.blob], { type: imgMime(item.path) }));
-    // If a `.thumb` in the DOM is waiting on this exact path, share it into `thumbs`.
+    let blobUrl;
+    // If a `.thumb` in the DOM shows this exact path, share it into `thumbs`.
     if (document.querySelector(`.thumb[data-img="${CSS.escape(item.path)}"]`)) {
-      thumbs.set(item.path, blobUrl);
-      thumbMeta.set(item.path, { size: f.size, machine: f.machine, path: f.path });
-      for (const el of document.querySelectorAll(".thumb[data-img] img")) {
-        if (el.parentElement.dataset.img === item.path) { el.src = blobUrl; el.parentElement.classList.remove("broken"); }
-      }
+      blobUrl = showThumb(item.path, { ...f, thumb: false });
     } else {
-      lbTempUrl = blobUrl;
+      blobUrl = lbTempUrl = URL.createObjectURL(new Blob([f.blob], { type: imgMime(item.path) }));
     }
     showUrl(blobUrl, { size: f.size, machine: f.machine });
   }
@@ -7098,7 +7179,7 @@
       }).then(async (res) => {
         const d = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(d.error || res.statusText);
-        if (f.abort === ctl) f.path = d.path;
+        if (f.abort === ctl) { f.path = d.path; seedImage(d.path, f.file, m); }
       }).catch((err) => { if (f.abort !== ctl) return; f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
     };
     // ready: every file in a message uploaded, the failed ones tried once
@@ -7602,9 +7683,9 @@
   }
   async function dropSnap(all) {
     store.del(SNAP_KEY);
-    if (!all || !("caches" in window)) return;
+    if (!("caches" in window)) return;
     try {
-      for (const k of await caches.keys()) if (k.startsWith("collie-")) await caches.delete(k);
+      for (const k of await caches.keys()) if (all ? k.startsWith("collie-") : k === IMG_CACHE) await caches.delete(k);
     } catch (err) { console.warn("clearing the app cache:", err); }
   }
   document.addEventListener("visibilitychange", () => { if (document.hidden) saveSnap(); });
