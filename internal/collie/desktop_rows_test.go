@@ -103,3 +103,13 @@ func TestCodexSurface(t *testing.T) {
 		}
 	}
 }
+
+func TestAgySurface(t *testing.T) {
+	for source, want := range map[string]string{
+		"CORTEX_TRAJECTORY_SOURCE_CLI": surfaceCLI, "CORTEX_TRAJECTORY_SOURCE_VSCODE": "", "": "",
+	} {
+		if got := agySurface(source); got != want {
+			t.Errorf("agySurface(%q) = %q, want %q", source, got, want)
+		}
+	}
+}

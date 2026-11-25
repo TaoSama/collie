@@ -628,7 +628,14 @@ func (s *Server) agyDesktopRows() []desktopRow {
 	defer db.Close()
 	// not_fully_idle: the turn is over but the agent will be back on its own
 	// (it set a timer, or a command runs in the background).
-	res, err := db.Query(`SELECT conversation_id, title, preview, workspace_uris, status, not_fully_idle, last_modified_time, last_user_input_time
+	// source names the client that started a conversation: the app lists the
+	// CLI's conversations too. Older indexes may lack the column.
+	source := "''"
+	var has int
+	if db.QueryRow(`SELECT count(*) FROM pragma_table_info('conversation_summaries') WHERE name = 'source'`).Scan(&has) == nil && has > 0 {
+		source = "source"
+	}
+	res, err := db.Query(`SELECT conversation_id, title, preview, workspace_uris, status, not_fully_idle, last_modified_time, last_user_input_time, `+source+`
 		FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0 AND last_modified_time > ?
 		ORDER BY last_modified_time DESC LIMIT ?`, time.Now().Add(-desktopWindow).UTC().Format("2006-01-02 15:04:05"), desktopMax)
 	if err != nil {
@@ -637,10 +644,10 @@ func (s *Server) agyDesktopRows() []desktopRow {
 	defer res.Close()
 	var rows []desktopRow
 	for res.Next() {
-		var id, title, preview, uris, status string
+		var id, title, preview, uris, status, src string
 		var notIdle bool
 		var mod, input any
-		if res.Scan(&id, &title, &preview, &uris, &status, &notIdle, &mod, &input) != nil {
+		if res.Scan(&id, &title, &preview, &uris, &status, &notIdle, &mod, &input, &src) != nil {
 			continue
 		}
 		if title == "" {
@@ -652,7 +659,7 @@ func (s *Server) agyDesktopRows() []desktopRow {
 		if len(ws) > 0 {
 			cwd = strings.TrimSuffix(strings.TrimPrefix(ws[0], "file://"), "/")
 		}
-		d := desktopRow{id: "ag-" + id, kind: "agy", app: appAgy, session: id, title: messageTitle(title), cwd: cwd,
+		d := desktopRow{id: "ag-" + id, kind: "agy", app: appAgy, surface: agySurface(src), session: id, title: messageTitle(title), cwd: cwd,
 			created: sqlTime(input), updated: sqlTime(mod), running: status == "CASCADE_RUN_STATUS_RUNNING"}
 		d.waiting = !d.running && notIdle
 		if f := filepath.Join(root, "brain", id, ".system_generated", "logs", "transcript.jsonl"); isFile(f) {
@@ -737,6 +744,15 @@ func codexSurface(originator string) string {
 	case isCodexApp(codexClient(originator, "")):
 		return surfaceDesktop
 	case originator == "codex-tui" || originator == "codex_cli_rs":
+		return surfaceCLI
+	}
+	return ""
+}
+
+// agySurface is the client an Antigravity conversation's source names. Only
+// the CLI's is known for sure; the app's own may come under several names.
+func agySurface(source string) string {
+	if source == "CORTEX_TRAJECTORY_SOURCE_CLI" {
 		return surfaceCLI
 	}
 	return ""
