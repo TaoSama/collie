@@ -7048,11 +7048,23 @@
       return i;
     };
     const camera = input("image/*", "environment"), photos = input("image/*");
+    // Chrome on Android shows a box that takes any file as a chooser of
+    // camera, camcorder and gallery. Its file picker API opens the system
+    // file manager directly; without it (before Chrome 132), a generic binary
+    // type, which is no media type, leaves out the camera apps.
+    const android = /Android/.test(navigator.userAgent);
+    if (android) picker.accept = "application/octet-stream";
+    const pickFiles = () => {
+      if (!android || !window.showOpenFilePicker) { picker.click(); return; }
+      showOpenFilePicker({ multiple: true }).then((hs) => Promise.all(hs.map((h) => h.getFile()))).then(add, (err) => {
+        if (err.name !== "AbortError") toast("打不开文件管理器：" + err.message, "attn");
+      });
+    };
     const pickers = {
       // a phone's camera comes from the file input; a computer's from the page
       camera: () => touchMQ.matches ? camera.click() : takePhoto().then((f) => f && add([f]), (err) => toast("打不开摄像头：" + err.message, "attn")),
       photos: () => photos.click(),
-      files: () => picker.click(),
+      files: pickFiles,
     };
     $(".attach", form).addEventListener("click", (e) => openAttach(e.currentTarget, pickers));
     picker.addEventListener("change", () => { add([...picker.files]); picker.value = ""; });
