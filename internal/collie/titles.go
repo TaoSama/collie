@@ -23,14 +23,26 @@ import (
 
 var genericTitles = map[string]bool{"": true, "claude": true, "claude code": true, "codex": true, "agy": true, "antigravity": true, "bash": true, "zsh": true}
 
+// titleRunes caps a title by characters, not bytes, so a Chinese one isn't cut at a third.
+const titleRunes = 60
+
+// spinnerGlyph is what an agent puts before the topic in its terminal title to
+// show it's busy or idle: braille spinner frames and claude's "✳"-style stars.
+// A title's own leading emoji or bracket ("🟢 [下载] …") is part of the name.
+func spinnerGlyph(r rune) bool {
+	return unicode.IsSpace(r) || r >= 0x2800 && r <= 0x28FF || r >= 0x2722 && r <= 0x273D || r == '·' || r == '*'
+}
+
 // cleanTitle drops the spinner/status glyphs claude puts in front of the topic.
 func cleanTitle(t string) string {
-	t = strings.TrimLeftFunc(t, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
-	t = strings.TrimSpace(t)
+	t = strings.TrimSpace(strings.TrimLeftFunc(t, spinnerGlyph))
 	if genericTitles[strings.ToLower(t)] {
 		return ""
 	}
-	return clip(t, 60)
+	if r := []rune(t); len(r) > titleRunes {
+		t = strings.TrimSpace(string(r[:titleRunes])) + " …"
+	}
+	return t
 }
 
 var codexNames struct {
