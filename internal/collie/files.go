@@ -28,6 +28,15 @@ func isHTMLPath(p string) bool {
 	return ext == ".html" || ext == ".htm"
 }
 
+// isImagePath: a picture the web app shows (IMG_EXT in app.js).
+func isImagePath(p string) bool {
+	switch strings.ToLower(path.Ext(strings.TrimSpace(p))) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico":
+		return true
+	}
+	return false
+}
+
 func setHTMLSandboxHeaders(h http.Header) {
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Del("Content-Disposition")

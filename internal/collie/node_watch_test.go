@@ -123,6 +123,10 @@ func TestDirectHandler(t *testing.T) {
 		writeJSON(w, 200, map[string]any{"pane": r.PathValue("id")})
 	})
 	api.HandleFunc("GET /api/dirs", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]any{}) })
+	api.HandleFunc("GET /api/file", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-File-Kind", "image")
+		w.Write([]byte("png"))
+	})
 	h := s.directHandler("https://c.example.com", "http://127.0.0.1:17788", api)
 	do := func(method, path, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(`{}`))
@@ -148,6 +152,16 @@ func TestDirectHandler(t *testing.T) {
 	}
 	if w := do("GET", "/direct/api/dirs?access_token="+tok, "https://c.example.com"); w.Code != 404 {
 		t.Fatalf("route outside terminals: %d", w.Code)
+	}
+	file := "/direct/api/file?path=~/.collie/uploads/a.png&access_token=" + tok
+	if w := do("GET", file+"&as=thumb", "https://c.example.com"); w.Code != 200 || w.Body.String() != "png" || !strings.Contains(w.Header().Get("Access-Control-Expose-Headers"), "X-File-Kind") {
+		t.Fatalf("picture: %d %s %v", w.Code, w.Body, w.Header())
+	}
+	for _, u := range []string{file, file + "&as=html", file + "&as=image&download=1",
+		"/direct/api/file?path=~/.ssh/id_rsa&as=image&access_token=" + tok} {
+		if w := do("GET", u, "https://c.example.com"); w.Code != 404 {
+			t.Fatalf("file read other than a picture (%s): %d", u, w.Code)
+		}
 	}
 	if w := do("OPTIONS", keys, "https://c.example.com"); w.Code != 204 || w.Header().Get("Access-Control-Allow-Private-Network") != "true" {
 		t.Fatalf("preflight: %d", w.Code)

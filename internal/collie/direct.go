@@ -13,8 +13,9 @@ import (
 // at http://127.0.0.1 (its local UI port) instead of going through the hub:
 // a keystroke and its echo then never leave the computer. The hub hands out
 // a token for it, only to a signed-in browser that connects from the node's
-// own address; the node accepts the token on a few terminal routes, from the
-// hub's page. Anything else, or a token it doesn't know, goes the usual way.
+// own address; the node accepts the token, from the hub's page, on a few
+// terminal routes and for the pictures shown in the chat. Anything else, or
+// a token it doesn't know, goes the usual way.
 
 // directTTL is how long a direct token works; the browser asks again after.
 const directTTL = 12 * time.Hour
@@ -59,8 +60,13 @@ func (s *Server) mintDirect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"token": s.direct.mint(), "ttl": int(directTTL.Seconds())})
 }
 
-// directRoute: the node routes a direct token opens. Terminal I/O only.
-func directRoute(method, path string) bool {
+// directRoute: the node routes a direct token opens. Terminal I/O, and
+// pictures shown in the chat (no downloads or HTML pages).
+func directRoute(method, path string, q url.Values) bool {
+	if path == "/api/file" {
+		as := q.Get("as")
+		return method == "GET" && (as == "image" || as == "thumb") && q.Get("download") == "" && isImagePath(q.Get("path"))
+	}
 	rest, ok := strings.CutPrefix(path, "/api/panes/")
 	if !ok {
 		return method == "GET" && path == "/api/hello"
@@ -96,6 +102,7 @@ func (s *Server) directHandler(hub, local string, api http.Handler) http.Handler
 			h := w.Header()
 			h.Set("Access-Control-Allow-Origin", o)
 			h.Add("Vary", "Origin")
+			h.Set("Access-Control-Expose-Headers", "X-File-Kind, X-File-Size, X-File-Path, X-File-Thumb")
 			if r.Method == http.MethodOptions {
 				h.Set("Access-Control-Allow-Methods", "GET, POST")
 				h.Set("Access-Control-Allow-Headers", "Content-Type")
@@ -109,7 +116,7 @@ func (s *Server) directHandler(hub, local string, api http.Handler) http.Handler
 			writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 			return
 		}
-		if !directRoute(r.Method, path) {
+		if !directRoute(r.Method, path, r.URL.Query()) {
 			writeJSON(w, 404, map[string]any{"error": "not found"})
 			return
 		}

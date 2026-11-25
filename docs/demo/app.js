@@ -4696,16 +4696,19 @@
   const DIRECT_RETRY_MS = 5 * 60e3, DIRECT_TIMEOUT_MS = 3000;
   const directs = new Map(); // machine → { base, token, until } | { until } (none for now) | a probe
   const paneMachine = (id) => !id || hubOf(id) || !id.includes("@") ? "" : id.slice(id.lastIndexOf("@") + 1);
-  function directOf(id) {
-    const d = directs.get(paneMachine(id));
+  function directOf(id) { return directOfMachine(paneMachine(id)); }
+  function directOfMachine(m) {
+    const d = directs.get(m);
     return d?.base && Date.now() < d.until ? d : null;
   }
-  const directURL = (d, id, rest) => `${d.base}/api/panes/${encodeURIComponent(id.slice(0, id.lastIndexOf("@")))}/${rest}${rest.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(d.token)}`;
-  function probeDirect(id) {
-    const m = paneMachine(id), d = directs.get(m);
+  const directAt = (d, path) => `${d.base}${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(d.token)}`;
+  const directURL = (d, id, rest) => directAt(d, `/api/panes/${encodeURIComponent(id.slice(0, id.lastIndexOf("@")))}/${rest}`);
+  function probeDirect(id) { return probeDirectMachine(paneMachine(id)); }
+  function probeDirectMachine(m) {
+    const d = directs.get(m);
     if (!m) return Promise.resolve(null);
     if (d instanceof Promise) return d;
-    if (d && Date.now() < d.until) return Promise.resolve(directOf(id));
+    if (d && Date.now() < d.until) return Promise.resolve(directOfMachine(m));
     const probe = (async () => {
       let got = null;
       try {
@@ -4721,8 +4724,8 @@
     return probe;
   }
   // The node restarted (its tokens with it) or stopped: ask again soon.
-  function dropDirect(id) {
-    const m = paneMachine(id);
+  function dropDirect(id) { dropDirectMachine(paneMachine(id)); }
+  function dropDirectMachine(m) {
     if (m && directs.get(m)?.base) directs.set(m, { until: Date.now() + 5000 });
   }
   async function postPane(id, kind, body) {
@@ -5545,9 +5548,12 @@
   // thumb: a picture comes shrunk by the computer it is on (X-File-Thumb).
   async function fetchFile(path, machine, { thumb = false, signal } = {}) {
     const as = IMG_EXT.test(path) ? (thumb ? "&as=thumb" : "&as=image") : "";
-    const q = `/api/file?path=${encodeURIComponent(path)}${machine ? "&machine=" + encodeURIComponent(machine) : ""}${as}`;
-    const r = routeReq(q);
-    const res = await fetch(r.url, { headers: r.hub ? { Authorization: "Bearer " + r.hub.token } : {}, credentials: r.hub ? "omit" : "same-origin", signal });
+    const q = `/api/file?path=${encodeURIComponent(path)}${as}`;
+    let res = as ? await directFile(machine, q, signal) : null;
+    if (!res) {
+      const r = routeReq(q + (machine ? "&machine=" + encodeURIComponent(machine) : ""));
+      res = await fetch(r.url, { headers: r.hub ? { Authorization: "Bearer " + r.hub.token } : {}, credentials: r.hub ? "omit" : "same-origin", signal });
+    }
     if (res.status === 404) return null;
     if (!res.ok) { let e = {}; try { e = await res.json(); } catch {} throw new Error(e.error || "打不开这个文件"); }
     const kind = res.headers.get("X-File-Kind"), size = +res.headers.get("X-File-Size") || 0;
@@ -5556,23 +5562,48 @@
     return { kind, size, thumb: res.headers.get("X-File-Thumb") === "1",
       path: decodeURIComponent(res.headers.get("X-File-Path") || path), blob: await res.blob(), machine };
   }
+  // A picture on the computer this browser runs on comes from its node's
+  // local port (direct.go), not round the hub, once findFile has found out
+  // the computer that had one can be reached that way.
+  async function directFile(machine, q, signal) {
+    const d = machine && !hubOf(machine) && directOfMachine(machine);
+    if (!d) return null;
+    const ctl = new AbortController(), stop = () => ctl.abort();
+    signal?.addEventListener("abort", stop);
+    const timer = setTimeout(stop, DIRECT_TIMEOUT_MS); // till it answers; reading the picture may take longer
+    try {
+      const res = await fetch(directAt(d, q), { signal: ctl.signal });
+      if (res.ok || res.status === 404) return res;
+    } catch (err) {
+      if (signal?.aborted) throw err;
+    } finally { clearTimeout(timer); }
+    dropDirectMachine(machine);
+    return null;
+  }
   // Where the message came from first, then the hub, then every other computer.
   const fileTries = () => {
     const ms = (state.machines || []).filter((m) => !m.hub && (m.local || m.online)).map((m) => m.local ? "" : m.id);
     return [...new Set([fileContextMachine() ?? "", "", ...ms])];
   };
   // Every computer is asked at once (one after another took a round trip
-  // each); the first in `tries` order that has the file wins. A computer that
-  // fails only matters when none has it.
+  // each); the first in `tries` order that has the file wins, or for a name
+  // Collie made up (on one computer only), the first to answer with it. A
+  // computer that fails only matters when none has it.
+  // The computer that had it may be this one: next time, ask it directly.
+  const found = (f) => { if (f.machine && !hubOf(f.machine)) probeDirectMachine(f.machine); return f; };
   async function findFile(path, tries = fileTries(), opts = {}) {
     const ctl = new AbortController();
     const asks = tries.map((m) => fetchFile(path, m, { ...opts, signal: ctl.signal }).catch((err) => ({ err })));
     let err = null;
     try {
+      if (IMG_FIXED.test(path)) {
+        const f = await Promise.any(asks.map((a) => a.then((f) => (f && !f.err ? f : Promise.reject())))).catch(() => null);
+        if (f) return found(f);
+      }
       for (const a of asks) {
         const f = await a;
         if (f?.err) err ||= f.err;
-        else if (f) return f;
+        else if (f) return found(f);
       }
       if (err) throw err;
       return null;
@@ -5876,6 +5907,7 @@
   async function loadThumb(img) {
     const p = img.parentElement.dataset.img;
     if (thumbs.get(p)) { img.src = thumbs.get(p); return; }
+    if (p.startsWith(LOCAL_PATH)) return; // a file of a message being sent, not on any computer
     if (thumbs.has(p)) return; // on its way; it fills every copy when it lands
     thumbs.set(p, "");
     const kept = await keptImage(p);
@@ -7301,11 +7333,32 @@
     form._restoreFiles = (files) => { form._files = files.concat(form._files); draw(); };
     form._dropFiles = (files) => files.forEach(release);
   }
+  // Until its files are up, a message being sent shows them from the box's
+  // own previews, under made-up paths only this page knows; forgetLocal
+  // drops them once the message is out (or back in the box).
+  const LOCAL_PATH = "/collie-local/";
+  function withLocalFiles(text, files) {
+    if (!files.length) return { text, local: [] };
+    const local = [];
+    const ps = files.map((f) => {
+      if (f.path) return f.path;
+      const p = `${LOCAL_PATH}${Math.random().toString(16).slice(2, 8).padEnd(6, "0")}-${f.name}`;
+      if (f.thumb) {
+        thumbs.set(p, f.thumb);
+        thumbMeta.set(p, { size: f.size, machine: "", path: p, thumb: false });
+        local.push(p);
+      }
+      return p;
+    });
+    return { text: attachText(text, ps), local };
+  }
+  const forgetLocal = (ps) => ps.forEach((p) => { thumbs.delete(p); thumbMeta.delete(p); });
+  const attachText = (text, paths) => (text.trim() ? text.trim() + "\n\n" : "") + "附件：\n" + paths.join("\n");
   async function withFiles(form, files, text) {
     if (!files.length) return text;
     await form._filesReady(files);
     if (files.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
-    return (text.trim() ? text.trim() + "\n\n" : "") + "附件：\n" + files.map((f) => f.path).join("\n");
+    return attachText(text, files.map((f) => f.path));
   }
   // Images a Collie message points at (a screenshot a worker took) show
   // under it, so you need not open each one.
@@ -7357,7 +7410,8 @@
       input.value = ""; grow(input); restored = 0;
       const prev = last;
       const ready = prev.then(() => withFiles(form, files, draft));
-      last = Promise.resolve(send(draft, ready)).then(() => form._dropFiles?.(files), (err) => {
+      const shown = withLocalFiles(draft, files);
+      last = Promise.resolve(send(shown.text, ready)).finally(() => forgetLocal(shown.local)).then(() => form._dropFiles?.(files), (err) => {
         const v = input.value, head = v.slice(0, restored), tail = v.slice(restored).replace(/^\n/, "");
         const front = head ? head + "\n" + draft : draft;
         input.value = tail.trim() ? front + "\n" + tail : front; grow(input);
