@@ -81,7 +81,12 @@
   const SOURCE_LABEL = { worker: "派出的 agent", chat: "对话", timer: "定时", system: "Collie" };
   const collieStatus = (s) => COLLIE_STATUS[s] || "空闲";
   const collieDot = (s) => (s === "done" || s === "unknown" ? "idle" : s === "dreaming" ? "starting" : s || "asleep");
-  const glyph = (v) => isLocalRouter(v) ? GLYPHS.collie : !v.is_agent ? GLYPHS.shell : (GLYPHS[v.kind] || GLYPHS.agent);
+  // A session's Claude or Codex mark carries a </> badge when it runs on the
+  // command line, none in the desktop app or when its record doesn't say.
+  const CLI_BADGE = '<span class="cli-badge" aria-hidden="true"><svg viewBox="0 0 12 12"><path d="M3.6 3.6 1.4 6l2.2 2.4M8.4 3.6 10.6 6 8.4 8.4M6.9 2.6 5.1 9.4"/></svg></span>';
+  const sessionGlyph = (kind, surface) => (GLYPHS[kind] || GLYPHS.agent) + (surface === "cli" && (kind === "claude" || kind === "codex") ? CLI_BADGE : "");
+  // herdr runs the agents' command lines.
+  const glyph = (v) => isLocalRouter(v) ? GLYPHS.collie : !v.is_agent ? GLYPHS.shell : sessionGlyph(v.kind, "cli");
 
   // ───────────────────────────── api
   // A page left open keeps its old code after the hub is updated: when the
@@ -3246,13 +3251,13 @@
       const where = [e.app || KIND_LABEL[e.kind] || e.kind, many && e.machine ? machineName(e.machine) : "", e.live && !open ? "" : ago(e.updated || e.started)].filter(Boolean).join(" · ");
       const dot = e.live ? `<span class="dot ${esc(e.status || "unknown")}" title="${esc(EXT_STATE[e.status] || "正在运行")}"></span>` : m?.unread ? unreadDot : "";
       return `<li><a class="item ${e.live ? "" : "ended"} ${view === "ext" && extCur === e.id ? "active" : ""}"${rowAttrs(e.id, m)} href="#/x/${encodeURIComponent(e.id)}">
-        <span class="glyph">${GLYPHS[e.kind] || GLYPHS.agent}</span>
+        <span class="glyph">${sessionGlyph(e.kind, e.surface)}</span>
         <span class="body"><div class="name">${esc(m?.title || extName(e))}</div><div class="sub">${esc(where)}</div></span>${dot}</a></li>`;
     };
     const histRow = (h, key, m) => {
       const sub = [KIND_LABEL[h.kind] || h.kind, many ? machineName(h.machine) : "", ago(h.ended)].filter(Boolean).join(" · ");
       return `<li><a class="item ended ${view === "ext" && extCur === "h:" + h.id ? "active" : ""}"${rowAttrs("h:" + h.id, m)} href="#/h/${encodeURIComponent(h.id)}">
-        <span class="glyph">${GLYPHS[h.kind] || GLYPHS.agent}</span>
+        <span class="glyph">${sessionGlyph(h.kind, "cli")}</span>
         <span class="body"><div class="name">${esc(m?.title || histName(h))}</div><div class="sub">${esc(sub)}</div></span>${m?.unread ? unreadDot : ""}</a></li>`;
     };
     const pane = (a, term) => {

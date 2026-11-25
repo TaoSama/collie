@@ -91,3 +91,15 @@ func TestCodexAppRowsKeepAutomationThreads(t *testing.T) {
 		t.Fatalf("got %d rows ending %q, want %d recent ones and the active automation's thread", len(rows), rows[len(rows)-1].session, codexMax)
 	}
 }
+
+func TestCodexSurface(t *testing.T) {
+	for originator, want := range map[string]string{
+		"": surfaceDesktop, "Codex Desktop": surfaceDesktop, "codex_work_desktop": surfaceDesktop,
+		"codex-tui": surfaceCLI, "codex_cli_rs": surfaceCLI,
+		"codex_exec": "", "some-ide": "",
+	} {
+		if got := codexSurface(originator); got != want {
+			t.Errorf("codexSurface(%q) = %q, want %q", originator, got, want)
+		}
+	}
+}

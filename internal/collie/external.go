@@ -33,7 +33,8 @@ type External struct {
 	Kind    string    `json:"kind"`
 	PID     int       `json:"pid"`
 	Cwd     string    `json:"cwd"`
-	App     string    `json:"app,omitempty"` // the terminal it runs in
+	App     string    `json:"app,omitempty"`     // the terminal it runs in
+	Surface string    `json:"surface,omitempty"` // Claude's or Codex's client: "cli", "desktop", or "" when its record doesn't say
 	Started time.Time `json:"started"`
 	Session string    `json:"session,omitempty"`
 	Title   string    `json:"title,omitempty"`
@@ -261,6 +262,9 @@ func (s *Server) externalSessions() []*External {
 		}
 		kind := externalKinds[p.name]
 		e := &External{ID: fmt.Sprintf("%s-%d", kind, p.pid), Kind: kind, PID: p.pid, Cwd: cwds[p.pid], App: app, Started: now.Add(-p.age), Live: true}
+		if kind != "agy" {
+			e.Surface = surfaceCLI
+		}
 		if q := launchShell(ps, p); q != nil && kind == "claude" {
 			e.startDir = cwds[q.pid]
 		}

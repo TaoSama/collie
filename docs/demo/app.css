@@ -329,6 +329,10 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .empty-hint { margin: 2px 10px; color: var(--t-empty); font-size: var(--fs-meta); }
 .item .glyph { width: 26px; height: 22px; display: grid; place-items: center; color: var(--t-secondary); }
 .item .glyph svg { width: 18px; height: 18px; }
+/* the command line's </> badge, off the mark's lower right corner */
+.item .glyph { position: relative; }
+.item .glyph .cli-badge { position: absolute; right: 0; bottom: -1px; width: 11px; height: 11px; display: grid; place-items: center; border-radius: 3px; background: var(--fg); color: var(--bg); box-shadow: 0 0 0 1px var(--bg); }
+.item .glyph .cli-badge svg { width: 9px; height: 9px; stroke-width: 1.6; }
 .attn .item { background: var(--attn-soft); }
 .tag { font: var(--fw-medium) var(--fs-micro)/1 var(--sans); letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--t-meta); border: var(--bw) solid var(--line-2); border-radius: calc(5px * var(--round)); padding: 3px 5px; }
 /* the view and kind filters, above the list as it scrolls */

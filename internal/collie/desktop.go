@@ -50,9 +50,15 @@ const (
 	appAgy    = "Antigravity 桌面版"
 )
 
+const (
+	surfaceCLI     = "cli"
+	surfaceDesktop = "desktop"
+)
+
 // desktopRow is one conversation as an app's index lists it.
 type desktopRow struct {
 	id, kind, app       string
+	surface             string // External.Surface
 	session, title, cwd string
 	path, format        string
 	created, updated    time.Time
@@ -103,7 +109,7 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 		if listed[d.session] {
 			continue
 		}
-		e := &External{ID: d.id, Kind: d.kind, Cwd: d.cwd, App: d.app, Started: d.created, Session: d.session, Title: d.title, Updated: d.updated, path: d.path, format: d.format, desktop: true}
+		e := &External{ID: d.id, Kind: d.kind, Cwd: d.cwd, App: d.app, Surface: d.surface, Started: d.created, Session: d.session, Title: d.title, Updated: d.updated, path: d.path, format: d.format, desktop: true}
 		if e.path != "" {
 			if fi, err := os.Stat(e.path); err == nil && fi.ModTime().After(e.Updated) {
 				e.Updated = fi.ModTime()
@@ -165,7 +171,7 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 		if !strings.HasPrefix(r.Entrypoint, "claude-desktop") || listed[r.SessionID] || rowsHave(rows, r.SessionID) {
 			continue
 		}
-		e := &External{ID: fmt.Sprintf("claude-%d", pid), Kind: "claude", PID: pid, Cwd: r.Cwd, App: appClaude, Session: r.SessionID, reg: r, Live: true, desktop: true, Started: now}
+		e := &External{ID: fmt.Sprintf("claude-%d", pid), Kind: "claude", PID: pid, Cwd: r.Cwd, App: appClaude, Surface: surfaceDesktop, Session: r.SessionID, reg: r, Live: true, desktop: true, Started: now}
 		if path, format := s.findTranscript("claude", "id", r.SessionID, "", ""); path != "" {
 			e.path, e.format = path, format
 			if fi, err := os.Stat(path); err == nil {
@@ -304,7 +310,7 @@ func (s *Server) claudeDesktopRows() []desktopRow {
 			if local == "" {
 				local = v.CliSessionID
 			}
-			d := desktopRow{id: "cd-" + local, kind: "claude", app: appClaude, session: v.CliSessionID, title: v.Title, cwd: v.Cwd, created: time.UnixMilli(v.Created), updated: last}
+			d := desktopRow{id: "cd-" + local, kind: "claude", app: appClaude, surface: surfaceDesktop, session: v.CliSessionID, title: v.Title, cwd: v.Cwd, created: time.UnixMilli(v.Created), updated: last}
 			d.path, d.format = s.findTranscript("claude", "id", v.CliSessionID, "", "")
 			rows = append(rows, d)
 		}
@@ -387,7 +393,7 @@ func (s *Server) codexAppRows() []desktopRow {
 			kept++
 		}
 		app := codexClient(originator, cwd)
-		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated)}
+		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, surface: codexSurface(originator), session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated)}
 		if isFile(rollout) {
 			d.path, d.format = rollout, "codex"
 			d.running = codexTurnRunning(rollout)
@@ -721,4 +727,17 @@ func codexClient(originator, cwd string) string {
 		return "Codex 终端"
 	}
 	return originator + "（Codex）"
+}
+
+// codexSurface is the client a thread's originator names: the App (as
+// codexClient counts it) or the command line; `codex exec` and other
+// programs on the app-server say neither.
+func codexSurface(originator string) string {
+	switch {
+	case isCodexApp(codexClient(originator, "")):
+		return surfaceDesktop
+	case originator == "codex-tui" || originator == "codex_cli_rs":
+		return surfaceCLI
+	}
+	return ""
 }

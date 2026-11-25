@@ -223,9 +223,10 @@
   const screenOf = (id) => screens[id] || wrapCols((chats[id] || []).filter((m) => m.kind !== "tool").map((m) => (m.kind === "user" ? "> " : "● ") + m.text).join("\n\n"));
 
   const external = [
-    { id: "x1", kind: "claude", pid: 4242, cwd: "/Users/alex/code/notes", app: "iTerm", started: ago(90), session: "s1", title: "周报草稿", updated: ago(20), machine: "macbook", status: "idle", can_send: false, live: true },
-    { id: "x3", kind: "codex", pid: 5120, cwd: "/home/alex/code/shop-api", app: "VS Code", started: ago(30), session: "s5", title: "排查 Redis 连接泄漏", updated: ago(1), status: "working", can_send: false, read_only: "这个 Codex 会话没有在共享后台里运行（旧版本，或用了独立的后台），只能看", live: true },
-    { id: "cd-2", kind: "claude", pid: 4310, cwd: "/Users/alex/code/shop-web", app: "Claude 桌面版", started: ago(240), session: "s2", title: "重构购物车状态管理", updated: ago(55), machine: "macbook", status: "idle", can_send: true, live: true },
+    { id: "x1", kind: "claude", pid: 4242, cwd: "/Users/alex/code/notes", app: "iTerm", surface: "cli", started: ago(90), session: "s1", title: "周报草稿", updated: ago(20), machine: "macbook", status: "idle", can_send: false, live: true },
+    { id: "x3", kind: "codex", pid: 5120, cwd: "/home/alex/code/shop-api", app: "VS Code", surface: "cli", started: ago(30), session: "s5", title: "排查 Redis 连接泄漏", updated: ago(1), status: "working", can_send: false, read_only: "这个 Codex 会话没有在共享后台里运行（旧版本，或用了独立的后台），只能看", live: true },
+    { id: "cd-2", kind: "claude", pid: 4310, cwd: "/Users/alex/code/shop-web", app: "Claude 桌面版", surface: "desktop", started: ago(240), session: "s2", title: "重构购物车状态管理", updated: ago(55), machine: "macbook", status: "idle", can_send: true, live: true },
+    { id: "cx-7", kind: "codex", pid: 0, cwd: "/Users/alex/code/shop-web", app: "Codex 桌面版", surface: "desktop", started: ago(300), session: "s7", title: "检查结算页的无障碍问题", updated: ago(70), machine: "macbook", status: "idle", can_send: true, live: true },
   ];
   const history = [
     { id: "h1", kind: "codex", cwd: "/home/alex/code/shop-api", name: "codex-3", session: "s3", ended: ago(60 * 20), topic: "升级 Go 到 1.25" },
@@ -233,6 +234,7 @@
   ];
   const extChats = {
     x1: [{ kind: "user", text: "根据这周的 commit 帮我写周报，分成已完成、进行中、下周计划。" }, { kind: "assistant", text: "**已完成**\n- 订单列表分页修复\n- 迁移脚本整理（41 → 33）\n\n**进行中**\n- 首页暗色模式\n\n**下周计划**\n- v1.4 发布" }],
+    "cx-7": [{ kind: "user", text: "检查结算页有哪些无障碍问题。" }, { kind: "assistant", text: "找到 4 处：两个按钮缺少可读名称，金额颜色对比度不够，错误提示没有关联到输入框。" }],
     "cd-2": [{ kind: "user", text: "购物车的状态现在分散在三个 context 里，合并成一个 store。" }, { kind: "assistant", text: "合并完成，三个 context 换成了一个 `useCart` store，组件改动 9 处，测试全部通过。" }],
   };
 
