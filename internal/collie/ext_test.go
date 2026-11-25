@@ -220,6 +220,54 @@ func TestExtArchiveFlow(t *testing.T) {
 	}
 }
 
+// Your own trigger word works in a conversation that is off: the switch
+// is about other people's messages.
+func TestExtOwnTriggerSwitchOff(t *testing.T) {
+	sp, h, dir := newExtTestHub(t)
+	r := startExt(t, h, "fake")
+	login(t, r)
+	feed(t, dir, "fake",
+		fakeMsg{Chat: "c1", ChatName: "群", ID: "m1", Sender: "u2", SenderName: "张三", Text: "/ai 别人的"},
+		fakeMsg{Chat: "c1", ChatName: "群", ID: "m2", Sender: "me", SenderName: "我", Mine: true, Text: "随便说说"},
+		fakeMsg{Chat: "c1", ChatName: "群", ID: "m3", Sender: "me", SenderName: "我", Mine: true, Text: "/ai 你好"})
+	waitFor(t, "my trigger", func() bool { return len(extTriggers(sp, "ext:fake")) == 1 })
+	time.Sleep(200 * time.Millisecond)
+	if ts := extTriggers(sp, "ext:fake"); len(ts) != 1 || ts[0].Ref != "m3" || !strings.Contains(ts[0].Text, "你好") {
+		t.Fatalf("only my /ai: %+v", ts)
+	}
+	if c, _ := h.store.conv("fake:c1"); c.On {
+		t.Fatal("the switch stays as it was")
+	}
+	if h.store.hasMsg("fake:c1", "m1") || h.store.hasMsg("fake:c1", "m2") || !h.store.hasMsg("fake:c1", "m3") {
+		t.Fatal("an off conversation keeps only the request")
+	}
+}
+
+// A conversation's agent runs on the default computer for workers, else
+// Collie's, else the extension's; never on the hub.
+func TestConvMachine(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	set := func(worker, router string) {
+		sp.mu.Lock()
+		sp.st.Settings.WorkerMachine, sp.st.Settings.RouterMachine = worker, router
+		sp.mu.Unlock()
+	}
+	h.mu.Lock()
+	h.sets["fake"] = ExtSetting{ID: "fake", Machine: "devbox"}
+	h.mu.Unlock()
+	for _, c := range []struct{ worker, router, want string }{
+		{"macmini", "macpro", "macmini"}, {"", "macpro", "macpro"}, {"", "", "devbox"},
+	} {
+		set(c.worker, c.router)
+		if got := h.convMachine("fake"); got != c.want {
+			t.Errorf("worker %q router %q: %q, want %q", c.worker, c.router, got, c.want)
+		}
+	}
+	if got := h.convMachine("fakew"); got != "" {
+		t.Errorf("nothing set and the extension on the hub: %q, want none", got)
+	}
+}
+
 // A receive extension (WeChat's shape): the bound person's chat is on from
 // the start and needs no trigger word; a deferred send reports later.
 func TestExtReceiveFlow(t *testing.T) {

@@ -88,7 +88,7 @@ curl -fsSL https://collie.taoai.site/install.sh | sh -s -- node --hub http://192
 ## 自动化
 
 - 在「自动化 → 事件」查看进入 Collie 的所有事件和线程，在「定时」设置定时任务，在「设置」中配置 Collie 和默认派活选项。
-- **扩展**：在「自动化 → 接入」打开飞书扩展（以你本人的身份收发），扫码登录。它们的会话出现在「自动化 → 收件箱」，默认都不处理；打开某个会话后，以触发词（默认 `/ai`，可改）开头的消息交给 Collie 或这个会话的专属 agent，回复带上尾标（可用 `{agent}`、`{model}`、`{elapsed}` 等变量）发回原会话。定时任务可以把结果发到打开的会话。规范见 [extensions/README.md](extensions/README.md)。
+- **扩展**：在「自动化 → 接入」打开飞书扩展（以你本人的身份收发），扫码登录。它们的会话出现在「自动化 → 收件箱」。你本人发的、以触发词（默认 `/ai`，可改）开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent；会话开关只管别人的消息，回复带上尾标（可用 `{agent}`、`{model}`、`{elapsed}` 等变量）发回原会话。定时任务可以把结果发到打开的会话。规范见 [extensions/README.md](extensions/README.md)。
 - 在「自动化 → 记忆」查看 Collie 记下的偏好、项目笔记和任务，或让 Collie 回顾最近的对话来整理记忆。
 - 在「自动化 → 接入」复制 GitHub、飞书或通用 Webhook 地址。GitHub 的 Content type 选 `application/json`。通用事件向对应地址发送 JSON，可包含 `text`、`thread`、`from` 和 `id`，也可用 `X-Idempotency-Key` 去重。
 - 终端里可以用 `collie say "任务"` 给 Collie 发消息，用 `collie timer ls` 查看定时任务。
