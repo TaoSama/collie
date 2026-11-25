@@ -941,6 +941,16 @@
     }
     return "#/";
   }
+  // A panel opened over the page (a run, a file) adds a step to history
+  // with the same address, so back (a phone's swipe, the browser's button)
+  // closes it and stays on the page. The step carries the panels open in
+  // it, and only those still open: one closed some other way stays closed.
+  function layerStep(add) {
+    const app = $("#app").classList, st = { ...(history.state || {}) };
+    if (!app.contains("has-file")) delete st.file;
+    if (!app.contains("has-run")) delete st.run;
+    history.pushState({ ...st, ...add, collieIdx: ++navCur }, "", location.hash);
+  }
   function goBack(replaceAtRoot = false) {
     if (navCur > 0) {
       history.back();
@@ -991,6 +1001,7 @@
     if (next && next !== "file") store.set("last", h);
     if (decidedAt && (decidedAt.view !== next || decidedAt.id !== id)) hideDecided();
     if (next === view && id === (next === "ext" ? extCur : current)) {
+      syncFile();
       if (next === "collie") syncRun();
       return;
     }
@@ -1048,6 +1059,7 @@
       openStream(saved);
       if (!narrow()) $("#input").focus({ preventScroll: true });
     }
+    syncFile();
   }
   addEventListener("popstate", route);
   addEventListener("hashchange", route);
@@ -6162,7 +6174,7 @@
     body.innerHTML = wrapCard ? `<div class="rv-code-card">${inner}</div>${cut}` : `${inner}${cut}`;
     return lang;
   }
-  async function openFile(path) {
+  async function openFile(path, fromHistory = false) {
     if (IMG_EXT.test(path)) { openLightbox([{ path }], 0); return; }
     const body = $("#fv-body"), seq = ++fileSeq;
     fvCur = null;
@@ -6172,7 +6184,7 @@
     $("#fv-name").textContent = path.split("/").pop();
     $("#fv-path").textContent = path;
     body.innerHTML = `<p class="fv-note muted">读取中…</p>`;
-    showFilePane();
+    showFilePane(path, fromHistory);
     const tries = fileTries();
     let f = null;
     try {
@@ -6969,7 +6981,7 @@
       body.classList.remove("is-code");
       body.innerHTML = `<iframe class="fv-html-sandbox" sandbox="${sb}"></iframe>`;
       body.querySelector("iframe").srcdoc = htmlText;
-      showFilePane();
+      showFilePane(path);
     } catch (err) {
       if (win && !win.closed) try { win.close(); } catch {}
       toast(err.message, "attn");
@@ -7043,9 +7055,15 @@
   const setFileW = (w) => document.documentElement.style.setProperty("--file-w", Math.round(w) + "px");
   // The widest the panel may be.
   const fileMax = () => innerWidth - $(".side").offsetWidth - MAIN_MIN - besideW("file");
-  let paneTimer;
-  function showFilePane() {
+  let paneTimer, fileIdx = -1, fileShut = -1; // as runIdx and runShut
+  // Open, it is a step in history of its own, as a run is (layerStep).
+  function showFilePane(path, fromHistory = false) {
     clearTimeout(paneTimer);
+    if (!fromHistory) {
+      if ($("#app").classList.contains("has-file") && history.state?.file) history.replaceState({ ...history.state, file: path }, "");
+      else layerStep({ file: path });
+      fileIdx = navCur; fileShut = -1;
+    }
     if (!roomFor("file", 360)) dismissRun();
     // Until it has been dragged: a little under half the window.
     setFileW(Math.max(Math.min(store.get("fileW", 0) || innerWidth * 0.45, fileMax()), 360));
@@ -7061,8 +7079,24 @@
       if (fileUrl) URL.revokeObjectURL(fileUrl), fileUrl = "";
     }, 360);
   }
-  pane.addEventListener("click", (e) => { if (e.target.closest("[data-fv-close]")) closeFilePane(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pane.hidden && !document.querySelector("dialog[open]")) closeFilePane(); });
+  // Closing it by hand takes back its step in history.
+  function dismissFile() {
+    if (history.state?.file && navCur === fileIdx) { history.back(); return; }
+    closeFilePane();
+    fileShut = fileIdx;
+    if (history.state?.file) history.replaceState({ ...history.state, file: undefined }, "");
+  }
+  // After going back or forward: closed when back before the step that
+  // opened it; opened again going forward onto that step.
+  function syncFile() {
+    let f = history.state?.file;
+    if (f && navCur === fileShut) { history.replaceState({ ...history.state, file: undefined }, ""); f = ""; }
+    const open = $("#app").classList.contains("has-file");
+    if (!f) { if (open && navCur < fileIdx) closeFilePane(); return; }
+    if (!open && !HTML_EXT.test(f)) { fileIdx = navCur; openFile(f, true); }
+  }
+  pane.addEventListener("click", (e) => { if (e.target.closest("[data-fv-close]")) dismissFile(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pane.hidden && !document.querySelector("dialog[open]")) dismissFile(); });
   let fileDragW = 0;
   dragGrip($("#fv-grip"), {
     onStart: fileMax,
@@ -7095,7 +7129,9 @@
     }
   };
   const runWho = (e) => e.stub ? e.who : e.role === "user" ? "你" : "Collie";
-  let runTimer = 0, runSig = "";
+  // runIdx: the history step that opened the run; runShut: one whose run
+  // was closed by hand from a later step, so back does not bring it again.
+  let runTimer = 0, runSig = "", runIdx = -1, runShut = -1;
   // Open, a run is a step in history of its own: back (a phone's swipe, the
   // browser's button) closes it and stays in the chat. fromHistory: that
   // step is the one being returned to, so none is added.
@@ -7103,9 +7139,9 @@
     const t = runs.threads.get(root);
     if (!t) return false;
     if (!fromHistory) {
-      const step = { ...(history.state || {}), run: root };
-      if (runOpen && history.state?.run) history.replaceState(step, "");
-      else history.pushState({ ...step, collieIdx: ++navCur }, "", location.hash);
+      if (runOpen && history.state?.run) history.replaceState({ ...history.state, run: root }, "");
+      else layerStep({ run: root });
+      runIdx = navCur; runShut = -1;
     }
     clearTimeout(runTimer);
     runOpen = { root, anchor: focus || talkKey(t.latest) };
@@ -7120,22 +7156,20 @@
   }
   // Closing it by hand takes back its step in history.
   function dismissRun() {
-    if (runOpen && history.state?.run) history.back();
-    else closeRun();
+    if (runOpen && history.state?.run && navCur === runIdx) { history.back(); return; }
+    closeRun();
+    runShut = runIdx;
+    if (history.state?.run) history.replaceState({ ...history.state, run: undefined }, "");
   }
   // After going back or forward in the chat: the run that step has open.
   function syncRun() {
-    const r = history.state?.run;
-    // A file opened from the run covers it on a phone: back closes that first.
-    if (!r && runOpen && !wideMQ.matches && $("#app").classList.contains("has-file")) {
-      closeFilePane();
-      history.pushState({ ...(history.state || {}), run: runOpen.root, collieIdx: ++navCur }, "", location.hash);
-      return;
-    }
+    let r = history.state?.run;
+    if (r && navCur === runShut) { history.replaceState({ ...history.state, run: undefined }, ""); r = ""; }
     if (!r) { closeRun(); return; }
     if (runOpen?.root === r) return;
     // Gone (e.g. reloaded before the chat came in): the step is the chat's.
-    if (!openRun(r, "", true)) history.replaceState({ ...history.state, run: undefined }, "");
+    if (openRun(r, "", true)) runIdx = navCur;
+    else history.replaceState({ ...history.state, run: undefined }, "");
   }
   function closeRun() {
     if (!runOpen) return;
