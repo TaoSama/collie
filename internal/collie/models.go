@@ -52,11 +52,34 @@ func modelArgs(kind, model, effort string) []string {
 		if model != "" {
 			a = append(a, "--model", model)
 		}
-		if effort != "" {
+		if effort != "" && (kinds[kind] != "agy" || agyTakesEffort(model)) {
 			a = append(a, "--effort", effort)
 		}
 	}
 	return a
+}
+
+// agyTakesEffort: whether Antigravity takes --effort with this model. It
+// refuses to start when the id already names a level ("…-high", kept in
+// settings from before models and levels were picked apart) or the model has
+// no levels (Claude's). A model it has not listed is left to it to judge.
+func agyTakesEffort(model string) bool {
+	if model == "" {
+		return true
+	}
+	if _, level := agySplit(model); level != "" {
+		return false
+	}
+	known := false
+	for _, v := range agyKnownVariants() {
+		if id, level := agySplit(v.ID); id == model {
+			if level != "" {
+				return true
+			}
+			known = true
+		}
+	}
+	return !known
 }
 
 // bypassArgs: the launch flag that turns off an agent's permission prompts.

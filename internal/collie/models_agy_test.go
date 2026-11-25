@@ -96,3 +96,24 @@ func TestAgyAliasRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestAgyModelArgsEffort(t *testing.T) {
+	agyHome(t)
+	for _, c := range []struct {
+		model, effort string
+		want          []string
+	}{
+		{"gemini-4-hydrogen", "high", []string{"--model", "gemini-4-hydrogen", "--effort", "high"}},
+		{"", "high", []string{"--effort", "high"}},
+		{"gemini-3.8-flash-medium", "high", []string{"--model", "gemini-3.8-flash-medium"}}, // the id names its level
+		{"claude-sonnet-4-6", "high", []string{"--model", "claude-sonnet-4-6"}},             // no levels
+		{"gemini-9-unlisted", "high", []string{"--model", "gemini-9-unlisted", "--effort", "high"}},
+	} {
+		if got := modelArgs("agy", c.model, c.effort); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("modelArgs(agy, %q, %q) = %q, want %q", c.model, c.effort, got, c.want)
+		}
+	}
+	if got := modelArgs("claude", "claude-sonnet-4-6", "high"); !reflect.DeepEqual(got, []string{"--model", "claude-sonnet-4-6", "--effort", "high"}) {
+		t.Errorf("claude lost its --effort: %q", got)
+	}
+}

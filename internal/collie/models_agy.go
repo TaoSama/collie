@@ -45,23 +45,28 @@ func agyRoot(home string) string {
 
 var agyListCache = struct {
 	sync.Mutex
-	at   time.Time
-	list []ModelOpt // nil: the last ask failed
+	asking sync.Mutex // held through a run of `agy models`, so one runs at a time
+	at     time.Time
+	list   []ModelOpt // nil: the last ask failed
 }{}
 
 // agyVariants: `agy models`, each id with its level, as the CLI lists them.
 // A failed ask is kept for a minute too, so callers don't queue up behind
-// one slow run after another.
+// one slow run after another. Readers of the cache (agyKnownVariants, which
+// launches call holding Super's lock) never wait on the run.
 func agyVariants(ctx context.Context, home string) []ModelOpt {
+	agyListCache.asking.Lock()
+	defer agyListCache.asking.Unlock()
 	agyListCache.Lock()
-	defer agyListCache.Unlock()
 	keep := 10 * time.Minute
 	if agyListCache.list == nil {
 		keep = time.Minute
 	}
 	if !agyListCache.at.IsZero() && time.Since(agyListCache.at) < keep {
+		defer agyListCache.Unlock()
 		return agyListCache.list
 	}
+	agyListCache.Unlock()
 	var list []ModelOpt
 	if bin := findBin("agy", home); bin != "" {
 		if out, err := exec.CommandContext(ctx, bin, "models").Output(); err == nil {
@@ -72,7 +77,9 @@ func agyVariants(ctx context.Context, home string) []ModelOpt {
 			}
 		}
 	}
+	agyListCache.Lock()
 	agyListCache.at, agyListCache.list = time.Now(), list
+	agyListCache.Unlock()
 	return list
 }
 
