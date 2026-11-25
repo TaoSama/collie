@@ -757,12 +757,16 @@ type Approval struct {
 	Hint     string   `json:"hint,omitempty"`
 	Screen   string   `json:"screen"`
 	after    int      // lines of other text below the menu
+	cursors  int      // options marked with a selection cursor
+	// idleBelow: the input box is under the menu, so the agent printed it.
+	idleBelow bool
 }
 
 var (
 	numberedRe = regexp.MustCompile(`^\s*([❯›>▸●➜→]\s*)?(\d)[.)]\s+(.{1,90}?)\s*$`)
 	cursorRe   = regexp.MustCompile(`^\s*[❯›>▸●➜→]\s+(.{1,90}?)\s*$`)
-	hintRe     = regexp.MustCompile(`(?i)(enter|esc|↑|↓|tab)\b.*(confirm|cancel|select|navigate|continue|back|skip|close|review|amend)`)
+	hintRe     = regexp.MustCompile(`(?i)((enter|esc|tab)\b|↑|↓).*(confirm|cancel|select|navigate|continue|back|skip|close|review|amend|dismiss|submit)`)
+	idleRe     = regexp.MustCompile(`(?i)^\s*[❯›>]\s*$|\?\s*for shortcuts\b|\bshift\+tab to cycle\b|⏎\s*send\b`)
 	frameRe    = regexp.MustCompile(`^[\s│┃|╭╮╰╯─━═┌┐└┘╌┄┈]*$`)
 	ruleRe     = regexp.MustCompile(`[─━═]{12,}`)
 )
@@ -835,10 +839,17 @@ func parseApproval(screen string) Approval {
 	first := digit(lines[end]) // the lowest option number found so far
 	for start > 0 {
 		prev := lines[start-1]
-		if numbered && (numberedRe.MatchString(prev) || wrapped(prev)) {
-			if d := digit(prev); d >= 0 {
+		// Options count down by one; a wrapped line above option 1 is the
+		// question, and a gap in the numbers is a different list.
+		if numbered && numberedRe.MatchString(prev) {
+			if d := digit(prev); d == first-1 {
 				first = d
+				start--
+				continue
 			}
+			break
+		}
+		if numbered && first > 1 && wrapped(prev) {
 			start--
 			continue
 		}
@@ -868,10 +879,13 @@ func parseApproval(screen string) Approval {
 	}
 	// Cursor menus may continue below the ❯ line.
 	for !numbered && end+1 < len(lines) && strings.HasPrefix(lines[end+1], "  ") && strings.TrimSpace(lines[end+1]) != "" &&
-		!hintRe.MatchString(lines[end+1]) {
+		!hintRe.MatchString(lines[end+1]) && !idleRe.MatchString(lines[end+1]) {
 		end++
 	}
 	for _, l := range lines[end+1:] {
+		if idleRe.MatchString(l) {
+			a.idleBelow = true
+		}
 		if strings.TrimSpace(l) != "" && !hintRe.MatchString(l) {
 			a.after++
 		}
@@ -880,8 +894,9 @@ func parseApproval(screen string) Approval {
 	cur := -1
 	opts := lines[start : end+1]
 	for i, l := range opts {
-		if t := strings.TrimSpace(l); t != "" && (cursorRe.MatchString(l) || strings.ContainsAny(t[:1], "❯›>▸●➜→")) {
+		if m := numberedRe.FindStringSubmatch(l); cursorRe.MatchString(l) || numbered && m != nil && m[1] != "" {
 			cur = i
+			a.cursors++
 		}
 	}
 	for i, l := range opts {

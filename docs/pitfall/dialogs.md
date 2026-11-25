@@ -1,5 +1,15 @@
 # 对话框识别（确认卡片、`collie answer`）
 
+## agent 回复里的编号列表不是对话框
+
+agent 答完一轮，回复末尾常是「1. … 2. …」的编号列表，或者引用了别的 worker 卡住时的弹窗，下面紧跟着空的输入框。`screenAsks` 以前只看菜单在不在屏幕底部，会把它们当成对话框，于是投递确认以为 agent 在等确认、推送发出假通知。现在的判定（`internal/collie/fleet.go` 的 `screenAsks`）：
+
+- 菜单下方有空输入提示符（`❯`、`›`、`>` 独占一行）或输入框页脚（`? for shortcuts`、`shift+tab to cycle`）：不是对话框。
+- 编号必须从下往上逐个减一；中间断号就是另一段文字。折行只算在 1 号以后的选项里。
+- 带编号的菜单要有按键提示，或者恰好一个选择光标；不带编号的光标菜单两者都要有。
+
+样本：`TestScreenAsksPrintedLists`（`internal/collie/screen_test.go`）。改判定时跑一遍全部屏幕样本，对比改前改后每条的识别结果。
+
 ## Codex 执行中提的问题是折叠的
 
 Codex（0.172 实测）在一轮执行中调用 `request_user_input` 时，问题不弹菜单，而是折叠在输入框上方：

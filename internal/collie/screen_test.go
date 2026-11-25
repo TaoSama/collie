@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -237,6 +238,102 @@ func TestCodexFolderAccessApproval(t *testing.T) {
 	}
 	if got := strings.Join(a.Choices[1].Keys, ","); got != "down,enter" {
 		t.Fatalf("choice 2 keys = %q, want down,enter", got)
+	}
+}
+
+// Antigravity done replying with a numbered list, above its empty input box.
+const agyIdleNumberedReply = `○ Thought for 31.7s ● Ran 2 commands ● Edited 1 file (notes.md) (ctrl+o to expand)
+
+  #t102 · chat:main · worker · from worker-a · 17:46
+    worker worker-a exited (its herdr pane is gone).
+
+  已完成：
+
+  1. 发现 worker-a 启动漏掉了任务说明，已补发。
+  2. worker-b 已上线新版本，停掉 worker 并更新
+     相关记录。
+
+───────────────────────────────────────────────────────────────────────────────
+> 
+───────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                         auto · Gemini 4 Neon · medium`
+
+func TestScreenAsksPrintedLists(t *testing.T) {
+	printed := map[string]string{
+		"agy reply above its input box": agyIdleNumberedReply,
+		"numbered list at the bottom":   "已完成：\n1. 修复第一项\n2. 补齐回归测试\n",
+		"quoted numbered list":          "> 1. 第一条引用\n> 2. 第二条引用\n",
+		"numbers with a gap":            "Steps:\n1. Build\n3. Deploy\n",
+		"claude reply above its input box": `● 已完成两件事：
+
+  1. 更新配置
+  2. 跑通测试
+
+──────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts`,
+		"codex reply above its input box": `• Done:
+  1. Updated installer
+  2. Added unit tests
+
+› 
+
+  gpt-5.5 xhigh · 95% left · ~/repo`,
+		"dialog quoted above agy's input box": `  worker 卡在了这个弹窗：
+  ❯ 1. Yes, I trust this folder
+    2. No, exit
+  Enter to confirm · Esc to cancel
+
+───────────────────────────────────────────────────────────────────────────────
+> 
+───────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                         auto · Gemini 4 Neon · medium`,
+	}
+	for name, screen := range printed {
+		if screenAsks(screen) {
+			t.Errorf("%s: seen as a dialog", name)
+		}
+	}
+
+	expanded, err := os.ReadFile("testdata/codex-question-expanded.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialogs := map[string]string{
+		"codex hooks review": `Hooks need review
+ 1 hook is new or changed.
+ Hooks can run outside the sandbox after you trust them.
+› 1. Review hooks
+  2. Trust all and continue`,
+		"codex model picker": `Select Model and Effort
+Access legacy models by running codex -m <model_name>
+
+› 1. GPT-6.2-Sol (current)   Latest workhorse model
+  2. GPT-6-Astra             Frontier intelligence
+  3. GPT-6.1 Terra           Codex model
+
+Press enter to select reasoning effort, or esc to dismiss.`,
+		"codex expanded question": string(expanded),
+		"claude bash approval":    "╭────╮\n│ Bash command\n│   git push origin main\n│ Do you want to proceed?\n│ ❯ 1. Yes\n│   2. Yes, and don't ask again\n│   3. No, and tell Claude what to do differently (esc)\n╰────╯",
+		"claude wrapped approval": wrappedMenu,
+		"claude trust dialog":     trustDialog,
+		"claude cursor trust":     cursorTrust,
+		"claude ask box":          askBox,
+		"agy folder trust":        agyTrust,
+		"agy run command": `Run command?
+  rm -rf /tmp/demo
+> 1. Allow once
+  2. Always allow
+  3. Deny
+  ↑/↓ Navigate · enter Confirm · esc Cancel
+                                                    auto · Gemini 4 Neon · medium`,
+		"numbered menu with a hint only": "Choose an option:\n  1. Continue\n  2. Cancel\n  Enter to confirm · Esc to cancel",
+	}
+	for name, screen := range dialogs {
+		if !screenAsks(screen) {
+			t.Errorf("%s: not seen as a dialog", name)
+		}
 	}
 }
 

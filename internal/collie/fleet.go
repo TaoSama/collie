@@ -670,13 +670,22 @@ func codexQueuedAsk(screen string) bool {
 	return false
 }
 
-// screenAsks: a menu with a key hint ("Enter to confirm · Esc to cancel") or
-// numbered options, at the bottom of the screen. An idle prompt ("❯ Try …")
-// over a status line is neither, and nor is a dialog an agent quoted in its
-// transcript, which has more conversation and the input box below it.
+// screenAsks: a live dialog at the bottom of the screen. An idle prompt
+// ("❯ Try …") over a status line is not one, and nor is a list or dialog the
+// agent printed in its reply, which has the input box below it:
+//   - an empty prompt or the input box's footer under the menu rules it out;
+//   - numbered options need a key hint ("Enter to confirm · Esc to cancel")
+//     or exactly one selection cursor ("❯ 1. Yes");
+//   - unnumbered options need both.
 func screenAsks(screen string) bool {
 	a := parseApproval(screen)
-	return len(a.Choices) >= 2 && (a.Hint != "" || a.Choices[0].Text != "") && a.after <= maxBelowMenu
+	if len(a.Choices) < 2 || a.idleBelow || a.after > maxBelowMenu {
+		return false
+	}
+	if a.Choices[0].Text == "" {
+		return a.Hint != "" && a.cursors == 1
+	}
+	return a.Hint != "" || a.cursors == 1
 }
 
 // maxBelowMenu: a live dialog has at most a footer or status line or two
