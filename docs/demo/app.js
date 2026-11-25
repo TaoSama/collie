@@ -3346,19 +3346,25 @@
       if (r.mark?.unread && r.rank >= ENDED_RANK) r.bucket = "done";
       return r;
     };
+    const extRows = ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
+      const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
+      return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
+        t: new Date(e.updated || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
+    });
+    const histRows = hist.filter((h) => !collieRan(h)).map((h) => {
+      const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
+      return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine, cwd: h.cwd,
+        key, mark: m, session: h.session || "", name: m?.title || histName(h), live: false });
+    });
+    // An app can list a session herdr ran too (Antigravity's lists the CLI's):
+    // one row each, the app's while it runs there, herdr's otherwise.
+    const liveKeys = new Set(extRows.filter((r) => r.live && r.key).map((r) => r.key));
+    const histKeys = new Set(histRows.map((r) => r.key).filter(Boolean));
     return [
       ...state.agents.filter((a) => !isLocalRouter(a) || a.status === "blocked").map((a) => pane(a, false)),
       ...state.shells.map((a) => pane(a, true)),
-      ...ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
-        const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
-        return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
-          t: new Date(e.updated || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
-      }),
-      ...hist.filter((h) => !collieRan(h)).map((h) => {
-        const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
-        return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine, cwd: h.cwd,
-          key, mark: m, session: h.session || "", name: m?.title || histName(h), live: false });
-      }),
+      ...extRows.filter((r) => r.live || !histKeys.has(r.key)),
+      ...histRows.filter((r) => !liveKeys.has(r.key)),
     // Archived where its agent has no archive of its own (or not yet listed
     // as archived): hidden while it rests.
     ].filter((r) => !(r.mark?.archived && r.rank >= ENDED_RANK));

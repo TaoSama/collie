@@ -49,6 +49,7 @@ const (
 	appClaude = "Claude 桌面版"
 	appCodex  = "Codex 桌面版"
 	appAgy    = "Antigravity 桌面版"
+	appAgyCLI = "Antigravity 终端" // a CLI conversation the app lists too
 )
 
 const (
@@ -652,7 +653,11 @@ func (s *Server) agyDesktopRows() []desktopRow {
 		if len(ws) > 0 {
 			cwd = strings.TrimSuffix(strings.TrimPrefix(ws[0], "file://"), "/")
 		}
-		d := desktopRow{id: "ag-" + id, kind: "agy", app: appAgy, surface: agySurface(src), session: id, title: messageTitle(title), cwd: cwd,
+		app := appAgy
+		if agySurface(src) == surfaceCLI {
+			app = appAgyCLI
+		}
+		d := desktopRow{id: "ag-" + id, kind: "agy", app: app, surface: agySurface(src), session: id, title: messageTitle(title), cwd: cwd,
 			created: sqlTime(input), updated: sqlTime(mod), running: status == "CASCADE_RUN_STATUS_RUNNING"}
 		d.waiting = !d.running && notIdle
 		if f := filepath.Join(root, "brain", id, ".system_generated", "logs", "transcript.jsonl"); isFile(f) {
