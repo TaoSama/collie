@@ -3335,7 +3335,7 @@
       const v = m?.unread && a.status === "idle" ? { ...a, status: "done" } : a;
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
-      return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, machine: a.machine || "", cwd: a.cwd,
+      return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, active: a.updated ? +new Date(a.updated) : 0, machine: a.machine || "", cwd: a.cwd,
         key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true };
     };
     // Another app's session that is only open (kept alive in the background,
@@ -3386,12 +3386,13 @@
     for (const r of rows) {
       if (r.bucket === "attn") continue;
       const path = repoOf(r.cwd), label = path ? base(path) : "其他", key = r.machine + "\n" + label;
-      if (!by.has(key)) by.set(key, { key, machine: r.machine, label, paths: new Set(), project: true, rows: [], best: Infinity, last: 0 });
+      if (!by.has(key)) by.set(key, { key, machine: r.machine, label, paths: new Set(), project: true, rows: [], last: 0 });
       const g = by.get(key);
       if (path) g.paths.add(tilde(path));
-      g.rows.push(r); g.best = Math.min(g.best, r.rank); g.last = Math.max(g.last, +r.t || 0);
+      g.rows.push(r); g.last = Math.max(g.last, +r.t || 0, r.active || 0);
     }
-    const groups = [...by.values()].sort((x, y) => x.best - y.best || y.last - x.last || x.label.localeCompare(y.label));
+    // Most recently active first.
+    const groups = [...by.values()].sort((x, y) => y.last - x.last || x.label.localeCompare(y.label));
     for (const g of groups) {
       g.title = [...g.paths].join("\n");
       // The same project on another computer says which.

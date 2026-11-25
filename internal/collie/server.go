@@ -262,6 +262,7 @@ type AgentView struct {
 	Machine        string     `json:"machine"`
 	Run            *[2]string `json:"run,omitempty"` // model, effort: its latest reply's, else what Collie started it with
 	Context        *ctxUsage  `json:"context,omitempty"`
+	Updated        time.Time  `json:"updated,omitzero"` // its session log's last write
 }
 
 type PaneState struct {
@@ -333,7 +334,7 @@ func (s *Server) state(ctx context.Context) PaneState {
 		local, v.Machine = split(p.ID)
 		if v.IsAgent {
 			ps := topics[v.Machine][local]
-			v.Topic, v.Session, v.Context = ps.Title, ps.Session, ps.Context
+			v.Topic, v.Session, v.Context, v.Updated = ps.Title, ps.Session, ps.Context, ps.Updated
 			if ps.Ran != nil {
 				v.Run = ps.Ran // what it last replied with
 			} else if r, ok := s.herdr.Run(p.ID); ok {

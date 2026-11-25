@@ -126,6 +126,8 @@ type paneSession struct {
 	Ran *[2]string `json:"ran,omitempty"`
 	// Context: how full its context window is, from the same log.
 	Context *ctxUsage `json:"context,omitempty"`
+	// Updated: when its log was last written, its latest activity.
+	Updated time.Time `json:"updated,omitzero"`
 }
 
 // localSessions maps this machine's agent panes (local ids) to their sessions.
@@ -181,6 +183,9 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		run, _ := s.herdr.Run(local)
 		ps := paneSession{Title: t, Session: sess, Run: run}
 		if sess != "" && (kind == "claude" || kind == "codex" || kind == "agy") {
+			if fi, err := os.Stat(s.sessionLog(kind, sess)); err == nil {
+				ps.Updated = fi.ModTime()
+			}
 			if u := s.sessionUsage(kind, sess); u != nil {
 				if u.Model != "" {
 					ps.Ran = &[2]string{u.Model, u.Effort}
@@ -190,7 +195,7 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 				}
 			}
 		}
-		if t != "" || sess != "" || run != nil || ps.Context != nil {
+		if t != "" || sess != "" || run != nil || ps.Context != nil || !ps.Updated.IsZero() {
 			out[local] = ps
 		}
 	}
@@ -201,17 +206,26 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 // doesn't search for it again every few seconds.
 var sessionLogs sync.Map
 
-// sessionUsage is how full a Claude, Codex or Antigravity session's context
-// is, and for Claude and Antigravity the model and effort its latest reply used.
-func (s *Server) sessionUsage(kind, session string) *ctxUsage {
+// sessionLog is where a session's log is ("" when it can't be found).
+func (s *Server) sessionLog(kind, session string) string {
 	key := kind + "\x00" + session
 	known, _ := sessionLogs.Load(key)
 	path, _ := known.(string)
 	if !isFile(path) {
 		if path, _ = s.findTranscript(kind, "", session, "", ""); path == "" {
-			return nil
+			return ""
 		}
 		sessionLogs.Store(key, path)
+	}
+	return path
+}
+
+// sessionUsage is how full a Claude, Codex or Antigravity session's context
+// is, and for Claude and Antigravity the model and effort its latest reply used.
+func (s *Server) sessionUsage(kind, session string) *ctxUsage {
+	path := s.sessionLog(kind, session)
+	if path == "" {
+		return nil
 	}
 	u := contextUsage(path, kind, 0)
 	if kind == "claude" {
