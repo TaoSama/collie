@@ -206,7 +206,7 @@
         <div><div class="meta"><b>${esc(c.name || c.chat)}</b><span>${esc(c.label)} · ${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread">${c.unread}</span>` : ""}</div>
           <div class="text">${esc(c.preview || "")}</div>${c.on ? outLine(c.out) : ""}</div>
         <span class="right">${when(c.last_at)}</span></li>`;
-    const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里，默认都不处理。打开某个会话后，以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话。没打开的会话只留最后一条预览。</p>`;
+    const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;
     if (!convs.length) return intro + `<div class="card"><div class="empty-row">还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div>`;
     return intro + `<div class="seg inbox-filter">${chips}</div>
       <div class="inbox-split ${cur ? "has-cur" : ""}">

@@ -149,7 +149,10 @@ func (h *extHost) incoming(r *extRun, in incomingMsg) {
 			c.Unread++ // history caught up on isn't news
 		}
 	})
-	if !conv.On {
+	// The switch is about other people's messages: your own trigger word
+	// works in any conversation.
+	request, triggered := afterTrigger(in.Text, h.trigger())
+	if !conv.On && !(in.fromYou() && triggered) {
 		return
 	}
 	// Collie's own answer, back through the archive: shown already as sent.
@@ -165,15 +168,13 @@ func (h *extHost) incoming(r *extRun, in incomingMsg) {
 	if !in.fromYou() && !conv.Anyone {
 		return // silent: answering "you can't" would ping-pong with auto-replies
 	}
-	request := in.Text
-	if m.Defaults.Conversations != convsOwner {
-		var ok bool
-		if request, ok = afterTrigger(in.Text, h.trigger()); !ok {
-			return
-		}
-		if request == "" {
-			request = "（只发了触发词：看上文和引用，判断要做什么。）"
-		}
+	switch {
+	case triggered && request == "":
+		request = "（只发了触发词：看上文和引用，判断要做什么。）"
+	case !triggered && m.Defaults.Conversations == convsOwner:
+		request = in.Text // the bot's own chat needs no trigger word
+	case !triggered:
+		return
 	}
 	if request == "" && len(in.Files) == 0 && len(in.Unsupported) == 0 {
 		return
@@ -335,7 +336,14 @@ func (h *extHost) startConvWorker(conv InboxConv, old *Worker, t *Trigger, text 
 		Subscribe: true,
 	}
 	if old != nil && old.Session != "" {
-		spec.Resume, spec.Task = old.Name, "新的请求：\n"+text
+		spec.Resume, spec.Task, spec.Machine = old.Name, "新的请求：\n"+text, old.Machine
+	}
+	if spec.Machine == "" {
+		spec.Machine = h.convMachine(conv.Ext)
+	}
+	if spec.Machine == "" {
+		h.sendOut(conv.thread(), "没能启动 agent：设置里没有默认电脑（hub 不跑 agent），请在设置里选一台", extproto.KindProgress, runInfo{}, t.ID)
+		return
 	}
 	if conv.Anyone {
 		dir := filepath.Join(h.home, "ext-sandbox", safeDirName(conv.ID))
@@ -347,7 +355,7 @@ func (h *extHost) startConvWorker(conv InboxConv, old *Worker, t *Trigger, text 
 	w, _, err := h.sp.Spawn(spec)
 	if err != nil {
 		log.Printf("ext: start the agent of %s: %v", conv.ID, err)
-		h.sendOut(conv.thread(), "没能启动 agent："+err.Error(), extproto.KindAnswer, runInfo{}, t.ID)
+		h.sendOut(conv.thread(), "没能启动 agent："+err.Error(), extproto.KindProgress, runInfo{}, t.ID)
 		return
 	}
 	h.sp.mu.Lock()
@@ -355,6 +363,21 @@ func (h *extHost) startConvWorker(conv InboxConv, old *Worker, t *Trigger, text 
 	h.sp.changed()
 	h.sp.mu.Unlock()
 	h.store.update(conv.ID, func(c *InboxConv) { c.Worker = w.Name })
+}
+
+// convMachine is where a conversation's agent runs: the default computer
+// for workers, else the one Collie runs on, else the extension's own; never
+// the hub, which runs no agents.
+func (h *extHost) convMachine(ext string) string {
+	h.sp.mu.Lock()
+	set := h.sp.st.Settings
+	h.sp.mu.Unlock()
+	for _, m := range []string{set.WorkerMachine, set.RouterMachine, h.setting(ext).Machine} {
+		if m != "" {
+			return m
+		}
+	}
+	return ""
 }
 
 // convWorkerName: <ext>-<chat name>, in the letters worker names allow; a

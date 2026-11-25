@@ -363,8 +363,16 @@ func (sp *Super) routerRunInfo() runInfo {
 // workerRunInfo is a worker, for the footer of its answers.
 func (sp *Super) workerRunInfo(w *Worker) runInfo {
 	ri := runInfo{Agent: agentLabel(w.Kind), Worker: w.Name, Model: modelLabel(w.Model), Effort: w.Effort}
-	if w.Run != nil {
-		ri.Model, ri.Effort = modelLabel(w.Run[0]), w.Run[1]
+	run := w.Run
+	// What its latest reply used, from its own log: started through an
+	// alias, it has no model of its own to go by.
+	if local, machine := split(w.PaneID); w.PaneID != "" {
+		if ps, ok := sp.s.titlesFor(machine, context.Background())[local]; ok && ps.Ran != nil {
+			run = ps.Ran
+		}
+	}
+	if run != nil && run[0] != "" {
+		ri.Model, ri.Effort = modelLabel(run[0]), run[1]
 	}
 	ri.Machine = sp.machineLabel(w.Machine)
 	return ri
