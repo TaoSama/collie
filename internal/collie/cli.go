@@ -93,7 +93,9 @@ func cliTarget() (base, token string, err error) {
 func cliPair(args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
 	computer := fs.Bool("computer", false, "pair another computer instead of a phone")
-	fs.Parse(args)
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	kind := "browser"
 	if *computer {
 		kind = "machine"
@@ -173,7 +175,7 @@ func parseReply(args []string, in io.Reader, tty bool) (map[string]any, error) {
 	check := fs.Bool("check", false, "mark as needing the human's review or action (without --opt)")
 	to := fs.String("to", "", "send to an extension's own chat with the human (e.g. wechat), only when they asked for it")
 	progress := fs.Bool("progress", false, "a short note while still working, in an extension conversation (no footer)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return nil, err
 	}
 	t := strings.Join(fs.Args(), " ")
@@ -220,7 +222,9 @@ func cliReply(args []string) error {
 
 func cliSay(args []string) error {
 	fs := flag.NewFlagSet("say", flag.ExitOnError)
-	fs.Parse(args)
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	t, err := textArg(fs)
 	if err != nil {
 		return err
@@ -245,7 +249,9 @@ func cliSpawn(args []string) error {
 	noAlias := fs.Bool("no-alias", false, "start the agent's own command, not the default alias")
 	sub := fs.Bool("subscribe", false, "route later events of --thread straight to this worker")
 	resume := fs.String("resume", "", "a stopped worker to carry on from: its computer, directory, alias and conversation")
-	fs.Parse(args)
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	t, err := textArg(fs)
 	if err != nil {
 		return err
@@ -288,7 +294,9 @@ func by() string {
 func cliSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	thread := fs.String("thread", "", "thread (default: the worker's)")
-	fs.Parse(args)
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	if fs.NArg() < 2 {
 		return fmt.Errorf("usage: collie send <worker> <text>")
 	}
@@ -303,7 +311,9 @@ func cliSend(args []string) error {
 func cliReport(args []string) error {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	worker := fs.String("worker", "", "worker name (default: detected from the herdr pane)")
-	fs.Parse(args)
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	t, err := textArg(fs)
 	if err != nil {
 		return err
@@ -318,7 +328,9 @@ func cliReport(args []string) error {
 func cliSubscribe(args []string) error {
 	fs := flag.NewFlagSet("subscribe", flag.ExitOnError)
 	off := fs.Bool("off", false, "unsubscribe")
-	fs.Parse(args)
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	if fs.NArg() != 2 {
 		return fmt.Errorf("usage: collie subscribe [--off] <worker> <thread>")
 	}
@@ -403,7 +415,9 @@ func cliTimer(args []string) error {
 		fs := flag.NewFlagSet("timer add", flag.ExitOnError)
 		thread := fs.String("thread", mainThread, "thread the timer fires into")
 		to := fs.String("to", "", "worker to wake (default: router)")
-		fs.Parse(args[1:])
+		if err := parseArgs(fs, args[1:]); err != nil {
+			return err
+		}
 		if fs.NArg() < 2 {
 			return fmt.Errorf(`usage: collie timer add [--thread T] [--to worker] "<every 2h | daily 09:00 | weekdays 09:00 | weekly mon,thu 09:00 | in 30m | at 2026-11-18 09:00>" <text>`)
 		}
@@ -420,7 +434,9 @@ func cliHook(args []string) error {
 	fs := flag.NewFlagSet("hook", flag.ExitOnError)
 	thread := fs.String("thread", "", "thread id")
 	from := fs.String("from", "", "sender")
-	fs.Parse(args)
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	if fs.NArg() < 2 {
 		return fmt.Errorf("usage: collie hook <source> <text>")
 	}
@@ -492,6 +508,7 @@ notes/index.md, open tasks; messages.md is maintained separately by the hub) und
 sessions and tidies memory/. Its journal is in dreams/.
 
 ## Tools (run in your shell)
+Flags may go before or after the text; text that has to spell a flag (say "--opt") goes after ` + "`--`" + `.
 - ` + "`{{BIN}} reply [--re ID] [--opt \"choice\"]... [--check] \"text\"`" + ` — message the human (add --thread X for another thread; --to wechat / --progress, see Events).
   When asking the human to confirm or choose between options — or whenever you proactively
   propose an actionable suggestion or next step (distilling a skill, creating/adjusting a
