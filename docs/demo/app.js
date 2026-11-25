@@ -92,15 +92,23 @@
   const glyph = (v) => isLocalRouter(v) ? GLYPHS.collie : !v.is_agent ? GLYPHS.shell : sessionGlyph(v.kind, "cli");
 
   // ───────────────────────────── api
-  // A page left open keeps its old code after the hub is updated: when the
-  // hub reports a different web app, offer a reload (once).
+  // A page left open keeps its old code after the hub is updated, and so does
+  // an installed app's first launch after it (the old cached copy). When the
+  // hub reports a different web app, reload straight away if you haven't
+  // touched the page since it opened or came back to the front and no message
+  // box has text; otherwise offer a reload (once).
   let webBuild = null;
+  let touched = false;
+  addEventListener("pointerdown", () => { touched = true; }, true);
+  addEventListener("keydown", () => { touched = true; }, true);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) touched = false; });
   function noteBuild(v) {
     if (!v) return;
     if (webBuild === null) { webBuild = v; return; }
     if (v !== webBuild) offerReload();
   }
   function offerReload() {
+    if (!touched && !$$("textarea").some((t) => t.value.trim())) { location.reload(); return; }
     if (document.getElementById("update-bar")) return;
     const bar = document.createElement("button");
     bar.id = "update-bar"; bar.type = "button";

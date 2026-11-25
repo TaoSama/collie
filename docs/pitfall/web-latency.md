@@ -14,7 +14,7 @@ node 收到输入后用 `paneWake` 叫醒这个 pane 的流，马上再读一次
 
 2026-11 实测（Pixel 7 仿真、Fast 4G 带宽、CPU 4 倍降速，到香港 hub 真实往返约 330ms），已安装的 app 冷启动要 4.4 秒才出侧栏：HTML 首字节约 1 秒（DNS、TCP、TLS），8 个静态文件逐个 304 重验证约 0.65 秒，`/api/session`、`super`、`state`、`hubs` 串行约 2.7 秒。nginx 只压缩 `text/html`，130KB 的 `/api/super` 在冷 TCP 窗口下要 1.6 秒。hub 本机处理这些请求都不到 10ms，时间全花在路上。现在的做法：
 
-- **service worker**（`web/sw.js`）。缓存启动要的文件，页面和这些文件不再走网络。文件清单是 `server.go` 的 `shellFiles`，hub 发 `sw.js` 时写入清单和版本号（`webBuild`，涵盖清单里所有文件和 `sw.js`）。发新版后浏览器发现 `sw.js` 变了，装上新的缓存并删掉旧的。页面还是旧代码时弹出「有新版本」，下次启动就是新版。`/api/` 和 `/direct/` 永远不经过它。往 `index.html` 加启动必需的文件时同步改 `shellFiles`，`compress_test.go` 会检查两边一致。
+- **service worker**（`web/sw.js`）。缓存启动要的文件，页面和这些文件不再走网络。文件清单是 `server.go` 的 `shellFiles`，hub 发 `sw.js` 时写入清单和版本号（`webBuild`，涵盖清单里所有文件和 `sw.js`）。发新版后浏览器发现 `sw.js` 变了，装上新的缓存并删掉旧的。所以发版后第一次启动仍是旧代码，新的 service worker 接管后才换新。页面发现自己是旧代码时（`controllerchange`，或接口返回的 `X-Collie-Web` 变了），如果打开或回到前台后还没点过、没按过键，且输入框都是空的，就直接刷新；否则弹出「有新版本」。`/api/` 和 `/direct/` 永远不经过它。往 `index.html` 加启动必需的文件时同步改 `shellFiles`，`compress_test.go` 会检查两边一致。
 - **启动快照**（`app.js` 的 `saveSnap` / `loadSnap`）。页面切到后台、关闭时，以及启动 5 秒后，把侧栏、Collie 对话最近 80 条、外部会话和历史存到 localStorage 的 `collie.snap`。启动时先画快照，再并行请求 `session`、`super`、`state`、`hubs`，回来后补齐。其他 hub 的令牌不存，它们的会话等 `/api/hubs` 回来后才能点开。
 - **退出和失效**。点退出先清快照和 `collie-*` 缓存再刷新。任何 401（`showLogin`）都会清快照。设备被移除后，下次启动会先画出上次的快照，hub 拒绝后才回到登录页，这段时间约一次往返。
 - **压缩**（`compress.go`）。hub 自己 gzip 文本响应（JSON、JS、CSS、HTML、SVG），不依赖 nginx 配置。事件流（SSE）不压缩，保证每条事件立刻送到。压缩后 ETag 变成弱标签 `W/"…"`，`static` 比较时去掉 `W/`，304 照常生效。
