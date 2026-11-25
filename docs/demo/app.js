@@ -3335,7 +3335,7 @@
       const v = m?.unread && a.status === "idle" ? { ...a, status: "done" } : a;
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
-      return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, active: a.updated ? +new Date(a.updated) : 0, machine: a.machine || "", cwd: a.cwd,
+      return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, human: +new Date(a.human_at || 0), machine: a.machine || "", cwd: a.cwd,
         key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true };
     };
     // Another app's session that is only open (kept alive in the background,
@@ -3357,11 +3357,11 @@
     const extRows = ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
       const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
       return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
-        t: new Date(e.updated || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
+        t: new Date(e.updated || e.started), human: +new Date(e.human_at || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
     });
     const histRows = hist.filter((h) => !collieRan(h)).map((h) => {
       const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
-      return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), machine, cwd: h.cwd,
+      return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), human: +new Date(h.human_at || h.ended), machine, cwd: h.cwd,
         key, mark: m, session: h.session || "", name: m?.title || histName(h), live: false });
     });
     // An app can list a session herdr ran too (Antigravity's lists the CLI's):
@@ -3389,9 +3389,10 @@
       if (!by.has(key)) by.set(key, { key, machine: r.machine, label, paths: new Set(), project: true, rows: [], last: 0 });
       const g = by.get(key);
       if (path) g.paths.add(tilde(path));
-      g.rows.push(r); g.last = Math.max(g.last, +r.t || 0, r.active || 0);
+      g.rows.push(r); g.last = Math.max(g.last, r.human || 0);
     }
-    // Most recently active first.
+    // The one the human last wrote in first: agents working on their own
+    // don't move them.
     const groups = [...by.values()].sort((x, y) => y.last - x.last || x.label.localeCompare(y.label));
     for (const g of groups) {
       g.title = [...g.paths].join("\n");

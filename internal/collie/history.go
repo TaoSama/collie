@@ -26,6 +26,7 @@ type Ended struct {
 	IsRouter *bool     `json:"is_router,omitempty"` // nil for records written before roles were stored
 	Session  string    `json:"session"`
 	Ended    time.Time `json:"ended"`
+	HumanAt  time.Time `json:"human_at,omitzero"` // the human's last message in it, else its start
 }
 
 const maxEnded = 40
@@ -144,7 +145,7 @@ func (s *Server) watchEndings(ctx context.Context) {
 			if kind == "antigravity" {
 				kind = "agy"
 			}
-			prev[a.PaneID] = &seen{Ended: Ended{Kind: kind, Machine: a.Machine, Cwd: a.Cwd, Title: a.Topic, Name: a.Name, IsRouter: &a.IsRouter, Session: a.Session}}
+			prev[a.PaneID] = &seen{Ended: Ended{Kind: kind, Machine: a.Machine, Cwd: a.Cwd, Title: a.Topic, Name: a.Name, IsRouter: &a.IsRouter, Session: a.Session, HumanAt: a.HumanAt}}
 			s.forgetSession(kind, a.Machine, a.Session)
 		}
 		for id, p := range prev {

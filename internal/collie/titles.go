@@ -126,8 +126,8 @@ type paneSession struct {
 	Ran *[2]string `json:"ran,omitempty"`
 	// Context: how full its context window is, from the same log.
 	Context *ctxUsage `json:"context,omitempty"`
-	// Updated: when its log was last written, its latest activity.
-	Updated time.Time `json:"updated,omitzero"`
+	// HumanAt: when the human last wrote in it, else when it started (humanAt).
+	HumanAt time.Time `json:"human_at,omitzero"`
 }
 
 // localSessions maps this machine's agent panes (local ids) to their sessions.
@@ -183,9 +183,7 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		run, _ := s.herdr.Run(local)
 		ps := paneSession{Title: t, Session: sess, Run: run}
 		if sess != "" && (kind == "claude" || kind == "codex" || kind == "agy") {
-			if fi, err := os.Stat(s.sessionLog(kind, sess)); err == nil {
-				ps.Updated = fi.ModTime()
-			}
+			ps.HumanAt = humanAt(s.sessionLog(kind, sess), kind)
 			if u := s.sessionUsage(kind, sess); u != nil {
 				if u.Model != "" {
 					ps.Ran = &[2]string{u.Model, u.Effort}
@@ -195,7 +193,7 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 				}
 			}
 		}
-		if t != "" || sess != "" || run != nil || ps.Context != nil || !ps.Updated.IsZero() {
+		if t != "" || sess != "" || run != nil || ps.Context != nil || !ps.HumanAt.IsZero() {
 			out[local] = ps
 		}
 	}

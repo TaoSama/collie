@@ -39,6 +39,7 @@ type External struct {
 	Session string    `json:"session,omitempty"`
 	Title   string    `json:"title,omitempty"`
 	Updated time.Time `json:"updated,omitempty"`
+	HumanAt time.Time `json:"human_at,omitzero"` // the human's last message in it, else its start
 	Machine string    `json:"machine,omitempty"`
 	Status  string    `json:"status,omitempty"` // working | idle | blocked, when the agent says
 	// CanSend: a message can go to it where it runs (Claude's peer inbox, the
@@ -311,6 +312,7 @@ func (s *Server) externalSessions() []*External {
 	kept := list[:0]
 	for _, e := range list {
 		if !collieSession(e.Title) {
+			e.HumanAt = humanAt(e.path, e.format)
 			kept = append(kept, e)
 		}
 	}
