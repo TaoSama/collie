@@ -30,7 +30,7 @@ func cliWB(args []string) error {
 			fmt.Fprintln(fs.Output(), "usage: collie wb ls\n\nLists the workbench modules shared with agents.")
 		}
 		fs.Parse(args[1:])
-		b, err := cliCall("GET", "/api/wb/ls?"+pane.Encode(), nil)
+		b, err := cliCall("GET", "/api/super/wb/ls?"+pane.Encode(), nil)
 		if err != nil {
 			return err
 		}
@@ -66,7 +66,7 @@ func cliWB(args []string) error {
 		if fs.NArg() != 1 {
 			return errors.New(wbUsage)
 		}
-		b, err := cliCall("GET", "/api/wb/read/"+url.PathEscape(fs.Arg(0))+"?"+pane.Encode(), nil)
+		b, err := cliCall("GET", "/api/super/wb/read/"+url.PathEscape(fs.Arg(0))+"?"+pane.Encode(), nil)
 		if err != nil {
 			return err
 		}

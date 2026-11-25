@@ -19,6 +19,7 @@
 | `read` | Collie 和它派出的 worker 用 `collie wb read ID` 现取 |
 | `keep` | 在 `read` 的基础上，每天存一份快照到 `router/wb/<id>/<日期>.md`。内容和上一份相同时不写新文件，保留 30 天。做梦时提炼进 `memory/notes/wb-<id>.md`，敏感模块写进 `wb-private-<id>.md` |
 
+- Agent 用的两个接口在 `/api/super/wb/ls` 和 `/api/super/wb/read/<id>`：已配对的电脑的 token 只能访问 `/api/super/`，而 Collie 和 worker 可能跑在任何一台电脑上。改布局、token 和探测的接口在 `/api/wb`，电脑的 token 访问不到。
 - **谁能读**由 hub 判断。它按 CLI 传来的 `HERDR_PANE_ID` 认出调用者，规则如下：
   - 不在 herdr 里运行（拿着 token 的人或脚本）：可以读。
   - Collie 本身，以及它派出的 worker：可以读。

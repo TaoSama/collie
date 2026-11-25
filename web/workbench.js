@@ -271,7 +271,7 @@
       const m = mod(cur);
       if (!m) return;
       try {
-        const r = await api(`/api/wb/read/${encodeURIComponent(m.id)}?human=1`);
+        const r = await api(`/api/super/wb/read/${encodeURIComponent(m.id)}?human=1`);
         await api("/api/super/say", { body: { text: `来自工作台「${m.title}」的数据：\n\n${r.text}` } });
         toast("已发给 Collie");
       } catch (err) { toast(err.message, "attn"); }

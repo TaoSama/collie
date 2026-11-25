@@ -633,8 +633,8 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     }
     if (p === "/api/wb/token") { const m = wb.modules.find((x) => x.id === body.id); if (m) m.has_token = !!body.token; return json({ ok: true }); }
     if (p === "/api/wb/probe") return json({ embed: "tab", reason: "演示里不检测网站" });
-    if (p.startsWith("/api/wb/read/")) {
-      const m = wb.modules.find((x) => x.id === decodeURIComponent(p.slice(13)));
+    if (p.startsWith("/api/super/wb/read/")) {
+      const m = wb.modules.find((x) => x.id === decodeURIComponent(p.slice(19)));
       return json({ id: m?.id, title: m?.title, text: `# 工作台 · ${m?.title}\n\n（演示数据）最近一周读完 2 本，在读 1 本。` });
     }
     if (p === "/api/external") return json({ sessions: external });

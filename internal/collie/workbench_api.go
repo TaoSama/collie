@@ -11,8 +11,10 @@ func (s *Server) wbRoutes(mux *http.ServeMux) {
 	api("POST /api/wb", s.wbSave)
 	api("POST /api/wb/token", s.wbToken)
 	api("POST /api/wb/probe", s.wbProbeURL)
-	api("GET /api/wb/ls", s.wbList)
-	api("GET /api/wb/read/{id}", s.wbReadModule)
+	// What agents call lives under /api/super/, where the computers' tokens
+	// reach too: Collie and its workers run on any of them.
+	api("GET /api/super/wb/ls", s.wbList)
+	api("GET /api/super/wb/read/{id}", s.wbReadModule)
 }
 
 // wbModuleView is a module as the page sees it: no token, only whether one is set.

@@ -357,3 +357,33 @@ func TestWorkbenchDue(t *testing.T) {
 		t.Fatal("checked kept for a module no longer kept")
 	}
 }
+
+// Collie and its workers run on joined computers, whose tokens reach only
+// /api/super/: `collie wb` must call there, and they must not edit the layout.
+func TestWorkbenchAgentRoutesReachComputers(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "herd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &Server{auths: newAuth(db, "master")}
+	code, _ := s.auths.newCode("machine")
+	_, tok, err := s.auths.redeem(code, "machine", "macpro", "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]bool{
+		"/api/super/wb/ls": true, "/api/super/wb/read/notes": true,
+		"/api/wb": false, "/api/wb/token": false, "/api/wb/probe": false,
+	} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Header.Set("Authorization", "Bearer "+tok)
+		if got := s.authed(r); got != want {
+			t.Errorf("%s: authed %v, want %v", path, got, want)
+		}
+	}
+	cli, _ := os.ReadFile("cli_wb.go")
+	if strings.Count(string(cli), `"/api/super/wb/`) != 2 {
+		t.Fatal("collie wb must call /api/super/wb/…")
+	}
+}
