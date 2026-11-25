@@ -1827,6 +1827,13 @@ select.picked { display: none; }
 .ctx-menu .po.danger, .ctx-menu .po.danger .pi { color: var(--attn); }
 .ctx-menu .pi svg { fill: none; stroke: currentColor; stroke-width: calc(1.7 * var(--stroke)); stroke-linecap: round; stroke-linejoin: round; }
 .ctx-menu .po .ck { display: none; }
+/* the sidebar's menu: centered on every screen over the scrim, as wide as the app's confirm */
+.ctx-menu.center {
+  inset: 0; margin: auto; width: min(400px, calc(100vw - 48px)); height: fit-content; max-width: none; max-height: calc(var(--vh) - 48px);
+  padding: 8px; border-radius: calc(28px * var(--round));
+}
+.ctx-menu.center .ph { padding: 10px 12px 8px; font-size: var(--fs-meta); }
+.ctx-menu.center .po { padding: 13px 12px; border-radius: calc(20px * var(--round)); font-size: calc(var(--fs-lead) - 0.5px); }
 .attach-menu { min-width: 168px; }
 .attach-menu .po { gap: 10px; padding: 8px 10px; }
 @media (pointer: coarse) { .attach-menu .po { padding: 12px 12px; font-size: calc(var(--fs-lead) - 0.5px); } .attach-menu .pi, .attach-menu .pi svg { width: 18px; height: 18px; } }
