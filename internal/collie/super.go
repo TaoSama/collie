@@ -60,6 +60,7 @@ type Super struct {
 	rsync          routerSync           // the router folder's mirror on that computer
 	handover       *handover            // set while the router writes its memory before a fresh session
 	dream          *dreamRun            // set while Collie sleeps and a dream session tidies its memory
+	wb             *workbench           // the workbench: modules the human pins, and what agents may read of them
 	lastTrust      map[string]time.Time // pane → when its trust dialog was last answered
 	lastAnswer     map[string]time.Time // pane → when a dialog there was just answered
 	lastScreen     map[string]screenMark
@@ -109,6 +110,10 @@ func newSuper(s *Server, dir string) (*Super, error) {
 	sp.db = db
 	if sp.st, err = loadState(db); err != nil {
 		return nil, err
+	}
+	sp.wb = newWorkbench(db, dir, sp.routerDir())
+	if err := sp.wb.writeIndex(); err != nil {
+		log.Printf("workbench: %v", err)
 	}
 	if sp.push, err = newWebPush(db); err != nil {
 		return nil, fmt.Errorf("web push: %w", err)
@@ -378,6 +383,7 @@ func (sp *Super) byName(list []Agent) map[string]liveAgent {
 func (sp *Super) tick(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
+	sp.wb.snapshotDue() // feeds are read over the web: herdr need not be up
 	// Listing every computer can take seconds. A worker spawned or done
 	// starting meanwhile is missing from a list taken before it was named:
 	// it isn't gone, and its brief must not go to the Router instead. Only

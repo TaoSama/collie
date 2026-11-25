@@ -108,6 +108,7 @@ func (s *Server) Routes() http.Handler {
 	s.machineRoutes(mux, func(h http.HandlerFunc) http.Handler { return s.auth(s.routed(h)) })
 	s.superRoutes(mux)
 	s.extRoutes(mux)
+	s.wbRoutes(mux)
 	s.pushRoutes(mux)
 	s.hubRoutes(mux)
 	return securityHeaders(compress(cors(mux)))
@@ -206,7 +207,7 @@ var webBuildOnce struct {
 // shellFiles are what a launch needs before it can draw anything. The
 // service worker keeps them, so an installed app starts without the network.
 var shellFiles = []string{
-	"/", "/app.js", "/imgedit.js", "/threads.js", "/ext.js", "/app.css", "/skins.css", "/icon.svg", "/manifest.webmanifest",
+	"/", "/app.js", "/imgedit.js", "/threads.js", "/ext.js", "/workbench.js", "/app.css", "/skins.css", "/icon.svg", "/manifest.webmanifest",
 	"/vendor/xterm.css", "/vendor/xterm.js", "/vendor/katex/katex.min.css", "/vendor/katex/katex.min.js",
 }
 

@@ -250,6 +250,19 @@
     { id: "chat:main", triggers: triggers.filter((t) => t.thread === "chat:main"), subscribers: [], last_at: ago(6) },
     { id: "github:alex/shop-api#58", triggers: [triggers[2]], subscribers: ["codex-1"], last_at: ago(40) },
   ];
+  // The workbench: pinned pages and shortcuts (web/workbench.js).
+  const wb = {
+    groups: [{ id: "fav", title: "收藏" }, { id: "life", title: "生活" }, { id: "collie", title: "Collie" }],
+    modules: [
+      { id: "books", title: "读书", icon: "📚", group: "life", kind: "web", url: "https://example.com/books", embed: "tab", feed: "https://example.com/agent.md", share: "keep", has_token: true, snap_at: later(-600) },
+      { id: "ledger", title: "账本", icon: "📒", group: "life", kind: "web", url: "https://example.com/ledger", embed: "tab", feed: "https://example.com/ledger.md", share: "read", sensitive: true, has_token: true },
+      { id: "router", title: "路由代理", icon: "🛜", group: "fav", kind: "web", url: "https://example.com/router", embed: "tab", share: "off" },
+      { id: "inbox", title: "收件箱", icon: "📥", group: "collie", kind: "link", url: "auto:inbox", share: "off" },
+      { id: "memory", title: "记忆", icon: "🧠", group: "collie", kind: "link", url: "auto:memory", share: "off" },
+      { id: "machines", title: "电脑", icon: "🖥", group: "collie", kind: "link", url: "devices:machines", share: "off" },
+    ],
+  };
+
   const timers = [
     { id: "tm1", spec: "weekdays 09:00", text: "检查各个任务的进展，有卡住的告诉我", target: "", enabled: true, next_run: later(60 * 18), owner: "you" },
     { id: "tm2", spec: "in 30m", text: "看一下 fix-flaky-test 跑完没有", target: "", enabled: true, next_run: later(16), owner: "collie" },
@@ -614,6 +627,16 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       return json(memory);
     }
     if (p === "/api/super/say") return json({ ok: true, entry: collieSay(body.text || "", body.re) });
+    if (p === "/api/wb") {
+      if (method === "POST") { wb.groups = body.groups; wb.modules = body.modules.map((m) => ({ ...wb.modules.find((x) => x.id === m.id), ...m })); }
+      return json(wb);
+    }
+    if (p === "/api/wb/token") { const m = wb.modules.find((x) => x.id === body.id); if (m) m.has_token = !!body.token; return json({ ok: true }); }
+    if (p === "/api/wb/probe") return json({ embed: "tab", reason: "演示里不检测网站" });
+    if (p.startsWith("/api/wb/read/")) {
+      const m = wb.modules.find((x) => x.id === decodeURIComponent(p.slice(13)));
+      return json({ id: m?.id, title: m?.title, text: `# 工作台 · ${m?.title}\n\n（演示数据）最近一周读完 2 本，在读 1 本。` });
+    }
     if (p === "/api/external") return json({ sessions: external });
     if (p === "/api/history") return json({ sessions: history });
     if (p === "/api/marks") {

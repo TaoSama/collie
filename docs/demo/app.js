@@ -739,6 +739,7 @@
     $("#nav-auto").classList.toggle("active", view === "auto");
     $("#nav-devices").classList.toggle("active", view === "devices");
     $("#nav-prefs").classList.toggle("active", view === "prefs");
+    $("#nav-wb").classList.toggle("active", view === "wb");
   }
 
   // A column edge dragged with mouse, finger or pen. onStart measures the
@@ -815,6 +816,7 @@
     if (v === "auto") return "auto:" + autoTab;
     if (v === "devices") return "devices:" + devTab;
     if (v === "prefs") return "prefs";
+    if (v === "wb") return "wb:" + (id || "");
     if (v === "file") return "file:" + (id || "");
     if (v === "ext") return "ext:" + (id || "");
     if (v === "pane") return "pane:" + (id || "") + ":" + ($("#viewer")?.dataset.mode || curMode());
@@ -825,6 +827,7 @@
     if (v === "auto") return $("#auto-body");
     if (v === "devices") return $("#devices-body");
     if (v === "prefs") return $("#prefs-body");
+    if (v === "wb") return $("#wb-main");
     if (v === "file") return $("#rv-scroller");
     if (v === "ext") return $("#x-thread")?.parentElement || null;
     if (v === "pane") {
@@ -927,6 +930,7 @@
     history.replaceState({ ...(history.state || {}), collieIdx: navCur }, "", hash);
   }
   function fallbackHash() {
+    if (view === "wb" && current) return "#/wb";
     if (!narrow()) return "#/collie";
     if (view === "pane") {
       const v = find(current);
@@ -969,17 +973,19 @@
     else if (h === "#/auto") next = "auto";
     else if (h === "#/devices") next = "devices";
     else if (h === "#/prefs") next = "prefs";
+    else if (h === "#/wb" || h.startsWith("#/wb/")) { next = "wb"; id = decodeURIComponent(h.slice(5)); }
     else if (!narrow()) {
       // Desktop has no empty home: reopen where you were on fresh launch, else Collie.
       let dest = "#/collie";
       if (!booted && !h) {
         const last = store.get("last", "#/collie");
-        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto|devices|prefs)$/.test(last);
+        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto|devices|prefs|wb(\/[a-z0-9-]+)?)$/.test(last);
         if (ok) dest = last;
       }
       replaceHash(dest);
       h = dest;
       if (h.startsWith("#/p/")) { next = "pane"; id = decodeURIComponent(h.slice(4)); }
+      else if (h.startsWith("#/wb")) { next = "wb"; id = decodeURIComponent(h.slice(5)); }
       else next = h.slice(2);
     }
     if (next && next !== "file") store.set("last", h);
@@ -994,6 +1000,7 @@
     if (view === "pane" && (next !== "pane" || id !== current)) closeStream();
     if (view === "auto" && next !== "auto") clearInterval(autoTimer);
     if (view === "devices" && next !== "devices") clearInterval(devTimer);
+    if (view === "wb" && next !== "wb") workbench.close();
     if (next !== "collie") {
       pendingOpen = false;
       hideSearchPanel();
@@ -1011,6 +1018,7 @@
     $("#v-auto").hidden = next !== "auto";
     $("#v-devices").hidden = next !== "devices";
     $("#v-prefs").hidden = next !== "prefs";
+    $("#v-wb").hidden = next !== "wb";
     $("#v-ext").hidden = next !== "ext";
     $("#detail").hidden = next !== "pane";
     $("#v-file").hidden = next !== "file";
@@ -1024,6 +1032,7 @@
     if (next === "auto") openAuto(saved, true);
     if (next === "devices") openDevices(saved);
     if (next === "prefs") renderPrefs(saved);
+    if (next === "wb") workbench.open(id);
     if (next === "file") openWideFile(id, saved);
     if (next === "ext") openExt(id, saved);
     if (next === "pane") {
@@ -4211,6 +4220,17 @@
   // and how they are doing.
   let devTab = store.get("devTab", "machines");
   bindTabs("#dev-tabs", "devices", "#devices-body", () => devTab, (t) => { devTab = t; store.set("devTab", t); }, (saved) => openDevices(saved));
+
+  // ───────────────────────────── workbench (workbench.js)
+  // A shortcut module opens one of Collie's pages on a given tab.
+  const workbench = window.collieWorkbench.mount({
+    api, toast, esc, ask,
+    openLink([v, tab]) {
+      if (v === "auto") { autoTab = tab; store.set("autoTab", tab); }
+      if (v === "devices") { devTab = tab; store.set("devTab", tab); }
+      location.hash = "#/" + v;
+    },
+  });
 
   function openDevices(restore = null) {
     if (!(devTab in DEV_VIEW)) store.set("devTab", devTab = "connect"); // a tab merged into 连接

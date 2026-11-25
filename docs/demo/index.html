@@ -94,6 +94,9 @@
       <a class="foot-status" href="#/devices" id="nav-devices" title="设备">
         <span class="conn" id="conn"></span><span class="update-note" id="update-note" hidden>有新版</span><span id="herdr-status" class="muted">connecting…</span>
       </a>
+      <a class="icon-btn" href="#/wb" id="nav-wb" title="工作台" aria-label="工作台">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+      </a>
       <a class="icon-btn" href="#/devices" title="设备与连接">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="13" height="10" rx="1.5"/><path d="M7 18h5M9.5 14v4"/><rect x="17" y="9" width="5" height="11" rx="1.2"/></svg>
       </a>
@@ -228,6 +231,19 @@
         <button data-tab="machines">电脑</button>
       </div>
       <div class="auto-body" id="devices-body"></div>
+    </section>
+
+    <!-- ── workbench: pinned pages and Collie's own, and what agents may read (workbench.js) ── -->
+    <section class="view" id="v-wb" hidden>
+      <header class="d-head">
+        <button type="button" class="icon-btn back" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <div class="d-title"><div class="d-name"><span id="wb-name">工作台</span></div><div class="d-meta"><span class="muted" id="wb-meta"></span></div></div>
+        <div class="wb-acts" id="wb-acts"></div>
+      </header>
+      <div class="wb">
+        <nav class="wb-nav" id="wb-nav" aria-label="工作台模块"></nav>
+        <div class="wb-main" id="wb-main"></div>
+      </div>
     </section>
 
     <!-- ── an agent running in another terminal: read-only, can be taken over ── -->
@@ -462,6 +478,63 @@
   </form>
 </dialog>
 
+<!-- ───────────── a workbench module ───────────── -->
+<dialog class="sheet" id="wb-edit" aria-labelledby="wb-edit-title">
+  <form method="dialog">
+    <header class="sheet-head">
+      <h3 id="wb-edit-title">添加网页</h3>
+      <button class="icon-btn" value="cancel" formnovalidate title="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </header>
+    <div class="sheet-body">
+      <div class="field wb-web">
+        <label for="wb-url">网址</label>
+        <div class="wb-url-row"><input id="wb-url" name="url" type="url" placeholder="https://example.com" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" class="btn small" id="wb-probe">检测</button></div>
+        <small class="muted" id="wb-probe-note"></small>
+      </div>
+      <div class="field wb-web">
+        <label>打开方式</label>
+        <div class="seg" data-seg="embed"><button type="button" data-v="iframe">嵌在工作台里</button><button type="button" data-v="tab">新标签打开</button></div>
+        <small class="muted">网站不允许被嵌入时会白屏，就改成新标签打开</small>
+      </div>
+      <div class="field wb-two">
+        <div><label for="wb-title">名字</label><input id="wb-title" name="title" maxlength="40" autocomplete="off"></div>
+        <div class="wb-icon-f"><label for="wb-icon">图标</label><input id="wb-icon" name="icon" maxlength="4" placeholder="🌐" autocomplete="off"></div>
+      </div>
+      <div class="field">
+        <label for="wb-group">分组</label>
+        <select id="wb-group" name="group"></select>
+      </div>
+      <div class="field wb-web">
+        <label>给 Agent</label>
+        <div class="seg" data-seg="share"><button type="button" data-v="off">不给</button><button type="button" data-v="read">按需读</button><button type="button" data-v="keep">沉淀</button></div>
+        <small class="muted" id="wb-share-hint"></small>
+      </div>
+      <div class="field wb-web">
+        <label for="wb-feed">数据地址 <span class="muted">给 Agent 时必填，返回 markdown、文本或 JSON</span></label>
+        <input id="wb-feed" name="feed" type="url" placeholder="https://example.com/agent.md" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <div class="field wb-web">
+        <label for="wb-token">只读 token <span class="muted">只存在 hub 上，Agent 看不到</span></label>
+        <input id="wb-token" name="token" type="password" autocomplete="new-password">
+        <label class="wb-check" id="wb-clear-row"><input type="checkbox" name="clear-token"> 清除已保存的 token</label>
+      </div>
+      <div class="field wb-web">
+        <label class="wb-check"><input type="checkbox" name="sensitive"> 敏感数据（账本、健康之类）：不在和外部的会话里读取</label>
+        <div id="wb-keep-every"><label for="wb-every">快照间隔（小时，默认 24）</label><input id="wb-every" name="every" type="number" min="1" max="168" placeholder="24"></div>
+      </div>
+      <p class="form-error" id="wb-edit-error"></p>
+    </div>
+    <footer class="sheet-foot">
+      <button type="button" class="btn ghost danger" id="wb-del">移除</button>
+      <button type="button" class="btn ghost" id="wb-up" title="在分组里前移">前移</button>
+      <button type="button" class="btn ghost" id="wb-down" title="在分组里后移">后移</button>
+      <span class="spacer"></span>
+      <button class="btn" value="cancel" formnovalidate>取消</button>
+      <button class="btn primary" value="save">保存</button>
+    </footer>
+  </form>
+</dialog>
+
 <!-- ───────────── launcher ───────────── -->
 <dialog class="sheet" id="launch">
   <form method="dialog" id="launch-form">
@@ -631,6 +704,7 @@
 <script src="imgedit.js"></script>
 <script src="threads.js"></script>
 <script src="ext.js"></script>
+<script src="workbench.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
