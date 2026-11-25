@@ -163,7 +163,12 @@ type Settings struct {
 	// Collie and its workers run with the agent's permission checks off
 	// (--dangerously-skip-permissions and the like) unless this is set.
 	AskPermissions bool `json:"ask_permissions,omitempty"`
+	// What the UI calls the sessions Collie started: "" their worker name,
+	// "topic" the title the agent gave its session.
+	WorkerTitle string `json:"worker_title,omitempty"`
 }
+
+const workerTitleTopic = "topic"
 
 type State struct {
 	Seq       int                `json:"seq"`

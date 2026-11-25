@@ -643,6 +643,9 @@
     return s;
   }
   const isWorker = (name) => sup.workers.some((w) => w.name === name && !w.ended);
+  const byTopic = () => sup.worker_title === "topic"; // 自动化 → 设置: call workers by their session's title
+  // A worker as its session is called (see title).
+  const workerLabel = (w) => { const a = !w.ended && state.agents.find((x) => x.name === w.name); return a ? title(a) : w.name; };
   const routerPane = () => state.agents.find(isLocalRouter)?.pane_id;
   const paneOf = (name) => name === ROUTER ? routerPane() : state.agents.find((a) => a.name === name)?.pane_id;
   // A worker's status as the sidebar shows it (which knows when it waits on
@@ -658,14 +661,15 @@
   function title(v) {
     if (!v) return "";
     if (isLocalRouter(v)) return "Collie";
-    if (isWorker(v.name)) return v.name; // Collie talks about its agents by name
+    // Collie talks about its agents by name; the session's own title on request.
+    if (isWorker(v.name)) return byTopic() && v.topic || v.name;
     return v.topic || (v.name && !autoName(v.name) ? v.name : base(tilde(v.cwd))) || v.pane_id;
   }
 
   // ───────────────────────────── sidebar
   function itemHTML(v, attrs = "") {
     const where = (state.machines || []).length > 1 ? machineName(v.machine) + " · " : "";
-    const named = v.is_agent && !isLocalRouter(v) && !isWorker(v.name) && v.name && !autoName(v.name) && v.topic && v.topic !== v.name ? v.name + " · " : "";
+    const named = v.is_agent && !isLocalRouter(v) && (!isWorker(v.name) || byTopic()) && v.name && !autoName(v.name) && v.topic && v.topic !== v.name ? v.name + " · " : "";
     const sub = isLocalRouter(v) ? "Collie 停在一个对话框上"
       : v.is_agent ? `${named}${KIND_LABEL[v.kind] || v.kind} · ${where}${base(tilde(v.cwd))}` : where + tilde(v.cwd);
     return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}">
@@ -1654,6 +1658,53 @@
     window.__collieHideSearchPanel?.();
   }
 
+  // ───────────────────────────── task view: Collie's open tasks, one per
+  // memory/tasks/*.md, with the workers on each, floating beside the chat.
+  // TASK_REFRESH_MS: how stale the task files may get while the panel is open.
+  const TASK_REFRESH_MS = 10e3;
+  let taskFiles = null, taskAt = 0, taskErr = "";
+  const taskBtn = $("#task-btn"), taskPanel = $("#task-panel");
+  function taskPanelHTML() {
+    const tasks = (taskFiles || []).filter(isOpenTask);
+    const pend = new Set(activePending().map((p) => p.task));
+    const row = (f) => {
+      const head = f.text.split("\n").find((l) => /^#\s/.test(l));
+      const name = head ? head.replace(/^#+\s*/, "") : f.name.replace(/^tasks\/|\.md$/g, "");
+      const ws = taskWorkers(f.text).filter((w) => !w.ended);
+      const st = ws.some((w) => workerStatus(w) === "blocked" || pend.has(w.name)) ? ["blocked", STATUS_LABEL.blocked]
+        : ws.some(workerBusy) ? ["working", "执行中"] : null;
+      return `<div class="tp-item"><div class="tp-top"><span class="tp-name">${esc(name)}</span>${st ? `<span class="tp-st ${st[0]}">${st[1]}</span>` : ""}</div>${taskCrewHTML(ws)}</div>`;
+    };
+    return `<div class="tp-h">进行中的任务${taskFiles ? `<span class="count">${tasks.length}</span>` : ""}</div>
+      ${!taskFiles ? `<div class="tp-empty">${taskErr ? "读取失败：" + esc(taskErr) : "加载中…"}</div>` : tasks.length ? tasks.map(row).join("") : `<div class="tp-empty">没有进行中的任务</div>`}`;
+  }
+  function renderTaskPanel() {
+    if (taskPanel.hidden) return;
+    const html = taskPanelHTML();
+    if (taskPanel._html !== html) taskPanel.innerHTML = taskPanel._html = html;
+    if (Date.now() - taskAt > TASK_REFRESH_MS) loadTasks();
+  }
+  async function loadTasks() {
+    taskAt = Date.now();
+    try { taskFiles = (await api("/api/super/memory")).files || []; taskErr = ""; }
+    catch (err) { taskErr = err.message; } // shown in the panel until a retry works
+    renderTaskPanel();
+  }
+  function toggleTaskPanel(open) {
+    taskPanel.hidden = !open;
+    taskBtn.setAttribute("aria-expanded", String(open));
+    taskBtn.classList.toggle("on", open);
+    if (open) { taskAt = 0; renderTaskPanel(); }
+  }
+  taskBtn.addEventListener("click", () => toggleTaskPanel(taskPanel.hidden));
+  document.addEventListener("click", (e) => {
+    // Outside it, or a worker in it opened.
+    if (!taskPanel.hidden && (!e.target.closest(".task-wrap") || e.target.closest("#task-panel a[href]"))) toggleTaskPanel(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !taskPanel.hidden && !composing(e)) toggleTaskPanel(false);
+  });
+
   function renderSuper(opts) {
     const force = opts === true || !!opts?.force;
     const forceBottom = !!opts?.scrollBottom;
@@ -1704,9 +1755,10 @@
     if (view === "collie") renderTarget();
     const crewHTML = active.map((w) => {
       const pane = paneOf(w.name);
-      return `<a class="chip" ${pane ? `href="#/p/${encodeURIComponent(pane)}"` : ""}><span class="dot ${esc(workerStatus(w))}" title="${esc(STATUS_LABEL[workerStatus(w)] || "")}"></span>${esc(w.name)}<span class="k">${esc(KIND_LABEL[w.kind] || w.kind)}</span></a>`;
+      return `<a class="chip" ${pane ? `href="#/p/${encodeURIComponent(pane)}"` : ""}><span class="dot ${esc(workerStatus(w))}" title="${esc(STATUS_LABEL[workerStatus(w)] || "")}"></span>${esc(workerLabel(w))}<span class="k">${esc(KIND_LABEL[w.kind] || w.kind)}</span></a>`;
     }).join("");
     if (crewHTML !== prevCrew) crew.innerHTML = crewHTML;
+    renderTaskPanel();
     let html = "", prevRole = "";
     if (!sup.entries.length && !pendingSays.length) {
       html = `<div class="hello"><img src="icon.svg" alt="">
@@ -2524,6 +2576,23 @@
   }
 
   // ───────────────────────────── memory: what Collie keeps between sessions
+  const isOpenTask = (f) => /^tasks\/[^/]+\.md$/.test(f.name); // tasks/done/ holds finished ones
+  // A task names the workers on it (a name can be reused: the newest one).
+  function taskWorkers(text) {
+    const latest = new Map();
+    for (const w of sup.workers) if (!latest.has(w.name) || new Date(w.created_at) > new Date(latest.get(w.name).created_at)) latest.set(w.name, w);
+    return [...latest.values()].filter((w) => new RegExp(`(^|[^\\w-])${reEsc(w.name)}(?![\\w-])`).test(text));
+  }
+  // The workers on a task, live, each opening its session.
+  function taskCrewHTML(ws) {
+    if (!ws.length) return "";
+    return `<span class="mem-crew">${ws.map((w) => {
+      const pane = !w.ended && paneOf(w.name), past = !pane && workerHist(w.name, w.created_at);
+      const href = pane ? `#/p/${encodeURIComponent(pane)}` : past ? `#/h/${encodeURIComponent(past.id)}` : "";
+      const st = workerStatus(w);
+      return `<a ${href ? `href="${href}"` : ""} title="${esc((KIND_LABEL[w.kind] || w.kind) + " · " + (STATUS_LABEL[st] || st))}"><span class="dot ${esc(st)}"></span>${esc(workerLabel(w))}</a>`;
+    }).join("")}</span>`;
+  }
   let memEditing = false;
   const kb = (n) => (n / 1024).toFixed(1) + " KB";
   const kbNum = (n) => (n / 1024).toFixed(1);
@@ -2539,19 +2608,7 @@
     const dream = r.dreaming ? `<b>Collie 正在做梦</b>：回顾最近的对话，整理记忆。整理完会自己醒来，期间的消息会先攒着。`
       : `上次做梦：${r.last_dream ? dayTime(r.last_dream) : "还没有"}　·　下次：${r.next_dream ? dayTime(r.next_dream) + "（当天有新对话才会做）" : "已关闭"}`;
     const firstLine = (t, dflt) => t.split("\n").filter((l) => !/^\s*#/.test(l)).map((l) => l.replace(/^[>*\-\s]+/, "").replace(/`|\*\*/g, "").trim()).find(Boolean) || dflt;
-    // A task names the workers on it: show them live, and open their session.
-    const crew = (f) => {
-      const latest = new Map(); // a name can be reused: the newest one
-      for (const w of sup.workers) if (!latest.has(w.name) || new Date(w.created_at) > new Date(latest.get(w.name).created_at)) latest.set(w.name, w);
-      const ws = [...latest.values()].filter((w) => new RegExp(`(^|[^\\w-])${reEsc(w.name)}(?![\\w-])`).test(f.text));
-      if (!ws.length) return "";
-      return `<span class="mem-crew">${ws.map((w) => {
-        const pane = !w.ended && paneOf(w.name), past = !pane && workerHist(w.name, w.created_at);
-        const href = pane ? `#/p/${encodeURIComponent(pane)}` : past ? `#/h/${encodeURIComponent(past.id)}` : "";
-        const st = workerStatus(w);
-        return `<a ${href ? `href="${href}"` : ""} title="${esc((KIND_LABEL[w.kind] || w.kind) + " · " + (STATUS_LABEL[st] || st))}"><span class="dot ${esc(st)}"></span>${esc(w.name)}</a>`;
-      }).join("")}</span>`;
-    };
+    const crew = (f) => taskCrewHTML(taskWorkers(f.text));
     const card = (f, o = {}) => {
       const edit = !f.legacy && o.edit !== false;
       const sub = o.sub ?? firstLine(f.text, "");
@@ -2566,7 +2623,7 @@
     const group = (title, note, list, o = {}) => list.length || o.always ? `<h4 class="mem-h">${title}<span class="muted">${note}</span></h4>
       <div class="card">${list.length ? list.map((f, i) => card(f, typeof o.card === "function" ? o.card(f, i) : o.card || {})).join("") : `<div class="empty-row">${o.empty || "空"}</div>`}</div>` : "";
     const ins = by((f) => f.name === "instructions.md");
-    const tasks = by((f) => /^tasks\/[^/]+\.md$/.test(f.name));
+    const tasks = by(isOpenTask);
     const notes = by((f) => f.name.startsWith("notes/")).sort((a, b) => (a.name === "notes/index.md" ? -1 : b.name === "notes/index.md" ? 1 : a.name.localeCompare(b.name)));
     const done = by((f) => f.name.startsWith("tasks/done/")).sort((a, b) => new Date(b.mod) - new Date(a.mod));
     const msgs = by((f) => f.name === "messages.md");
@@ -2954,6 +3011,7 @@
         <div class="set-grid">
           <label>聊天回复长度<input name="reply_chars" type="number" min="40" step="20" value="${s.reply_chars || 200}"><small>Collie 平时每条回复大约多少字（英文按词算）；你要详细时它会写长</small></label>
           <label>多久没进展算卡住<input name="stall_minutes" type="number" min="0" value="${s.stall_minutes}"><small>分钟；0 表示不检查</small></label>
+          <label>Collie 派出的会话显示<select name="worker_title" data-pick="compact" data-title="Collie 派出的会话显示"><option value="" ${s.worker_title ? "" : "selected"} data-sub="Collie 派活时起的名字">名字</option><option value="topic" ${s.worker_title === "topic" ? "selected" : ""} data-sub="agent 给会话起的标题，还没有时显示名字">标题</option></select></label>
         </div>
         <label class="check"><input type="checkbox" name="bypass" ${s.ask_permissions ? "" : "checked"}> 跳过权限确认：Collie 和它派出的 agent 直接跑命令、改文件，不停下来问你（重启 Collie、新派的 agent 生效）</label>
         <label class="check"><input type="checkbox" name="paused" ${s.paused ? "checked" : ""}> 暂停投递：事件照收，先不交给 agent</label>
@@ -2992,7 +3050,7 @@
           reply_chars: +f.reply_chars.value, stall_minutes: +f.stall_minutes.value,
           rotate_pct: +f.rotate_pct.value, dream_at: f.dream_at.value,
           notify_webhook: f.notify_webhook.value.trim(), notify_lark: f.notify_lark.checked, notify_level: f.notify_level.value, paused: f.paused.checked,
-          ask_permissions: !f.bypass.checked,
+          ask_permissions: !f.bypass.checked, worker_title: f.worker_title.value,
         };
         await api("/api/super/settings", { body: { settings: s } });
         renderTarget(true);

@@ -96,8 +96,9 @@ type superView struct {
 	Workers []*Worker    `json:"workers"`
 	Queued  int          `json:"queued"`
 	// QueuedRouter: those waiting for Collie itself, not for a worker.
-	QueuedRouter int  `json:"queued_router"`
-	Paused       bool `json:"paused"`
+	QueuedRouter int    `json:"queued_router"`
+	Paused       bool   `json:"paused"`
+	WorkerTitle  string `json:"worker_title,omitempty"`
 	// Follow: the next time Collie set itself to look at something again.
 	Follow *followView `json:"follow,omitempty"`
 }
@@ -112,7 +113,7 @@ func (s *Server) superState(ctx context.Context) superView {
 	live, _ := sp.liveAgents(withCachedLists(ctx))
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	v := superView{Router: routerView{Kind: sp.st.Settings.RouterKind, Status: "asleep"}, Paused: sp.st.Settings.Paused}
+	v := superView{Router: routerView{Kind: sp.st.Settings.RouterKind, Status: "asleep"}, Paused: sp.st.Settings.Paused, WorkerTitle: sp.st.Settings.WorkerTitle}
 	if a, ok := live[routerName]; ok {
 		v.Router = routerView{Alive: true, Status: a.Status, PaneID: a.Pane, Kind: a.Kind}
 		if asked := sp.routerAskedAt; a.Status == "working" && !asked.IsZero() {
@@ -876,6 +877,9 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if ns.NotifyLevel != "normal" {
 			ns.NotifyLevel = "quiet"
+		}
+		if ns.WorkerTitle != workerTitleTopic {
+			ns.WorkerTitle = ""
 		}
 		for _, p := range []*string{&ns.RouterModel, &ns.RouterEffort, &ns.WorkerModel, &ns.WorkerEffort} {
 			if *p = strings.TrimSpace(*p); !modelNameRe.MatchString(*p) {
