@@ -2706,22 +2706,33 @@
       if (m2 && (stick || !msgs)) m2.scrollTop = m2.scrollHeight;
       applyAfter();
     } else if (tab === "hooks") {
-      // 接入 is a list; each extension, the shared settings, the
-      // marketplaces and the webhooks have a page of their own (#/auto/hooks/…).
-      // A page with something typed in, or a picker open, is left alone.
+      // 接入 is a list of extensions with the webhooks under it, as before;
+      // each extension, the shared settings and the marketplaces have a page
+      // of their own (#/auto/hooks/…). A page with something typed in, or a
+      // picker open, is left alone.
       const sub = hooksSub();
-      const sig = JSON.stringify([sub, r, autoData.ext, autoData.inbox, autoData.markets, extLogin]);
-      if (sig === body._sig || body.querySelector("input:focus, textarea:focus, select:focus")) { if (restore) restoreSimpleScroll(body, restore); return; }
-      body._sig = sig;
+      if (body.querySelector("input:focus, textarea:focus, select:focus")) { if (restore) restoreSimpleScroll(body, restore); return; }
       const newPage = body._sub !== sub;
-      body._sub = sub;
       const ext = autoData.ext, id = sub.startsWith("ext/") ? decodeURIComponent(sub.slice(4)) : "";
-      body.innerHTML = id ? collieExt.extPage((ext?.extensions || []).find((v) => v.manifest.id === id), ext, extLogin, autoData.inbox)
-        : sub === "reply" ? collieExt.replyPage(ext)
-        : sub === "markets" ? collieExt.marketsHTML(autoData.markets)
-        : sub === "webhooks" ? collieExt.pageHead("Webhook 与来源策略") + hooksHTML(r)
-        : collieExt.hooksList(ext, autoData.inbox, autoData.markets);
-      if (newPage) { markProgrammaticScroll(); body.scrollTop = 0; requestAnimationFrame(() => { body.scrollTop = 0; }); } else applyAfter();
+      if (!sub) {
+        // The list redraws as extensions change; the webhook forms only
+        // when their settings do, so rows added and not yet saved stay.
+        if (newPage || !$("#hooks-top")) { body.innerHTML = `<div id="hooks-top"></div><div id="hooks-wh"></div>`; body._sig = body._whSig = ""; }
+        const sig = JSON.stringify([autoData.ext, autoData.inbox, autoData.markets]), whSig = JSON.stringify(r);
+        if (sig !== body._sig) { body._sig = sig; $("#hooks-top").innerHTML = collieExt.hooksList(ext, autoData.inbox, autoData.markets); }
+        if (whSig !== body._whSig) { body._whSig = whSig; $("#hooks-wh").innerHTML = `<h3 class="hooks-h">Webhook 与来源策略</h3>` + hooksHTML(r); }
+      } else {
+        const sig = JSON.stringify([sub, r, autoData.ext, autoData.inbox, autoData.markets, extLogin]);
+        if (sig === body._sig && !newPage) { if (restore) restoreSimpleScroll(body, restore); return; }
+        body._sig = sig;
+        body.innerHTML = id ? collieExt.extPage((ext?.extensions || []).find((v) => v.manifest.id === id), ext, extLogin, autoData.inbox)
+          : sub === "reply" ? collieExt.replyPage(ext)
+          : sub === "markets" ? collieExt.marketsHTML(autoData.markets)
+          : sub === "webhooks" ? collieExt.pageHead("Webhook 与来源策略") + hooksHTML(r)
+          : collieExt.hooksList(ext, autoData.inbox, autoData.markets);
+      }
+      body._sub = sub;
+      if (newPage) { markProgrammaticScroll(); body.scrollTop = 0; requestAnimationFrame(() => { body.scrollTop = 0; }); } else if (restore) restoreSimpleScroll(body, restore);
     } else if (tab === "memory") {
       if (memEditing) return;
       const sig = memSig(r);

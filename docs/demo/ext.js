@@ -34,6 +34,9 @@
     if (!s) return { key: "starting", dot: "starting", label: "启动中", text: "正在读取状态…", busy: true };
     if (s.state === "ok") return { key: "on", dot: "idle", label: "运行中", text: needsLogin(m) ? "已登录" + (s.account ? " " + s.account : "") : "运行中", ok: true };
     if (s.state === "not_signed_in") return { key: "login", dot: "blocked", label: "未登录", text: "未登录", login: true };
+    // Just started, an extension may say "error" while it prepares (a first
+    // start downloads what it needs): that is starting, not broken.
+    if (p.since && Date.now() - Date.parse(p.since) < 5 * 60e3) return { key: needsLogin(m) ? "login" : "starting", dot: "starting", label: needsLogin(m) ? "未登录" : "启动中", text: s.error || "正在启动…", busy: true };
     return { key: "error", dot: "blocked", label: "出错", text: s.error || "出错" };
   }
   const extIcon = (m) => `<span class="ext-icon" aria-hidden="true">${esc((m.label || m.name || m.id).slice(0, 1))}</span>`;
@@ -110,7 +113,6 @@
       <div class="card"><div class="rows">
         ${nav("#/auto/hooks/reply", "唤起与回复", `触发词 ${r?.trigger || r?.default_trigger || "/ai"} · 回复尾标`)}
         ${nav("#/auto/hooks/markets", "扩展市场", `${(markets?.markets || []).length} 个市场${updates ? ` · ${updates} 个可更新` : ""}`)}
-        ${nav("#/auto/hooks/webhooks", "Webhook 与来源策略", "GitHub、飞书事件和通用 Webhook")}
       </div></div>`;
   }
 

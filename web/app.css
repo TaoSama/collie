@@ -2511,3 +2511,4 @@ select.picked { display: none; }
   .ext-status { flex-wrap: wrap; }
   .ext-status .btn.primary { width: 100%; }
 }
+.hooks-h { margin: 22px 0 10px; font-size: var(--fs-card-h); font-weight: var(--fw-card-h); }

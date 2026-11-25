@@ -2511,6 +2511,7 @@ select.picked { display: none; }
   .ext-status { flex-wrap: wrap; }
   .ext-status .btn.primary { width: 100%; }
 }
+.hooks-h { margin: 22px 0 10px; font-size: var(--fs-card-h); font-weight: var(--fw-card-h); }
 
 /* demo only */
 .demo-badge { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 999; font: 500 12px/1 var(--sans); padding: 7px 10px; border-radius: 999px; background: var(--fg); color: var(--bg); text-decoration: none; opacity: .85; }
