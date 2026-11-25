@@ -26,7 +26,7 @@ const (
 	extArchiveEvery  = 10 * time.Minute
 	extInterestEvery = 30 * time.Second
 	extCallWait      = 30 * time.Second
-	extLoginWait     = 60 * time.Second
+	extLoginWait     = 50 * time.Second // under the reverse proxy's 60 s: a slow first step is retried by the page
 	extViewLogs      = 12
 )
 

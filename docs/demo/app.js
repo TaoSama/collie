@@ -981,6 +981,7 @@
     else if (h === "#/file" || h.startsWith("#/file?")) { next = "file"; id = h.slice(6); }
     else if (h === "#/collie") next = "collie";
     else if (h === "#/auto") next = "auto";
+    else if (h.startsWith("#/auto/")) { next = "auto"; id = h.slice(7); }
     else if (h === "#/devices") next = "devices";
     else if (h === "#/prefs") next = "prefs";
     else if (h === "#/wb" || h.startsWith("#/wb/")) { next = "wb"; id = decodeURIComponent(h.slice(5)); }
@@ -989,7 +990,7 @@
       let dest = "#/collie";
       if (!booted && !h) {
         const last = store.get("last", "#/collie");
-        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto|devices|prefs|wb(\/[a-z0-9-]+)?)$/.test(last);
+        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto(\/hooks\/[\w%./-]+)?|devices|prefs|wb(\/[a-z0-9-]+)?)$/.test(last);
         if (ok) dest = last;
       }
       replaceHash(dest);
@@ -2600,7 +2601,10 @@
   // 收件箱: the open conversation, its messages, the filter; 接入: a sign-in.
   let inboxCur = "", inboxDetail = null, inboxFilter = store.get("inboxFilter", "all"), extLogin = null;
   collieExt.init({ esc, when, md: (t) => md(t), workerHref: (n) => { const p = paneOf(n); return p ? `#/p/${encodeURIComponent(p)}` : ""; } });
-  bindTabs("#auto-tabs", "auto", "#auto-body", () => autoTab, (t) => { autoTab = t; store.set("autoTab", t); }, (saved) => openAuto(saved));
+  bindTabs("#auto-tabs", "auto", "#auto-body", () => autoTab, (t) => {
+    autoTab = t; store.set("autoTab", t);
+    if (current) { current = null; replaceHash("#/auto"); } // leaving a 接入 page for another tab
+  }, (saved) => openAuto(saved));
 
   // The follow-up line under 自动化 opens the open tasks (top of 记忆).
   $("#nav-auto-sub").addEventListener("click", () => {
@@ -2627,6 +2631,7 @@
   // all: the page was just opened, so the other tabs' data is fetched too.
   function openAuto(restore = null, all = false) {
     const body = $("#auto-body");
+    if (hooksSub() && autoTab !== "hooks") { autoTab = "hooks"; store.set("autoTab", autoTab); }
     // The memory tab's nodes are kept while another tab is open: parsing
     // them again is the slowest part of a switch.
     if (body._memSig && !memEditing) memParked = { sig: body._memSig, nodes: [...body.childNodes] };
@@ -2655,10 +2660,12 @@
     try {
       const [r] = await Promise.all([fetchAuto(AUTO_API[tab]),
         tab === "hooks" ? fetchAuto("ext").catch(() => null) : null,
-        tab === "hooks" && !autoData.markets ? fetchAuto("markets").catch(() => null) : null,
+        tab === "hooks" && (!autoData.markets || hooksSub() === "markets") ? fetchAuto("markets").catch(() => null) : null,
+        tab === "hooks" ? fetchAuto("inbox").catch(() => null) : null,
         tab === "inbox" && inboxCur ? loadConv() : null,
         tab === "timers" ? fetchAuto("inbox").catch(() => null) : null]);
       if (view !== "auto" || autoTab !== tab) return;
+      if (tab === "hooks") resumeLogin();
       drawAuto(r, restore);
       if (tab === "settings") api("/api/super/lark?fresh").then((l) => { autoData.lark = l; showLarkWho(); }).catch(() => {});
     } catch (err) {
@@ -2699,27 +2706,22 @@
       if (m2 && (stick || !msgs)) m2.scrollTop = m2.scrollHeight;
       applyAfter();
     } else if (tab === "hooks") {
-      // The cards redraw on their own: the forms below keep what is typed.
-      const extSig = JSON.stringify([autoData.ext, extLogin]);
-      const sig = JSON.stringify(r);
-      if (sig !== body._sig || !body.querySelector("#ext-cards")) {
-        body._sig = sig; body._extSig = "";
-        body.innerHTML = `<div id="ext-cards"></div><div id="ext-markets"></div><div id="ext-settings"></div>` + hooksHTML(r);
-        applyAfter();
-      }
-      const mSig = JSON.stringify(autoData.markets || null);
-      if (mSig !== body._mSig && !body.querySelector("#ext-markets :focus")) {
-        body._mSig = mSig;
-        $("#ext-markets").innerHTML = collieExt.marketsHTML(autoData.markets);
-      }
-      if (extSig !== body._extSig && !body.querySelector("#ext-cards :focus")) {
-        body._extSig = extSig;
-        const top = collieExt.hooksTop(autoData.ext, extLogin);
-        const at = top.indexOf('<div class="card"><div class="card-h">唤起与回复');
-        $("#ext-cards").innerHTML = at > 0 ? top.slice(0, at) : top;
-        if (!$("#ext-settings").innerHTML && at > 0) $("#ext-settings").innerHTML = top.slice(at);
-      }
-      if (restore) restoreSimpleScroll(body, restore);
+      // 接入 is a list; each extension, the shared settings, the
+      // marketplaces and the webhooks have a page of their own (#/auto/hooks/…).
+      // A page with something typed in, or a picker open, is left alone.
+      const sub = hooksSub();
+      const sig = JSON.stringify([sub, r, autoData.ext, autoData.inbox, autoData.markets, extLogin]);
+      if (sig === body._sig || body.querySelector("input:focus, textarea:focus, select:focus")) { if (restore) restoreSimpleScroll(body, restore); return; }
+      body._sig = sig;
+      const newPage = body._sub !== sub;
+      body._sub = sub;
+      const ext = autoData.ext, id = sub.startsWith("ext/") ? decodeURIComponent(sub.slice(4)) : "";
+      body.innerHTML = id ? collieExt.extPage((ext?.extensions || []).find((v) => v.manifest.id === id), ext, extLogin, autoData.inbox)
+        : sub === "reply" ? collieExt.replyPage(ext)
+        : sub === "markets" ? collieExt.marketsHTML(autoData.markets)
+        : sub === "webhooks" ? collieExt.pageHead("Webhook 与来源策略") + hooksHTML(r)
+        : collieExt.hooksList(ext, autoData.inbox, autoData.markets);
+      if (newPage) { markProgrammaticScroll(); body.scrollTop = 0; requestAnimationFrame(() => { body.scrollTop = 0; }); } else applyAfter();
     } else if (tab === "memory") {
       if (memEditing) return;
       const sig = memSig(r);
@@ -3292,6 +3294,16 @@
       if (view === "auto" && autoTab === "hooks") drawAuto(autoData.settings);
     } catch (err) { toast(err.message, "attn"); }
   }
+  // The 接入 page open: "" the list, ext/<id>, reply, markets or webhooks.
+  const hooksSub = () => (current && current.startsWith("hooks/") ? current.slice(6) : "");
+  // A sign-in asked for before the extension was up starts as soon as it waits for one.
+  function resumeLogin() {
+    if (!extLogin?.waiting) return;
+    const v = (autoData.ext?.extensions || []).find((x) => x.manifest.id === extLogin.id);
+    if (!v || !v.setting.enabled) { extLogin = null; return; }
+    if (collieExt.stateOf(v).login) { const id = extLogin.id; extLogin = { id }; extLoginStep(id, ""); }
+    else if (collieExt.stateOf(v).ok) extLogin = null;
+  }
   // A sign-in: show the QR code, step again until the extension says done.
   async function extLoginStep(id, step) {
     if (extLogin?.id !== id && step) return; // left or restarted meanwhile
@@ -3301,12 +3313,21 @@
       extLogin = { id, kind: st.kind, label: st.label, step: st.step, img: r.qr || extLogin?.img, hint: st.hint, error: st.error, done: !!st.done };
       if (!st.done && st.kind !== "secret") setTimeout(() => { if (extLogin?.id === id && view === "auto" && autoTab === "hooks") extLoginStep(id, st.step); }, Math.max(1, st.interval || 2) * 1000);
       else { toast("已登录"); setTimeout(() => { if (extLogin?.id === id) { extLogin = null; loadAuto(); } }, 2500); }
-    } catch (err) { extLogin = { id, error: err.message }; }
+    } catch (err) {
+      // The first step waits for the extension to be ready (a first start
+      // downloads what it needs): keep showing "preparing" and ask again.
+      const tries = (extLogin?.tries || 0) + 1;
+      if (!step && tries < 12 && /timeout|超时|not_running|没在运行|还没在运行/i.test(err.message)) {
+        extLogin = { id, waiting: true, tries };
+        setTimeout(() => { if (extLogin?.id === id && extLogin.waiting) { extLogin = { id, tries }; extLoginStep(id, ""); } }, 5000);
+      } else extLogin = { id, error: err.message };
+    }
     if (view === "auto" && autoTab === "hooks") { await fetchAuto("ext").catch(() => {}); drawAuto(autoData.settings); }
   }
   $("#auto-body").addEventListener("click", async (e) => {
+    if (e.target.closest("[data-sub-back]")) { e.preventDefault(); if (navCur > 0) history.back(); else location.hash = "#/auto"; return; }
     const a = e.target.closest("a[data-auto-tab]");
-    if (a) { e.preventDefault(); autoTab = a.dataset.autoTab; store.set("autoTab", autoTab); openAuto(); return; }
+    if (a) { e.preventDefault(); autoTab = a.dataset.autoTab; store.set("autoTab", autoTab); if (location.hash !== "#/auto") location.hash = "#/auto"; else openAuto(); return; }
     const row = e.target.closest("[data-conv]");
     if (row && !e.target.closest("a")) {
       inboxCur = row.dataset.conv; inboxDetail = null;
@@ -3342,13 +3363,21 @@
     const card = b.closest("[data-ext]");
     if (!card) return;
     const id = card.dataset.ext;
-    if (b.hasAttribute("data-ext-toggle")) {
-      const on = b.getAttribute("aria-checked") !== "true";
-      if (on) {
-        const v = (autoData.ext?.extensions || []).find((x) => x.manifest.id === id);
-        if (v?.manifest.warning && !(await ask({ title: "打开" + v.manifest.name + "？", text: v.manifest.warning, ok: "打开" }))) return;
-      }
-      extConfigure(id, { enabled: on }, on ? "已打开，启动后扫码登录" : "已关闭");
+    const v = (autoData.ext?.extensions || []).find((x) => x.manifest.id === id);
+    const turnOn = async () => {
+      if (v?.manifest.defaults?.machine === "ask" && !v.setting.chosen) { toast("先选它运行在哪台电脑", "attn"); return false; }
+      if (v?.manifest.warning && !(await ask({ title: "开启" + v.manifest.name + "？", text: v.manifest.warning, ok: "开启" }))) return false;
+      await extConfigure(id, { enabled: true });
+      return true;
+    };
+    if (b.hasAttribute("data-ext-enable")) {
+      if (await turnOn()) toast("已开启");
+    } else if (b.hasAttribute("data-ext-disable")) {
+      if (!(await ask({ title: "关闭" + (v?.manifest.name || "") + "？", text: "关闭后不再收发，数据和登录状态保留，随时可以再开启。", ok: "关闭" }))) return;
+      extLogin = null;
+      extConfigure(id, { enabled: false }, "已关闭");
+    } else if (b.hasAttribute("data-ext-login-cancel")) {
+      extLogin = null; drawAuto(autoData.settings);
     } else if (b.hasAttribute("data-ext-uninstall")) {
       const purge = await ask({ title: "卸载这个扩展？", text: "会停掉它、删掉它的设置和 hub 上的安装包。要连它在那台电脑上的数据和登录态一起删，在下面输入「删除数据」。", value: "", ok: "卸载" });
       if (purge === false || purge == null) return;
@@ -3359,7 +3388,11 @@
     } else if (b.hasAttribute("data-ext-writes")) {
       extConfigure(id, { no_writes: b.getAttribute("aria-checked") === "true" }, "已保存");
     } else if (b.hasAttribute("data-ext-login")) {
-      extLogin = { id }; extLoginStep(id, "");
+      // Off: turn it on first; the sign-in starts by itself once it runs.
+      if (!v?.setting.enabled && !(await turnOn())) return;
+      extLogin = { id, waiting: true };
+      resumeLogin();
+      drawAuto(autoData.settings);
     } else if (b.hasAttribute("data-ext-logout")) {
       if (!(await ask({ title: "退出登录？", text: "之后要重新扫码。", ok: "退出登录" }))) return;
       api(`/api/ext/${encodeURIComponent(id)}/logout`, { body: {} }).then(() => toast("已退出登录")).catch((err) => toast(err.message, "attn")).then(loadAuto);
