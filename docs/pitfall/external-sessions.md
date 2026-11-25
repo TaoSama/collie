@@ -32,6 +32,10 @@ Claude Code 进入 worktree（`EnterWorktree`）时会把自己的进程 `chdir`
 
 Antigravity 桌面 App 的 `conversation_summaries.db` 也列出 agy CLI 起的会话，但这些会话的 `brain/<id>/.system_generated/logs/` 在 `~/.gemini/antigravity-cli` 下，不在 App 的 `~/.gemini/antigravity`。`agyDesktopRows`（`internal/collie/desktop.go`）两处都找，只找 App 目录时打开会显示「还没有找到这个会话的记录」。
 
+## Antigravity 没建成的会话留在索引里
+
+新建失败的会话会在 `conversation_summaries` 里留一行：标题空、`step_count = 0`、`last_modified_time` 是零值 `0001-01-01`、`killed = 0`。App 自己加载不到它（日志报 `conversation … not found`），所以从 Collie 归档、改名时 `UpdateConversation` 也会失败。`agyDesktopRows` 只列 `step_count > 0`（旧索引没有这一列就不看）且有修改时间的会话；`agyAnnotate` 遇到 `not_found` 时说明 App 加载不到这个会话。Codex 的线程表里没见到这种空行（App 的线程都带第一条消息），没有加同样的过滤。
+
 ## 一轮做完折成「已工作 Xm Ys」
 
 Codex 和 Antigravity 每几步就插一句过程消息，连续的工具调用很少超过 3 个，「N 个步骤」那种按连续工具合并的折叠收不起来，所以按轮折叠：解析时给一轮的最后一条消息标上 `turn_ms`，前端把它之前、上一条用户消息之后的过程收成一行（`drawThread`）。Codex 用日志里 `event_msg` 的 `task_complete.duration_ms`；Antigravity 没有轮结束的记录，把「有内容、不调用工具的 `PLANNER_RESPONSE`」当作结束，从 `USER_INPUT` 的 `created_at` 算起。被中断的轮没有 `task_complete`，不折叠。
