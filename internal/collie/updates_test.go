@@ -238,3 +238,63 @@ func TestReapHelper(t *testing.T) {
 		t.Skip("run by TestReapInherited")
 	}
 }
+
+// "Update all" asks which computers to update: each one's id and whether it
+// is behind, with a release out moments ago counted (?refresh=1).
+func TestGetVersionListsMachines(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/releases/latest" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/releases/tag/v0.2.42", http.StatusFound)
+	}))
+	defer ts.Close()
+	origVer, origURL := version, releaseRepoURL
+	latestRel.Lock()
+	origTag, origChecked := latestRel.tag, latestRel.checked
+	latestRel.checked = time.Time{}
+	latestRel.Unlock()
+	version, releaseRepoURL = "v0.2.41", ts.URL
+	t.Cleanup(func() {
+		version, releaseRepoURL = origVer, origURL
+		latestRel.Lock()
+		latestRel.tag, latestRel.checked = origTag, origChecked
+		latestRel.Unlock()
+	})
+	home := t.TempDir()
+	s := &Server{home: home, herdr: newHerdr(filepath.Join(home, "missing.sock"), "hub", home)}
+	s.herdr.mu.Lock()
+	s.herdr.remote["a"] = &Machine{ID: "a", Name: "mac", Version: "v0.2.41", Online: true}
+	s.herdr.remote["b"] = &Machine{ID: "b", Name: "box", Version: "v0.2.42", Online: true}
+	s.herdr.remote["c"] = &Machine{ID: "c", Name: "off", Version: "v0.2.40"}
+	s.herdr.mu.Unlock()
+
+	w := httptest.NewRecorder()
+	s.getVersion(w, httptest.NewRequest("GET", "/api/version?refresh=1", nil))
+	var v struct {
+		Latest   string           `json:"latest"`
+		Outdated []string         `json:"outdated"`
+		Machines []versionMachine `json:"machines"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Latest != "v0.2.42" {
+		t.Fatalf("latest %q: %s", v.Latest, w.Body)
+	}
+	got := map[string]versionMachine{}
+	for _, m := range v.Machines {
+		got[m.ID] = m
+	}
+	hub := got[""]
+	if !hub.Local || !hub.Online || hub.Version != "v0.2.41" || !hub.Outdated {
+		t.Errorf("hub: %+v", hub)
+	}
+	if !got["a"].Outdated || got["b"].Outdated || got["c"].Outdated || got["c"].Online {
+		t.Errorf("machines: %+v", v.Machines)
+	}
+	if len(v.Outdated) != 2 {
+		t.Errorf("outdated: %v", v.Outdated)
+	}
+}

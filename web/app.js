@@ -99,6 +99,7 @@
   // hub reports a different web app, reload straight away if you haven't
   // touched the page since it opened or came back to the front and no message
   // box has text; otherwise offer a reload (once).
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let webBuild = null;
   let touched = false;
   addEventListener("pointerdown", () => { touched = true; }, true);
@@ -110,7 +111,7 @@
     if (v !== webBuild) offerReload();
   }
   function offerReload() {
-    if (!touched && !$$("textarea").some((t) => t.value.trim())) { location.reload(); return; }
+    if (!touched && !fleetUp && !$$("textarea").some((t) => t.value.trim())) { location.reload(); return; }
     if (document.getElementById("update-bar")) return;
     const bar = document.createElement("button");
     bar.id = "update-bar"; bar.type = "button";
@@ -1415,7 +1416,7 @@
     let m = document.querySelector(sel);
     let guards = 0;
     while (!m && canLoadOlder() && guards++ < 40) {
-      while (olderBusy) await new Promise((r) => setTimeout(r, 35));
+      while (olderBusy) await sleep(35);
       if (seq !== jumpSeq) return;
       m = document.querySelector(sel);
       if (m) break;
@@ -1903,12 +1904,11 @@
           const tag = hid ? `a href="#/h/${encodeURIComponent(hid)}" title="${hTitle}"`
             : past ? `a href="#/h/${encodeURIComponent(past.id)}" title="看它的完整记录"`
             : pane ? `a href="#/p/${encodeURIComponent(pane)}"` : "div";
-          // A spawn line stays still while its worker runs: the sidebar spins
-          // for it and the line says 还在跑.
+          // A spawn line spins only while that worker is still at it; history stays still.
           const w = e.tone === "spawn" ? sup.workers.find((x) => x.name === e.ref) : null;
           const busy = w && workerBusy(w);
           const stuck = w && !w.ended && w.status === "blocked";
-          const tone = e.tone === "blocked" ? "blocked" : e.tone === "done" ? "done" : e.tone === "spawn" ? (busy ? "running" : stuck ? "blocked" : "unknown") : e.tone === "error" ? "failed" : "unknown";
+          const tone = e.tone === "blocked" ? "blocked" : e.tone === "done" ? "done" : e.tone === "spawn" ? (busy ? "working" : stuck ? "blocked" : "unknown") : e.tone === "error" ? "failed" : "unknown";
           // A spawn line carries its worker's state, in place of a line per change.
           const state = w ? (w.ended ? "已结束" : busy ? "还在跑" : stuck ? "等你确认" : "") : "";
           html += `<${tag} class="event ${e.tone === "error" ? "error" : ""}"><span class="dot ${tone}"></span><span class="when">${hhmm(e.at)}</span><span>${esc(e.text)}</span>${state ? `<span class="wstate">${state}</span>` : ""}</${tag.split(" ")[0]}>`;
@@ -2080,7 +2080,7 @@
     try {
       await api(paneURL(pane, kind), { body });
       noteDecided(pane, label);
-      await new Promise((r) => setTimeout(r, 350));
+      await sleep(350);
       await loadSuperAsk(pane, true);
     } catch (err) {
       if (cur) cur.sending = false;
@@ -4107,10 +4107,100 @@
   }
   checkUpdates();
   setInterval(checkUpdates, 30 * 60 * 1000);
+  // 有新版 opens the computers, where 全部更新 is.
+  $("#update-note").addEventListener("click", () => {
+    devTab = "machines"; store.set("devTab", devTab);
+    scrollByRoute.delete("devices:machines");
+  });
   const verTag = (have, latest, cmd) => !have ? "" : isOld(have, latest)
     ? `<span class="tag attn" title="${esc("更新：" + cmd)}">${esc(have)} → ${esc(latest)}</span>` : `<span>${esc(have)}</span>`;
   const updateRow = (have, latest, cmd, note, id, name) => isOld(have, latest)
     ? `<div class="update-cmd"><p class="pair-hint">有新版本 ${esc(latest)}。<button class="btn small primary" data-update="${esc(id)}" data-name="${esc(name)}">更新到 ${esc(latest)}</button></p><p class="pair-hint muted">点了没反应的话，在这台电脑上运行${note ? "（" + esc(note) + "）" : ""}：</p><div class="code"><span>${esc(cmd)}</span><button class="icon-btn" data-copy="${esc(cmd)}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></div>` : "";
+
+  // Update all: every computer behind the latest release, one at a time and
+  // the hub last (its restart drops this page for a moment). Each has to come
+  // back on the new release before the next one starts; a failure stops there
+  // and 重试 picks up from it.
+  const FLEET_UP_WAIT_MS = 3 * 60 * 1000, FLEET_UP_POLL_MS = 3000;
+  let fleetUp = null; // { latest, order: [{ id, name, local }], i, error }
+  let fleetUpBusy = false; // checking, asking or updating: one run at a time
+  function fleetUpBar(r) {
+    const f = fleetUp;
+    if (fleetUpBusy && !f) return `<div class="fleet-up"><p class="pair-hint">正在查最新版本…</p></div>`;
+    if (f) {
+      const m = f.order[f.i];
+      const text = f.error ? `更新 ${esc(m.name)} 没成功：${esc(f.error)}`
+        : `正在更新 ${esc(m.name)}（${f.i + 1}/${f.order.length}）到 ${esc(f.latest)}…${m.local ? "页面会断开一会儿" : ""}`;
+      return `<div class="fleet-up${f.error ? " failed" : ""}"><p class="pair-hint">${text}</p>${f.error && !fleetUpBusy
+        ? `<button class="btn small primary" data-fleet-up="retry">重试</button><button class="btn small ghost" data-fleet-up="stop">算了</button>` : ""}</div>`;
+    }
+    const old = machineList(r).filter((m) => m.online && isOld(m.version, r.latest));
+    if (!old.length) return "";
+    return `<div class="fleet-up"><p class="pair-hint">${old.length} 台电脑可以更新到 ${esc(r.latest)}：${esc(old.map((m) => m.name).join("、"))}</p>
+      <button class="btn small primary" data-fleet-up="start">全部更新</button></div>`;
+  }
+  function drawFleetUp() {
+    if (view !== "devices" || devTab !== "machines" || !lastDevices) return;
+    const body = $("#devices-body"), html = DEV_VIEW.machines(lastDevices);
+    if (body._html !== html) body.innerHTML = body._html = html;
+  }
+  async function startFleetUp() {
+    if (fleetUpBusy) return;
+    fleetUpBusy = true; drawFleetUp();
+    try {
+      const v = await api("/api/version?refresh=1");
+      const behind = (v.machines || []).filter((m) => m.outdated);
+      if (!behind.length) { toast("都已经是最新版"); loadDevices(); checkUpdates(); return; }
+      const order = [...behind.filter((m) => !m.local), ...behind.filter((m) => m.local)];
+      const hub = order.some((m) => m.local);
+      if (!(await ask({ title: `把 ${order.length} 台电脑更新到 ${v.latest}？`, ok: "全部更新",
+        text: `一台一台来：${order.map((m) => m.name).join("、")}。每台下载新版后重启，十几秒连不上，里面的 agent 不受影响${hub ? "；hub 放在最后，那时页面会短暂断开" : ""}。` }))) return;
+      fleetUp = { latest: v.latest, order, i: 0, error: "" };
+      await updateFleet();
+    } finally {
+      fleetUpBusy = false; drawFleetUp();
+    }
+  }
+  async function runFleetUp() {
+    if (fleetUpBusy || !fleetUp) return;
+    fleetUpBusy = true;
+    try { await updateFleet(); } finally { fleetUpBusy = false; drawFleetUp(); }
+  }
+  async function updateFleet() {
+    const f = fleetUp;
+    f.error = "";
+    for (; f.i < f.order.length; f.i++) {
+      const m = f.order[f.i];
+      drawFleetUp();
+      try {
+        const r = await api("/api/update?" + new URLSearchParams(m.local ? {} : { machine: m.id }), { body: {} });
+        if (!r.latest) await backOnRelease(m, f.latest);
+      } catch (err) {
+        f.error = err.message;
+        drawFleetUp();
+        toast(`更新 ${m.name} 没成功`, "attn");
+        return;
+      }
+    }
+    fleetUp = null;
+    toast(`全部更新到 ${f.latest}`);
+    loadDevices(); checkUpdates();
+  }
+  // backOnRelease waits for m to answer again, running latest.
+  async function backOnRelease(m, latest) {
+    for (const until = Date.now() + FLEET_UP_WAIT_MS; Date.now() < until;) {
+      await sleep(FLEET_UP_POLL_MS);
+      try {
+        const v = await api("/api/version");
+        // A hub on a release from before machines were listed says only its own.
+        const now = v.machines ? v.machines.find((x) => x.id === m.id) : m.local && { online: true, version: v.version };
+        if (now?.online && now.version === latest) return;
+      } catch (err) {
+        if (err.message === "unauthorized") throw err;
+      } // else the hub itself restarting
+    }
+    throw new Error(`${FLEET_UP_WAIT_MS / 60000} 分钟内没回到新版本，展开它的卡片看看`);
+  }
 
   // ───────────────────────────── computer cards
   // Each computer's CPU, memory, network, tokens and disk over the last hour,
@@ -4267,17 +4357,17 @@
     return hub.some((m) => m.agents?.length) ? [...hub, ...rest] : [...rest, ...hub];
   }
 
+  const machineList = (r) => machineOrder([...r.devices.filter((d) => d.kind === "machine"),
+    { id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home }], (m) => m.hub);
   function machineCards(r) {
     for (const id of mcOpen) if (id && !r.devices.some((d) => d.id === id)) mcOpen.delete(id);
-    const list = machineOrder([...r.devices.filter((d) => d.kind === "machine"),
-      { id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home }], (m) => m.hub);
-    return list.map((m) => machineCard(m, r.latest)).join("");
+    return machineList(r).map((m) => machineCard(m, r.latest)).join("");
   }
 
   // What each tab shows, from /api/devices (the hubs tab needs none: other
   // hubs are this browser's own list).
   const DEV_VIEW = {
-    machines: (r) => `<div class="mc-list" id="dev-machines">${machineCards(r)}</div>`,
+    machines: (r) => `${fleetUpBar(r)}<div class="mc-list" id="dev-machines">${machineCards(r)}</div>`,
     connect: (r) => devPairing(r) + devHubs() + devBrowsers(r),
   };
   function devBrowsers(r) {
@@ -4415,6 +4505,9 @@
         if (!mcOpen.delete(id)) mcOpen.add(id);
         if (lastDevices) $("#dev-machines").innerHTML = machineCards(lastDevices);
       } else if (b.id === "new-node-code") { await newCode("machine"); loadDevices(); }
+      else if (b.dataset.fleetUp === "start") await startFleetUp();
+      else if (b.dataset.fleetUp === "retry") await runFleetUp();
+      else if (b.dataset.fleetUp === "stop") { fleetUp = null; loadDevices(); }
       else if (b.dataset.update !== undefined) {
         const id = b.dataset.update;
         if (!(await ask({ title: `更新「${b.dataset.name}」上的 Collie？`, ok: "更新", text: `它会下载新版并重启，大约十几秒连不上${id ? "" : "（这是 hub，页面会短暂断开）"}；里面的 agent 不受影响。` }))) return;

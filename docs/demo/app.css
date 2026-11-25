@@ -401,9 +401,6 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
    right now, something still running. */
 .dot.waiting { box-sizing: border-box; border: 1.5px dashed var(--fg-3); }
 @media (prefers-reduced-motion: no-preference) { .dot.waiting { animation: spin 6s linear infinite; } }
-/* running: busy, but another dot on screen already spins for it (a spawn
-   line in the timeline, whose worker spins in the sidebar). */
-.dot.running { box-shadow: inset 0 0 0 1.5px var(--fg); }
 .dot.blocked { background: var(--attn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--attn) 22%, transparent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* How much a dot moves says how alive it is: spinning = busy, breathing =
@@ -930,12 +927,6 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .chip {
   flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 10px;
   border: var(--bw) solid var(--line); border-radius: 999px; font-size: var(--fs-small); white-space: nowrap; text-decoration: none; background: var(--bg);
-}
-/* With the sidebar showing, it spins for these workers; the strip stays still.
-   The query is the phone layout's, inverted: change them together. */
-@media (min-width: 761px) and (min-height: 501px), (min-width: 761px) and (not (pointer: coarse)) {
-  .crew .dot.working::after, .crew .dot.starting::after { content: none; }
-  .crew .dot.waiting { animation: none; }
 }
 .chip:hover { border-color: var(--line-2); }
 .chip .k { color: var(--t-meta); font-family: var(--mono); font-size: var(--fs-tiny); }
@@ -2253,6 +2244,12 @@ select.picked { display: none; }
 .update-cmd .pair-hint { margin: 0 0 4px; }
 
 /* ─── computer cards (设备 → 电脑) ─── */
+.fleet-up {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 14px; padding: var(--card-py) var(--card-px);
+  border: var(--bw) solid color-mix(in srgb, var(--attn) 40%, var(--line)); border-radius: calc(14px * var(--round)); background: var(--attn-soft);
+}
+.fleet-up .pair-hint { flex: 1 1 16em; color: var(--fg); }
+.fleet-up.failed .pair-hint { color: var(--attn); }
 .mc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 14px; }
 .mc { border: var(--bw) solid var(--line); border-radius: calc(14px * var(--round)); background: var(--bg); box-shadow: var(--shadow-sm); overflow: hidden; display: flex; flex-direction: column; container-type: inline-size; }
 .mc-h { display: flex; align-items: flex-start; gap: 12px; padding: 16px 16px 4px; }

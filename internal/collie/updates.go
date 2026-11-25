@@ -176,19 +176,46 @@ func outdated(have, latest string) bool {
 	return false
 }
 
+// versionMachine: a computer's collie, as "update all" needs it.
+type versionMachine struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"`
+	Local    bool   `json:"local"`
+	Online   bool   `json:"online"`
+	Outdated bool   `json:"outdated"`
+}
+
+// getVersion: the latest release and which computers run an older one.
+// ?refresh=1 asks GitHub first, so a release out minutes ago counts.
 func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
-	latest := latestVersion(false)
-	var old []string
-	for _, m := range s.herdr.Machines() {
-		v := m.Version
-		if m.Local {
-			v = version
-		}
-		if (m.Local || m.Online) && outdated(v, latest) {
-			old = append(old, m.Name)
+	// Not through refreshLatest: it skips a check while one is under way, and
+	// this answer must have the newest tag. A check moments ago will do.
+	latestRel.Lock()
+	fresh := time.Since(latestRel.checked) < 30*time.Second
+	latestRel.Unlock()
+	if r.URL.Query().Get("refresh") == "1" && !fresh {
+		if t := fetchLatestTag(); t != "" {
+			latestRel.Lock()
+			latestRel.tag, latestRel.checked = t, time.Now()
+			latestRel.Unlock()
 		}
 	}
-	writeJSON(w, 200, map[string]any{"version": version, "latest": latest, "outdated": old})
+	latest := latestVersion(false)
+	old := []string{}
+	machines := []versionMachine{}
+	for _, m := range s.herdr.Machines() {
+		vm := versionMachine{ID: m.ID, Name: m.Name, Version: m.Version, Local: m.Local, Online: m.Local || m.Online}
+		if m.Local {
+			vm.Version = version
+		}
+		if vm.Online && outdated(vm.Version, latest) {
+			vm.Outdated = true
+			old = append(old, m.Name)
+		}
+		machines = append(machines, vm)
+	}
+	writeJSON(w, 200, map[string]any{"version": version, "latest": latest, "outdated": old, "machines": machines})
 }
 
 // selfUpdate replaces this computer's collie with the latest release and
