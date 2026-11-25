@@ -37,6 +37,9 @@ func Main(v string) {
 			runNode(os.Args[2:])
 			return
 		}
+		if run := builtinExts[strings.TrimPrefix(os.Args[1], "ext-")]; run != nil && strings.HasPrefix(os.Args[1], "ext-") {
+			os.Exit(run(os.Args[2:]))
+		}
 		if _, ok := cliCommands[os.Args[1]]; ok {
 			runCLI(os.Args[1], os.Args[2:])
 			return
@@ -81,6 +84,7 @@ func serve() {
 		log.Fatalf("open %s: %v", dir, err)
 	}
 	srv.sup = sup
+	srv.ext = newExtHost(srv, sup, dir)
 	srv.auths = newAuth(sup.db, *token)
 	srv.herdr.onChange = sup.changed
 	loadAgentNames(sup.db, srv.herdr)
@@ -99,6 +103,7 @@ func serve() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go sup.Run(ctx)
+	go srv.ext.Run(ctx)
 	go srv.watchEndings(ctx)
 	srv.sysmon = startSysmon(ctx, home)
 

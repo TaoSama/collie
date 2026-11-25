@@ -30,10 +30,11 @@ type Machine struct {
 	Since  time.Time `json:"since,omitempty"`
 
 	conn   *herdrConn
-	client *http.Client // remote only: the node's own API, through the tunnel
-	snap   *listSnap    // remote only: the lists the node last sent (node_watch.go)
-	ip     string       // remote only: where it connects from
-	ui     string       // remote only: its local web UI (http://127.0.0.1:port), if any
+	ext    func(ctx context.Context) (net.Conn, error) // remote only: an extension's stream (ext_proc.go)
+	client *http.Client                                // remote only: the node's own API, through the tunnel
+	snap   *listSnap                                   // remote only: the lists the node last sent (node_watch.go)
+	ip     string                                      // remote only: where it connects from
+	ui     string                                      // remote only: its local web UI (http://127.0.0.1:port), if any
 	close  func()
 }
 

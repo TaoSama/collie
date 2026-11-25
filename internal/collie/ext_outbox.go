@@ -1,0 +1,337 @@
+package collie
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/TaoSama/collie/internal/extproto"
+)
+
+// Sending answers back (extensions/README.md §3.5, §4): each send gets a ref,
+// is stored before it goes out, and is retried with the same ref only while
+// the extension could not be reached; the extension makes a ref go out at
+// most once. An answer carries the footer.
+
+const outboxGiveUp = time.Hour
+
+// runInfo is who answered, for the footer.
+type runInfo struct {
+	Agent, Model, Effort, Machine, Worker, Ctx string
+}
+
+var footerVarRe = regexp.MustCompile(`\{[a-z]+\}`)
+
+// renderFooter fills the template; unknown {names} stay as written.
+func renderFooter(tpl string, vars map[string]string) string {
+	return footerVarRe.ReplaceAllStringFunc(tpl, func(k string) string {
+		if v, ok := vars[strings.Trim(k, "{}")]; ok {
+			return v
+		}
+		return k
+	})
+}
+
+// footerPrefix is the template's fixed start, which marks Collie's own sends.
+func footerPrefix(tpl string) string {
+	if i := strings.IndexByte(tpl, '{'); i >= 0 {
+		tpl = tpl[:i]
+	}
+	if len([]rune(strings.TrimSpace(tpl))) < 2 {
+		return "" // too short to tell an answer from a message
+	}
+	return tpl
+}
+
+func elapsedText(d time.Duration) string {
+	if d < 0 {
+		return "—"
+	}
+	s := int(d.Round(time.Second) / time.Second)
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%d秒", s)
+	case s < 3600:
+		if s%60 == 0 {
+			return fmt.Sprintf("%d分", s/60)
+		}
+		return fmt.Sprintf("%d分%d秒", s/60, s%60)
+	}
+	return fmt.Sprintf("%d小时%d分", s/3600, s%3600/60)
+}
+
+func newRef() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "o" + hex.EncodeToString(b), nil
+}
+
+// sendOut sends text to the conversation of thread. kind says what it is
+// (answer, progress, result, push). It returns the stored item.
+func (h *extHost) sendOut(thread, text, kind string, ri runInfo, trig string) (*OutboxItem, error) {
+	_, convID, ok := channelOf(thread)
+	if !ok {
+		return nil, fmt.Errorf("%s is not an extension conversation", thread)
+	}
+	conv, ok := h.store.conv(convID)
+	if !ok {
+		return nil, fmt.Errorf("no conversation %s", convID)
+	}
+	if text = strings.TrimSpace(text); text == "" {
+		text = "（这一轮没有文字回复）"
+	}
+	vars := map[string]string{
+		"agent": ri.Agent, "model": ri.Model, "effort": ri.Effort, "machine": ri.Machine, "worker": ri.Worker,
+		"ctx": ri.Ctx, "time": time.Now().Format("15:04"), "by": conv.AskBy, "elapsed": "—",
+	}
+	for k, v := range vars {
+		if v == "" {
+			vars[k] = "默认"
+			if k == "by" || k == "ctx" || k == "worker" || k == "machine" {
+				vars[k] = "—"
+			}
+		}
+	}
+	if !conv.AskAt.IsZero() {
+		vars["elapsed"] = elapsedText(time.Since(conv.AskAt))
+	}
+	full := text
+	if kind != extproto.KindProgress {
+		full += "\n\n" + renderFooter(h.footer(), vars)
+	}
+	ref, err := newRef()
+	if err != nil {
+		return nil, err
+	}
+	o := &OutboxItem{Ref: ref, Conv: convID, Kind: kind, Text: full, Trigger: trig, State: outPending, At: time.Now()}
+	if kind == extproto.KindAnswer || kind == extproto.KindProgress {
+		o.ReplyTo = conv.AskMsg
+	}
+	h.store.putOut(o)
+	h.store.addMsg(InboxMsg{ID: "out:" + o.Ref, Conv: convID, At: o.At, Mine: true, Text: full, Ref: o.Ref})
+	if r := h.run(conv.Ext); r != nil {
+		go h.trySend(r, o)
+	}
+	return o, nil
+}
+
+// trySend makes one attempt; false when the extension could not be reached
+// (the send stays pending). Anything the extension answered is final. One
+// ref is tried by one goroutine at a time, and a result only lands while
+// the send is still pending: a delivery event that came first wins.
+func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
+	if !r.running() {
+		return false
+	}
+	if _, busy := h.sending.LoadOrStore(o.Ref, true); busy {
+		return true
+	}
+	defer h.sending.Delete(o.Ref)
+	conv, ok := h.store.conv(o.Conv)
+	if !ok {
+		return true
+	}
+	ctx := context.Background()
+	var err error
+	var res extproto.SendResult
+	o.Tries++
+	if r.man.has(capSend) {
+		err = r.call(ctx, extproto.MChannelSend, extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref,
+			Chat: conv.Chat, Text: o.Text, Kind: o.Kind, ReplyTo: o.ReplyTo}, &res)
+	} else {
+		var out extproto.ActionResult
+		args := map[string]any{"chat": conv.Chat, "text": o.Text}
+		if o.ReplyTo != "" {
+			args["reply_to"] = o.ReplyTo
+		}
+		err = r.call(ctx, extproto.MActionsDo, extproto.ActionsDo{Contribution: r.man.Contributes.Connector.ID,
+			Name: r.man.Contributes.Connector.SendAction, Args: args, RequestID: o.Ref}, &out)
+		if err == nil {
+			res.MessageID = sentIDOf(out.Text)
+		}
+	}
+	switch {
+	case err == nil && res.Deferred:
+		o.State, o.Reason = extproto.DeliveryDeferred, res.Reason
+	case err == nil:
+		o.State, o.MessageID, o.DoneAt = extproto.DeliverySent, res.MessageID, time.Now()
+	case unreachable(err):
+		log.Printf("ext %s: send %s: %v", r.man.ID, o.Ref, err)
+		return false
+	// larkx answers an unknown result with this text and no code.
+	case strings.Contains(err.Error(), "可能已经发出") || extproto.IsCode(err, extproto.DeliveryUncertain):
+		o.State, o.Reason, o.DoneAt = extproto.DeliveryUncertain, err.Error(), time.Now()
+	default:
+		o.State, o.Reason, o.DoneAt = extproto.DeliveryFailed, err.Error(), time.Now()
+	}
+	h.store.putOutIf(o, outPending)
+	return true
+}
+
+func unreachable(err error) bool {
+	for _, c := range []string{extproto.ErrClosed, extproto.ErrTimeout, extproto.ErrHubUnavailable, extproto.ErrNotRunning} {
+		if extproto.IsCode(err, c) {
+			return true
+		}
+	}
+	return false
+}
+
+var sentIDRe = regexp.MustCompile(`[（(]([^）)]+)[）)]`)
+
+// sentIDOf reads the message id out of an action's answer, "已发出（123）。".
+func sentIDOf(text string) string {
+	if m := sentIDRe.FindStringSubmatch(text); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+// retrySends tries the extension's pending sends again, oldest first,
+// until one finds it unreachable.
+func (h *extHost) retrySends(r *extRun) {
+	for _, o := range h.store.outs("", outPending) {
+		if strings.HasPrefix(o.Conv, r.man.ID+":") && !h.trySend(r, o) {
+			return
+		}
+	}
+}
+
+// delivered records what the extension says became of a send.
+func (h *extHost) delivered(r *extRun, d extproto.Delivery) {
+	o := h.store.out(d.Ref)
+	if o == nil || !strings.HasPrefix(o.Conv, r.man.ID+":") {
+		return
+	}
+	o.State, o.Reason = d.State, d.Reason
+	if d.MessageID != "" {
+		o.MessageID = d.MessageID
+	}
+	if d.State != extproto.DeliveryDeferred {
+		o.DoneAt = time.Now()
+	}
+	h.store.putOutIf(o, outPending, extproto.DeliveryDeferred)
+}
+
+// interestChats: chats with a send still waiting or a timer set to send there.
+func (h *extHost) interestChats(ext string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(conv string) {
+		if c, ok := h.store.conv(conv); ok && c.Ext == ext && !seen[c.Chat] {
+			seen[c.Chat] = true
+			out = append(out, c.Chat)
+		}
+	}
+	for _, c := range h.store.waitingConvs(outPending, extproto.DeliveryDeferred) {
+		add(c)
+	}
+	h.sp.mu.Lock()
+	var threads []string
+	for _, t := range h.sp.st.Timers {
+		if t.Enabled {
+			threads = append(threads, t.Thread)
+		}
+	}
+	h.sp.mu.Unlock()
+	for _, th := range threads {
+		if _, conv, ok := channelOf(th); ok {
+			add(conv)
+		}
+	}
+	return out
+}
+
+// homeConv is where `collie reply --to <ext>` goes: the bot's chat with you,
+// or your chat with yourself.
+func (h *extHost) homeConv(ext string) (InboxConv, bool) {
+	for _, c := range h.store.list(ext) {
+		if c.Owner || c.Kind == chatSelf {
+			return c, true
+		}
+	}
+	return InboxConv{}, false
+}
+
+// replyKind: what a reply into an extension conversation is.
+func (h *extHost) replyKind(thread string, push, progress bool) string {
+	switch {
+	case progress:
+		return extproto.KindProgress
+	case push:
+		return extproto.KindPush
+	}
+	h.sp.mu.Lock()
+	defer h.sp.mu.Unlock()
+	for i := len(h.sp.st.Triggers) - 1; i >= 0; i-- {
+		if t := h.sp.st.Triggers[i]; t.Thread == thread {
+			if t.Source == "timer" {
+				return extproto.KindResult
+			}
+			break
+		}
+	}
+	return extproto.KindAnswer
+}
+
+func agentLabel(kind string) string {
+	if n := agentNames[kinds[kind]]; n != "" {
+		return n
+	}
+	if n := agentNames[kind]; n != "" {
+		return n
+	}
+	return kind
+}
+
+func (sp *Super) machineLabel(id string) string {
+	if m, err := sp.s.herdr.machine(id); err == nil && m != nil {
+		return m.Name
+	}
+	return id
+}
+
+// routerRunInfo is Collie itself, for the footer of its replies.
+func (sp *Super) routerRunInfo() runInfo {
+	sp.mu.Lock()
+	ri := runInfo{Agent: agentLabel(sp.st.Settings.RouterKind), Worker: "Collie"}
+	if run := sp.routerRunLocked(); run != nil {
+		ri.Model, ri.Effort = modelLabel(run[0]), run[1]
+	}
+	if sp.routerUsage.Model != "" {
+		ri.Model = modelLabel(sp.routerUsage.Model)
+	}
+	machine := sp.routerOnLocked()
+	if sp.routerUsage.Window > 0 {
+		ri.Ctx = fmt.Sprintf("%d%%", sp.routerUsage.Used*100/sp.routerUsage.Window)
+	}
+	sp.mu.Unlock()
+	ri.Machine = sp.machineLabel(machine)
+	return ri
+}
+
+// workerRunInfo is a worker, for the footer of its answers.
+func (sp *Super) workerRunInfo(w *Worker) runInfo {
+	ri := runInfo{Agent: agentLabel(w.Kind), Worker: w.Name, Model: modelLabel(w.Model), Effort: w.Effort}
+	if w.Run != nil {
+		ri.Model, ri.Effort = modelLabel(w.Run[0]), w.Run[1]
+	}
+	ri.Machine = sp.machineLabel(w.Machine)
+	return ri
+}
+
+// modelLabel shortens a model id for the footer: claude-opus-4-5-20251101 → opus-4-5.
+func modelLabel(id string) string {
+	id = strings.TrimPrefix(strings.TrimSpace(id), "claude-")
+	if i := strings.LastIndexByte(id, '-'); i > 0 && len(id)-i == 9 {
+		id = id[:i] // a date suffix
+	}
+	return id
+}

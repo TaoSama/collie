@@ -1,0 +1,519 @@
+package collie
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/TaoSama/collie/internal/extproto"
+)
+
+// The hub side of extensions (extensions/README.md): which are on and where
+// they run, one connection to each (through the process side, ext_proc.go),
+// and the calls Collie makes on them. What happens to their messages is in
+// inbox.go.
+
+const (
+	extRedialWait    = 10 * time.Second
+	extStatusEvery   = time.Minute
+	extArchiveEvery  = 10 * time.Minute
+	extInterestEvery = 30 * time.Second
+	extCallWait      = 30 * time.Second
+	extLoginWait     = 60 * time.Second
+	extViewLogs      = 12
+)
+
+// ExtSetting is what you chose for one extension (kv "ext_settings").
+type ExtSetting struct {
+	ID      string         `json:"id"`
+	Enabled bool           `json:"enabled"`
+	Machine string         `json:"machine"`          // machine id, "" for the hub
+	Chosen  bool           `json:"chosen,omitempty"` // you picked Machine (needed when the manifest says ask)
+	Config  map[string]any `json:"config,omitempty"`
+	// NoWrites refuses its actions that change something (readonly false).
+	NoWrites bool `json:"no_writes,omitempty"`
+}
+
+type extHost struct {
+	s     *Server
+	sp    *Super
+	home  string
+	store *extStore
+
+	cfgMu   sync.Mutex // one configure at a time: an old program stops before a new one starts
+	sending sync.Map   // refs being sent right now
+	mu      sync.Mutex
+	cat     map[string]*ExtManifest
+	sets    map[string]ExtSetting
+	runs    map[string]*extRun
+	ctx     context.Context
+}
+
+// extRun is one enabled extension's connection.
+type extRun struct {
+	h      *extHost
+	man    *ExtManifest
+	set    ExtSetting
+	cancel context.CancelFunc
+
+	mu       sync.Mutex
+	peer     *extproto.Peer
+	proc     extProcState
+	status   extproto.Status
+	statusAt time.Time
+	dialErr  string
+	pull     chan struct{}
+	pulling  sync.Mutex
+}
+
+func newExtHost(s *Server, sp *Super, home string) *extHost {
+	h := &extHost{s: s, sp: sp, home: home, store: newExtStore(sp.db),
+		cat: map[string]*ExtManifest{}, sets: map[string]ExtSetting{}, runs: map[string]*extRun{}}
+	cat, err := extCatalog()
+	if err != nil {
+		log.Printf("ext: catalog: %v", err)
+	}
+	for _, m := range cat {
+		h.cat[m.ID] = m
+	}
+	var sets []ExtSetting
+	if raw := h.store.kv("ext_settings"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &sets); err != nil {
+			log.Printf("ext: settings: %v", err)
+		}
+	}
+	for _, x := range sets {
+		h.sets[x.ID] = x
+	}
+	return h
+}
+
+// Run starts the enabled extensions and keeps their housekeeping going.
+func (h *extHost) Run(ctx context.Context) {
+	h.mu.Lock()
+	h.ctx = ctx
+	for id, set := range h.sets {
+		if set.Enabled && h.cat[id] != nil {
+			h.startLocked(h.cat[id], set)
+		}
+	}
+	h.mu.Unlock()
+	h.refreshLocal(ctx)
+	t := time.NewTicker(extLocalEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			h.housekeep()
+			h.refreshLocal(ctx)
+		}
+	}
+}
+
+func (h *extHost) saveSetsLocked() {
+	list := make([]ExtSetting, 0, len(h.sets))
+	for _, x := range h.sets {
+		list = append(list, x)
+	}
+	b, _ := json.Marshal(list)
+	h.store.setKV("ext_settings", string(b))
+}
+
+func (h *extHost) setting(id string) ExtSetting {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.settingLocked(id)
+}
+
+func (h *extHost) settingLocked(id string) ExtSetting {
+	if x, ok := h.sets[id]; ok {
+		return x
+	}
+	x := ExtSetting{ID: id}
+	if m := h.cat[id]; m != nil && m.Defaults.Machine == machineRouter {
+		x.Machine = h.sp.routerOn()
+	}
+	return h.pinLocked(x)
+}
+
+// pinLocked: a local extension runs where it was found.
+func (h *extHost) pinLocked(x ExtSetting) ExtSetting {
+	if m := h.cat[x.ID]; m != nil && m.Local {
+		x.Machine, x.Chosen = m.LocalOn, true
+	}
+	return x
+}
+
+// configure turns an extension on or off, moves it, or changes its config.
+// Any change restarts its program.
+func (h *extHost) configure(id string, change func(*ExtSetting)) (ExtSetting, error) {
+	h.cfgMu.Lock()
+	defer h.cfgMu.Unlock()
+	h.mu.Lock()
+	m := h.cat[id]
+	if m == nil {
+		h.mu.Unlock()
+		return ExtSetting{}, fmt.Errorf("no extension %q", id)
+	}
+	x := h.settingLocked(id)
+	before := x
+	change(&x)
+	x = h.pinLocked(x)
+	if x.Enabled && !before.Enabled && m.Defaults.Machine == machineAsk && !x.Chosen {
+		h.mu.Unlock()
+		return before, fmt.Errorf("先选它运行在哪台电脑：它的后端只在某一台电脑上")
+	}
+	x.Config = m.configWithDefaults(x.Config)
+	h.sets[id] = x
+	h.saveSetsLocked()
+	old := h.runs[id]
+	if old != nil && (!x.Enabled || x.Machine != before.Machine || !sameJSON(x.Config, before.Config)) {
+		delete(h.runs, id)
+	} else {
+		old = nil
+	}
+	h.mu.Unlock()
+	// The old program stops before a new one starts: two at once would
+	// steal each other's messages.
+	if old != nil {
+		old.stop(x.Machine != before.Machine || !x.Enabled)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if x.Enabled && h.runs[id] == nil && h.ctx != nil {
+		h.startLocked(m, x)
+	}
+	return x, nil
+}
+
+func sameJSON(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+func (h *extHost) startLocked(m *ExtManifest, set ExtSetting) {
+	ctx, cancel := context.WithCancel(h.ctx)
+	r := &extRun{h: h, man: m, set: set, cancel: cancel, pull: make(chan struct{}, 1)}
+	r.proc = extProcState{State: extStarting}
+	h.runs[m.ID] = r
+	go r.loop(ctx)
+}
+
+func (h *extHost) run(id string) *extRun {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.runs[id]
+}
+
+func (h *extHost) manifest(id string) *ExtManifest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cat[id]
+}
+
+// dial reaches the process side on the extension's computer.
+func (h *extHost) dial(ctx context.Context, machine string) (net.Conn, error) {
+	if machine == "" {
+		return localExtConn(h.home), nil
+	}
+	m, err := h.s.herdr.machine(machine)
+	if err != nil {
+		return nil, err
+	}
+	if m.ext == nil {
+		return nil, errors.New("that computer is the hub's own")
+	}
+	return m.ext(ctx)
+}
+
+// stop ends the connection; with halt the program stops too (off, or moved).
+func (r *extRun) stop(halt bool) {
+	r.mu.Lock()
+	peer := r.peer
+	r.mu.Unlock()
+	if halt && peer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := peer.Call(ctx, "$proc.stop", nil, nil); err != nil {
+			log.Printf("ext %s: stop: %v", r.man.ID, err)
+		}
+		cancel()
+	}
+	r.cancel()
+}
+
+func (r *extRun) loop(ctx context.Context) {
+	for ctx.Err() == nil {
+		err := r.session(ctx)
+		r.mu.Lock()
+		r.peer = nil
+		if err != nil && ctx.Err() == nil {
+			r.dialErr = err.Error()
+		}
+		r.mu.Unlock()
+		if sleepCtx(ctx, extRedialWait) != nil {
+			return
+		}
+	}
+}
+
+// session is one connection to the process side, until it drops.
+func (r *extRun) session(ctx context.Context) error {
+	conn, err := r.h.dial(ctx, r.set.Machine)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	hdr, _ := json.Marshal(extStartHeader{ID: r.man.ID, Manifest: r.man, Config: r.set.Config, HostVersion: version})
+	if _, err := conn.Write(append(hdr, '\n')); err != nil {
+		return err
+	}
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	peer := extproto.NewPeer(bufio.NewReaderSize(conn, 64<<10), conn, "h", r.handle, r.event)
+	r.mu.Lock()
+	r.peer, r.dialErr = peer, ""
+	r.mu.Unlock()
+	go func() { <-sctx.Done(); conn.Close() }()
+	go r.housekeep(sctx, peer)
+	err = peer.Serve(sctx)
+	return err
+}
+
+// housekeep: status now and then, the archive when told and as a fallback,
+// interest for extensions that want it, and sends still pending.
+func (r *extRun) housekeep(ctx context.Context, peer *extproto.Peer) {
+	status := time.NewTicker(extStatusEvery)
+	archive := time.NewTicker(extArchiveEvery)
+	interest := time.NewTicker(extInterestEvery)
+	defer status.Stop()
+	defer archive.Stop()
+	defer interest.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-status.C:
+			r.refreshStatus(ctx)
+			r.h.retrySends(r)
+		case <-archive.C:
+			r.signalPull()
+		case <-interest.C:
+			r.sendInterest(ctx)
+		case <-r.pull:
+			if r.man.has(capArchive) && r.running() {
+				r.pullArchive(ctx)
+			}
+		}
+	}
+}
+
+func (r *extRun) running() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.proc.State == extRunning
+}
+
+func (r *extRun) signalPull() {
+	select {
+	case r.pull <- struct{}{}:
+	default:
+	}
+}
+
+func (r *extRun) call(ctx context.Context, method string, params, out any) error {
+	r.mu.Lock()
+	peer := r.peer
+	r.mu.Unlock()
+	if peer == nil {
+		return extproto.Errorf(extproto.ErrHubUnavailable, "not connected to %s", r.man.ID)
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, extCallWait)
+		defer cancel()
+	}
+	return peer.Call(ctx, method, params, out)
+}
+
+func (r *extRun) contribution() extproto.Contribution {
+	return extproto.Contribution{Contribution: r.man.Contributes.Connector.ID}
+}
+
+func (r *extRun) refreshStatus(ctx context.Context) {
+	if !r.running() {
+		return
+	}
+	var st extproto.Status
+	if err := r.call(ctx, extproto.MStatus, r.contribution(), &st); err != nil {
+		st = extproto.Status{State: extproto.StateError, Error: err.Error()}
+	}
+	r.mu.Lock()
+	r.status, r.statusAt = st, time.Now()
+	r.mu.Unlock()
+}
+
+func (r *extRun) sendInterest(ctx context.Context) {
+	if !r.man.has(capInterest) || !r.running() {
+		return
+	}
+	chats := r.h.interestChats(r.man.ID)
+	if err := r.call(ctx, extproto.MChannelInterest, extproto.Interest{Contribution: r.man.Contributes.Connector.ID, Chats: chats}, nil); err != nil {
+		log.Printf("ext %s: interest: %v", r.man.ID, err)
+	}
+}
+
+// event: the process side's state, and the extension's own events.
+func (r *extRun) event(name string, params json.RawMessage) {
+	switch name {
+	case "$proc.state":
+		var st extProcState
+		if json.Unmarshal(params, &st) != nil {
+			return
+		}
+		r.mu.Lock()
+		was := r.proc.State
+		r.proc = st
+		r.mu.Unlock()
+		if st.State == extRunning && was != extRunning {
+			go func() {
+				r.refreshStatus(context.Background())
+				r.signalPull()
+				r.h.retrySends(r)
+				r.sendInterest(context.Background())
+			}()
+		}
+	case extproto.EChanged:
+		var c extproto.Changed
+		json.Unmarshal(params, &c)
+		if c.Scope == "status" || c.Scope == "" {
+			go r.refreshStatus(context.Background())
+		}
+		if c.Scope != "status" {
+			r.signalPull()
+		}
+	case extproto.EDelivery:
+		var d extproto.Delivery
+		if json.Unmarshal(params, &d) == nil {
+			r.h.delivered(r, d)
+		}
+	}
+}
+
+// handle answers the extension's requests (secrets never get here: the
+// process side keeps them on its computer).
+func (r *extRun) handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	switch method {
+	case extproto.MChannelReceive:
+		if !r.man.has(capReceive) {
+			return struct{}{}, nil // e.g. larkx's own /agent: Collie reads its archive instead
+		}
+		var in extproto.Receive
+		if err := json.Unmarshal(params, &in); err != nil {
+			return nil, extproto.Errorf(extproto.ErrInvalidParams, "bad message")
+		}
+		if err := r.h.received(r, in.Message); err != nil {
+			return nil, err
+		}
+		return struct{}{}, nil
+	}
+	return nil, extproto.Errorf(extproto.ErrUnknownMethod, "%s", method)
+}
+
+// pullArchive reads every new message since the cursor. The first time
+// (no cursor yet) it only moves the cursor to now: history isn't new.
+func (r *extRun) pullArchive(ctx context.Context) {
+	r.pulling.Lock()
+	defer r.pulling.Unlock()
+	key := "ext_cursor:" + r.man.ID
+	cursor := r.h.store.kv(key)
+	baseline := cursor == ""
+	for i := 0; i < 50 && ctx.Err() == nil; i++ {
+		var out extproto.ArchiveChanges
+		args := map[string]any{"contribution": r.man.Contributes.Connector.ID, "cursor": cursor, "limit": 50}
+		if err := r.call(ctx, extproto.MArchiveChanges, args, &out); err != nil {
+			log.Printf("ext %s: archive: %v", r.man.ID, err)
+			return
+		}
+		for _, b := range out.Batches {
+			r.h.archived(r, b, baseline)
+		}
+		if out.Next != "" {
+			cursor = out.Next
+			r.h.store.setKV(key, cursor)
+		}
+		if !out.More {
+			break
+		}
+	}
+	if baseline && cursor == "" {
+		r.h.store.setKV(key, "0") // nothing yet: later messages are all new
+	}
+}
+
+// view is what the 接入 page shows of an extension.
+type extView struct {
+	Manifest *ExtManifest     `json:"manifest"`
+	Setting  ExtSetting       `json:"setting"`
+	Proc     *extProcState    `json:"proc,omitempty"`
+	Status   *extproto.Status `json:"status,omitempty"`
+	Problem  string           `json:"problem,omitempty"`
+}
+
+func (h *extHost) views() []extView {
+	h.mu.Lock()
+	ids := make([]string, 0, len(h.cat))
+	for id := range h.cat {
+		ids = append(ids, id)
+	}
+	h.mu.Unlock()
+	sort.Strings(ids)
+	out := []extView{}
+	for _, id := range ids {
+		out = append(out, h.view(id))
+	}
+	return out
+}
+
+func (h *extHost) view(id string) extView {
+	h.mu.Lock()
+	v := extView{Manifest: h.cat[id], Setting: h.settingLocked(id)}
+	r := h.runs[id]
+	h.mu.Unlock()
+	if r != nil {
+		r.mu.Lock()
+		p, st := r.proc, r.status
+		if n := len(p.Logs); n > extViewLogs {
+			p.Logs = p.Logs[n-extViewLogs:]
+		}
+		v.Proc = &p
+		if !r.statusAt.IsZero() {
+			v.Status = &st
+		}
+		v.Problem = r.dialErr
+		r.mu.Unlock()
+	}
+	return v
+}
+
+// Call makes any call on a running extension, for features built on it.
+func (h *extHost) Call(ctx context.Context, id, method string, params any) (json.RawMessage, error) {
+	r := h.run(id)
+	if r == nil {
+		return nil, extproto.Errorf(extproto.ErrNotRunning, "extension %s is off", id)
+	}
+	var out json.RawMessage
+	if err := r.call(ctx, method, params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

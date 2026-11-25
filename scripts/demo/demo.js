@@ -482,6 +482,27 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
 }
 `;
 
+  // ───────────────────────────── extensions (接入, 收件箱)
+  const larkx = { manifest_version: 1, id: "larkx", name: "飞书（以你本人身份）", version: "0.3.6", engines: { collie_protocol: 1 }, runtime: { command: "bin/larkx" },
+    description: "用 LarkAgentX 扫码登录飞书网页版，以你本人的身份收发消息。收件箱列出你的飞书会话，打开某个会话后，发触发词即可交给 agent，回复以你的身份发出并带上尾标。",
+    warning: "走逆向的飞书网页版协议，不是官方接口：飞书升级后可能失效，账号可能被风控。",
+    contributes: { connector: { id: "larkx", capabilities: ["status", "login", "archive", "actions"] }, channel: { format: "markdown" } },
+    configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] } } } };
+  const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "—— 🤖 {agent} · {model} · {elapsed}",
+    machines: [{ id: "", name: "hub", online: true }, { id: "mini", name: "mac-mini", online: true }],
+    extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu" } },
+      proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } }] };
+  const inboxConvs = [
+    { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
+    { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
+    { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", on: false, handler: "agent" },
+  ];
+  const inboxMsgs = { "larkx:oc_1": [
+    { id: "m1", conv: "larkx:oc_1", at: ago(9), sender_name: "李四", text: "评审定在周五，接口先冻结" },
+    { id: "m2", conv: "larkx:oc_1", at: ago(4), sender_name: "张三", mine: true, text: "/ai 帮我总结今天的讨论" },
+    { id: "out:o1", conv: "larkx:oc_1", at: ago(3), mine: true, ref: "o1", text: "今天定了三件事：\n\n1. 周五评审\n2. 接口先冻结\n3. 张三负责发布说明\n\n—— 🤖 Claude Code · opus-4-5 · 58秒" },
+  ] };
+
   // ───────────────────────────── the API
   const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
   const realFetch = window.fetch.bind(window);
@@ -559,6 +580,25 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     }
     if (p === "/api/super/lark") return json({ ready: true, who: "Alex" });
     if (p === "/api/super/triggers") return json({ triggers, threads });
+    if (p === "/api/ext/settings") { Object.assign(extData, { trigger: body.trigger ?? extData.trigger, footer: body.footer ?? extData.footer }); return json({ trigger: extData.trigger, footer: extData.footer }); }
+    if (p === "/api/ext") return json(extData);
+    if ((m = p.match(/^\/api\/ext\/([^/]+)$/)) && method === "POST") {
+      const v = extData.extensions.find((x) => x.manifest.id === m[1]);
+      if (v) Object.assign(v.setting, body.enabled != null ? { enabled: body.enabled } : {}, body.machine != null ? { machine: body.machine } : {});
+      return json({ setting: v?.setting, view: v });
+    }
+    if (/^\/api\/ext\/[^/]+\/login$/.test(p)) return json({ step: { done: true } });
+    if (p === "/api/inbox") return json({ convs: inboxConvs, trigger: extData.trigger || "/ai" });
+    if (p === "/api/inbox/conv" && method === "POST") {
+      const c = inboxConvs.find((x) => x.id === body.id);
+      if (c) for (const k of ["on", "anyone", "handler"]) if (body[k] != null) c[k] = body[k];
+      if (c && body.seen) c.unread = 0;
+      return json({ conv: c });
+    }
+    if (p === "/api/inbox/conv") {
+      const c = inboxConvs.find((x) => x.id === q.get("id"));
+      return json({ conv: c, msgs: c?.on ? inboxMsgs[c.id] || [] : [], outbox: {} });
+    }
     if (p === "/api/super/timers") {
       if (method === "POST") timers.push({ id: "tm" + (++seq), spec: body.spec, text: body.text, target: body.target, enabled: true, next_run: later(60), owner: "you" });
       return json({ timers });

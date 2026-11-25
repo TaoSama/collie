@@ -520,7 +520,8 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 
 // nodeConnect upgrades a computer's connection into a multiplexed tunnel.
 // The hub opens streams on it: "herdr" reaches that computer's herdr socket,
-// "http" its node API (chat, screens, directories, launching).
+// "http" its node API (chat, screens, directories, launching), "ext" the
+// extensions that run there (ext_proc.go).
 func (s *Server) nodeConnect(w http.ResponseWriter, r *http.Request) {
 	_, d := s.identity(r)
 	if d == nil || d.Kind != "machine" {
@@ -559,6 +560,7 @@ func (s *Server) nodeConnect(w http.ResponseWriter, r *http.Request) {
 		ID: d.ID, Name: d.Name, OS: r.Header.Get("X-Collie-OS"), Home: r.Header.Get("X-Collie-Home"),
 		Bin: r.Header.Get("X-Collie-Bin"), Version: r.Header.Get("X-Collie-Version"), Agents: parseAgentsHeader(r.Header.Get("X-Collie-Agents")), Online: true, Since: time.Now(),
 		conn: &herdrConn{dial: streamDialer(open, "herdr")},
+		ext:  streamDialer(open, "ext"),
 		snap: &listSnap{},
 		client: &http.Client{Transport: &http.Transport{
 			DialContext:         func(ctx context.Context, _, _ string) (net.Conn, error) { return httpDial(ctx) },

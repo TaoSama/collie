@@ -33,6 +33,7 @@ import (
 //	"herdr" — piped straight to this computer's herdr socket
 //	"http"  — this computer's own pane API: chat transcripts, screens,
 //	          directories, launching agents
+//	"ext"   — an extension that runs here (ext_proc.go)
 type nodeConfig struct {
 	Hub   string `json:"hub"`
 	ID    string `json:"id"`
@@ -346,6 +347,8 @@ func nodeSession(ctx context.Context, cfg nodeConfig, name, home, bin, sock stri
 				case <-ln.done:
 					st.Close()
 				}
+			case "ext":
+				localExtProcs.serve(st, collieDir())
 			default:
 				st.Close()
 			}

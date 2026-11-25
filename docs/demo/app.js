@@ -2566,8 +2566,15 @@
   const markTab = (bar, cur) => $$(bar + " button").forEach((b) => b.classList.toggle("on", b.dataset.tab === cur));
 
   // ───────────────────────────── automation view
+  // 事件 holds what were two tabs (the trigger log and threads); the old
+  // names open it at the right part.
   let autoTab = store.get("autoTab", "inbox");
+  let eventsSub = store.get("eventsSub", "events");
+  if (autoTab === "threads") { autoTab = "events"; eventsSub = "threads"; store.set("autoTab", autoTab); }
   let autoTimer;
+  // 收件箱: the open conversation, its messages, the filter; 接入: a sign-in.
+  let inboxCur = "", inboxDetail = null, inboxFilter = store.get("inboxFilter", "all"), extLogin = null;
+  collieExt.init({ esc, when, md: (t) => md(t), workerHref: (n) => { const p = paneOf(n); return p ? `#/p/${encodeURIComponent(p)}` : ""; } });
   bindTabs("#auto-tabs", "auto", "#auto-body", () => autoTab, (t) => { autoTab = t; store.set("autoTab", t); }, (saved) => openAuto(saved));
 
   // The follow-up line under 自动化 opens the open tasks (top of 记忆).
@@ -2581,11 +2588,13 @@
 
   // Each tab draws from the last answer to its request at once; the request
   // only refreshes it. The answers ride in the startup snapshot.
-  const AUTO_API = { inbox: "triggers", threads: "triggers", timers: "timers", memory: "memory", hooks: "settings", settings: "settings" };
+  const AUTO_API = { inbox: "inbox", events: "triggers", timers: "timers", memory: "memory", hooks: "settings", settings: "settings" };
+  const AUTO_PATH = { inbox: "/api/inbox", ext: "/api/ext" };
   let autoData = {};
   async function fetchAuto(src) {
-    const r = await api("/api/super/" + src);
+    const r = await api(AUTO_PATH[src] || "/api/super/" + src);
     autoData[src] = r;
+    if (src === "ext" || src === "inbox") collieExt.learn(r);
     if (src === "memory") (window.requestIdleCallback || setTimeout)(() => memHTML(r));
     return r;
   }
@@ -2612,14 +2621,17 @@
       for (const k of new Set(Object.values(AUTO_API))) if (k !== src) fetchAuto(k).catch(() => {});
       if (autoData.memory) (window.requestIdleCallback || setTimeout)(() => memHTML(autoData.memory));
     }
-    if (autoTab === "inbox" || autoTab === "threads") autoTimer = setInterval(() => loadAuto(), 4000);
+    if (autoTab === "inbox" || autoTab === "events" || autoTab === "hooks") autoTimer = setInterval(() => loadAuto(), autoTab === "hooks" ? 3000 : 4000);
     if (autoTab === "memory") autoTimer = setInterval(() => { if (!memEditing) loadAuto(); }, 5000);
   }
 
   async function loadAuto(restore = null) {
     const tab = autoTab;
     try {
-      const r = await fetchAuto(AUTO_API[tab]);
+      const [r] = await Promise.all([fetchAuto(AUTO_API[tab]),
+        tab === "hooks" ? fetchAuto("ext").catch(() => null) : null,
+        tab === "inbox" && inboxCur ? loadConv() : null,
+        tab === "timers" ? fetchAuto("inbox").catch(() => null) : null]);
       if (view !== "auto" || autoTab !== tab) return;
       drawAuto(r, restore);
       if (tab === "settings") api("/api/super/lark?fresh").then((l) => { autoData.lark = l; showLarkWho(); }).catch(() => {});
@@ -2641,9 +2653,42 @@
       if (restore) restoreSimpleScroll(body, restore);
       else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
     };
-    if (tab === "inbox" || tab === "threads") {
-      body.innerHTML = tab === "inbox" ? inboxHTML(r.triggers || []) : threadsHTML(r.threads || []);
+    if (tab === "events") {
+      const seg = `<div class="seg events-seg">${[["events", "事件"], ["threads", "线程"]].map(([k, l]) => `<button type="button" data-events-sub="${k}" class="${eventsSub === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
+      body.innerHTML = seg + (eventsSub === "threads" ? threadsHTML(r.threads || []) : inboxHTML(r.triggers || []));
       applyAfter();
+    } else if (tab === "inbox") {
+      // The list and the open chat redraw apart: a new message elsewhere
+      // leaves the chat you are reading as it is.
+      const sig = JSON.stringify([r, inboxCur, inboxFilter]), dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger]);
+      const msgs = body.querySelector(".conv-msgs"), stick = msgs && msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 40;
+      if (sig !== body._sig) {
+        body._sig = sig; body._dsig = dsig;
+        body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxFilter);
+      } else if (dsig !== body._dsig && $("#inbox-detail")) {
+        body._dsig = dsig;
+        $("#inbox-detail").innerHTML = collieExt.detailHTML(inboxCur, inboxDetail, r?.trigger);
+      } else { if (restore) restoreSimpleScroll(body, restore); return; }
+      const m2 = body.querySelector(".conv-msgs");
+      if (m2 && (stick || !msgs)) m2.scrollTop = m2.scrollHeight;
+      applyAfter();
+    } else if (tab === "hooks") {
+      // The cards redraw on their own: the forms below keep what is typed.
+      const extSig = JSON.stringify([autoData.ext, extLogin]);
+      const sig = JSON.stringify(r);
+      if (sig !== body._sig || !body.querySelector("#ext-cards")) {
+        body._sig = sig; body._extSig = "";
+        body.innerHTML = `<div id="ext-cards"></div><div id="ext-settings"></div>` + hooksHTML(r);
+        applyAfter();
+      }
+      if (extSig !== body._extSig && !body.querySelector("#ext-cards :focus")) {
+        body._extSig = extSig;
+        const top = collieExt.hooksTop(autoData.ext, extLogin);
+        const at = top.indexOf('<div class="card"><div class="card-h">唤起与回复');
+        $("#ext-cards").innerHTML = at > 0 ? top.slice(0, at) : top;
+        if (!$("#ext-settings").innerHTML && at > 0) $("#ext-settings").innerHTML = top.slice(at);
+      }
+      if (restore) restoreSimpleScroll(body, restore);
     } else if (tab === "memory") {
       if (memEditing) return;
       const sig = memSig(r);
@@ -2665,8 +2710,8 @@
         body.innerHTML = timersHTML(r.timers || []);
         if (endedOpen) { const d = body.querySelector("details[data-ended-timers]"); if (d) d.open = true; }
       } else {
-        body.innerHTML = tab === "hooks" ? hooksHTML(r) : settingsHTML(r);
-        if (tab === "settings") showLarkWho();
+        body.innerHTML = settingsHTML(r);
+        showLarkWho();
       }
       applyAfter();
     }
@@ -2762,12 +2807,12 @@
   }
 
   function inboxHTML(ts) {
-    return `<p class="panel-intro">你的消息、外部事件、定时器，以及派出的 agent 完成或卡住，都会进这里。先按来源策略过滤；订阅了线程的 agent 直接收到，其余交给 Collie 判断。对方正忙时事件会先攒着，空闲后一次送过去。</p>
+    return `<p class="panel-intro">你的消息、外部事件、扩展会话里唤起的请求、定时器，以及派出的 agent 完成或卡住，都会进这里。先按来源策略过滤；订阅了线程的 agent 直接收到，其余交给 Collie 判断。对方正忙时事件会先攒着，空闲后一次送过去。</p>
       <div class="card"><ul class="rows">${ts.length ? ts.map((t) => `<li class="row">
         <span class="badge ${esc(t.status === "queued" ? "queued" : t.status === "ignored" ? "ignored" : t.status === "failed" ? "failed" : t.action === "candidate" ? "candidate" : "")}">${esc({ queued: "排队", delivered: "已投递", ignored: "已忽略", failed: "未送达" }[t.status] || t.status)}</span>
-        <div><div class="meta"><b>#${esc(t.id)}</b><span>${esc(SOURCE_LABEL[t.source] || t.source)}</span><span>${esc(t.thread)}</span>${t.from ? `<span>from ${esc(t.from === ROUTER ? "Collie" : t.from)}</span>` : ""}${t.targets?.length ? `<span>→ ${esc(t.targets.map((x) => x === ROUTER ? "Collie" : x).join(", "))}</span>` : ""}${t.action === "candidate" ? "<span>candidate</span>" : ""}</div>
+        <div><div class="meta"><b>#${esc(t.id)}</b><span>${esc(SOURCE_LABEL[t.source] || collieExt.label(t.source) || t.source)}</span><span>${esc(t.thread)}</span>${t.from ? `<span>from ${esc(t.from === ROUTER ? "Collie" : t.from)}</span>` : ""}${t.targets?.length ? `<span>→ ${esc(t.targets.map((x) => x === ROUTER ? "Collie" : x).join(", "))}</span>` : ""}${t.action === "candidate" ? "<span>candidate</span>" : ""}</div>
         <div class="text">${esc(t.text)}</div></div>
-        <span class="right">${when(t.at)}</span></li>`).join("") : `<li class="empty-row">收件箱是空的</li>`}</ul></div>`;
+        <span class="right">${when(t.at)}</span></li>`).join("") : `<li class="empty-row">还没有事件</li>`}</ul></div>`;
   }
 
   function threadsHTML(ths) {
@@ -2853,7 +2898,7 @@
     });
     const timerRow = (t) => `<li class="row">
         <span class="badge ${t.enabled ? "queued" : "ignored"}">${t.enabled ? "启用" : "已结束"}</span>
-        <div><div class="meta"><b title="${esc(t.spec)}">${esc(describeSpec(t.spec))}</b><span>→ ${esc(t.target || "Collie")}</span>${t.enabled ? `<span>下次 ${when(t.next_run)}</span>` : t.last_run ? `<span>上次 ${when(t.last_run)}</span>` : ""}${t.owner ? `<span>${t.owner === "you" ? "你设的" : esc(t.owner) + " 设的"}</span>` : ""}</div>
+        <div><div class="meta"><b title="${esc(t.spec)}">${esc(describeSpec(t.spec))}</b><span>→ ${esc(t.target || "Collie")}</span>${t.thread?.startsWith("ext:") ? `<span>发到 ${esc(convName(t.thread))}</span>` : ""}${t.enabled ? `<span>下次 ${when(t.next_run)}</span>` : t.last_run ? `<span>上次 ${when(t.last_run)}</span>` : ""}${t.owner ? `<span>${t.owner === "you" ? "你设的" : esc(t.owner) + " 设的"}</span>` : ""}</div>
         <div class="text">${esc(t.text)}</div></div>
         <button class="btn ghost small" data-del-timer="${esc(t.id)}">删除</button></li>`;
     return `<p class="panel-intro">到点会给 Collie（或某个 agent）发一条消息：每天的例行检查、过一会儿的跟进提醒。Collie 自己也会设定时来跟进。</p>
@@ -2871,6 +2916,7 @@
           </div>
           <label class="tm-text"><span class="tm-lab">说什么</span><textarea name="text" rows="2" placeholder="例如：检查各个任务的进展，有卡住的告诉我" required></textarea></label>
           <div class="tm-foot">
+            ${collieExt.timerChannels(autoData.inbox) ? `<label class="tm-target"><span class="tm-lab">发到</span><select name="channel" data-pick="compact" data-title="结果发到哪里"><option value="" data-sub="Collie 的对话">Collie</option>${collieExt.timerChannels(autoData.inbox)}</select></label>` : ""}
             <label class="tm-target"><span class="tm-lab">交给</span><select name="target" data-pick="compact" data-title="到点交给谁"><option value="" data-sub="由它决定怎么处理">Collie</option>${sup.workers.filter((w) => !w.ended).map((w) => `<option value="${esc(w.name)}" data-sub="${esc(KIND_LABEL[w.kind] || w.kind)}">${esc(w.name)}</option>`).join("")}</select></label>
             <span class="tm-sum muted"></span>
             <button class="btn primary small">添加</button>
@@ -2904,7 +2950,7 @@
   function hooksHTML(r) {
     const base = location.origin + "/hooks/";
     const url = (src) => `${base}${src}?key=${r.hook_key}`;
-    return `<p class="panel-intro">把外部事件接进来。Webhook 立即返回 202，过滤和路由在收件箱里异步完成。未经请求的事件默认是 <b>candidate</b>：只有 Collie 的记忆或你的规则覆盖到时才会行动，否则保持安静。</p>
+    return `<p class="panel-intro">把外部事件接进来。Webhook 立即返回 202，过滤和路由在「事件」里异步完成。未经请求的事件默认是 <b>candidate</b>：只有 Collie 的记忆或你的规则覆盖到时才会行动，否则保持安静。</p>
       <div class="card"><div class="card-h">Webhook 地址</div><div class="form">
         <label>GitHub <small>Settings → Webhooks，Content type 选 application/json</small><div class="code"><span>${esc(url("github"))}</span><button class="icon-btn" data-copy="${esc(url("github"))}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></label>
         <label>飞书 / Lark <small>事件订阅的请求地址，已支持 url_verification</small><div class="code"><span>${esc(url("feishu"))}</span><button class="icon-btn" data-copy="${esc(url("feishu"))}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></label>
@@ -3135,9 +3181,21 @@
       if (f.id === "timer-form") {
         const r = timerSpec(f);
         if (r.err) { toast(r.err, "attn"); return; }
-        await api("/api/super/timers", { body: { spec: r.spec, text: f.text.value, target: f.target.value, owner: "you" } });
+        await api("/api/super/timers", { body: { spec: r.spec, text: f.text.value, target: f.target.value, owner: "you", thread: f.channel?.value || "" } });
         toast(`已添加：${describeSpec(r.spec)}`);
         loadAuto();
+      } else if (f.hasAttribute("data-ext-secret")) {
+        const id = f.closest("[data-ext]").dataset.ext;
+        const r = await api(`/api/ext/${encodeURIComponent(id)}/login`, { body: { step: f.dataset.extSecret, secret: f.secret.value } });
+        f.secret.value = "";
+        const st = r.step || {};
+        if (st.done) { extLogin = null; toast("已登录"); } else extLogin = { id, kind: st.kind, label: st.label, step: st.step, hint: st.hint, error: st.error || "没通过，再试一次" };
+        await fetchAuto("ext").catch(() => {});
+        drawAuto(autoData.settings);
+      } else if (f.id === "ext-settings-form") {
+        await api("/api/ext/settings", { body: { trigger: f.trigger.value, footer: f.footer.value } });
+        toast("已保存");
+        fetchAuto("ext").catch(() => {});
       } else if (f.classList.contains("mem-edit")) {
         await api("/api/super/memory", { body: { path: f.closest("[data-path]").dataset.path, text: f.text.value } });
         memEditing = false;
@@ -3166,6 +3224,90 @@
         fetchAuto("settings").catch(() => {});
       }
     } catch (err) { toast(err.message, "attn"); }
+  });
+
+  // ───────────────────────────── extensions: 收件箱 and the 接入 cards
+  const convName = (thread) => {
+    const c = (autoData.inbox?.convs || []).find((x) => "ext:" + x.id === thread);
+    return c ? `${c.label} · ${c.name || c.chat}` : thread.replace(/^ext:/, "");
+  };
+  async function loadConv() {
+    const id = inboxCur;
+    try {
+      const d = await api("/api/inbox/conv?id=" + encodeURIComponent(id));
+      if (id === inboxCur) inboxDetail = d;
+    } catch (err) { if (id === inboxCur) { inboxCur = ""; inboxDetail = null; toast(err.message, "attn"); } }
+  }
+  async function setConv(body) {
+    try {
+      await api("/api/inbox/conv", { body: { id: inboxCur, ...body } });
+      await Promise.all([loadConv(), fetchAuto("inbox")]);
+      if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
+    } catch (err) { toast(err.message, "attn"); }
+  }
+  async function extConfigure(id, body, done) {
+    try {
+      await api("/api/ext/" + encodeURIComponent(id), { body });
+      if (done) toast(done);
+      await fetchAuto("ext");
+      if (view === "auto" && autoTab === "hooks") drawAuto(autoData.settings);
+    } catch (err) { toast(err.message, "attn"); }
+  }
+  // A sign-in: show the QR code, step again until the extension says done.
+  async function extLoginStep(id, step) {
+    if (extLogin?.id !== id && step) return; // left or restarted meanwhile
+    try {
+      const r = await api(`/api/ext/${encodeURIComponent(id)}/login`, { body: { step } });
+      const st = r.step || {};
+      extLogin = { id, kind: st.kind, label: st.label, step: st.step, img: r.qr || extLogin?.img, hint: st.hint, error: st.error, done: !!st.done };
+      if (!st.done && st.kind !== "secret") setTimeout(() => { if (extLogin?.id === id && view === "auto" && autoTab === "hooks") extLoginStep(id, st.step); }, Math.max(1, st.interval || 2) * 1000);
+      else { toast("已登录"); setTimeout(() => { if (extLogin?.id === id) { extLogin = null; loadAuto(); } }, 2500); }
+    } catch (err) { extLogin = { id, error: err.message }; }
+    if (view === "auto" && autoTab === "hooks") { await fetchAuto("ext").catch(() => {}); drawAuto(autoData.settings); }
+  }
+  $("#auto-body").addEventListener("click", async (e) => {
+    const a = e.target.closest("a[data-auto-tab]");
+    if (a) { e.preventDefault(); autoTab = a.dataset.autoTab; store.set("autoTab", autoTab); openAuto(); return; }
+    const row = e.target.closest("[data-conv]");
+    if (row && !e.target.closest("a")) {
+      inboxCur = row.dataset.conv; inboxDetail = null;
+      drawAuto(autoData.inbox); loadConv().then(() => drawAuto(autoData.inbox));
+      api("/api/inbox/conv", { body: { id: inboxCur, seen: true } }).catch(() => {});
+      return;
+    }
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.eventsSub) { eventsSub = b.dataset.eventsSub; store.set("eventsSub", eventsSub); drawAuto(autoData.triggers); return; }
+    if (b.dataset.inboxFilter) { inboxFilter = b.dataset.inboxFilter; store.set("inboxFilter", inboxFilter); drawAuto(autoData.inbox); return; }
+    if (b.hasAttribute("data-conv-close")) { inboxCur = ""; inboxDetail = null; drawAuto(autoData.inbox); return; }
+    if (b.hasAttribute("data-conv-on")) { setConv({ on: b.getAttribute("aria-checked") !== "true" }); return; }
+    if (b.dataset.convSet) { setConv({ [b.dataset.convSet]: b.dataset.convSet === "anyone" ? b.dataset.v === "true" : b.dataset.v }); return; }
+    const card = b.closest("[data-ext]");
+    if (!card) return;
+    const id = card.dataset.ext;
+    if (b.hasAttribute("data-ext-toggle")) {
+      const on = b.getAttribute("aria-checked") !== "true";
+      if (on) {
+        const v = (autoData.ext?.extensions || []).find((x) => x.manifest.id === id);
+        if (v?.manifest.warning && !(await ask({ title: "打开" + v.manifest.name + "？", text: v.manifest.warning, ok: "打开" }))) return;
+      }
+      extConfigure(id, { enabled: on }, on ? "已打开，启动后扫码登录" : "已关闭");
+    } else if (b.hasAttribute("data-ext-writes")) {
+      extConfigure(id, { no_writes: b.getAttribute("aria-checked") === "true" }, "已保存");
+    } else if (b.hasAttribute("data-ext-login")) {
+      extLogin = { id }; extLoginStep(id, "");
+    } else if (b.hasAttribute("data-ext-logout")) {
+      if (!(await ask({ title: "退出登录？", text: "之后要重新扫码。", ok: "退出登录" }))) return;
+      api(`/api/ext/${encodeURIComponent(id)}/logout`, { body: {} }).then(() => toast("已退出登录")).catch((err) => toast(err.message, "attn")).then(loadAuto);
+    } else if (b.hasAttribute("data-ext-save")) {
+      const config = {};
+      card.querySelectorAll("[data-ext-config]").forEach((el) => { config[el.dataset.extConfig] = el.type === "checkbox" ? el.checked : el.value; });
+      extConfigure(id, { config }, "已保存，扩展会重启");
+    }
+  });
+  $("#auto-body").addEventListener("change", (e) => {
+    const sel = e.target.closest("[data-ext-machine]");
+    if (sel) extConfigure(sel.closest("[data-ext]").dataset.ext, { machine: sel.value }, "已换电脑");
   });
 
   $("#auto-body").addEventListener("click", async (e) => {

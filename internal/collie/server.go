@@ -30,8 +30,9 @@ type Server struct {
 	home  string
 	web   fs.FS
 	sup   *Super
-	auths *Auth // hub only: paired devices and computers
-	node  bool  // serving the node API inside a tunnel (no auth, no super)
+	ext   *extHost // hub only: extensions and their conversations
+	auths *Auth    // hub only: paired devices and computers
+	node  bool     // serving the node API inside a tunnel (no auth, no super)
 
 	port       int      // hub only: listening port, for addresses
 	publicURLs []string // hub only: addresses given with -url, shown first
@@ -106,6 +107,7 @@ func (s *Server) Routes() http.Handler {
 	api("GET /api/events", s.streamState)
 	s.machineRoutes(mux, func(h http.HandlerFunc) http.Handler { return s.auth(s.routed(h)) })
 	s.superRoutes(mux)
+	s.extRoutes(mux)
 	s.pushRoutes(mux)
 	s.hubRoutes(mux)
 	return securityHeaders(compress(cors(mux)))
@@ -116,6 +118,7 @@ func (s *Server) Routes() http.Handler {
 // serves them for itself inside the tunnel.
 func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) http.Handler) {
 	mux.Handle("GET /api/state", wrap(s.getState))
+	mux.Handle("GET /api/ext-local", wrap(s.localExts))
 	mux.Handle("GET /api/dirs", wrap(s.listDirs))
 	mux.Handle("GET /api/file", wrap(s.readFile))
 	mux.Handle("POST /api/agents", wrap(s.launchAgent))

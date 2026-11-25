@@ -2373,3 +2373,50 @@ select.picked { display: none; }
   .d-head { gap: 6px; }
   .seg button { padding: 0 7px; }
 }
+
+/* ───────────── extensions: 接入 cards, 收件箱 (web/ext.js) */
+.ext-card .card-h { gap: 12px; }
+.ext-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.ext-title .muted { font-weight: var(--fw-normal); font-size: var(--fs-meta); }
+.switch-row { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-meta); font-weight: var(--fw-normal); }
+.ext-desc { margin: 0; color: var(--t-desc); font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.2); }
+.ext-warn { margin: 0; padding: 8px 10px; border-radius: calc(8px * var(--round)); background: var(--attn-soft); color: var(--fg); font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.2); }
+.ext-state { font-weight: var(--fw-medium); font-size: var(--fs-meta); }
+.ext-detail { color: var(--t-meta); font-size: var(--fs-meta); }
+.ext-qr { display: flex; gap: 16px; align-items: center; padding: 12px; border: var(--bw) solid var(--line); border-radius: calc(10px * var(--round)); }
+.ext-qr img { width: 180px; height: 180px; image-rendering: pixelated; border-radius: calc(6px * var(--round)); flex: none; }
+.ext-qr p { margin: 4px 0 0; font-size: var(--fs-meta); }
+.ext-logs { flex-basis: 100%; }
+.ext-logs pre { margin: 6px 0 0; max-height: 180px; overflow: auto; font: var(--fs-tiny)/var(--lh-code) var(--mono); color: var(--t-meta); white-space: pre-wrap; }
+.ext-out { display: block; margin-top: 4px; font-size: var(--fs-tiny); color: var(--t-meta); }
+.ext-out.attn { color: var(--attn); }
+.ext-out.bad { color: var(--danger); }
+.events-seg, .inbox-filter { margin-bottom: 12px; }
+.inbox-split { display: grid; grid-template-columns: minmax(240px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.inbox-split .card { margin-bottom: 0; }
+.inbox-row { cursor: pointer; }
+.inbox-row:hover { background: var(--bg-3); }
+.inbox-row.sel { background: var(--sel-bg); box-shadow: inset 2px 0 0 var(--sel-ring); }
+.inbox-row .dot { margin-top: 5px; }
+.inbox-row .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-unread { min-width: 18px; padding: 1px 6px; border-radius: 999px; background: var(--attn); color: var(--on-attn); font-size: var(--fs-tiny); text-align: center; }
+.conv-card .form { gap: 12px; }
+.conv-rule { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--fs-meta); }
+.conv-rule small { display: block; margin-top: 2px; font-weight: var(--fw-normal); }
+.conv-msgs { list-style: none; margin: 0; padding: 4px 16px 12px; max-height: 60vh; overflow: auto; border-top: var(--bw) solid var(--line); }
+.conv-msg { padding: 8px 0; border-bottom: var(--bw) solid var(--line); }
+.conv-msg:last-child { border-bottom: 0; }
+.conv-msg .meta { display: flex; gap: 8px; align-items: baseline; font-size: var(--fs-meta); color: var(--t-meta); }
+.conv-msg .meta b { color: var(--fg); }
+.conv-msg .msg { margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-meta); }
+.conv-msg .msg.assistant { white-space: normal; }
+.conv-close { display: none; }
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  .inbox-split { grid-template-columns: 1fr; }
+  .inbox-split.has-cur .inbox-list { display: none; }
+  .conv-close { display: inline-flex; }
+  .ext-qr { flex-direction: column; align-items: flex-start; }
+}
+.ext-actions ul { margin: 6px 0 0; padding-left: 18px; font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.2); }
+.ext-actions .tag { font-size: var(--fs-tiny); }
+.ext-secret { display: grid; gap: 8px; }

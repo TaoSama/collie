@@ -309,17 +309,48 @@ func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger) {
 
 func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text    string   `json:"text"`
-		Thread  string   `json:"thread"`
-		Re      string   `json:"re"`
-		Options []string `json:"options"`
-		Check   bool     `json:"check"`
+		Text     string   `json:"text"`
+		Thread   string   `json:"thread"`
+		Re       string   `json:"re"`
+		Options  []string `json:"options"`
+		Check    bool     `json:"check"`
+		To       string   `json:"to"`
+		Progress bool     `json:"progress"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	if strings.TrimSpace(body.Text) == "" {
 		writeJSON(w, 400, map[string]any{"error": "empty reply"})
+		return
+	}
+	if body.To != "" {
+		if s.ext == nil {
+			writeJSON(w, 400, map[string]any{"error": "extensions run on the hub"})
+			return
+		}
+		c, ok := s.ext.homeConv(body.To)
+		if !ok {
+			writeJSON(w, 400, map[string]any{"error": "no chat of " + body.To + " with the human yet (is the extension on and signed in?)"})
+			return
+		}
+		body.Thread = c.thread()
+	}
+	if _, _, ok := channelOf(body.Thread); ok && s.ext != nil {
+		kind := s.ext.replyKind(body.Thread, body.To != "", body.Progress)
+		sent, err := s.ext.sendOut(body.Thread, body.Text, kind, s.sup.routerRunInfo(), "")
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error()})
+			return
+		}
+		// The answer lives in that chat (and its 收件箱 view), not in the
+		// chat with Collie, where its question never showed.
+		if !body.Progress {
+			s.sup.mu.Lock()
+			s.sup.routerAskedAt, s.sup.routerRetries = time.Time{}, 0
+			s.sup.mu.Unlock()
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "sent": sent.Ref})
 		return
 	}
 	e, warn := s.sup.Reply(body.Thread, body.Text, body.Re, body.Options, body.Check)
@@ -588,18 +619,28 @@ func (s *Server) superStop(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	if err := s.stopWorker(r.Context(), body.Worker); err != nil {
+		writeJSON(w, 404, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+var errUnknownWorker = errors.New("unknown worker")
+
+// stopWorker ends a worker's turn and closes its pane.
+func (s *Server) stopWorker(ctx context.Context, name string) error {
 	sp := s.sup
 	sp.mu.Lock()
-	wk := sp.st.Workers[body.Worker]
+	wk := sp.st.Workers[name]
 	sp.mu.Unlock()
 	if wk == nil {
-		writeJSON(w, 404, map[string]any{"error": "unknown worker"})
-		return
+		return errUnknownWorker
 	}
 	if wk.Session == "" && wk.PaneID != "" {
 		// herdr does not always know (Antigravity): ask the pane's machine.
 		local, m := split(wk.PaneID)
-		if ps := s.titlesFor(m, r.Context())[local]; ps.Session != "" {
+		if ps := s.titlesFor(m, ctx)[local]; ps.Session != "" {
 			sp.mu.Lock()
 			wk.Session = ps.Session
 			sp.mu.Unlock()
@@ -609,17 +650,17 @@ func (s *Server) superStop(w http.ResponseWriter, r *http.Request) {
 		// Esc stops the turn it is on, the way you would before closing it:
 		// Codex's turn lives in a shared daemon and would carry on without
 		// its window.
-		s.herdr.Call(r.Context(), "pane.send_keys", map[string]any{"pane_id": wk.PaneID, "keys": []string{"esc"}}, nil)
+		s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": wk.PaneID, "keys": []string{"esc"}}, nil)
 		time.Sleep(700 * time.Millisecond)
 	}
 	if kinds[wk.Kind] == "codex" && wk.Session != "" {
 		// Its turn runs in Codex's shared daemon and outlives the terminal.
-		if err := s.stopCodexTurn(r.Context(), wk.Machine, wk.Session); err != nil {
+		if err := s.stopCodexTurn(ctx, wk.Machine, wk.Session); err != nil {
 			log.Printf("stop %s: interrupt its codex turn: %v", wk.Name, err)
 		}
 	}
 	if wk.WorkspaceID != "" {
-		s.herdr.Call(r.Context(), "workspace.close", map[string]any{"workspace_id": wk.WorkspaceID}, nil)
+		s.herdr.Call(ctx, "workspace.close", map[string]any{"workspace_id": wk.WorkspaceID}, nil)
 	}
 	sp.mu.Lock()
 	wk.Ended, wk.Status = true, "gone"
@@ -628,7 +669,7 @@ func (s *Server) superStop(w http.ResponseWriter, r *http.Request) {
 	}
 	sp.addEntryLocked("event", wk.Thread, wk.Name+" 已停止", wk.Name, "info")
 	sp.mu.Unlock()
-	writeJSON(w, 200, map[string]any{"ok": true})
+	return nil
 }
 
 func (s *Server) superShow(w http.ResponseWriter, r *http.Request) {

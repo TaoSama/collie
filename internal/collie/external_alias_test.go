@@ -126,6 +126,9 @@ func TestLaunchedByAsksBetweenDifferentFits(t *testing.T) {
 
 // TestMain lets the test binary stand in for an agent (agentStandIn).
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "ext-") && builtinExts[strings.TrimPrefix(os.Args[1], "ext-")] != nil {
+		os.Exit(builtinExts[strings.TrimPrefix(os.Args[1], "ext-")](os.Args[2:])) // an extension for ext_test.go
+	}
 	if os.Getenv("COLLIE_STAND_IN") != "" {
 		time.Sleep(30 * time.Second)
 		os.Exit(0)

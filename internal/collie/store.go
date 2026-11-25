@@ -62,6 +62,9 @@ type Worker struct {
 	// Session is its agent's conversation id, kept after it stops so a later
 	// `spawn --resume` can carry on where it left off.
 	Session string `json:"session,omitempty"`
+	// Conv is the extension conversation it answers ("" for other workers):
+	// each turn's last message goes back there instead of to the Router.
+	Conv string `json:"conv,omitempty"`
 }
 
 // Entry is one line of the human-facing super-agent conversation.
@@ -166,6 +169,11 @@ type Settings struct {
 	// What the UI calls the sessions Collie started: "" their worker name,
 	// "topic" the title the agent gave its session.
 	WorkerTitle string `json:"worker_title,omitempty"`
+	// Extensions (extensions/README.md §4): the word that hands a message in
+	// an open conversation to its agent ("" for /ai), and the line under
+	// every answer sent back ("" for the default template).
+	ExtTrigger string `json:"ext_trigger,omitempty"`
+	ExtFooter  string `json:"ext_footer,omitempty"`
 }
 
 const workerTitleTopic = "topic"

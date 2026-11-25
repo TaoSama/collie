@@ -33,19 +33,23 @@ func uploadName(name string) string {
 	return stem + ext
 }
 
-func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
-	name := uploadName(r.URL.Query().Get("name"))
+// newUpload makes a fresh file in today's uploads folder for name.
+func newUpload(name string) (*os.File, error) {
 	dir := filepath.Join(collieDir(), "uploads", time.Now().Format("20060102"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		fail(w, err)
-		return
+		return nil, err
 	}
-	path := filepath.Join(dir, randomToken()[:6]+"-"+name)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	return os.OpenFile(filepath.Join(dir, randomToken()[:6]+"-"+uploadName(name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
+func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	name := uploadName(r.URL.Query().Get("name"))
+	f, err := newUpload(name)
 	if err != nil {
 		fail(w, err)
 		return
 	}
+	path := f.Name()
 	n, err := io.Copy(f, http.MaxBytesReader(w, r.Body, maxUpload))
 	f.Close()
 	if err != nil {

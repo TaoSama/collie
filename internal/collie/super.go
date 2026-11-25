@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/TaoSama/collie/internal/extproto"
 )
 
 // Super is Collie's super-agent: one resident Router session (the herdr agent
@@ -874,6 +876,18 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 			dialog = &a
 		}
 	}
+	if w.Conv != "" && !blocked && sp.s.ext != nil {
+		// An extension conversation's agent: its turn's last message is the
+		// answer, sent back to that chat, not a report for the Router.
+		text := sp.lastAssistantText(ctx, w, 0)
+		if msg := sp.workerAgentError(ctx, w, text); msg != "" {
+			text = "（agent 出错，没能完成：" + msg + "）"
+		}
+		if _, err := sp.s.ext.sendOut(w.Thread, text, extproto.KindAnswer, sp.workerRunInfo(w), ""); err != nil {
+			log.Printf("worker %s: send the answer back: %v", w.Name, err)
+		}
+		return
+	}
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if blocked {
@@ -933,6 +947,17 @@ func agentStopLine(screen, summary string) string {
 }
 
 func (sp *Super) lastAssistant(ctx context.Context, w *Worker) string {
+	return sp.lastAssistantText(ctx, w, 1200)
+}
+
+// lastAssistantText is w's last message, clipped to most runes (0: all of it).
+func (sp *Super) lastAssistantText(ctx context.Context, w *Worker, most int) string {
+	cut := func(s string) string {
+		if most > 0 {
+			return clip(s, most)
+		}
+		return s
+	}
 	if pane, machine := split(w.PaneID); machine != "" {
 		// Its transcript lives on that computer: ask its node.
 		if c, err := sp.s.herdr.Client(machine); err == nil {
@@ -944,7 +969,7 @@ func (sp *Super) lastAssistant(ctx context.Context, w *Worker) string {
 				json.NewDecoder(resp.Body).Decode(&out)
 				resp.Body.Close()
 				if out.Text != "" {
-					return clip(out.Text, 1200)
+					return cut(out.Text)
 				}
 			}
 		}
@@ -958,7 +983,7 @@ func (sp *Super) lastAssistant(ctx context.Context, w *Worker) string {
 				msgs := tr.view()
 				for i := len(msgs) - 1; i >= 0; i-- {
 					if msgs[i].Kind == "assistant" {
-						return clip(msgs[i].Text, 1200)
+						return cut(msgs[i].Text)
 					}
 				}
 			}

@@ -29,6 +29,13 @@ CREATE TABLE IF NOT EXISTS entries  (id TEXT PRIMARY KEY, n INTEGER NOT NULL, at
 CREATE INDEX IF NOT EXISTS entries_thread ON entries(thread, n);
 CREATE TABLE IF NOT EXISTS timers   (id TEXT PRIMARY KEY, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, device TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ext_convs  (id TEXT PRIMARY KEY, ext TEXT NOT NULL, last_at INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ext_msgs   (conv TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (conv, id));
+CREATE TABLE IF NOT EXISTS ext_outbox (ref TEXT PRIMARY KEY, conv TEXT NOT NULL, at INTEGER NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ext_outbox_conv ON ext_outbox(conv, at);
+CREATE INDEX IF NOT EXISTS ext_outbox_state ON ext_outbox(state, at);
+CREATE INDEX IF NOT EXISTS ext_msgs_at ON ext_msgs(conv, at);
+CREATE TABLE IF NOT EXISTS ext_audit  (at INTEGER NOT NULL, ext TEXT NOT NULL, action TEXT NOT NULL, ms INTEGER NOT NULL, ok INTEGER NOT NULL);
 `
 
 func openDB(path string) (*sql.DB, error) {
