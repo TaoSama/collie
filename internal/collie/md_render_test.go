@@ -331,7 +331,10 @@ function loadApp(expose, extra = {}) {
   const marker = "  boot();\n})();";
   assert.ok(appSrc.includes(marker), "expected boot() tail in web/app.js");
   const instrumented = appSrc.replace(marker, "  globalThis.__collieTest = { " + expose + " };\n})();");
-  vm.runInNewContext(instrumented, ctx, { filename: "web/app.js" });
+  // The scripts app.js uses go first, as on the page.
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(root, "web/threads.js"), "utf8"), ctx, { filename: "web/threads.js" });
+  vm.runInContext(instrumented, ctx, { filename: "web/app.js" });
   return { ...ctx.__collieTest, ctx, warnings };
 }
 

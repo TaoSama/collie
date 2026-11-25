@@ -230,7 +230,7 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 		Model   string  `json:"model"`
 		Effort  string  `json:"effort"`
 		Alias   *string `json:"alias"` // absent: the default; "": none
-		Re      string  `json:"re"`    // a message of Collie's this answers
+		Re      string  `json:"re"`    // a message of Collie's (or the human's own) this answers
 	}
 	if !decode(w, r, &body) || strings.TrimSpace(body.Text) == "" {
 		if strings.TrimSpace(body.Text) == "" {
@@ -294,11 +294,15 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 // sayLocked is your message to Collie, answering its message reID if set;
 // note goes to Collie only.
 func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger) {
-	re := sp.collieQuoteLocked(reID)
+	re := sp.sayQuoteLocked(reID)
 	e := sp.addEntryReLocked("user", mainThread, text, "", "", re)
 	prompt := text
-	if re != nil { // which of your messages they mean: Collie need not guess
-		prompt = "[In reply to what you said earlier: \"" + clip(re.Text, 300) + "\"]\n" + prompt
+	if re != nil { // which message they mean: Collie need not guess
+		said := "you said"
+		if re.Who == "你" {
+			said = "the human said"
+		}
+		prompt = "[In reply to what " + said + " earlier: \"" + clip(re.Text, 300) + "\"]\n" + prompt
 	}
 	return e, sp.ingestLocked("chat", mainThread, "you", prompt+note, "", "", e.ID)
 }

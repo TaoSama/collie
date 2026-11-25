@@ -222,7 +222,7 @@ func TestPendingDismissPersistenceAgeAndTrimmedQuote(t *testing.T) {
 		t.Fatalf("summary = %q, want %q", snap.Pending[0].Summary, wantSum)
 	}
 
-	// Verify collieQuoteLocked still resolves quotes for an older entry trimmed
+	// Verify sayQuoteLocked still resolves quotes for an older entry trimmed
 	// from in-memory st.Entries (e.g. after scrolling back via /api/super/earlier).
 	oldTarget, _ := sp2.Reply(mainThread, "很早以前的一条待确认消息", "", []string{"确认"})
 	for i := 0; i < 610; i++ {
@@ -238,13 +238,13 @@ func TestPendingDismissPersistenceAgeAndTrimmedQuote(t *testing.T) {
 			inMem = true
 		}
 	}
-	q := sp2.collieQuoteLocked(oldTarget.ID)
+	q := sp2.sayQuoteLocked(oldTarget.ID)
 	sp2.mu.Unlock()
 	if inMem {
 		t.Fatal("expected oldTarget to be trimmed from in-memory st.Entries")
 	}
 	if q == nil || q.Entry != oldTarget.ID || !strings.Contains(q.Text, "很早以前") {
-		t.Fatalf("collieQuoteLocked fallback from SQLite failed: %+v", q)
+		t.Fatalf("sayQuoteLocked fallback from SQLite failed: %+v", q)
 	}
 }
 

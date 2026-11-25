@@ -1661,13 +1661,20 @@ func (sp *Super) quoteLocked(id string) *Quote {
 	return nil
 }
 
-// collieQuoteLocked is a message of Collie's you answer, as a Quote.
-func (sp *Super) collieQuoteLocked(id string) *Quote {
+// sayQuoteLocked is a chat message the human answers: one of Collie's, or
+// one of their own when a run of replies last ended on what they said.
+func (sp *Super) sayQuoteLocked(id string) *Quote {
 	if id == "" {
 		return nil
 	}
-	if e, _ := sp.entryLocked(id); e != nil && e.Role == "collie" {
+	e, _ := sp.entryLocked(id)
+	switch {
+	case e == nil:
+		return nil
+	case e.Role == "collie":
 		return &Quote{Entry: e.ID, Who: "Collie", Text: clip(e.Text, 600)}
+	case e.Role == "user":
+		return &Quote{Entry: e.ID, Who: "你", Text: clip(humanText(e.Text), 600)}
 	}
 	return nil
 }

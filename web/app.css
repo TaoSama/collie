@@ -572,42 +572,42 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 
 /* collie replies carry a small avatar */
 /* hovering a message in Collie's chat shows its time beside it */
-#v-collie .msg[data-time] { position: relative; }
-#v-collie .msg[data-time]::after {
+:is(#v-collie, #run-view) .msg[data-time] { position: relative; }
+:is(#v-collie, #run-view) .msg[data-time]::after {
   content: attr(data-time); position: absolute; bottom: 4px; white-space: nowrap; pointer-events: none;
   font-size: var(--fs-tiny); color: var(--t-meta); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s;
 }
-#v-collie .msg.user[data-time]::after { right: calc(100% + 10px); }
-#v-collie .msg[data-time]:hover::after, #v-collie .msg.show-time::after { opacity: 1; }
+:is(#v-collie, #run-view) .msg.user[data-time]::after { right: calc(100% + 10px); }
+:is(#v-collie, #run-view) .msg[data-time]:hover::after, :is(#v-collie, #run-view) .msg.show-time::after { opacity: 1; }
 /* Phones: tap a message and its time shows on a line of its own under it. */
 @media (hover: none) {
-  #v-collie .msg[data-time]::after, #v-collie .say .msg[data-time]::after { position: static; display: none; width: auto; margin-top: 4px; font-size: var(--fs-tiny); text-align: inherit; opacity: 1; }
-  #v-collie .msg.show-time::after, #v-collie .say .msg.show-time::after { display: block; }
-  #v-collie .msg.user.show-time::after { color: inherit; opacity: .6; }
+  :is(#v-collie, #run-view) .msg[data-time]::after, :is(#v-collie, #run-view) .say .msg[data-time]::after { position: static; display: none; width: auto; margin-top: 4px; font-size: var(--fs-tiny); text-align: inherit; opacity: 1; }
+  :is(#v-collie, #run-view) .msg.show-time::after, :is(#v-collie, #run-view) .say .msg.show-time::after { display: block; }
+  :is(#v-collie, #run-view) .msg.user.show-time::after { color: inherit; opacity: .6; }
 }
 .mem-crew { display: flex; flex-wrap: wrap; gap: 4px 14px; min-width: 0; }
 .mem-crew a { display: inline-flex; align-items: center; gap: 6px; color: var(--t-secondary); text-decoration: none; }
 .mem-crew a[href]:hover { color: var(--fg); }
 .mem-crew + .grow::before { content: "·"; margin-right: 8px; }
 /* What a reply answers: one quiet line above it. */
-#v-collie .re { display: block; max-width: 100%; margin: 0 0 6px; padding-left: 8px; border-left: 2px solid var(--line-2);
+:is(#v-collie, #run-view) .re { display: block; max-width: 100%; margin: 0 0 6px; padding-left: 8px; border-left: 2px solid var(--line-2);
   font-size: var(--fs-small); line-height: 18px; color: var(--t-meta); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#v-collie .re-who { color: var(--t-secondary); margin-right: 6px; }
-#v-collie .msg.user .re { color: inherit; opacity: .6; border-left-color: currentColor; }
-#v-collie .msg.user .re-who { color: inherit; }
+:is(#v-collie, #run-view) .re-who { color: var(--t-secondary); margin-right: 6px; }
+:is(#v-collie, #run-view) .msg.user .re { color: inherit; opacity: .6; border-left-color: currentColor; }
+:is(#v-collie, #run-view) .msg.user .re-who { color: inherit; }
 /* Under a Collie message: copy, quote, its time. The row keeps its place
    and shows on hover; on a phone it opens when you tap the message. */
 /* It takes no room of its own: it sits in the gap before the next item
    (and keeps its room only when a close follow-up message leaves no gap). */
 .msg-acts { display: flex; align-items: center; gap: 2px; height: 24px; margin: 0 0 -24px -6px; color: var(--t-icon); position: relative; z-index: 1;
   opacity: 0; pointer-events: none; transition: opacity .12s; }
-#v-collie .say:hover .msg-acts, #v-collie .msg.show-time .msg-acts { opacity: 1; pointer-events: auto; }
+:is(#v-collie, #run-view) .say:hover .msg-acts, :is(#v-collie, #run-view) .msg.show-time .msg-acts { opacity: 1; pointer-events: auto; }
 /* your own message: the row sits under the bubble's right edge */
-#v-collie .mine { display: flex; flex-direction: column; align-items: flex-end; align-self: stretch; }
-#v-collie .mine .msg-acts { justify-content: flex-end; margin: 2px -6px -26px 0; }
-#v-collie .say:has(+ .say.cont) .msg-acts { margin-bottom: 0; }
-#v-collie .mine .msg-acts .t { margin: 0 6px 0 0; }
-#v-collie .mine:hover .msg-acts, #v-collie .mine .msg.show-time + .msg-acts { opacity: 1; pointer-events: auto; }
+:is(#v-collie, #run-view) .mine { display: flex; flex-direction: column; align-items: flex-end; align-self: stretch; }
+:is(#v-collie, #run-view) .mine .msg-acts { justify-content: flex-end; margin: 2px -6px -26px 0; }
+:is(#v-collie, #run-view) .say:has(+ .say.cont) .msg-acts { margin-bottom: 0; }
+:is(#v-collie, #run-view) .mine .msg-acts .t { margin: 0 6px 0 0; }
+:is(#v-collie, #run-view) .mine:hover .msg-acts, :is(#v-collie, #run-view) .mine .msg.show-time + .msg-acts { opacity: 1; pointer-events: auto; }
 .msg-acts button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: calc(6px * var(--round)); background: none; color: inherit; cursor: pointer; }
 .msg-acts button:hover { background: var(--bg-2); color: var(--fg); }
 .msg-acts button.pin-btn.on { color: var(--pin); }
@@ -618,12 +618,12 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   display: inline-flex; align-items: center; gap: 4px; margin: 0 0 4px;
   font-size: calc(var(--fs-tiny) + 0.5px); line-height: 16px; color: var(--pin); user-select: none;
 }
-#v-collie .mine > .pin-ind { margin: 0 4px 3px 0; }
+:is(#v-collie, #run-view) .mine > .pin-ind { margin: 0 4px 3px 0; }
 .pin-ind svg { width: 12.5px; height: 12.5px; stroke-width: calc(1.85 * var(--stroke)); }
 .pin-ind .pin-body { fill: color-mix(in srgb, currentColor 18%, transparent); }
 @media (hover: none) {
-  .msg-acts, #v-collie .mine .msg-acts { display: none; margin-bottom: 0; }
-  #v-collie .msg.show-time .msg-acts, #v-collie .mine .msg.show-time + .msg-acts { display: flex; }
+  .msg-acts, :is(#v-collie, #run-view) .mine .msg-acts { display: none; margin-bottom: 0; }
+  :is(#v-collie, #run-view) .msg.show-time .msg-acts, :is(#v-collie, #run-view) .mine .msg.show-time + .msg-acts { display: flex; }
 }
 .re-draft { display: flex; align-items: center; gap: 6px; margin: 10px 12px 0; padding-left: 8px; border-left: 2px solid var(--line-2); font-size: var(--fs-small); line-height: 18px; color: var(--t-meta); min-width: 0; }
 .re-draft[hidden] { display: none; }
@@ -631,9 +631,9 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .re-draft .re-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .re-draft button { flex: none; border: 0; background: none; color: var(--t-meta); font-size: calc(var(--fs-lead) - 1px); line-height: 1; padding: 0 4px; cursor: pointer; }
 .re-draft button:hover { color: var(--fg); }
-#v-collie a.re[href]:hover { color: var(--t-secondary); border-left-color: var(--fg-3); }
-#v-collie .msg.flash { animation: flash 1.5s ease-out; }
-#v-collie .say .msg.flash { border-radius: calc(8px * var(--round)); animation: flash-collie 1.5s ease-out; }
+:is(#v-collie, #run-view) a.re[href]:hover { color: var(--t-secondary); border-left-color: var(--fg-3); }
+:is(#v-collie, #run-view) .msg.flash { animation: flash 1.5s ease-out; }
+:is(#v-collie, #run-view) .say .msg.flash { border-radius: calc(8px * var(--round)); animation: flash-collie 1.5s ease-out; }
 @keyframes flash {
   0%, 28% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--attn) 42%, transparent); }
   100% { box-shadow: 0 0 0 3px transparent; }
@@ -649,8 +649,17 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  #v-collie .msg.flash, #v-collie .say .msg.flash { animation-duration: .8s; }
+  :is(#v-collie, #run-view) .msg.flash, :is(#v-collie, #run-view) .say .msg.flash { animation-duration: .8s; }
 }
+/* Under a run's latest message: how many replies, opening the run beside. */
+.run-more { display: inline-flex; align-items: center; gap: 4px; margin: 6px 0 0 -6px; padding: 3px 6px 3px 4px; border: 0; border-radius: calc(6px * var(--round));
+  background: none; color: var(--t-meta); font: inherit; font-size: var(--fs-small); line-height: 18px; cursor: pointer; }
+.mine > .run-more { margin: 6px -6px 0 0; }
+.run-more:hover { background: var(--bg-2); color: var(--fg); }
+.run-more.on { color: var(--accent); }
+.run-more svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: calc(1.8 * var(--stroke)); stroke-linecap: round; stroke-linejoin: round; }
+.run-more svg:last-child { width: 12px; height: 12px; margin-left: -1px; }
+@media (pointer: coarse) { .run-more { min-block-size: 32px; } }
 /* Quick-reply choices under a Collie question: first is the recommended pick. */
 .reply-opts { display: flex; flex-wrap: wrap; gap: 8px; margin: -2px 0 6px; min-width: 0; }
 .thumbs + .reply-opts { margin-top: 8px; }
@@ -1174,12 +1183,22 @@ dialog.sheet > form { flex: 1 1 auto; min-height: 0; max-height: none; }
    on narrow ones, sliding in from the right */
 .app { transition: grid-template-columns .36s cubic-bezier(.32, .72, 0, 1); }
 @media (min-width: 1001px) {
-  .app { grid-template-columns: var(--side-w) minmax(0, 1fr) 0px; }
-  .app.has-file { grid-template-columns: var(--side-w) minmax(0, 1fr) var(--file-w, 600px); }
+  .app { grid-template-columns: var(--side-w) minmax(0, 1fr) var(--run-col, 0px) var(--file-col, 0px); }
+  .app.has-run { --run-col: var(--run-w, 420px); }
+  .app.has-file { --file-col: var(--file-w, 600px); }
+  .runpane { grid-area: 1 / 3; }
+  .filepane { grid-area: 1 / 4; }
 }
 body.dragging .app { transition: none; }
-.filepane { position: relative; display: flex; justify-content: flex-end; min-width: 0; min-height: 0; overflow: hidden; border-left: var(--bw) solid var(--line); background: var(--bg); }
-.filepane[hidden] { display: none; }
+.filepane, .runpane { position: relative; display: flex; justify-content: flex-end; min-width: 0; min-height: 0; overflow: hidden; border-left: var(--bw) solid var(--line); background: var(--bg); }
+.filepane[hidden], .runpane[hidden] { display: none; }
+/* a run of replies: the same column, with the chat's own messages and composer */
+.run-inner { display: flex; flex-direction: column; flex: none; width: var(--run-w, 420px); height: 100%; }
+.runpane .fv-head { padding-bottom: 10px; border-bottom: var(--bw) solid var(--line); }
+#run-body .thread { padding: 20px 20px 24px; }
+#run-thread > .re { margin: 0; white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+#run-view .re-btn { display: none; } /* it always answers the run's latest */
+.runpane .composer { padding: 6px 12px 12px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 .fv-inner { display: flex; flex-direction: column; flex: none; width: var(--file-w, 600px); height: 100%; }
 .fv-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; touch-action: none; }
 .fv-grip:hover, .fv-grip.on, body.dragging { cursor: col-resize; user-select: none; }
@@ -1228,10 +1247,15 @@ body.dragging .app { transition: none; }
 .fv-img img { max-width: 100%; height: auto; border-radius: calc(8px * var(--round)); }
 .fv-note { margin: 16px 0 0; font-size: var(--fs-meta); }
 @media (max-width: 1000px) {
-  .app.has-file { grid-template-columns: var(--side-w) 1fr; }
-  .filepane { position: fixed; inset: 0; z-index: 50; border-left: 0; transform: translateX(100%);
+  .app.has-file, .app.has-run { grid-template-columns: var(--side-w) 1fr; }
+  .filepane, .runpane { position: fixed; inset: 0; z-index: 50; border-left: 0; transform: translateX(100%);
     transition: transform .36s cubic-bezier(.32, .72, 0, 1); box-shadow: -12px 0 32px rgba(0,0,0,.08); }
-  .app.has-file .filepane { transform: none; }
+  .runpane { z-index: 49; } /* a file opened from a run comes over it */
+  .app.has-file .filepane, .app.has-run .runpane { transform: none; }
+  .run-inner { width: 100%; }
+  #run-grip { display: none; }
+  .runpane .fv-x { display: none; }
+  #run-body .thread { padding: 16px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left)); }
   .fv-inner { width: 100%; }
   .fv-grip { display: none; }
   .fv-back { display: inline-grid; }
@@ -1249,12 +1273,12 @@ body.dragging .app { transition: none; }
   .fv-head > .fv-lang { display: none; }
   .fv-act-btn, .fv-copy-btn { min-inline-size: 32px; min-block-size: 32px; width: 32px; height: 32px; }
 }
-@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) { .app.has-file { grid-template-columns: 1fr; } }
-@media (prefers-reduced-motion: reduce) { .app, .filepane { transition: none !important; } }
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) { .app.has-file, .app.has-run { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .app, .filepane, .runpane { transition: none !important; } }
 
 /* ─── standalone wide-screen file reader (#/file?path=...) ─── */
 body.reading-file .app { grid-template-columns: minmax(0, 1fr) !important; transition: none; }
-body.reading-file .side, body.reading-file .filepane { display: none !important; }
+body.reading-file .side, body.reading-file .filepane, body.reading-file .runpane { display: none !important; }
 body.reading-file .main { display: flex !important; }
 .reader-view { background: var(--bg); }
 .rv-head {

@@ -14,6 +14,8 @@
   const narrowMQ = matchMedia("(max-width: 760px), (max-height: 500px) and (pointer: coarse)");
   const shortMQ = matchMedia("(max-height: 500px) and (pointer: coarse)");
   const narrow = () => narrowMQ.matches;
+  // Wide enough for panels beside the conversation, not over it (app.css).
+  const wideMQ = matchMedia("(min-width: 1001px)");
   // A touch screen with no hover: a phone or tablet, where Enter in a message
   // box makes a new line and the send button sends.
   const touchMQ = matchMedia("(hover: none) and (pointer: coarse)");
@@ -764,12 +766,16 @@
   }
   // The conversation keeps at least this much beside the sidebar and a file.
   const MAIN_MIN = 420;
+  // What is open to the right of the conversation, but one of them.
+  const BESIDE = { file: "#file-view", run: "#run-view" };
+  const besideW = (but) => Object.entries(BESIDE).reduce((w, [k, sel]) => w + (k !== but && $("#app").classList.contains("has-" + k) ? $(sel).offsetWidth : 0), 0);
+  // Opening one: the other closes if the conversation would be left too narrow.
+  const roomFor = (k, min) => !wideMQ.matches || innerWidth - $(".side").offsetWidth - besideW(k) - min >= MAIN_MIN;
   // The sidebar's edge drags wider or narrower (not on a phone, where the
   // sidebar is the whole screen); a double-click puts it back.
   const SIDE_MIN = 220, SIDE_MAX = 520;
   const sideMax = () => {
-    const file = $("#app").classList.contains("has-file") ? $("#file-view").offsetWidth : 0;
-    return Math.max(SIDE_MIN, Math.min(SIDE_MAX, innerWidth - MAIN_MIN - file));
+    return Math.max(SIDE_MIN, Math.min(SIDE_MAX, innerWidth - MAIN_MIN - besideW()));
   };
   function setSideW(w, max = sideMax()) {
     const root = document.documentElement.style;
@@ -990,6 +996,7 @@
     if (next !== "collie") {
       pendingOpen = false;
       hideSearchPanel();
+      closeRun();
     }
     view = next; current = next === "ext" ? null : id;
     const nextKey = routeKeyFor(next, id);
@@ -1150,6 +1157,16 @@
   const routerQueued = () => sup.queued_router ?? sup.queued;
   // Messages you sent that the hub's stream hasn't shown yet.
   const pendingSays = [];
+  // A message's key for runs of replies: its id, or a stand-in until it has one.
+  let talkSeq = 0;
+  const talkKey = (e) => e.id || (e._k ||= "l" + ++talkSeq);
+  // Runs of replies as last drawn (threads.js).
+  let runs = collieThreads.group([], talkKey);
+  // The run open beside the chat: its first message, and the one it was
+  // opened at, which finds the run again when an earlier first message loads.
+  let runOpen = null;
+  // The messages, pins and quick replies the chat was last drawn from.
+  let drawn = { allEntries: [], pinIds: new Set(), replyOpts: () => "" };
   // Items dismissed locally via × before the hub's next stream frame lands.
   const dismissedLocal = new Set();
   const ICON_X = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>`;
@@ -1380,6 +1397,11 @@
     }
     return added;
   }
+  // Where scroller sc puts element m in its middle.
+  function centerTop(sc, m) {
+    const sr = sc.getBoundingClientRect(), mr = m.getBoundingClientRect();
+    return Math.max(0, Math.min(sc.scrollHeight - sc.clientHeight, sc.scrollTop + (mr.top - sr.top) - Math.max(24, (sc.clientHeight - mr.height) / 2)));
+  }
   async function jumpToEntry(id) {
     if (!id) return;
     const seq = ++jumpSeq;
@@ -1387,6 +1409,9 @@
     pendingOpen = false;
     renderPendingBar();
     const sel = `#v-collie .msg[data-id="${CSS.escape(id)}"]`;
+    // Folded into a run, or in the run open beside: show it there.
+    const inRun = () => runs.folded.has(id) || runs.member.get(id) === runOpen?.root;
+    if (inRun()) { openRun(runs.member.get(id), id); return; }
     let m = document.querySelector(sel);
     let guards = 0;
     while (!m && canLoadOlder() && guards++ < 40) {
@@ -1396,14 +1421,14 @@
       if (m) break;
       const ok = await loadOlder(false, id);
       if (seq !== jumpSeq) return;
+      if (inRun()) { openRun(runs.member.get(id), id); return; }
       m = document.querySelector(sel);
       if (!ok) break;
     }
     if (!m) { toast("这条消息太早了，已经不在这里"); return; }
     if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(superScrollRAF);
     const sc = $("#super-thread").parentElement;
-    const sr = sc.getBoundingClientRect(), mr = m.getBoundingClientRect();
-    const want = Math.max(0, Math.min(sc.scrollHeight - sc.clientHeight, sc.scrollTop + (mr.top - sr.top) - Math.max(24, (sc.clientHeight - mr.height) / 2)));
+    const want = centerTop(sc, m);
     const dist = want - sc.scrollTop;
     const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (smooth && Math.abs(dist) > sc.clientHeight * 2.2) {
@@ -1717,7 +1742,44 @@
     if (e.key === "Escape" && !taskPanel.hidden && !composing(e)) toggleTaskPanel(false);
   });
 
+  // Quick-reply buttons under a Collie message still waiting on you.
+  function replyOptsIn(allEntries) {
+    const pendIds = new Set(activePending().map((p) => p.id));
+    const entryPending = (idx, id) => {
+      if (!id) return false;
+      if (sup.hasPending) return pendIds.has(id);
+      if (dismissedLocal.has(id)) return false;
+      let otherCollie = false;
+      for (let j = idx + 1; j < allEntries.length; j++) {
+        const next = allEntries[j];
+        if (next.role === "user") {
+          const reId = next.re?.entry || "";
+          if (reId === id || (!reId && !otherCollie)) return false;
+        } else if (next.role === "collie") {
+          otherCollie = true;
+        }
+      }
+      return true;
+    };
+    const replyOpts = (e, idx) => {
+      const opts = Array.isArray(e.options) ? e.options.filter((o) => typeof o === "string" && o.trim()) : [];
+      if (opts.length) {
+        if (!entryPending(idx, e.id)) return "";
+        return `<div class="reply-opts" data-entry="${esc(e.id)}">${opts.map((o) =>
+          `<button type="button" class="reply-opt" data-opt="${esc(o)}">${esc(o)}</button>`).join("")}</div>`;
+      }
+      if (e.check && entryPending(idx, e.id)) {
+        return `<div class="reply-opts reply-check" data-entry="${esc(e.id)}"><button type="button" class="reply-ack" data-ack="${esc(e.id)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已看</button></div>`;
+      }
+      return "";
+    };
+    return replyOpts;
+  }
   function renderSuper(opts) {
+    renderSuperMain(opts);
+    renderRun();
+  }
+  function renderSuperMain(opts) {
     const force = opts === true || !!opts?.force;
     const forceBottom = !!opts?.scrollBottom;
     const restore = opts?.restore || null;
@@ -1788,36 +1850,10 @@
       // a word on the worker whose line it follows.
       let lastUser = "", sinceUser = 0, lastEvent = "", lastCollie = "", sinceCollie = 0;
       const allEntries = chatEntries();
-      const pendIds = new Set(activePending().map((p) => p.id));
+      runs = collieThreads.group(allEntries, talkKey);
       const pinIds = new Set(activePinned().map((p) => p.id));
-      const entryPending = (idx, id) => {
-        if (!id) return false;
-        if (sup.hasPending) return pendIds.has(id);
-        if (dismissedLocal.has(id)) return false;
-        let otherCollie = false;
-        for (let j = idx + 1; j < allEntries.length; j++) {
-          const next = allEntries[j];
-          if (next.role === "user") {
-            const reId = next.re?.entry || "";
-            if (reId === id || (!reId && !otherCollie)) return false;
-          } else if (next.role === "collie") {
-            otherCollie = true;
-          }
-        }
-        return true;
-      };
-      const replyOpts = (e, idx) => {
-        const opts = Array.isArray(e.options) ? e.options.filter((o) => typeof o === "string" && o.trim()) : [];
-        if (opts.length) {
-          if (!entryPending(idx, e.id)) return "";
-          return `<div class="reply-opts" data-entry="${esc(e.id)}">${opts.map((o) =>
-            `<button type="button" class="reply-opt" data-opt="${esc(o)}">${esc(o)}</button>`).join("")}</div>`;
-        }
-        if (e.check && entryPending(idx, e.id)) {
-          return `<div class="reply-opts reply-check" data-entry="${esc(e.id)}"><button type="button" class="reply-ack" data-ack="${esc(e.id)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>已看</button></div>`;
-        }
-        return "";
-      };
+      const replyOpts = replyOptsIn(allEntries);
+      drawn = { allEntries, pinIds, replyOpts };
       const quote = (e) => {
         const q = e.re;
         if (!q) return "";
@@ -1826,12 +1862,13 @@
         if (q.worker && q.worker === lastEvent) return "";
         const pane = q.worker && paneOf(q.worker), past = q.worker && !pane ? workerHist(q.worker, e.at) : null;
         const attr = q.entry ? `href="#" data-goto="${esc(q.entry)}"` : pane ? `href="#/p/${encodeURIComponent(pane)}"` : past ? `href="#/h/${encodeURIComponent(past.id)}"` : "";
-        return `<a class="re" ${attr} title="${esc(q.text)}"><span class="re-who">${esc(q.who)}</span>${esc(plainLine(q.text))}</a>`;
+        return quoteLine(q, attr);
       };
       for (let ei = 0; ei < allEntries.length; ei++) {
         const e = allEntries[ei];
         if (e.ref === ROUTER && e.tone === "info" && e.role !== "user" && e.role !== "collie") continue;
         if (e.role === "event" && workerChatter(e)) continue;
+        if (runs.folded.has(talkKey(e))) continue;
         // A quiet line with the time when the talk picks up again after a
         // while (or on a new day); hovering a message shows its exact time.
         const at = +new Date(e.at) || 0;
@@ -1846,14 +1883,12 @@
         if (at) lastAt = at;
         const cont = e.role === "collie" && prev === "collie";
         prev = prevRole = e.role;
-        const tip = at ? ` title="${esc(fullTime(at))}" data-time="${esc(sepTime(at))}"` : "";
         const pinned = !!(e.id && pinIds.has(e.id));
-        const pinBadge = pinned ? `<div class="pin-ind">${ICON_PIN}<span>已钉住</span></div>` : "";
         if (e.role === "user") {
-          html += `<div class="mine${pinned ? " is-pinned" : ""}">${pinBadge}<div class="msg user" data-id="${esc(e.id)}"${at ? ` title="${esc(fullTime(at))}"` : ""}>${quote(e)}${userText(e.text)}</div>${mineActs(e, at, pinned)}</div>`;
+          html += talkHTML(e, { quote: quote(e), pinned, more: runMore(e) });
           lastUser = e.id; sinceUser = 0; lastEvent = ""; sinceCollie++;
         } else if (e.role === "collie") {
-          html += `<div class="say${cont ? " cont" : ""}${pinned ? " is-pinned" : ""}"><span class="avatar">${cont ? "" : `<img src="icon.svg" alt="">`}</span><div class="msg assistant" data-id="${esc(e.id)}"${at ? ` title="${esc(fullTime(at))}"` : ""}>${pinBadge}${quote(e)}${md(e.text)}${imagesIn(e.text)}${replyOpts(e, ei)}${msgActs(e, at, pinned)}</div></div>`;
+          html += talkHTML(e, { quote: quote(e), cont, pinned, opts: replyOpts(e, ei), more: runMore(e) });
           sinceUser++; lastEvent = ""; lastCollie = e.id; sinceCollie = 0;
         } else {
           lastEvent = e.ref || "";
@@ -2459,7 +2494,7 @@
     if (!sup.router?.alive) toast("正在唤醒 Collie…");
   }
 
-  $("#super-thread").addEventListener("click", async (ev) => {
+  async function onReplyOpt(ev) {
     const ack = ev.target.closest(".reply-ack[data-ack]");
     if (ack) { ev.preventDefault(); dismissPending(ack.dataset.ack); return; }
     const b = ev.target.closest(".reply-opt[data-opt]");
@@ -2479,7 +2514,9 @@
       grp.querySelectorAll("button").forEach((x) => { x.disabled = false; });
       toast(err.message, "attn");
     }
-  });
+  }
+  $("#super-thread").addEventListener("click", onReplyOpt);
+  $("#run-thread").addEventListener("click", onReplyOpt);
 
   $("#pending-wrap").addEventListener("click", (ev) => {
     const dis = ev.target.closest("[data-dismiss]");
@@ -6073,6 +6110,17 @@
   const mineActs = (e, at, pinned = false) => e.id ? `<div class="msg-acts">${at ? `<span class="t">${esc(sepTime(at))}</span>` : ""}
       <button type="button" data-copy="${esc(e.id)}" title="复制" aria-label="复制">${ICON_COPY}</button>
       ${pinActBtn(e.id, pinned)}</div>` : "";
+  // What a message answers, as a quiet line above it; attr makes it a link.
+  const quoteLine = (q, attr = "") => `<${attr ? "a" : "div"} class="re" ${attr} title="${esc(q.text)}"><span class="re-who">${esc(q.who)}</span>${esc(plainLine(q.text))}</${attr ? "a" : "div"}>`;
+  // One of your messages or Collie's, in the chat or in a run beside it.
+  function talkHTML(e, { quote = "", cont = false, pinned = false, opts = "", more = "" }) {
+    const at = +new Date(e.at) || 0, tip = at ? ` title="${esc(fullTime(at))}"` : "";
+    const pinBadge = pinned ? `<div class="pin-ind">${ICON_PIN}<span>已钉住</span></div>` : "";
+    if (e.role === "user") {
+      return `<div class="mine${pinned ? " is-pinned" : ""}">${pinBadge}<div class="msg user" data-id="${esc(e.id)}"${tip}>${quote}${userText(e.text)}</div>${more}${mineActs(e, at, pinned)}</div>`;
+    }
+    return `<div class="say${cont ? " cont" : ""}${pinned ? " is-pinned" : ""}"><span class="avatar">${cont ? "" : `<img src="icon.svg" alt="">`}</span><div class="msg assistant" data-id="${esc(e.id)}"${tip}>${pinBadge}${quote}${md(e.text)}${imagesIn(e.text)}${opts}${more}${msgActs(e, at, pinned)}</div></div>`;
+  }
   async function copyText(t) {
     if (navigator.clipboard && window.isSecureContext) {
       try { await navigator.clipboard.writeText(t); return true; } catch {}
@@ -6163,9 +6211,9 @@
   // No hover on a phone: tap a Collie chat message to see when it was said.
   document.addEventListener("click", (e) => {
     if (!matchMedia("(hover: none)").matches) return;
-    const m = e.target.closest("#v-collie .msg[data-time], #v-collie .say .msg, #v-collie .mine .msg");
+    const m = e.target.closest(":is(#v-collie, #run-view) :is(.msg[data-time], .say .msg, .mine .msg)");
     if (m && e.target.closest("a, button, .thumb, img")) return;
-    for (const x of document.querySelectorAll("#v-collie .msg.show-time")) if (x !== m) x.classList.remove("show-time");
+    for (const x of document.querySelectorAll(":is(#v-collie, #run-view) .msg.show-time")) if (x !== m) x.classList.remove("show-time");
     m?.classList.toggle("show-time");
   });
   new MutationObserver(() => {
@@ -6725,10 +6773,11 @@
   const pane = $("#file-view");
   const setFileW = (w) => document.documentElement.style.setProperty("--file-w", Math.round(w) + "px");
   // The widest the panel may be.
-  const fileMax = () => innerWidth - $(".side").offsetWidth - MAIN_MIN;
+  const fileMax = () => innerWidth - $(".side").offsetWidth - MAIN_MIN - besideW("file");
   let paneTimer;
   function showFilePane() {
     clearTimeout(paneTimer);
+    if (!roomFor("file", 360)) closeRun();
     // Until it has been dragged: a little under half the window.
     setFileW(Math.max(Math.min(store.get("fileW", 0) || innerWidth * 0.45, fileMax()), 360));
     if (pane.hidden) { pane.hidden = false; pane.offsetWidth; }
@@ -6751,6 +6800,111 @@
     onMove: (x, max) => setFileW(fileDragW = Math.max(Math.min(innerWidth - x, max), 360)),
     onEnd: () => store.set("fileW", Math.round(fileDragW)),
   });
+
+  // ───────────────────────────── a run of replies, beside the chat
+  // Wide screens: a column right of the conversation, its width dragged and
+  // remembered. Narrow ones: full screen, sliding in from the right.
+  const runPane = $("#run-view"), runBody = $("#run-body"), runBox = $("#run-thread"), runInput = $("#run-input");
+  const RUN_MIN = 360, RUN_W = 420;
+  const setRunW = (w) => document.documentElement.style.setProperty("--run-w", Math.round(w) + "px");
+  const runMax = () => Math.max(RUN_MIN, innerWidth - $(".side").offsetWidth - MAIN_MIN - besideW("run"));
+  const ICON_RUN = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v8a4 4 0 0 0 4 4h8"/><path d="M15 12l4 4-4 4"/></svg>`;
+  // Under a run's latest message in the chat: how many replies, and the way in.
+  function runMore(e) {
+    const r = runs.lastOf.get(talkKey(e));
+    const t = r && runs.threads.get(r);
+    if (!t) return "";
+    const on = runOpen?.root === r;
+    return `<button type="button" class="run-more${on ? " on" : ""}" data-run="${esc(r)}" aria-expanded="${on}">${ICON_RUN}<span>${t.items.length} 条回复</span>${ICON_MORE}</button>`;
+  }
+  // The chat's buttons follow which run is open, without redrawing the chat.
+  const markRunMore = () => {
+    for (const b of $$("#super-thread .run-more")) {
+      const on = b.dataset.run === runOpen?.root;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-expanded", String(on));
+    }
+  };
+  const runWho = (e) => e.stub ? e.who : e.role === "user" ? "你" : "Collie";
+  let runTimer = 0, runSig = "";
+  function openRun(root, focus = "") {
+    const t = runs.threads.get(root);
+    if (!t) return;
+    clearTimeout(runTimer);
+    runOpen = { root, anchor: focus || talkKey(t.latest) };
+    if (!roomFor("run", RUN_MIN)) closeFilePane();
+    setRunW(Math.max(Math.min(store.get("runW", 0) || RUN_W, runMax()), RUN_MIN));
+    if (runPane.hidden) { runPane.hidden = false; runSig = ""; runPane.offsetWidth; }
+    $("#app").classList.add("has-run");
+    markRunMore();
+    renderRun({ focus, bottom: !focus });
+    if (!touchMQ.matches) runInput.focus({ preventScroll: true });
+  }
+  function closeRun() {
+    if (!runOpen) return;
+    runOpen = null;
+    $("#app").classList.remove("has-run");
+    markRunMore();
+    clearTimeout(runTimer);
+    runTimer = setTimeout(() => { runPane.hidden = true; runBox.innerHTML = runSig = ""; }, 360);
+  }
+  // Redrawn with the chat, from what the chat was drawn from.
+  function renderRun(o = {}) {
+    if (!runOpen) return;
+    const root = runs.member.get(runOpen.anchor) || runOpen.root, t = runs.threads.get(root);
+    if (!t) { closeRun(); return; }
+    if (runOpen.root !== root) { runOpen.root = root; markRunMore(); }
+    const { allEntries, pinIds, replyOpts } = drawn;
+    let html = "", prevKey = "", prevRole = "";
+    for (const e of [t.root, ...t.items]) {
+      if (e.stub) {
+        html += quoteLine(e);
+        prevKey = e.id; prevRole = "";
+        continue;
+      }
+      // Its quote only when it answers something other than the line above.
+      const p = t.parentOf(e);
+      const quote = p && p !== prevKey ? quoteLine(e.re, `href="#" data-goto="${esc(p)}"`) : "";
+      const opts = e.role === "collie" && (e.options?.length || e.check) ? replyOpts(e, allEntries.indexOf(e)) : "";
+      html += talkHTML(e, { quote, cont: e.role === "collie" && prevRole === "collie", pinned: !!(e.id && pinIds.has(e.id)), opts });
+      prevKey = talkKey(e); prevRole = e.role;
+    }
+    if (html === runSig && !o.focus && !o.bottom) return;
+    const atBottom = runBody.scrollHeight - runBody.scrollTop - runBody.clientHeight <= AT_BOTTOM_PX;
+    if (html !== runSig) runBox.innerHTML = runSig = html;
+    $("#run-title").textContent = (t.root.stub ? plainLine(t.root.text) : clientPinSummary(t.root)) || runWho(t.root);
+    const hit = o.focus && runBox.querySelector(`.msg[data-id="${CSS.escape(o.focus)}"]`);
+    if (hit) {
+      runBody.scrollTop = centerTop(runBody, hit);
+      replayClass(hit, "flash");
+    } else if (o.bottom || atBottom) {
+      runBody.scrollTop = runBody.scrollHeight;
+    }
+  }
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("#super-thread [data-run]");
+    if (b) { e.preventDefault(); runOpen?.root === b.dataset.run ? closeRun() : openRun(b.dataset.run); }
+  });
+  runPane.addEventListener("click", (e) => { if (e.target.closest("[data-run-close]")) closeRun(); });
+  // Esc closes what is on top: a file beside it, a list or a dialog goes first.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !runOpen || composing(e) || $("#app").classList.contains("has-file")) return;
+    if (pendingOpen || !$("#task-panel").hidden || document.querySelector("dialog[open]")) return;
+    closeRun();
+  });
+  let runDragW = 0;
+  dragGrip($("#run-grip"), {
+    onStart: runMax,
+    onMove: (x, max) => setRunW(runDragW = Math.max(Math.min(innerWidth - besideW("run") - x, max), RUN_MIN)),
+    onEnd: () => store.set("runW", Math.round(runDragW)),
+  });
+  // Your reply goes on the run's latest message.
+  bindComposer($("#run-composer"), runInput, async (draft, ready) => {
+    const t = runOpen && runs.threads.get(runOpen.root);
+    if (!t) throw new Error("这串回复已经关上了");
+    const last = [...t.items].reverse().find((x) => x.id) || t.root;
+    await sendSuper(draft, { entry: last.id, who: last.stub ? last.who : runWho(last), text: last.text }, false, ready);
+  }, () => targetNow().machine);
 
   // Minimal, safe Markdown: escape first, then add a little structure.
   const mdCache = new Map();

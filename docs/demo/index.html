@@ -387,6 +387,34 @@
       </div>
     </section>
   </main>
+  <!-- a run of replies in the chat with Collie, beside it -->
+  <aside class="runpane" id="run-view" hidden>
+    <div class="fv-grip" id="run-grip" title="拖动调整宽度"></div>
+    <div class="run-inner">
+    <header class="fv-head">
+      <button type="button" class="icon-btn fv-back" data-run-close aria-label="返回" title="返回"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <h3 id="run-title"></h3>
+      <div class="fv-actions">
+        <button type="button" class="icon-btn fv-act-btn fv-x" data-run-close aria-label="关闭" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </header>
+    <div class="viewer chatbg" id="run-body" tabindex="-1">
+      <div class="thread" id="run-thread"></div>
+    </div>
+    <form class="composer" id="run-composer">
+      <div class="cbox">
+        <div class="files" hidden></div>
+        <textarea id="run-input" rows="1" placeholder="回复…"></textarea>
+        <div class="cbar">
+          <button type="button" class="icon-btn attach" title="添加图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+          <span class="spacer"></span>
+          <button class="send" type="submit" title="发送 (Enter)"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </div>
+      </div>
+      <input type="file" multiple hidden>
+    </form>
+    </div>
+  </aside>
   <!-- a file a message mentions, read-only, beside the conversation -->
   <aside class="filepane" id="file-view" hidden>
     <div class="fv-grip" id="fv-grip" title="拖动调整宽度"></div>
@@ -601,6 +629,7 @@
 <script src="vendor/xterm.js"></script>
 <script src="vendor/katex/katex.min.js"></script>
 <script src="imgedit.js"></script>
+<script src="threads.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -135,12 +135,15 @@ func TestQuote(t *testing.T) {
 	}
 }
 
-func TestCollieQuote(t *testing.T) {
-	sp := &Super{st: &State{Entries: []*Entry{{ID: "e1", Role: "collie", Text: "要我开 PR 吗？"}, {ID: "e2", Role: "user", Text: "x"}}}}
-	if q := sp.collieQuoteLocked("e1"); q == nil || q.line() != "Collie：要我开 PR 吗？" {
+func TestSayQuote(t *testing.T) {
+	sp := &Super{st: &State{Entries: []*Entry{{ID: "e1", Role: "collie", Text: "要我开 PR 吗？"}, {ID: "e2", Role: "user", Text: "先别开"}, {ID: "e3", Role: "event", Text: "w 完成了一轮"}}}}
+	if q := sp.sayQuoteLocked("e1"); q == nil || q.line() != "Collie：要我开 PR 吗？" {
 		t.Errorf("got %+v", q)
 	}
-	if sp.collieQuoteLocked("e2") != nil || sp.collieQuoteLocked("") != nil {
-		t.Error("only Collie's messages are quoted")
+	if q := sp.sayQuoteLocked("e2"); q == nil || q.line() != "你：先别开" {
+		t.Errorf("your own message: got %+v", q)
+	}
+	if sp.sayQuoteLocked("e3") != nil || sp.sayQuoteLocked("") != nil || sp.sayQuoteLocked("e9") != nil {
+		t.Error("only chat messages are quoted")
 	}
 }
