@@ -334,6 +334,7 @@ function loadApp(expose, extra = {}) {
   // The scripts app.js uses go first, as on the page.
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(root, "web/threads.js"), "utf8"), ctx, { filename: "web/threads.js" });
+  vm.runInContext(fs.readFileSync(path.join(root, "web/machines.js"), "utf8"), ctx, { filename: "web/machines.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/ext.js"), "utf8"), ctx, { filename: "web/ext.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/workbench.js"), "utf8"), ctx, { filename: "web/workbench.js" });
   vm.runInContext(instrumented, ctx, { filename: "web/app.js" });

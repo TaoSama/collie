@@ -45,6 +45,10 @@
 | `--composer-line` / `--composer-focus` / `--composer-shadow` | 输入框的边框、聚焦边框和阴影 |
 | `--sel-bg` / `--sel-ring` | 侧栏里打开着的那一项 |
 
+## 选电脑
+
+凡是让人选电脑的地方（派活、新建会话、设置里的电脑、扩展的运行在）都用同一个 `<select>` 选择器，列表和每一项都交给 `web/machines.js`：本 hub 在线的电脑加上当前选中的那台，按名字排，hub 有 agent 时排第一、没有时排最后；每项带在线圆点，下面一行写 `hub` 或系统、离线、默认。各处可选范围不同（新建会话还列出其他 hub 的电脑）用 `choices` 的参数表达，不要另写一份。
+
 ## 加一个皮肤
 
 1. 在 `web/skins.css` 加三块：`:root[data-skin="名字"]` 放和明暗无关的值（`--round`、字体、组件形状），`[data-theme="light"]` 和 `[data-theme="dark"]` 两块各放一整套颜色。颜色只写在明暗块里，否则会漏到另一个主题。
