@@ -6871,7 +6871,11 @@
         .replace(FILE_RE, (_, pre, p) => {
           const rawP = unesc(p);
           return `${pre}${keep(`<a ${fileLinkAttrs(rawP, p, "打开这个文件")}>${p}</a>`)}`;
-        });
+        })
+        // *italic* and _italic_, after links so a URL's or path's * and _ stay
+        // as they are; not inside a word (2*3*4, snake_case) or around spaces (a * b).
+        .replace(/(?<![A-Za-z0-9*])\*(?![\s*])([^*\n]*?[^\s*])\*(?![A-Za-z0-9*])/g, "<em>$1</em>")
+        .replace(/(?<![\p{L}\p{N}_])_(?![\s_])([^_\n]*?[^\s_])_(?![\p{L}\p{N}_])/gu, "<em>$1</em>");
       while (r.includes("\u0001")) r = r.replace(/\u0001(\d+)\u0001/g, (_, n) => stash[+n]);
       return r;
     };
