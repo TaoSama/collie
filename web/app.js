@@ -3382,7 +3382,7 @@
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
       return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, human: +new Date(a.human_at || 0), machine: a.machine || "", cwd: a.cwd,
-        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true };
+        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true, archived: !!a.archived };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -3420,8 +3420,9 @@
       ...extRows.filter((r) => r.live || !histKeys.has(r.key)),
       ...histRows.filter((r) => !liveKeys.has(r.key)),
     // Archived where its agent has no archive of its own (or not yet listed
-    // as archived): hidden while it rests.
-    ].filter((r) => !(r.mark?.archived && r.rank >= ENDED_RANK));
+    // as archived): hidden while it rests. One its own agent archived while
+    // it stays open in herdr hides once it has finished (archived.go).
+    ].filter((r) => !(r.mark?.archived && r.rank >= ENDED_RANK) && !(r.archived && r.rank >= RANK.done));
   }
   // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {

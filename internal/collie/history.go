@@ -172,6 +172,7 @@ func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 	s.loadHistory()
 	list := append([]*Ended{}, history.list...)
 	history.Unlock()
+	list = s.withoutArchived(list)
 	sort.SliceStable(list, func(i, j int) bool { return list[i].Ended.After(list[j].Ended) })
 	writeJSON(w, 200, map[string]any{"sessions": list})
 }

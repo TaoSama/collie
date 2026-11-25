@@ -35,3 +35,9 @@ Antigravity 桌面 App 的 `conversation_summaries.db` 也列出 agy CLI 起的�
 ## 一轮做完折成「已工作 Xm Ys」
 
 Codex 和 Antigravity 每几步就插一句过程消息，连续的工具调用很少超过 3 个，「N 个步骤」那种按连续工具合并的折叠收不起来，所以按轮折叠：解析时给一轮的最后一条消息标上 `turn_ms`，前端把它之前、上一条用户消息之后的过程收成一行（`drawThread`）。Codex 用日志里 `event_msg` 的 `task_complete.duration_ms`；Antigravity 没有轮结束的记录，把「有内容、不调用工具的 `PLANNER_RESPONSE`」当作结束，从 `USER_INPUT` 的 `created_at` 算起。被中断的轮没有 `task_complete`，不折叠。
+
+## Codex 和 Antigravity 自己归档的会话要从每条列表里拿掉
+
+两家各有归档，Collie 得照着读（`internal/collie/archived.go`）：Codex 是 `state_<n>.sqlite` 的 `threads.archived = 1`（会话文件挪进 `archived_sessions/`）；Antigravity 是 `conversation_summaries.db` 里搜索表 `conversations_fts` 中 `chunk_index = -1` 那行的 `archived`，App 的索引和 CLI 的索引各有一份，两处都要看。`annotations/<id>.pbtxt` 只存改过的标题之类，App 自己的归档列表也按搜索表查。
+
+只滤 App 的线程表不够：人在 Codex 里归档的会话，常常还开在 herdr 窗格里（接管过来的），或已经结束、留在 hub 的历史里。所以节点在 `/api/titles` 里给窗格会话标上 `archived`，并回答 hub 带来的历史会话里哪些已归档；侧栏把已归档、已经停下的窗格和历史行藏起来，正在跑或等确认的照常显示。取消归档后几秒内回来。Antigravity 的 App 行在 Go 里滤掉归档再数满上限，SQL 不加 `LIMIT`。

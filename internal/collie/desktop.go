@@ -36,6 +36,8 @@ import (
 //     "vscode" is the App); a message goes through the App's local message bus,
 //     so it runs in the App window that owns the thread.
 //   - Antigravity: its conversation index, ~/.gemini/antigravity/conversation_summaries.db.
+//
+// What an app has archived is left out (archived.go).
 
 // No age window: the apps list their old conversations too, so each app's
 // newest ones are kept, however old.
@@ -625,25 +627,31 @@ func (s *Server) agyDesktopRows() []desktopRow {
 	// (it set a timer, or a command runs in the background).
 	// source names the client that started a conversation: the app lists the
 	// CLI's conversations too. Older indexes may lack the column.
+	// No LIMIT: archived conversations (whichever index says so) are left
+	// out below, and mustn't take the places of the others.
 	source := "''"
 	var has int
 	if db.QueryRow(`SELECT count(*) FROM pragma_table_info('conversation_summaries') WHERE name = 'source'`).Scan(&has) == nil && has > 0 {
 		source = "source"
 	}
-	res, err := db.Query(`SELECT conversation_id, title, preview, workspace_uris, status, not_fully_idle, last_modified_time, last_user_input_time, `+source+`
+	res, err := db.Query(`SELECT conversation_id, title, preview, workspace_uris, status, not_fully_idle, last_modified_time, last_user_input_time, ` + source + `
 		FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0
-		ORDER BY last_modified_time DESC LIMIT ?`, desktopMax)
+		ORDER BY last_modified_time DESC`)
 	if err != nil {
 		return nil
 	}
 	defer res.Close()
+	archived := s.archivedIDs()
 	var rows []desktopRow
 	for res.Next() {
 		var id, title, preview, uris, status, src string
 		var notIdle bool
 		var mod, input any
-		if res.Scan(&id, &title, &preview, &uris, &status, &notIdle, &mod, &input, &src) != nil {
+		if res.Scan(&id, &title, &preview, &uris, &status, &notIdle, &mod, &input, &src) != nil || archived[id] {
 			continue
+		}
+		if len(rows) == desktopMax {
+			break
 		}
 		if title == "" {
 			title = preview

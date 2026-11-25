@@ -76,6 +76,8 @@ func (s *Server) archiveSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return
 	}
+	forgetDesktopRows()
+	forgetArchived()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -140,6 +141,8 @@ type paneSession struct {
 	Context *ctxUsage `json:"context,omitempty"`
 	// HumanAt: when the human last wrote in it, else when it started (humanAt).
 	HumanAt time.Time `json:"human_at,omitzero"`
+	// Archived: its agent's own archive has it (archived.go).
+	Archived bool `json:"archived,omitempty"`
 }
 
 // localSessions maps this machine's agent panes (local ids) to their sessions.
@@ -156,6 +159,7 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		}
 		s.herdr.pruneRuns(alive, func(m string) bool { return m == "" })
 	}
+	archived := s.archivedIDs()
 	for _, a := range agents {
 		local, machine := split(a.PaneID)
 		if machine != "" {
@@ -193,7 +197,7 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 			t = cleanTitle(tt)
 		}
 		run, _ := s.herdr.Run(local)
-		ps := paneSession{Title: t, Session: sess, Run: run}
+		ps := paneSession{Title: t, Session: sess, Run: run, Archived: archived[sess]}
 		if sess != "" && (kind == "claude" || kind == "codex" || kind == "agy") {
 			ps.HumanAt = humanAt(s.sessionLog(kind, sess), kind)
 			if u := s.sessionUsage(kind, sess); u != nil {
@@ -247,8 +251,10 @@ func (s *Server) sessionUsage(kind, session string) *ctxUsage {
 	return &u
 }
 
+// getTitles: GET /api/titles?archived=<ids>; the hub names the ended
+// sessions it remembers here, and hears which of them are archived.
 func (s *Server) getTitles(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"sessions": s.titlesFor("", r.Context())})
+	writeJSON(w, 200, map[string]any{"sessions": s.titlesFor("", r.Context()), "archived": s.archivedAmong(splitIDs(r.URL.Query().Get("archived")))})
 }
 
 // titlesFor returns the cached titles of one machine ("" = this one) and
@@ -257,6 +263,8 @@ type titleCache struct {
 	at      time.Time
 	m       map[string]paneSession
 	loading bool
+	// archived: those of its ended sessions it says are archived (nil: it didn't say).
+	archived map[string]bool
 }
 
 var titles = struct {
@@ -284,16 +292,25 @@ func (s *Server) titlesFor(machine string, ctx context.Context) map[string]paneS
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
 		var got map[string]paneSession
+		var archived map[string]bool
 		if machine == "" {
 			got = s.localSessions(ctx)
 		} else if client, err := s.herdr.Client(machine); err == nil {
-			req, _ := http.NewRequestWithContext(ctx, "GET", "http://node/api/titles", nil)
+			u := "http://node/api/titles?archived=" + url.QueryEscape(strings.Join(s.endedOn(machine), ","))
+			req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
 			if resp, err := client.Do(req); err == nil {
 				var body struct {
 					Sessions map[string]paneSession `json:"sessions"`
+					Archived *[]string              `json:"archived"`
 				}
 				if json.NewDecoder(resp.Body).Decode(&body) == nil && body.Sessions != nil {
 					got = body.Sessions
+					if body.Archived != nil {
+						archived = map[string]bool{}
+						for _, id := range *body.Archived {
+							archived[id] = true
+						}
+					}
 				}
 				resp.Body.Close()
 			}
@@ -301,7 +318,7 @@ func (s *Server) titlesFor(machine string, ctx context.Context) map[string]paneS
 		titles.Lock()
 		c.loading, c.at = false, time.Now()
 		if got != nil {
-			c.m = got
+			c.m, c.archived = got, archived
 		}
 		titles.Unlock()
 	}
