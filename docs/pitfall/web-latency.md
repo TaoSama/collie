@@ -54,7 +54,7 @@ hub 以前每次组装状态都要依次问每台电脑的 workspace、pane、ag
 - 记忆页最重：所有文件的 Markdown 和编辑框。渲染结果按数据签名记住（`memHTML`），数据到达后空闲时先算好；切走时保留它的节点（不在编辑时），切回且数据没变就直接放回。
 - 收件箱、线程的行和记忆的折叠块用 `content-visibility: auto`，长列表只排版屏幕内的部分。
 
-结果（点击到内容画出，处理时间 / Event Timing）：桌面 2–10ms / 24–32ms（无头 Chrome 的帧间隔占大头），首次打开记忆约 30ms。手机仿真加 4 倍 CPU 降速 10–40ms / 16–56ms，首次打开记忆约 110ms。
+v2026.1125.39 线上结果（devbox 无头 Chrome，点击到内容画出，事件处理时间 / Event Timing 时长）：桌面 2–11ms / 16–32ms，首次打开记忆约 30ms / 64ms。Pixel 7 尺寸加 4 倍 CPU 降速 10–55ms / 16–64ms，首次打开记忆约 105ms / 160ms，剩下的是解析和排版表单、Markdown 的时间。测量脚本用 Playwright 在 `#auto-tabs` 上记点击时刻，MutationObserver 等 `#auto-body` 变化后的下一帧，加上 Event Timing 的 `processingEnd` 和 `duration`。
 
 ## 读不到 pane 不等于 pane 关了
 
