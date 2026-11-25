@@ -168,6 +168,10 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			} else {
 				e.ReadOnly = "Antigravity 没有打开：打开它之后就能从这里发消息"
 			}
+			// `agy --conversation` picks the App's conversation up in a herdr
+			// pane, but not while the App still runs a turn of it: there is no
+			// process of its own to stop first.
+			e.CanTakeOver = e.Session != "" && e.Cwd != "" && !e.Live
 		}
 		out = append(out, e)
 	}

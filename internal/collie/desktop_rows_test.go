@@ -253,3 +253,28 @@ func TestAgyDesktopRowsSkipEmptyConversations(t *testing.T) {
 		t.Fatalf("rows = %+v, want only the conversation with steps and a time", rows)
 	}
 }
+
+func TestAgyDesktopSessionsTakeOverWhenIdle(t *testing.T) {
+	desktopCache.Lock()
+	desktopCache.at, desktopCache.app = time.Now(), false
+	desktopCache.rows = []desktopRow{
+		{id: "ag-idle", kind: "agy", session: "idle", cwd: "/root"},
+		{id: "ag-running", kind: "agy", session: "running", cwd: "/root", running: true},
+		{id: "ag-waiting", kind: "agy", session: "waiting", cwd: "/root", waiting: true},
+		{id: "ag-nowhere", kind: "agy", session: "nowhere"},
+	}
+	desktopCache.Unlock()
+	t.Cleanup(forgetDesktopRows)
+	got := map[string]bool{}
+	for _, e := range (&Server{home: t.TempDir()}).desktopSessions(nil, nil, time.Now()) {
+		got[e.Session] = e.CanTakeOver
+	}
+	// Only a resting conversation with a directory to resume it in: a turn the
+	// App still runs has no process of its own to stop first.
+	want := map[string]bool{"idle": true, "running": false, "waiting": false, "nowhere": false}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("CanTakeOver[%s] = %v, want %v", id, got[id], w)
+		}
+	}
+}
