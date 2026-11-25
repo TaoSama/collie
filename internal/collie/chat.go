@@ -763,7 +763,10 @@ type Approval struct {
 }
 
 var (
-	numberedRe = regexp.MustCompile(`^\s*([❯›>▸●➜→]\s*)?(\d)[.)]\s+(.{1,90}?)\s*$`)
+	// A numbered option can be as long as the line: Codex's update prompt
+	// spells out the install command. The numbering rules in parseApproval
+	// and screenAsks tell a menu from a printed list, not the length.
+	numberedRe = regexp.MustCompile(`^\s*([❯›>▸●➜→]\s*)?(\d)[.)]\s+(.+?)\s*$`)
 	cursorRe   = regexp.MustCompile(`^\s*[❯›>▸●➜→]\s+(.{1,90}?)\s*$`)
 	hintRe     = regexp.MustCompile(`(?i)((enter|esc|tab)\b|↑|↓).*(confirm|cancel|select|navigate|continue|back|skip|close|review|amend|dismiss|submit)`)
 	idleRe     = regexp.MustCompile(`(?i)^\s*[❯›>]\s*$|\?\s*for shortcuts\b|\bshift\+tab to cycle\b|⏎\s*send\b`)

@@ -10,6 +10,15 @@ agent 答完一轮，回复末尾常是「1. … 2. …」的编号列表，或�
 
 样本：`TestScreenAsksPrintedLists`（`internal/collie/screen_test.go`）。改判定时跑一遍全部屏幕样本，对比改前改后每条的识别结果。
 
+## 选项可以比一行话还长
+
+Codex 启动时的升级框（0.167 实测），独立安装版的第 1 项把整条安装命令写在选项里（``› 1. Update now (runs `sh -c 's=$(curl -fsSL …) && … eval "$s"'`)``，122 字符）。`numberedRe` 原先限制选项文字最多 90 字符，这一项匹配不上，被当成提示语放进卡片标题，选项只剩 2、3。npm 安装版的第 1 项短，窄屏折行时也正常，所以只在宽屏的独立安装版出现。
+
+- 编号选项不限长度，区分菜单和回复里的编号列表靠编号递减、按键提示、选择光标和下方没有输入框这几条，不靠长度。不带编号的光标菜单仍限 90 字符，它没有别的办法区分正文。
+- 对话框没有以「?」结尾的问句时，卡片标题取第一段（对话框的标题，如 `Update available · …`、`Select Model and Effort`），不取最后一段。
+
+样本：`internal/collie/testdata/codex-update-*.txt`，测试 `TestCodexUpdatePrompt`。在临时 `CODEX_HOME` 里把 Codex 二进制放到 `packages/standalone/current/bin/codex` 运行，就能看到独立安装版的升级框。
+
 ## Codex 执行中提的问题是折叠的
 
 Codex（0.172 实测）在一轮执行中调用 `request_user_input` 时，问题不弹菜单，而是折叠在输入框上方：

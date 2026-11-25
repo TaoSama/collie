@@ -5381,9 +5381,10 @@
       const q = m[0].trim().replace(/^[^:：?？]{1,24}[:：]\s*(?=\S)/, "");
       return { q, blocks: out };
     }
-    const last = blocks.map((b) => !b.code).lastIndexOf(true);
-    if (last < 0) return { q: "要继续吗？", blocks };
-    return { q: blocks[last].text, blocks: blocks.filter((_, k) => k !== last) };
+    // No question: a dialog heads itself with its title ("Update available").
+    const head = blocks.findIndex((b) => !b.code);
+    if (head < 0) return { q: "要继续吗？", blocks };
+    return { q: blocks[head].text, blocks: blocks.filter((_, k) => k !== head) };
   }
 
   // A calm decision sheet: the question as the title, the dialog's text

@@ -78,3 +78,30 @@ func TestCodexQueuedQuestion(t *testing.T) {
 		t.Error("an opened question is not pressed again")
 	}
 }
+
+// Codex's update prompt at launch. Real 0.167 screens: npm and standalone
+// installs, wide and narrow. The standalone install's option 1 spells out the
+// whole install command, longer than a line of prose in a list.
+func TestCodexUpdatePrompt(t *testing.T) {
+	screens := map[string]string{}
+	for _, name := range []string{"codex-update-npm.txt", "codex-update-narrow.txt", "codex-update-curl.txt"} {
+		screen, err := os.ReadFile("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		screens[name] = string(screen)
+		a := parseApproval(string(screen))
+		var labels []string
+		for _, c := range a.Choices {
+			labels = append(labels, c.Text+"."+strings.SplitN(c.Label, " ", 2)[0])
+		}
+		if !screenAsks(string(screen)) || strings.Join(labels, ",") != "1.Update,2.Skip,3.Skip" || !a.Choices[0].Current ||
+			!strings.HasPrefix(strings.TrimSpace(a.Question), "Update available") {
+			t.Errorf("%s: %q %v", name, a.Question, labels)
+		}
+	}
+	a := parseApproval(screens["codex-update-curl.txt"])
+	if want := "Update now (runs `sh -c 's=$(curl -fsSL https://chatgpt.com/codex/install.sh) && CODEX_NON_INTERACTIVE=1 eval \"$s\"'`)"; len(a.Choices) == 0 || a.Choices[0].Label != want {
+		t.Errorf("option 1: %+v", a.Choices)
+	}
+}
