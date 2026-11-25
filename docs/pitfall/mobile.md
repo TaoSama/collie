@@ -25,6 +25,8 @@
 
 PWA 没有浏览器的返回按钮，靠系统返回手势走 `history`。从通知或链接直接打开某个会话时，历史只有一条，返回会直接退出 app。所以手机冷启动到深链时，先在下面垫一条 `#/`。
 
+盖在页面上的全屏层（回复串抽屉）也要在历史里占一步，否则返回手势会把下面那一页也带走：打开时 `pushState` 同一个 hash，`history.state.run` 记着开的是哪串；返回时 `route()` 看到 hash 没变，只按 `history.state` 开关抽屉（`syncRun`）。手动关（返回按钮、×、Esc）走 `history.back()`，把这一步收回来，不留空步。在抽屉里打开文件时，文件盖在抽屉上，第一次返回先关文件，再把抽屉这一步补回去。文件预览自己还没有这一步，单独打开文件时，返回手势会离开当前页。
+
 ## 测量
 
 演示站（`sh scripts/demo.sh`，`python3 -m http.server -d docs/demo`）就是真实前端，可以用 Playwright 的手机模拟（`isMobile`、`hasTouch`、iOS/Android UA）和 CDP `Emulation.setSafeAreaInsetsOverride` 模拟刘海。量的是点击区域（主要控件不小于 44px，视觉小的圆按钮用 `::after` 扩大热区）、小于 12px 的字、超出视口的元素和横向滚动。iOS 键盘只能把 `--vh` 改小来模拟，Playwright 缩小视口相当于 Android 的行为。

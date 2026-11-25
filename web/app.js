@@ -990,7 +990,10 @@
     }
     if (next && next !== "file") store.set("last", h);
     if (decidedAt && (decidedAt.view !== next || decidedAt.id !== id)) hideDecided();
-    if (next === view && id === (next === "ext" ? extCur : current)) return;
+    if (next === view && id === (next === "ext" ? extCur : current)) {
+      if (next === "collie") syncRun();
+      return;
+    }
     // Snapshot the departing view right before its DOM is hidden.
     if (prevView && performance.now() >= programmaticScrollUntil) {
       captureViewScroll(prevView, prevId, prevIdx);
@@ -1026,6 +1029,7 @@
     if (next === "collie") {
       if (saved && !saved.atBottom) renderSuper({ force: true, restore: saved });
       else renderSuper({ force: true, scrollBottom: true });
+      syncRun();
       renderTarget(true);
       if (!narrow() && ($("#super-search")?.hidden ?? true)) $("#super-input").focus({ preventScroll: true });
     }
@@ -7042,7 +7046,7 @@
   let paneTimer;
   function showFilePane() {
     clearTimeout(paneTimer);
-    if (!roomFor("file", 360)) closeRun();
+    if (!roomFor("file", 360)) dismissRun();
     // Until it has been dragged: a little under half the window.
     setFileW(Math.max(Math.min(store.get("fileW", 0) || innerWidth * 0.45, fileMax()), 360));
     if (pane.hidden) { pane.hidden = false; pane.offsetWidth; }
@@ -7092,9 +7096,17 @@
   };
   const runWho = (e) => e.stub ? e.who : e.role === "user" ? "你" : "Collie";
   let runTimer = 0, runSig = "";
-  function openRun(root, focus = "") {
+  // Open, a run is a step in history of its own: back (a phone's swipe, the
+  // browser's button) closes it and stays in the chat. fromHistory: that
+  // step is the one being returned to, so none is added.
+  function openRun(root, focus = "", fromHistory = false) {
     const t = runs.threads.get(root);
-    if (!t) return;
+    if (!t) return false;
+    if (!fromHistory) {
+      const step = { ...(history.state || {}), run: root };
+      if (runOpen && history.state?.run) history.replaceState(step, "");
+      else history.pushState({ ...step, collieIdx: ++navCur }, "", location.hash);
+    }
     clearTimeout(runTimer);
     runOpen = { root, anchor: focus || talkKey(t.latest) };
     if (!roomFor("run", RUN_MIN)) closeFilePane();
@@ -7104,6 +7116,26 @@
     markRunMore();
     renderRun({ focus, bottom: !focus });
     if (!touchMQ.matches) runInput.focus({ preventScroll: true });
+    return true;
+  }
+  // Closing it by hand takes back its step in history.
+  function dismissRun() {
+    if (runOpen && history.state?.run) history.back();
+    else closeRun();
+  }
+  // After going back or forward in the chat: the run that step has open.
+  function syncRun() {
+    const r = history.state?.run;
+    // A file opened from the run covers it on a phone: back closes that first.
+    if (!r && runOpen && !wideMQ.matches && $("#app").classList.contains("has-file")) {
+      closeFilePane();
+      history.pushState({ ...(history.state || {}), run: runOpen.root, collieIdx: ++navCur }, "", location.hash);
+      return;
+    }
+    if (!r) { closeRun(); return; }
+    if (runOpen?.root === r) return;
+    // Gone (e.g. reloaded before the chat came in): the step is the chat's.
+    if (!openRun(r, "", true)) history.replaceState({ ...history.state, run: undefined }, "");
   }
   function closeRun() {
     if (!runOpen) return;
@@ -7148,14 +7180,14 @@
   }
   document.addEventListener("click", (e) => {
     const b = e.target.closest("#super-thread [data-run]");
-    if (b) { e.preventDefault(); runOpen?.root === b.dataset.run ? closeRun() : openRun(b.dataset.run); }
+    if (b) { e.preventDefault(); runOpen?.root === b.dataset.run ? dismissRun() : openRun(b.dataset.run); }
   });
-  runPane.addEventListener("click", (e) => { if (e.target.closest("[data-run-close]")) closeRun(); });
+  runPane.addEventListener("click", (e) => { if (e.target.closest("[data-run-close]")) dismissRun(); });
   // Esc closes what is on top: a file beside it, a list or a dialog goes first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !runOpen || composing(e) || $("#app").classList.contains("has-file")) return;
     if (pendingOpen || !$("#task-panel").hidden || document.querySelector("dialog[open]")) return;
-    closeRun();
+    dismissRun();
   });
   let runDragW = 0;
   dragGrip($("#run-grip"), {
