@@ -7249,6 +7249,38 @@
   // along in the message (agents read images and files by path).
   const RETRY_SVG = `<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>`;
   const fmtSize = (n) => n < 1024 ? n + " B" : n < 1 << 20 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB";
+  // A screenshot or photo crosses the network as WebP (JPEG where the browser
+  // cannot write WebP), no larger than agents read it: a 2576-pixel long
+  // edge and 3.75 megapixels. Small files, GIFs, SVGs and the like go as they are.
+  const SHRINK_TYPES = /^image\/(png|jpeg|bmp)$/, SHRINK_MIN_BYTES = 96 << 10;
+  const SHRINK_EDGE = 2576, SHRINK_PIXELS = 3.75e6, SHRINK_QUALITY = 0.85;
+  async function shrinkImage(file, name) {
+    if (!SHRINK_TYPES.test(file.type) || file.size < SHRINK_MIN_BYTES || !window.createImageBitmap) return file;
+    try {
+      const bm = await createImageBitmap(file);
+      const scale = Math.min(1, SHRINK_EDGE / Math.max(bm.width, bm.height), Math.sqrt(SHRINK_PIXELS / (bm.width * bm.height)));
+      const c = Object.assign(document.createElement("canvas"), { width: Math.max(1, Math.round(bm.width * scale)), height: Math.max(1, Math.round(bm.height * scale)) });
+      const g = c.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.drawImage(bm, 0, 0, c.width, c.height);
+      bm.close();
+      const encode = (type) => new Promise((done) => c.toBlob(done, type, SHRINK_QUALITY));
+      let b = await encode("image/webp");
+      if (b?.type !== "image/webp") {
+        // JPEG has no transparency: what was see-through turns white
+        g.globalCompositeOperation = "destination-over";
+        g.fillStyle = "#fff";
+        g.fillRect(0, 0, c.width, c.height);
+        b = await encode("image/jpeg");
+      }
+      if (!b || b.size >= file.size) return file;
+      const ext = b.type === "image/webp" ? ".webp" : ".jpg";
+      return new File([b], name.replace(/\.[^./]*$/, "") + ext, { type: b.type });
+    } catch (err) {
+      console.warn("image not shrunk", file.name, err);
+      return file;
+    }
+  }
   function bindFiles(form, machine) {
     const box = $(".files", form), picker = $('input[type="file"]', form);
     form._files = [];
@@ -7265,10 +7297,12 @@
       // an edit uploads the picture again: the earlier upload is dropped
       f.abort?.abort();
       const ctl = f.abort = new AbortController(), m = machine();
-      const up = routeReq(`/api/uploads?name=${encodeURIComponent(f.name)}${m ? "&machine=" + encodeURIComponent(m) : ""}`);
-      f.done = fetch(up.url, {
-        method: "POST", body: f.file, signal: ctl.signal, credentials: up.hub ? "omit" : "same-origin",
-        headers: up.hub ? { Authorization: "Bearer " + up.hub.token } : {},
+      f.done = shrinkImage(f.file, f.name).then((body) => {
+        const up = routeReq(`/api/uploads?name=${encodeURIComponent(body === f.file ? f.name : body.name)}${m ? "&machine=" + encodeURIComponent(m) : ""}`);
+        return fetch(up.url, {
+          method: "POST", body, signal: ctl.signal, credentials: up.hub ? "omit" : "same-origin",
+          headers: up.hub ? { Authorization: "Bearer " + up.hub.token } : {},
+        });
       }).then(async (res) => {
         const d = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(d.error || res.statusText);
