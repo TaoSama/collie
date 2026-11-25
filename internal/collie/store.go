@@ -20,7 +20,7 @@ type Trigger struct {
 	Text    string    `json:"text"`
 	At      time.Time `json:"at"`
 	Action  string    `json:"action"` // respond | candidate | ignore (fast-path decision)
-	Status  string    `json:"status"` // queued | delivered | ignored
+	Status  string    `json:"status"` // queued | delivered | ignored | failed
 	Targets []string  `json:"targets,omitempty"`
 	Key     string    `json:"key,omitempty"` // idempotency key
 	Ref     string    `json:"ref,omitempty"` // related object id (worker, timer…)

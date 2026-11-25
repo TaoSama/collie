@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -40,7 +41,9 @@ func unixDialer(socket string) func(ctx context.Context) (net.Conn, error) {
 func dialHerdr(ctx context.Context, socket string) (net.Conn, error) {
 	var d net.Dialer
 	c, err := d.DialContext(ctx, "unix", socket)
-	if err == nil || !startHerdrServer() {
+	// Only a socket that isn't there (or that nobody listens on) means herdr
+	// isn't running; a dial that ran out of time is just late.
+	if err == nil || !(errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)) || !startHerdrServer() {
 		return c, err
 	}
 	for i := 0; i < 40; i++ {

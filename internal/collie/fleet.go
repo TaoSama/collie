@@ -3,7 +3,6 @@ package collie
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -408,6 +407,25 @@ func (h *Herdr) paneOfName(ctx context.Context, name string) string {
 // fanOut runs a list call on every online machine and merges the results.
 // The hub's machine failing is reported only when nothing else answered.
 func (h *Herdr) fanOut(ctx context.Context, method string) (json.RawMessage, error) {
+	raw, _, err := h.fanOutFrom(ctx, method)
+	return raw, err
+}
+
+// AgentsListed is Agents with the machines that answered: an agent missing
+// from the list may still run on the others.
+func (h *Herdr) AgentsListed(ctx context.Context) ([]Agent, map[string]bool, error) {
+	raw, answered, err := h.fanOutFrom(ctx, "agent.list")
+	if err != nil {
+		return nil, nil, err
+	}
+	var r struct {
+		Agents []Agent `json:"agents"`
+	}
+	err = json.Unmarshal(raw, &r)
+	return r.Agents, answered, err
+}
+
+func (h *Herdr) fanOutFrom(ctx context.Context, method string) (json.RawMessage, map[string]bool, error) {
 	key := map[string]string{"workspace.list": "workspaces", "pane.list": "panes", "agent.list": "agents"}[method]
 	ms := h.Machines()
 	type res struct {
@@ -475,7 +493,7 @@ func (h *Herdr) fanOut(ctx context.Context, method string) (json.RawMessage, err
 	h.local.Online = localErr == nil
 	h.mu.Unlock()
 	if ok == 0 && localErr != nil {
-		return nil, localErr
+		return nil, nil, localErr
 	}
 	for _, m := range ms { // stable order: hub machine first
 		merged = append(merged, byMachine[m.ID]...)
@@ -526,7 +544,12 @@ func (h *Herdr) fanOut(ctx context.Context, method string) (json.RawMessage, err
 		}
 		h.mu.Unlock()
 	}
-	return json.Marshal(map[string]any{key: merged})
+	answered := make(map[string]bool, len(byMachine))
+	for id := range byMachine {
+		answered[id] = true
+	}
+	raw, err := json.Marshal(map[string]any{key: merged})
+	return raw, answered, err
 }
 
 func machineOf(id string) string { _, m := split(id); return m }
@@ -572,50 +595,6 @@ func streamDialer(open func() (net.Conn, error), kind string) func(ctx context.C
 		}
 		return c, nil
 	}
-}
-
-// Prompt submits text to an agent. herdr 0.8 refuses agent.prompt while it
-// still marks the agent launch_pending, which can stick for good; once herdr
-// reports the agent idle the terminal is ready, so paste into the pane and
-// press enter instead.
-func (h *Herdr) Prompt(ctx context.Context, target, text string) error {
-	err := h.Call(ctx, "agent.prompt", map[string]any{"target": target, "text": text}, nil)
-	var he *HerdrError
-	if err == nil || !errors.As(err, &he) || (he.Code != "agent_not_found" && he.Code != "agent_not_ready") {
-		return err
-	}
-	pane := target
-	if !strings.Contains(pane, ":") {
-		if pane = h.paneOfName(ctx, target); pane == "" {
-			return err
-		}
-	}
-	var info struct {
-		Agent struct {
-			Status string `json:"agent_status"`
-		} `json:"agent"`
-	}
-	if h.Call(ctx, "agent.get", map[string]any{"target": pane}, &info) != nil {
-		return err
-	}
-	switch info.Agent.Status {
-	case "idle", "done":
-	case "working", "blocked":
-		return &HerdrError{Code: "agent_blocked", Message: "agent is " + info.Agent.Status}
-	default:
-		return err // still starting: let the caller retry
-	}
-	// herdr 0.8 also says "idle" while a dialog (folder trust, a permission
-	// question) is up; pasting there would answer it. Look first.
-	if h.ScreenAsks(ctx, pane) {
-		return &HerdrError{Code: "agent_blocked", Message: "agent is showing a question"}
-	}
-	// Bracketed paste keeps multi-line text in one message.
-	if e := h.Call(ctx, "pane.send_text", map[string]any{"pane_id": pane, "text": "\x1b[200~" + text + "\x1b[201~"}, nil); e != nil {
-		return e
-	}
-	time.Sleep(300 * time.Millisecond)
-	return h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"enter"}}, nil)
 }
 
 // Type types a line at a pane's prompt and presses enter.

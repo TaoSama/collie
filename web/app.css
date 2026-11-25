@@ -1119,6 +1119,7 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .badge.queued { border-color: var(--fg); color: var(--fg); }
 .badge.ignored { color: var(--t-meta); border-style: dashed; }
 .badge.candidate { color: var(--attn); border-color: color-mix(in srgb, var(--attn) 40%, transparent); }
+.badge.failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
 .empty-row { padding: 22px 16px; text-align: center; color: var(--t-empty); font-size: var(--fs-meta); }
 .form { display: grid; gap: 12px; padding: 16px; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

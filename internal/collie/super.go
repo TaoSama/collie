@@ -63,6 +63,7 @@ type Super struct {
 	lastScreen     map[string]screenMark
 	transcripts    map[string]*transcript
 	noAgent        map[string]time.Time // worker → since when its pane has had no agent in it
+	unanswered     map[string]time.Time // machine → since when it hasn't answered the tick's list
 	pinnedCache    map[string]*Entry    // older pinned entries resolved from SQLite
 	notifyBuf      []notice
 	notifyAt       time.Time
@@ -97,6 +98,7 @@ func newSuper(s *Server, dir string) (*Super, error) {
 		lastScreen:  map[string]screenMark{},
 		transcripts: map[string]*transcript{},
 		noAgent:     map[string]time.Time{},
+		unanswered:  map[string]time.Time{},
 	}
 	db, err := openDB(filepath.Join(dir, "herd.db")) // ~/.collie/collie.db belongs to another app
 	if err != nil {
@@ -367,13 +369,30 @@ func (sp *Super) byName(list []Agent) map[string]liveAgent {
 func (sp *Super) tick(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
-	list, ok := sp.agentList(ctx)
+	// Listing every computer can take seconds. A worker spawned or done
+	// starting meanwhile is missing from a list taken before it was named:
+	// it isn't gone, and its brief must not go to the Router instead. Only
+	// the workers already up before the list can be missing from it.
+	sp.mu.Lock()
+	settled := map[string]*Worker{}
+	for name, w := range sp.st.Workers {
+		if w.Status != "starting" {
+			settled[name] = w
+		}
+	}
+	sp.mu.Unlock()
+	// One computer that hangs must not use up the tick: it is left out of
+	// this list, and what is on it waits for it (away).
+	listCtx, cancelList := context.WithTimeout(ctx, tickListWait)
+	list, answered, ok := sp.agentsListed(listCtx)
+	cancelList()
 	if !ok {
 		return // herdr unavailable; keep everything queued
 	}
 	sp.push.watch(list)
 	live := sp.byName(list)
 	now := time.Now()
+	away := sp.awayMachines(answered, now)
 
 	type finished struct {
 		w       *Worker
@@ -407,8 +426,11 @@ func (sp *Super) tick(parent context.Context) {
 			continue
 		}
 		a, alive := live[w.Name]
+		if !alive && away[w.Machine] {
+			continue // its computer didn't answer: it may well be running
+		}
 		if !alive {
-			if w.Status != "starting" && w.Status != "failed" {
+			if w.Status != "starting" && w.Status != "failed" && settled[w.Name] == w {
 				w.Ended, w.Status = true, "gone"
 				sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf("worker %s exited (its herdr pane is gone).", w.Name), "", "", w.Name)
 				sp.addEntryLocked("event", w.Thread, w.Name+" 已退出", w.Name, "info")
@@ -500,13 +522,18 @@ func (sp *Super) tick(parent context.Context) {
 		return
 	}
 
-	// 4. Deliver batches to free sessions.
+	// 4. Deliver batches to free sessions, side by side: each one is a send
+	// and a read back across the internet, with its own time.
+	var sending sync.WaitGroup
 	for target, list := range deliveries {
 		if target == routerName && (sp.handingOver() || sp.dreaming()) {
 			continue // events wait for the fresh session
 		}
 		a, alive := live[target]
 		if !alive {
+			if away[sp.targetMachine(target)] {
+				continue // delivered as soon as its computer answers again
+			}
 			if target == routerName {
 				sp.ensureRouter(ctx)
 			} else {
@@ -531,8 +558,15 @@ func (sp *Super) tick(parent context.Context) {
 				continue
 			}
 		}
-		sp.deliver(ctx, target, list)
+		sending.Add(1)
+		go func() {
+			defer sending.Done()
+			dctx, cancel := context.WithTimeout(parent, deliverWait)
+			defer cancel()
+			sp.deliver(dctx, target, list)
+		}()
 	}
+	sending.Wait()
 
 	if a, ok := live[routerName]; ok && (a.Status == "done" || a.Status == "idle") {
 		sp.routerSettled(ctx, a.Pane)
@@ -542,6 +576,70 @@ func (sp *Super) tick(parent context.Context) {
 
 	// 5. Watchdog.
 	sp.watchdog(ctx, live, routerAlive)
+}
+
+const (
+	tickListWait = 3 * time.Second
+	deliverWait  = 30 * time.Second // a send, read back, and its retries
+	// awayGrace: how long a computer that doesn't answer (reconnecting,
+	// hanging) keeps its workers. Past it they count as gone, as before.
+	awayGrace = 2 * time.Minute
+)
+
+// agentsListed is the agent list with the computers that answered.
+func (sp *Super) agentsListed(ctx context.Context) ([]Agent, map[string]bool, bool) {
+	if sp.s == nil || sp.s.herdr == nil {
+		return nil, nil, false
+	}
+	list, answered, err := sp.s.herdr.AgentsListed(ctx)
+	return list, answered, err == nil
+}
+
+// awayMachines is the computers that didn't answer this list (or aren't
+// connected, as after a hub restart), for less than awayGrace so far.
+func (sp *Super) awayMachines(answered map[string]bool, now time.Time) map[string]bool {
+	ids := map[string]bool{}
+	for _, m := range sp.s.herdr.Machines() {
+		ids[m.ID] = true
+	}
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	for _, w := range sp.st.Workers {
+		if !w.Ended {
+			ids[w.Machine] = true
+		}
+	}
+	ids[sp.routerMachineLocked()] = true
+	away := map[string]bool{}
+	for id := range sp.unanswered {
+		if !ids[id] || answered[id] {
+			delete(sp.unanswered, id)
+		}
+	}
+	for id := range ids {
+		if answered[id] {
+			continue
+		}
+		since, ok := sp.unanswered[id]
+		if !ok {
+			sp.unanswered[id], since = now, now
+		}
+		away[id] = now.Sub(since) < awayGrace
+	}
+	return away
+}
+
+// targetMachine is the computer a delivery target runs on.
+func (sp *Super) targetMachine(target string) string {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if target == routerName {
+		return sp.routerMachineLocked()
+	}
+	if w := sp.st.Workers[target]; w != nil {
+		return w.Machine
+	}
+	return ""
 }
 
 // fromHuman keeps what the human said in the chat.
@@ -631,6 +729,27 @@ func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 	defer sp.mu.Unlock()
 	if err != nil {
 		log.Printf("deliver to %s: %v", target, err)
+	}
+	if err != nil && (he == nil || he.Code != "prompt_unconfirmed") {
+		return
+	}
+	if err != nil {
+		// Sent and read back, retried, still not in: sending it yet again
+		// could submit it twice, so it stops here, where the human sees it.
+		ids := make([]string, len(list))
+		for i, t := range list {
+			ids[i] = "#" + t.ID
+			t.Targets = remove(t.Targets, target)
+			if len(t.Targets) == 0 {
+				t.Status = "failed"
+			}
+		}
+		who := target
+		if target == routerName {
+			who = "Collie"
+		}
+		sp.addEntryLocked("event", list[0].Thread, fmt.Sprintf("没能把消息送进 %s 的终端（%s）：%s", who, strings.Join(ids, " "), he.Message), target, "error")
+		sp.changed()
 		return
 	}
 	if fresh {

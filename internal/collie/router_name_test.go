@@ -21,6 +21,8 @@ type fakeHerdr struct {
 	next   int
 	hidden int
 	calls  []string
+	// afterList runs once a list call has its answer, before it is sent.
+	afterList func()
 }
 
 type fakePane struct {
@@ -28,7 +30,49 @@ type fakePane struct {
 	// screen is what pane.read shows; ⇧← turns it into unfolded.
 	screen, unfolded string
 	status           string // "" is idle
+	// sim makes the pane an agent with an input box: its screen shows what
+	// it took (said) above what is typed (box). drop counts make it lose
+	// prompts or Enters; quiet ones take a message without changing state.
+	sim                     bool
+	box                     string
+	said                    []string
+	seq                     uint64
+	dropPrompts, dropEnters int
+	quiet                   bool
+	// hangUp: the next agent.prompt types its text, then the connection
+	// drops before herdr answers (a node going away mid-call).
+	hangUp bool
 }
+
+func (p *fakePane) enter() {
+	if p.dropEnters > 0 {
+		p.dropEnters--
+		return
+	}
+	if p.box == "" {
+		return
+	}
+	p.said, p.box = append(p.said, p.box), ""
+	if !p.quiet {
+		p.status = "working"
+		p.seq++
+	}
+}
+
+func (p *fakePane) simScreen() string {
+	var b strings.Builder
+	for _, m := range p.said {
+		b.WriteString("❯ " + m + "\n")
+	}
+	box := p.box
+	if strings.Contains(box, "\n") {
+		box = fmt.Sprintf("[Pasted text #1 +%d lines]", strings.Count(box, "\n"))
+	}
+	b.WriteString("────\n❯ " + box + "\n────\n")
+	return b.String()
+}
+
+var errHangUp = &HerdrError{Code: "hang_up"}
 
 func newFakeHerdr(t *testing.T) *fakeHerdr {
 	return &fakeHerdr{ws: map[string]string{}, panes: map[string]*fakePane{}}
@@ -66,7 +110,7 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		if status == "" {
 			status = "idle"
 		}
-		v := map[string]any{"pane_id": id, "workspace_id": p.ws, "cwd": p.cwd, "agent_status": status, "interactive_ready": true}
+		v := map[string]any{"pane_id": id, "workspace_id": p.ws, "cwd": p.cwd, "agent_status": status, "interactive_ready": true, "state_change_seq": p.seq}
 		if p.kind != "" {
 			v["agent"] = p.kind
 		}
@@ -95,6 +139,9 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 			}
 		}
 		key := map[string]string{"workspace.list": "workspaces", "agent.list": "agents", "pane.list": "panes"}[method]
+		if f.afterList != nil {
+			f.afterList()
+		}
 		return map[string]any{key: out}, nil
 	case "workspace.create":
 		f.next++
@@ -127,11 +174,40 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		if p == nil {
 			return nil, &HerdrError{Code: "pane_not_found"}
 		}
+		if p.sim {
+			return map[string]any{"read": map[string]any{"text": p.simScreen()}}, nil
+		}
 		return map[string]any{"read": map[string]any{"text": p.screen}}, nil
 	case "pane.send_keys":
 		p := f.panes[str("pane_id")]
 		if keys, _ := params["keys"].([]any); p != nil && len(keys) == 1 && keys[0] == "shift+left" && p.unfolded != "" {
 			p.screen = p.unfolded
+		}
+		if keys, _ := params["keys"].([]any); p != nil && p.sim && len(keys) == 1 && keys[0] == "enter" {
+			p.enter()
+		}
+		return map[string]any{}, nil
+	case "pane.send_text":
+		p := f.panes[str("pane_id")]
+		if p == nil {
+			return nil, &HerdrError{Code: "pane_not_found"}
+		}
+		p.box += strings.TrimSuffix(strings.TrimPrefix(str("text"), "\x1b[200~"), "\x1b[201~")
+		return map[string]any{}, nil
+	case "agent.prompt":
+		p := f.panes[str("target")]
+		if p == nil || p.kind == "" {
+			return nil, &HerdrError{Code: "agent_not_found"}
+		}
+		if p.dropPrompts > 0 {
+			p.dropPrompts--
+			return map[string]any{}, nil
+		}
+		p.box += str("text")
+		p.enter()
+		if p.hangUp {
+			p.hangUp = false
+			return nil, errHangUp
 		}
 		return map[string]any{}, nil
 	case "agent.start":
@@ -167,7 +243,11 @@ func (f *fakeHerdr) dial(context.Context) (net.Conn, error) {
 			return
 		}
 		resp := map[string]any{"id": req.ID}
-		if out, err := f.handle(req.Method, req.Params); err != nil {
+		out, err := f.handle(req.Method, req.Params)
+		if err == errHangUp {
+			return
+		}
+		if err != nil {
 			resp["error"] = err
 		} else {
 			resp["result"] = out
@@ -207,7 +287,8 @@ func newRouterTestSuper(t *testing.T, f *fakeHerdr) *Super {
 	binCache.Store("claude", "/usr/bin/true") // the agent is "installed"
 	srv := &Server{herdr: h, home: dir}
 	sp := &Super{s: srv, db: db, dir: dir, bin: "collie", st: st, subs: map[chan struct{}]bool{},
-		lastScreen: map[string]screenMark{}, transcripts: map[string]*transcript{}, noAgent: map[string]time.Time{}}
+		lastScreen: map[string]screenMark{}, transcripts: map[string]*transcript{}, noAgent: map[string]time.Time{},
+		unanswered: map[string]time.Time{}}
 	srv.sup = sp
 	return sp
 }
