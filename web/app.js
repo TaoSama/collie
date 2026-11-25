@@ -83,10 +83,11 @@
   const SOURCE_LABEL = { worker: "派出的 agent", chat: "对话", timer: "定时", system: "Collie" };
   const collieStatus = (s) => COLLIE_STATUS[s] || "空闲";
   const collieDot = (s) => (s === "done" || s === "unknown" ? "idle" : s === "dreaming" ? "starting" : s || "asleep");
-  // A session's Claude or Codex mark carries a </> badge when it runs on the
-  // command line, none in the desktop app or when its record doesn't say.
+  // A session's Claude, Codex or Antigravity mark carries a </> badge when it
+  // runs on the command line, none in the desktop app or when its record
+  // doesn't say.
   const CLI_BADGE = '<span class="cli-badge" aria-hidden="true"><svg viewBox="0 0 12 12"><path d="M3.6 3.6 1.4 6l2.2 2.4M8.4 3.6 10.6 6 8.4 8.4M6.9 2.6 5.1 9.4"/></svg></span>';
-  const sessionGlyph = (kind, surface) => (GLYPHS[kind] || GLYPHS.agent) + (surface === "cli" && (kind === "claude" || kind === "codex") ? CLI_BADGE : "");
+  const sessionGlyph = (kind, surface) => (GLYPHS[kind] || GLYPHS.agent) + (surface === "cli" && (kind === "claude" || kind === "codex" || kind === "agy") ? CLI_BADGE : "");
   // herdr runs the agents' command lines.
   const glyph = (v) => isLocalRouter(v) ? GLYPHS.collie : !v.is_agent ? GLYPHS.shell : sessionGlyph(v.kind, "cli");
 
