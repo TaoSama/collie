@@ -1012,7 +1012,7 @@
       renderTarget(true);
       if (!narrow() && ($("#super-search")?.hidden ?? true)) $("#super-input").focus({ preventScroll: true });
     }
-    if (next === "auto") openAuto(saved);
+    if (next === "auto") openAuto(saved, true);
     if (next === "devices") openDevices(saved);
     if (next === "prefs") renderPrefs(saved);
     if (next === "file") openWideFile(id, saved);
@@ -2528,62 +2528,97 @@
     }
   });
 
-  function openAuto(restore = null) {
+  // Each tab draws from the last answer to its request at once; the request
+  // only refreshes it. The answers ride in the startup snapshot.
+  const AUTO_API = { inbox: "triggers", threads: "triggers", timers: "timers", memory: "memory", hooks: "settings", settings: "settings" };
+  let autoData = {};
+  async function fetchAuto(src) {
+    const r = await api("/api/super/" + src);
+    autoData[src] = r;
+    if (src === "memory") (window.requestIdleCallback || setTimeout)(() => memHTML(r));
+    return r;
+  }
+
+  // all: the page was just opened, so the other tabs' data is fetched too.
+  function openAuto(restore = null, all = false) {
+    const body = $("#auto-body");
+    // The memory tab's nodes are kept while another tab is open: parsing
+    // them again is the slowest part of a switch.
+    if (body._memSig && !memEditing) memParked = { sig: body._memSig, nodes: [...body.childNodes] };
     memEditing = false;
-    $("#auto-body")._memSig = "";
+    body._memSig = ""; body._sig = "";
     markTab("#auto-tabs", autoTab);
-    if (restore) restoreSimpleScroll($("#auto-body"), restore);
+    const src = AUTO_API[autoTab], have = autoData[src];
+    if (autoTab === "memory" && have && memParked?.sig === memSig(have)) {
+      body.replaceChildren(...memParked.nodes);
+      body._memSig = memParked.sig;
+      if (restore) restoreSimpleScroll(body, restore);
+    } else if (have) drawAuto(have, restore);
+    else body.innerHTML = "";
     clearInterval(autoTimer);
-    loadAuto(restore);
+    loadAuto(have ? null : restore);
+    if (all) {
+      for (const k of new Set(Object.values(AUTO_API))) if (k !== src) fetchAuto(k).catch(() => {});
+      if (autoData.memory) (window.requestIdleCallback || setTimeout)(() => memHTML(autoData.memory));
+    }
     if (autoTab === "inbox" || autoTab === "threads") autoTimer = setInterval(() => loadAuto(), 4000);
     if (autoTab === "memory") autoTimer = setInterval(() => { if (!memEditing) loadAuto(); }, 5000);
   }
 
   async function loadAuto(restore = null) {
-    const body = $("#auto-body");
+    const tab = autoTab;
+    try {
+      const r = await fetchAuto(AUTO_API[tab]);
+      if (view !== "auto" || autoTab !== tab) return;
+      drawAuto(r, restore);
+      if (tab === "settings") api("/api/super/lark?fresh").then((l) => { autoData.lark = l; showLarkWho(); }).catch(() => {});
+    } catch (err) {
+      if (view === "auto" && autoTab === tab) $("#auto-body").innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`;
+    }
+  }
+  function showLarkWho() {
+    const el = $("#lark-who"), l = autoData.lark;
+    if (el && l) el.textContent = l.ready ? `发给 ${l.who || "lark-cli 登录的人"}（以机器人身份）` : `${l.problem}，所以不会发`;
+  }
+
+  // drawAuto shows r in the open tab, keeping the scroll and which folds are
+  // open. Tabs with forms are left alone when the answer hasn't changed.
+  function drawAuto(r, restore = null) {
+    const body = $("#auto-body"), tab = autoTab;
     const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
     const applyAfter = () => {
       if (restore) restoreSimpleScroll(body, restore);
       else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
     };
-    try {
-      if (autoTab === "inbox" || autoTab === "threads") {
-        const r = await api("/api/super/triggers");
-        if (view !== "auto") return;
-        body.innerHTML = autoTab === "inbox" ? inboxHTML(r.triggers || []) : threadsHTML(r.threads || []);
+    if (tab === "inbox" || tab === "threads") {
+      body.innerHTML = tab === "inbox" ? inboxHTML(r.triggers || []) : threadsHTML(r.threads || []);
+      applyAfter();
+    } else if (tab === "memory") {
+      if (memEditing) return;
+      const sig = memSig(r);
+      if (sig !== body._memSig) {
+        const open = new Set([...body.querySelectorAll("details[open]")].map((d) => d.dataset.path || d.querySelector("summary")?.textContent));
+        const first = !body._memSig;
+        body._memSig = sig; body.innerHTML = memHTML(r, sig);
+        if (!first) body.querySelectorAll("details").forEach((d) => d.open = open.has(d.dataset.path || d.querySelector("summary")?.textContent));
         applyAfter();
-      } else if (autoTab === "memory") {
-        const r = await api("/api/super/memory");
-        if (view !== "auto" || autoTab !== "memory" || memEditing) return;
-        // Workers' states count too: the task cards show them.
-        const sig = JSON.stringify(r) + sup.workers.map((w) => w.name + ":" + workerStatus(w)).join();
-        if (sig !== body._memSig) {
-          const open = new Set([...body.querySelectorAll("details[open]")].map((d) => d.dataset.path || d.querySelector("summary")?.textContent));
-          const first = !body._memSig;
-          body._memSig = sig; body.innerHTML = memoryHTML(r);
-          if (!first) body.querySelectorAll("details").forEach((d) => d.open = open.has(d.dataset.path || d.querySelector("summary")?.textContent));
-          applyAfter();
-        } else if (restore) {
-          restoreSimpleScroll(body, restore);
-        }
-        return;
-      } else if (autoTab === "timers") {
-        const r = await api("/api/super/timers");
-        if (view !== "auto" || autoTab !== "timers") return;
+      } else if (restore) {
+        restoreSimpleScroll(body, restore);
+      }
+    } else {
+      const sig = JSON.stringify(r);
+      if (sig === body._sig) { if (restore) restoreSimpleScroll(body, restore); return; }
+      body._sig = sig;
+      if (tab === "timers") {
         const endedOpen = !!body.querySelector("details[data-ended-timers][open]");
         body.innerHTML = timersHTML(r.timers || []);
         if (endedOpen) { const d = body.querySelector("details[data-ended-timers]"); if (d) d.open = true; }
-        applyAfter();
       } else {
-        const r = await api("/api/super/settings");
-        body.innerHTML = autoTab === "hooks" ? hooksHTML(r) : settingsHTML(r);
-        applyAfter();
-        if (autoTab !== "hooks") api("/api/super/lark?fresh").then((l) => {
-          const el = $("#lark-who");
-          if (el) el.textContent = l.ready ? `发给 ${l.who || "lark-cli 登录的人"}（以机器人身份）` : `${l.problem}，所以不会发`;
-        }).catch(() => {});
+        body.innerHTML = tab === "hooks" ? hooksHTML(r) : settingsHTML(r);
+        if (tab === "settings") showLarkWho();
       }
-    } catch (err) { body.innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`; }
+      applyAfter();
+    }
   }
 
   // ───────────────────────────── memory: what Collie keeps between sessions
@@ -2605,6 +2640,16 @@
     }).join("")}</span>`;
   }
   let memEditing = false;
+  // Workers' states count too: the task cards show them.
+  const memSig = (r) => JSON.stringify(r) + sup.workers.map((w) => w.name + ":" + workerStatus(w)).join();
+  // memoryHTML renders every file's markdown; the last result is kept, and
+  // made while idle when the data arrives, so opening the tab only draws it.
+  let memDrawn = { sig: "", html: "" };
+  let memParked = null;
+  function memHTML(r, sig = memSig(r)) {
+    if (memDrawn.sig !== sig) memDrawn = { sig, html: memoryHTML(r) };
+    return memDrawn.html;
+  }
   const kb = (n) => (n / 1024).toFixed(1) + " KB";
   const kbNum = (n) => (n / 1024).toFixed(1);
   const kbCap = (n) => (n % 1024 === 0 ? String(n / 1024) : (n / 1024).toFixed(1)) + " KB";
@@ -3067,6 +3112,7 @@
         renderTarget(true);
         const relaunch = s.router_kind !== cur.router_kind || s.router_machine !== (cur.router_machine || "") || s.router_model !== (cur.router_model || "") || s.router_effort !== (cur.router_effort || "") || s.router_alias !== (cur.router_alias || "") || s.router_args.join(" ") !== (cur.router_args || []).join(" ") || s.ask_permissions !== !!cur.ask_permissions;
         toast(relaunch ? "已保存。Collie 自己的启动设置在重启 Collie 后生效" : "已保存");
+        fetchAuto("settings").catch(() => {});
       }
     } catch (err) { toast(err.message, "attn"); }
   });
@@ -3124,7 +3170,7 @@
         source: $("[data-f=source]", row).value.trim(), action: $("[data-f=action]", row).value,
         allow: $("[data-f=allow]", row).value.split(",").map((x) => x.trim()).filter(Boolean),
       })).filter((p) => p.source);
-      try { await api("/api/super/settings", { body: { policies } }); toast("策略已保存"); } catch (err) { toast(err.message, "attn"); }
+      try { await api("/api/super/settings", { body: { policies } }); toast("策略已保存"); fetchAuto("settings").catch(() => {}); } catch (err) { toast(err.message, "attn"); }
     }
   });
 
@@ -7819,7 +7865,7 @@
     const entries = sup.entries.slice(-SNAP_ENTRIES);
     store.set(SNAP_KEY, { v: SNAP_VERSION,
       sup: { ...sup, entries, earlier: sup.earlier || entries.length < sup.entries.length },
-      local: localState, remote: [...remote].map(([k, r]) => [k, r.state]), ext, hist, marks });
+      local: localState, remote: [...remote].map(([k, r]) => [k, r.state]), ext, hist, marks, auto: autoData });
   }
   function loadSnap() {
     const v = store.get(SNAP_KEY, null);
@@ -7827,7 +7873,7 @@
     sup = normSup(v.sup);
     for (const [k, st] of v.remote || []) remote.set(k, { state: st });
     setLocalState(v.local);
-    ext = v.ext || []; hist = v.hist || []; marks = v.marks || {};
+    ext = v.ext || []; hist = v.hist || []; marks = v.marks || {}; autoData = v.auto || {};
     return true;
   }
   async function dropSnap(all) {

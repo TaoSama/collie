@@ -45,6 +45,17 @@ hub 以前每次组装状态都要依次问每台电脑的 workspace、pane、ag
 
 测量方法：用 Playwright 打开线上页面，用 Event Timing 和 CDP `Performance.getMetrics` 看每次按键的处理时间、排版次数和长任务。
 
+## 自动化页切 tab 不等网络
+
+自动化页的 tab 以前点了才请求 `/api/super/{triggers,timers,memory,settings}`，内容等接口回来才换。2026-11 实测线上（devbox 无头 Chrome，到香港 hub 单次 1.4–8.5 秒）每次切换 0.4–3 秒，旧请求晚到时还会把别的 tab 的内容画进当前 tab。现在：
+
+- 每个接口的上次结果存在 `autoData`（也进启动快照），点 tab 先用它同步画出来，请求只负责刷新；画之前核对 tab 没变。进自动化页时同时预取其他 tab 的数据，没有缓存的 tab 先清空，不显示别的 tab 的内容。
+- 定时、接入、设置有表单，刷新结果和已画的一样就不重画，免得冲掉正在填的内容。保存设置后在后台刷新缓存。
+- 记忆页最重：所有文件的 Markdown 和编辑框。渲染结果按数据签名记住（`memHTML`），数据到达后空闲时先算好；切走时保留它的节点（不在编辑时），切回且数据没变就直接放回。
+- 收件箱、线程的行和记忆的折叠块用 `content-visibility: auto`，长列表只排版屏幕内的部分。
+
+结果（点击到内容画出，处理时间 / Event Timing）：桌面 2–10ms / 24–32ms（无头 Chrome 的帧间隔占大头），首次打开记忆约 30ms。手机仿真加 4 倍 CPU 降速 10–40ms / 16–56ms，首次打开记忆约 110ms。
+
 ## 读不到 pane 不等于 pane 关了
 
 浏览器收到流的 `gone` 就显示「这个 pane 已经关闭。」并停掉这个流，不会自己恢复，所以只有 herdr 明确回 `*_not_found` 时才能发。连不上 herdr（它在重启或热升级，socket 暂时不在）、5 秒超时、node 正在重连（`machine_offline`），都只是这一轮没读到，下一轮再试。
