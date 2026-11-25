@@ -34,7 +34,7 @@ func TestWorkbenchNormalize(t *testing.T) {
 		err  string
 	}{
 		{"valid", func(*WBModule) {}, ""},
-		{"bad id", func(m *WBModule) { m.ID = "City!" }, "无效"},
+		{"bad id", func(m *WBModule) { m.ID = "Bad!" }, "无效"},
 		{"no title", func(m *WBModule) { m.Title = " " }, "不能为空"},
 		{"unknown group", func(m *WBModule) { m.Group = "nope" }, "不存在"},
 		{"javascript url", func(m *WBModule) { m.URL = "javascript:alert(1)" }, "http"},
