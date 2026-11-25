@@ -48,7 +48,7 @@ func TestAgyModels(t *testing.T) {
 	if !reflect.DeepEqual(info.Models, want) {
 		t.Errorf("models = %+v", info.Models)
 	}
-	if !reflect.DeepEqual(info.Efforts, []string{"low", "medium", "high", "xhigh"}) {
+	if !reflect.DeepEqual(info.Efforts, []string{"low", "medium"}) { // the default model's
 		t.Errorf("efforts = %q", info.Efforts)
 	}
 	if info.Default != "gemini-3.8-flash" || info.DefaultEffort != "medium" {

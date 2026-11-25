@@ -138,7 +138,11 @@ func (s *Server) agyModels(ctx context.Context, info *ModelInfo) {
 			return cmp.Compare(slices.Index(effortOrder, a), slices.Index(effortOrder, b))
 		})
 	}
-	if len(info.Models) > 0 {
+	// Every model here names its own levels, so the agent's are what "the
+	// default model" offers: those of the one settings.json picks.
+	if i, ok := byID[info.Default]; ok {
+		info.Efforts = info.Models[i].Efforts
+	} else if len(info.Models) > 0 {
 		info.Efforts = unionEfforts(info.Models)
 	}
 }
