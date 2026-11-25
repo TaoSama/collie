@@ -5583,7 +5583,8 @@
   async function fetchFile(path, machine, { thumb = false, signal } = {}) {
     const as = IMG_EXT.test(path) ? (thumb ? "&as=thumb" : "&as=image") : "";
     const q = `/api/file?path=${encodeURIComponent(path)}${as}`;
-    let res = as ? await directFile(machine, q, signal) : null;
+    // Shrinking only saves the network: from this computer the original is quicker.
+    let res = as ? await directFile(machine, q.replace("&as=thumb", "&as=image"), signal) : null;
     if (!res) {
       const r = routeReq(q + (machine ? "&machine=" + encodeURIComponent(machine) : ""));
       res = await fetch(r.url, { headers: r.hub ? { Authorization: "Bearer " + r.hub.token } : {}, credentials: r.hub ? "omit" : "same-origin", signal });
