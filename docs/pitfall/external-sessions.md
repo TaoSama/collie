@@ -41,3 +41,5 @@ Codex 和 Antigravity 每几步就插一句过程消息，连续的工具调用�
 两家各有归档，Collie 得照着读（`internal/collie/archived.go`）：Codex 是 `state_<n>.sqlite` 的 `threads.archived = 1`（会话文件挪进 `archived_sessions/`）；Antigravity 是 `conversation_summaries.db` 里搜索表 `conversations_fts` 中 `chunk_index = -1` 那行的 `archived`，App 的索引和 CLI 的索引各有一份，两处都要看。`annotations/<id>.pbtxt` 只存改过的标题之类，App 自己的归档列表也按搜索表查。
 
 只滤 App 的线程表不够：人在 Codex 里归档的会话，常常还开在 herdr 窗格里（接管过来的），或已经结束、留在 hub 的历史里。所以节点在 `/api/titles` 里给窗格会话标上 `archived`，并回答 hub 带来的历史会话里哪些已归档；侧栏把已归档、已经停下的窗格和历史行藏起来，正在跑或等确认的照常显示。取消归档后几秒内回来。Antigravity 的 App 行在 Go 里滤掉归档再数满上限，SQL 不加 `LIMIT`。
+
+Codex 和 Antigravity 的归档只认它们自己的标记，hub 的 `archived` 标记（`marks.go`）只藏 Claude Code 的会话。从 Collie 菜单归档这两家时，调用它们自己的归档，页面只在本地临时藏起，等列表跟上（成功后 60 秒）；归档失败就马上显示并报错。旧版本给这两家打过的 hub 标记不再起作用，否则在它们那边取消归档后，Collie 里还会一直藏着。

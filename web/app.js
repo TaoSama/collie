@@ -3353,6 +3353,18 @@
     try { marks = (await api("/api/marks")).marks || {}; } catch { return; }
     renderSessions();
   }
+  // Codex and Antigravity archive a session themselves (archived.go); the
+  // hub's mark hides only Claude Code's. archiving: the ones archived from
+  // this page, hidden until their lists have caught up (key → until when).
+  const ownArchive = (kind) => kind === "codex" || kind === "agy";
+  const ARCHIVE_SETTLE_MS = 60e3;
+  const archiving = new Map();
+  const archivingNow = (key) => {
+    const until = archiving.get(key);
+    if (until > Date.now()) return true;
+    archiving.delete(key);
+    return false;
+  };
   async function setMark(key, change) {
     marks = (await api("/api/marks", { body: { key, ...change } })).marks || {};
     renderSessions();
@@ -3419,10 +3431,12 @@
       ...state.shells.map((a) => pane(a, true)),
       ...extRows.filter((r) => r.live || !histKeys.has(r.key)),
       ...histRows.filter((r) => !liveKeys.has(r.key)),
-    // Archived where its agent has no archive of its own (or not yet listed
-    // as archived): hidden while it rests. One its own agent archived while
-    // it stays open in herdr hides once it has finished (archived.go).
-    ].filter((r) => !(r.mark?.archived && r.rank >= ENDED_RANK) && !(r.archived && r.rank >= RANK.done));
+    // Archived where its agent has no archive of its own (Claude Code), or
+    // archived from here and not yet listed so: hidden while it rests. For
+    // Codex and Antigravity only their own archive counts, so a mark left by
+    // an older Collie hides nothing. One its own agent archived while it
+    // stays open in herdr hides once it has finished (archived.go).
+    ].filter((r) => !((ownArchive(r.kind) ? archivingNow(r.key) : r.mark?.archived) && r.rank >= ENDED_RANK) && !(r.archived && r.rank >= RANK.done));
   }
   // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {
@@ -3785,21 +3799,34 @@
     toast("已改名为「" + name + "」");
   }
   async function archiveRow(r) {
-    const own = r.kind !== "claude", running = r.src === "pane";
+    const own = ownArchive(r.kind), running = r.src === "pane";
     const text = [running ? "会先结束这个 agent（关闭它的工作区）。" : "",
       own ? `用 ${AGENT_LABEL[r.kind] || r.kind} 自己的归档，在它那边也会归档。` : "Claude Code 没有自己的归档：Collie 只把它从列表里藏起来，会话文件不动。"].filter(Boolean).join("\n");
     if (!await ask({ title: `归档「${r.name}」？`, text, ok: "归档", warn: true })) return;
-    // Hidden first, so a closed agent whose archive then fails doesn't come
-    // back as an ended session; the error says so.
-    await setMark(r.key, { archived: true });
+    // Hidden first, so a closed agent doesn't come back as an ended session
+    // before its archive lands. An agent with its own archive is hidden only
+    // here, and until the lists have caught up: its archive is the one that
+    // counts, and unarchived there it comes back.
+    if (own) { archiving.set(r.key, Infinity); renderSessions(); }
+    else await setMark(r.key, { archived: true });
+    try {
+      await archiveIt(r, own, running);
+    } catch (err) {
+      archiving.delete(r.key);
+      renderSessions();
+      throw err;
+    }
+    if (own) archiving.set(r.key, Date.now() + ARCHIVE_SETTLE_MS);
+    if (r.src === "ext") loadExternal();
+    toast("已归档");
+  }
+  async function archiveIt(r, own, running) {
     if (running) {
       await api(`/api/workspaces/${encodeURIComponent(r.ws)}/close`, { body: {} });
       state = { ...state, agents: state.agents.filter((a) => a.workspace_id !== r.ws), shells: state.shells.filter((a) => a.workspace_id !== r.ws) };
       if (view === "pane" && current === r.id) goBack(true);
     }
     if (own) await api(`/api/sessions/${sessionPath(r)}/archive`, { body: { kind: r.kind, just_closed: running } });
-    if (r.src === "ext") loadExternal();
-    toast("已归档");
   }
   async function closeTerm(r) {
     if (!await ask({ title: `关闭终端「${r.term}」？`, text: "里面在跑的进程会被结束。", ok: "关闭", warn: true })) return;
