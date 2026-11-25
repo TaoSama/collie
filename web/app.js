@@ -5627,7 +5627,15 @@
   // Collie made up (on one computer only), the first to answer with it. A
   // computer that fails only matters when none has it.
   // The computer that had it may be this one: next time, ask it directly.
-  const found = (f) => { if (f.machine && !hubOf(f.machine)) probeDirectMachine(f.machine); return f; };
+  // Only once local network access is allowed (a terminal of this computer
+  // asked for it): looking at a picture must never bring up Chrome's prompt.
+  const lanAllowed = async () => {
+    try { return (await navigator.permissions.query({ name: "local-network-access" })).state === "granted"; } catch { return false; }
+  };
+  const found = (f) => {
+    if (f.machine && !hubOf(f.machine)) lanAllowed().then((ok) => ok && probeDirectMachine(f.machine));
+    return f;
+  };
   async function findFile(path, tries = fileTries(), opts = {}) {
     const ctl = new AbortController();
     const asks = tries.map((m) => fetchFile(path, m, { ...opts, signal: ctl.signal }).catch((err) => ({ err })));
