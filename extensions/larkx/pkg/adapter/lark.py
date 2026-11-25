@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import types
+from concurrent.futures import ThreadPoolExecutor
 import zlib
 from pathlib import Path
 
@@ -30,7 +31,7 @@ CMD_PUT_MESSAGE = 5
 CMD_PUSH_MESSAGES = 6
 CMD_PUSH_SID = 6000  # only sids: the packets are pulled by them
 CMD_PUSH_DOC_FEED = 14004  # comments, replies and mentions in cloud documents
-DOC_FEED_NEW, DOC_FEED_UPDATE = 1, 2  # PushDocFeedRequest.Status
+DOC_FEED_NEWS = (1, 2, 5)  # PushDocFeedRequest.Status NEW, UPDATE, CREATE
 DOC_KINDS = {1: "在文档里@了你", 2: "评论了文档", 3: "回复了评论"}  # DocMessage.Type MENTION, COMMENT, REPLY
 DOC_CHAT = "doc:"  # a document's comments are a chat of their own
 BAD_FRAME_EVERY = 600
@@ -135,6 +136,7 @@ class Feishu:
         self._loop = None
         self._task = None
         self._bad_frames, self._bad_warned = 0, 0.0
+        self._pool = ThreadPoolExecutor(max_workers=4)  # handles pushes; outlives each connection's loop
 
     # Signing in.
 
@@ -221,7 +223,6 @@ class Feishu:
         import websockets
 
         c = self.client
-        loop = asyncio.get_running_loop()
         async with websockets.connect(c.build_ws_url()) as ws:
             beat = asyncio.create_task(c.heartbeat_loop(ws))
             try:
@@ -235,7 +236,7 @@ class Feishu:
                         continue
                     if packet.sid:
                         await c.send_ack(ws, packet.sid)
-                    loop.run_in_executor(None, self._push, packet.cmd, packet.payload, packet, on_message)
+                    self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message)
             finally:
                 beat.cancel()
 
@@ -298,18 +299,19 @@ class Feishu:
 
         L = self.U.L
         req = L.docs.PushDocFeedRequest.FromString(payload)
-        if req.status not in (DOC_FEED_NEW, DOC_FEED_UPDATE):
+        if req.status not in DOC_FEED_NEWS:
             return []
         feed, out = req.docFeed, []
         for dm in sorted(req.docMessages.values(), key=lambda d: d.createTime):
             what = DOC_KINDS.get(dm.type)
             mid = DOC_CHAT + dm.id
-            with self._mu:
-                seen = mid in self.recent
-            if not what or not dm.id or seen:
-                continue  # a feed update repeats what came before
+            # A feed update repeats what came before, and a sid pull may bring a push again.
+            if not what or not dm.id or not self._remember(mid, "", ""):
+                continue
             body = (richtext.to_text(L, protobuf_to_dict(dm.richText)) if dm.HasField("richText") else "") or dm.content
             sender = str(dm.fromId)
+            # The text opens with who did what, so a comment never starts with the trigger word:
+            # nothing here asks for an answer that could not be sent.
             m = {"id": mid, "chat_id": DOC_CHAT + (feed.id or dm.docFeedId), "chat": feed.title or "云文档",
                  "chat_kind": "doc", "sender": sender, "owner": bool(self.me) and sender == self.me,
                  "sender_name": self.user_name(sender, ""), "thread": feed.id or dm.docFeedId,
@@ -317,8 +319,6 @@ class Feishu:
             if dm.createTime:
                 at = dm.createTime / (1000 if dm.createTime > 10 ** 12 else 1)
                 m["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
-            with self._mu:
-                self.recent[mid] = ("", m["text"])
             out.append(m)
         return out
 
@@ -367,10 +367,7 @@ class Feishu:
             out["quote"] = quoted[1]
         if msg.get("anchor"):
             out["thread"] = str(msg["anchor"])
-        with self._mu:
-            self.recent[mid] = (root, text)
-            while len(self.recent) > RECENT_MOST:
-                self.recent.popitem(last=False)
+        self._remember(mid, root, text, again=True)
         p2p = msg.get("chat_type") == CHAT_P2P
         out["chat_kind"] = "self" if p2p and chat == self.self_chat else "dm" if p2p else "group"
         out["sender_name"] = self.user_name(sender, chat)
@@ -383,6 +380,16 @@ class Feishu:
             at = int(at) / (1000 if int(at) > 10 ** 12 else 1)
             out["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
         return out
+
+    def _remember(self, mid, root, text, again=False):
+        """Keeps a message's topic root and text; False when it was kept already (unless again)."""
+        with self._mu:
+            if mid in self.recent and not again:
+                return False
+            self.recent[mid] = (root, text)
+            while len(self.recent) > RECENT_MOST:
+                self.recent.popitem(last=False)
+            return True
 
     def user_name(self, uid, chat):
         if not uid or self.client is None:
