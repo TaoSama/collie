@@ -183,6 +183,8 @@ func (s *Server) agyAnnotate(ctx context.Context, conversation string, annotatio
 		var api *agyError
 		if !errors.As(err, &api) {
 			forgetAgyServer()
+		} else if api.Code == "not_found" || strings.HasSuffix(api.Message, "not found") {
+			return errors.New("Antigravity 加载不到这个会话（可能是没建成的空会话），改不了它")
 		}
 		return fmt.Errorf("Antigravity 没有改成：%w", err)
 	}

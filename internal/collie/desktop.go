@@ -629,13 +629,23 @@ func (s *Server) agyDesktopRows() []desktopRow {
 	// CLI's conversations too. Older indexes may lack the column.
 	// No LIMIT: archived conversations (whichever index says so) are left
 	// out below, and mustn't take the places of the others.
-	source := "''"
-	var has int
-	if db.QueryRow(`SELECT count(*) FROM pragma_table_info('conversation_summaries') WHERE name = 'source'`).Scan(&has) == nil && has > 0 {
+	// A conversation the app failed to create stays in the index with no
+	// steps and a zero last_modified_time (0001-01-01); the app can't load it,
+	// so it can't be opened or archived either. Older indexes may lack
+	// step_count.
+	hasColumn := func(name string) bool {
+		var n int
+		return db.QueryRow(`SELECT count(*) FROM pragma_table_info('conversation_summaries') WHERE name = ?`, name).Scan(&n) == nil && n > 0
+	}
+	source, steps := "''", ""
+	if hasColumn("source") {
 		source = "source"
 	}
+	if hasColumn("step_count") {
+		steps = " AND step_count > 0"
+	}
 	res, err := db.Query(`SELECT conversation_id, title, preview, workspace_uris, status, not_fully_idle, last_modified_time, last_user_input_time, ` + source + `
-		FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0
+		FROM conversation_summaries WHERE nesting_depth = 0 AND killed = 0 AND last_modified_time > '0001-12-31'` + steps + `
 		ORDER BY last_modified_time DESC`)
 	if err != nil {
 		return nil

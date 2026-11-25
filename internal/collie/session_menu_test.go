@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClaudeRenameAppendsCustomTitle(t *testing.T) {
@@ -95,5 +96,22 @@ func TestSessionUsageReadsLatestReply(t *testing.T) {
 	}
 	if got := s.sessionUsage("claude", "missing"); got != nil {
 		t.Fatalf("no log should give nothing, got %v", got)
+	}
+}
+
+func TestAgyAnnotateSaysWhenTheAppCannotLoadIt(t *testing.T) {
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(404)
+		w.Write([]byte(`{"code":"not_found","message":"conversation b600 not found"}`))
+	}))
+	defer app.Close()
+	agyServerCache.Lock()
+	agyServerCache.at, agyServerCache.ls = time.Now(), &agyServer{addr: strings.TrimPrefix(app.URL, "http://")}
+	agyServerCache.Unlock()
+	defer forgetAgyServer()
+	err := (&Server{home: t.TempDir()}).agyAnnotate(t.Context(), "b600", map[string]any{"archived": true})
+	if err == nil || !strings.Contains(err.Error(), "加载不到这个会话") {
+		t.Fatalf("err = %v, want it to say the app can't load the conversation", err)
 	}
 }

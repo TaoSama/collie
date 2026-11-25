@@ -221,3 +221,35 @@ func TestAgyDesktopRowsNameTheirClient(t *testing.T) {
 		t.Fatalf("apps = %v, want cli: antigravity, app: Antigravity 桌面版", got)
 	}
 }
+
+func TestAgyDesktopRowsSkipEmptyConversations(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".gemini", "antigravity")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, "conversation_summaries.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE conversation_summaries (conversation_id TEXT, title TEXT, preview TEXT, step_count INTEGER, workspace_uris TEXT, status TEXT,
+		not_fully_idle NUMERIC, last_modified_time DATETIME, last_user_input_time DATETIME, nesting_depth INTEGER, killed NUMERIC)`); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Format("2006-01-02 15:04:05")
+	zero := "0001-01-01 00:00:00+00:00" // how the app writes a time it never set
+	for _, c := range []struct {
+		id    string
+		steps int
+		mod   string
+	}{{"ok", 3, at}, {"shell", 0, zero}, {"no-steps", 0, at}, {"no-time", 3, zero}} {
+		if _, err := db.Exec(`INSERT INTO conversation_summaries VALUES (?, '对话', '', ?, '["file:///root"]', '', 0, ?, ?, 0, 0)`, c.id, c.steps, c.mod, c.mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := (&Server{home: home}).agyDesktopRows()
+	if len(rows) != 1 || rows[0].session != "ok" {
+		t.Fatalf("rows = %+v, want only the conversation with steps and a time", rows)
+	}
+}
