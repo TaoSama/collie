@@ -190,6 +190,9 @@ class Normalize(unittest.TestCase):
                          "content_data": content, "parent_id": "1"})
         self.assertEqual((m["chat_kind"], m["owner"], m["quote"]), ("self", True, "你好 `x`"))
         self.assertIsNone(f.normalize({"msg_id": "3", "chat_id": "c", "from_id": "u", "msg_type": 6}))
+        card = {"cardHeader": {"title": "分析中"}, "jsonCard": '{"body":{}}'}
+        m = f.normalize({"msg_id": "4", "chat_id": "c_g", "from_id": "u_a", "msg_type": 14, "chat_type": 2, "content_data": card})
+        self.assertEqual(m["text"], "[卡片] 分析中", "a card shows its title, not its JSON")
 
 
 class Pushes(unittest.TestCase):

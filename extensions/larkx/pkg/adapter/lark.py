@@ -24,7 +24,7 @@ log = logging.getLogger("larkx")
 QR_WAITING, QR_SCANNED, QR_DONE, QR_EXPIRED, QR_FAILED = "waiting", "scanned", "done", "expired", "failed"
 QR_STATUS = {1: QR_WAITING, 2: QR_SCANNED, 3: QR_FAILED, 4: QR_FAILED, 5: QR_EXPIRED}
 
-MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM = 3, 4, 5, 6
+MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM, MSG_CARD = 3, 4, 5, 6, 14
 CHAT_P2P = 1
 CMD_PUT_MESSAGE = 5
 CMD_PUSH_MESSAGES = 6
@@ -355,6 +355,9 @@ class Feishu:
                 out["images" if mtype == MSG_IMAGE else "files"] = [blob]
             else:
                 out["unsupported"] = ["图片（没能下载）" if mtype == MSG_IMAGE else "文件 %s（没能下载）" % data.get("name", "")]
+        elif mtype == MSG_CARD:
+            head = data.get("cardHeader") or {}
+            text = " ".join(x for x in ("[卡片]", head.get("title") or head.get("mainTitle") or "", data.get("cardDesc") or "") if x)
         else:
             text = re.sub(r",?\s*(key|imageKey|stickerId)=\S+", "", msg.get("content") or "").strip()
         out["text"] = text
