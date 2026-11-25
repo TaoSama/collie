@@ -172,8 +172,10 @@
     ],
     "w9:p1": [
       { kind: "user", text: "在 Linux 上跑一遍 e2e 回归，看看暗色模式有没有影响" },
+      { kind: "assistant", text: "先装依赖，再跑全量 e2e。" },
+      tool("Bash", "pnpm install --frozen-lockfile", "Done in 8.2s"),
       tool("Bash", "pnpm test:e2e", "42 passed"),
-      { kind: "assistant", text: "42 个 e2e 用例都过了，暗色模式的改动还没合进来，合并后再跑一次。\n\n| 套件 | 用例 | 结果 |\n|-|-|-|\n| 下单 | 18 | 通过 |\n| 购物车 | 15 | 通过 |\n| 账户 | 9 | 通过 |\n\n报告：https://ci.example.com/shop-web/pipelines/48213/jobs/e2e-linux/artifacts/report/index.html?tab=summary" },
+      { kind: "assistant", text: "42 个 e2e 用例都过了，暗色模式的改动还没合进来，合并后再跑一次。\n\n| 套件 | 用例 | 结果 |\n|-|-|-|\n| 下单 | 18 | 通过 |\n| 购物车 | 15 | 通过 |\n| 账户 | 9 | 通过 |\n\n报告：https://ci.example.com/shop-web/pipelines/48213/jobs/e2e-linux/artifacts/report/index.html?tab=summary", turn_ms: 281000 },
     ],
     "w6:p1@macbook": [
       { kind: "user", text: "[collie] 根据 v1.3..main 的提交写 v1.4 发布说明。完成后 collie report。" },

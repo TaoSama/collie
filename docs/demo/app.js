@@ -4929,77 +4929,110 @@
     input.value = b.dataset.text;
     form.requestSubmit();
   });
+  // How long a turn took: "41s", "4m 41s", "1h 5m".
+  const took = (ms) => {
+    const t = Math.max(1, Math.round(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60;
+    return h ? `${h}h ${m}m` : m ? `${m}m ${t % 60}s` : `${t}s`;
+  };
+  const ICON_STEPS = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12l8.5 4.5 8.5-4.5"/><path d="M3.5 16l8.5 4.5 8.5-4.5"/></svg>`;
+  const ICON_MORE = `<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
   function drawThread(msgs, el = $("#thread"), empty = "还没有对话。发一条消息开始吧。") {
     const rest = el._restore;
     // Just opened: start at the latest message, unless restoring a scroll position.
     const was = rest ? !!rest.atBottom : (el._fresh || nearBottom(el) || !el.childElementCount);
     if (msgs.length) el._fresh = false;
-    const open = new Set($$("details.tool[open], details.toolrun[open]", el).map((d) => d.dataset.i));
+    const open = new Set($$("details.tool[open], details.toolrun[open], details.turn[open]", el).map((d) => d.dataset.i));
     if (!msgs.length) { el.innerHTML = `<div class="thread-empty">${empty}</div>`; el._sig = ""; el._blocks = null; return; }
-    const blocks = [];
+    // A finished turn (the agent says when) folds what came before its answer,
+    // what it said on the way and the tools it ran, into one line with the
+    // time it took: first step → [end, ms].
+    const turns = new Map();
+    for (let j = 0, s = 0; j < msgs.length; j++) {
+      if (msgs[j].kind === "user") s = j + 1;
+      if (!msgs[j].turn_ms) continue;
+      const end = msgs[j].kind === "assistant" ? j : j + 1;
+      if (end > s) turns.set(s, [end, msgs[j].turn_ms]);
+      s = j + 1;
+    }
     let html = "", i = 0;
-    const cut = () => { blocks.push(html); html = ""; };
-    while (i < msgs.length) {
-      const m = msgs[i];
-      if (m.kind === "tool") {
-        // A run of tool calls reads as one quiet line; long runs fold away,
-        // keeping only the latest step in view.
-        const start = i;
-        while (i < msgs.length && msgs[i].kind === "tool") i++;
-        const run = msgs.slice(start, i);
-        const row = (t, k) => {
-          const cls = t.error ? "err" : (t.output ? "" : "pending");
-          return `<details class="tool ${cls}" data-i="${k}" ${open.has(String(k)) ? "open" : ""}>`
-            + `<summary><span class="tname">${esc(t.name)}</span><span class="targ">${esc(t.input)}</span></summary>`
-            + (t.output ? `<pre>${esc(t.output)}</pre>` : "") + `</details>`;
-        };
-        if (run.length <= 3 || !prefs.fold()) {
-          html += `<div class="tools">${run.map((t, k) => row(t, start + k)).join("")}</div>`;
+    // The messages up to to, as blocks; a finished turn's steps (only at the
+    // top level) become one block.
+    function walk(to, top) {
+      const blocks = [];
+      const cut = () => { blocks.push(html); html = ""; };
+      while (i < to) {
+        const m = msgs[i];
+        const turn = top && turns.get(i);
+        if (turn) {
+          const key = "turn" + i, body = walk(turn[0], false).join("");
+          html += `<details class="turn" data-i="${key}" ${open.has(key) ? "open" : ""}><summary>${ICON_STEPS}<span class="n">已工作 ${took(turn[1])}</span>${ICON_MORE}</summary>
+            <div class="turn-body">${body}</div></details>`;
           cut();
           continue;
         }
-        const key = "run" + start;
-        const names = [...new Set(run.map((t) => t.name))].slice(0, 4).join("、");
-        const errs = run.filter((t) => t.error).length;
-        html += `<div class="tools"><details class="toolrun" data-i="${key}" ${open.has(key) ? "open" : ""}>
-          <summary><span class="n">${run.length} 个步骤</span><span class="targ">${esc(names)}${errs ? ` · <b class="errs">${errs} 个出错</b>` : ""}</span></summary>
-          <div class="toolrun-body">${run.slice(0, -1).map((t, k) => row(t, start + k)).join("")}</div>
-        </details>${row(run[run.length - 1], i - 1)}</div>`;
-        cut();
-        continue;
-      }
-      if (m.kind === "ask" && m.name === "recap") {
-        html += `<div class="recap-note">${esc(m.input)}</div>`;
+        if (m.kind === "tool") {
+          // A run of tool calls reads as one quiet line; long runs fold away,
+          // keeping only the latest step in view.
+          const start = i;
+          i++;
+          while (i < to && msgs[i].kind === "tool" && !(top && turns.has(i))) i++;
+          const run = msgs.slice(start, i);
+          const row = (t, k) => {
+            const cls = t.error ? "err" : (t.output ? "" : "pending");
+            return `<details class="tool ${cls}" data-i="${k}" ${open.has(String(k)) ? "open" : ""}>`
+              + `<summary><span class="tname">${esc(t.name)}</span><span class="targ">${esc(t.input)}</span></summary>`
+              + (t.output ? `<pre>${esc(t.output)}</pre>` : "") + `</details>`;
+          };
+          if (run.length <= 3 || !prefs.fold()) {
+            html += `<div class="tools">${run.map((t, k) => row(t, start + k)).join("")}</div>`;
+            cut();
+            continue;
+          }
+          const key = "run" + start;
+          const names = [...new Set(run.map((t) => t.name))].slice(0, 4).join("、");
+          const errs = run.filter((t) => t.error).length;
+          html += `<div class="tools"><details class="toolrun" data-i="${key}" ${open.has(key) ? "open" : ""}>
+            <summary><span class="n">${run.length} 个步骤</span><span class="targ">${esc(names)}${errs ? ` · <b class="errs">${errs} 个出错</b>` : ""}</span></summary>
+            <div class="toolrun-body">${run.slice(0, -1).map((t, k) => row(t, start + k)).join("")}</div>
+          </details>${row(run[run.length - 1], i - 1)}</div>`;
+          cut();
+          continue;
+        }
+        if (m.kind === "ask" && m.name === "recap") {
+          html += `<div class="recap-note">${esc(m.input)}</div>`;
+          cut();
+          i++;
+          continue;
+        }
+        if (m.kind === "ask") {
+          // A question to you: AskUserQuestion is answered in the app it runs
+          // in; the Claude app's end-of-turn buttons just send their label.
+          const later = msgs.slice(i + 1).some((x) => x.kind === "user");
+          const box = m.name === "wrap_up";
+          const open = box ? !later : !m.output;
+          const opts = (m.options || []).map((o) => box && open
+            ? `<button type="button" class="btn small" data-act="ask-reply" data-text="${esc(o)}">${esc(o)}</button>`
+            : `<span class="opt">${esc(o)}</span>`).join("");
+          html += `<div class="ask-card ${open ? "open" : ""}">`
+            + (m.input ? `<div class="recap">${esc(m.input)}</div>` : "")
+            + `<div class="q"><span class="dot ${open ? "blocked" : "unknown"}"></span>${esc(m.text)}</div>`
+            + (opts ? `<div class="opts">${opts}</div>` : "")
+            + (m.output ? `<div class="answer">${esc(m.output)}</div>`
+              : open && !box ? (el.id === "x-thread" && /^cd-/.test(extCur || "")
+                ? `<div class="where"><button type="button" class="btn small" data-act="ask-reveal">去 Claude 桌面版回答</button><span>这个对话框只能在电脑上答</span></div>`
+                : el.id === "thread" ? "" : `<div class="where">在电脑上的会话里回答</div>`) : "")
+            + `</div>`;
+          cut();
+          i++;
+          continue;
+        }
+        html += m.kind === "user" ? `<div class="msg user${m.sending ? " sending" : ""}">${userText(m.text)}</div>` : `<div class="msg assistant">${md(m.text)}</div>`;
         cut();
         i++;
-        continue;
       }
-      if (m.kind === "ask") {
-        // A question to you: AskUserQuestion is answered in the app it runs
-        // in; the Claude app's end-of-turn buttons just send their label.
-        const later = msgs.slice(i + 1).some((x) => x.kind === "user");
-        const box = m.name === "wrap_up";
-        const open = box ? !later : !m.output;
-        const opts = (m.options || []).map((o) => box && open
-          ? `<button type="button" class="btn small" data-act="ask-reply" data-text="${esc(o)}">${esc(o)}</button>`
-          : `<span class="opt">${esc(o)}</span>`).join("");
-        html += `<div class="ask-card ${open ? "open" : ""}">`
-          + (m.input ? `<div class="recap">${esc(m.input)}</div>` : "")
-          + `<div class="q"><span class="dot ${open ? "blocked" : "unknown"}"></span>${esc(m.text)}</div>`
-          + (opts ? `<div class="opts">${opts}</div>` : "")
-          + (m.output ? `<div class="answer">${esc(m.output)}</div>`
-            : open && !box ? (el.id === "x-thread" && /^cd-/.test(extCur || "")
-              ? `<div class="where"><button type="button" class="btn small" data-act="ask-reveal">去 Claude 桌面版回答</button><span>这个对话框只能在电脑上答</span></div>`
-              : el.id === "thread" ? "" : `<div class="where">在电脑上的会话里回答</div>`) : "")
-          + `</div>`;
-        cut();
-        i++;
-        continue;
-      }
-      html += m.kind === "user" ? `<div class="msg user${m.sending ? " sending" : ""}">${userText(m.text)}</div>` : `<div class="msg assistant">${md(m.text)}</div>`;
-      cut();
-      i++;
+      return blocks;
     }
+    const blocks = walk(msgs.length, true);
     if (el._loadingEarlier) blocks.unshift(`<div class="earlier-row">加载中…</div>`);
     const sig = blocks.join("");
     if (sig === el._sig) return;

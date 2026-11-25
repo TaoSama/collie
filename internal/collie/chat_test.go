@@ -62,6 +62,42 @@ func TestCodexTranscript(t *testing.T) {
 	}
 }
 
+func TestCodexTurnDone(t *testing.T) {
+	msgs := parse(t, "codex", `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"list files"}]}}
+{"type":"event_msg","payload":{"type":"task_started","started_at":1795596689}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Looking."}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"a"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"One file."}]}}
+{"type":"event_msg","payload":{"type":"task_complete","started_at":1795596689,"completed_at":1795596970,"duration_ms":281000}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"again"}]}}
+{"type":"event_msg","payload":{"type":"task_complete","started_at":1795597000,"completed_at":1795597010}}
+`)
+	if len(msgs) != 5 || msgs[3].TurnMS != 281000 {
+		t.Fatalf("unexpected: %+v", msgs)
+	}
+	for i, m := range msgs[:3] {
+		if m.TurnMS != 0 {
+			t.Errorf("msg %d ends a turn: %+v", i, m)
+		}
+	}
+	// A turn with nothing to show leaves the question unmarked.
+	if msgs[4].TurnMS != 0 {
+		t.Errorf("user message ends a turn: %+v", msgs[4])
+	}
+}
+
+func TestAgyTurnDone(t *testing.T) {
+	msgs := parse(t, "agy", `{"type":"USER_INPUT","source":"USER_EXPLICIT","created_at":"2026-11-25T08:10:00Z","content":"<USER_REQUEST>\nlist files\n</USER_REQUEST>"}
+{"type":"PLANNER_RESPONSE","source":"MODEL","created_at":"2026-11-25T08:10:05Z","content":"Looking.","tool_calls":[{"name":"run_command","args":{"CommandLine":"\"ls\""}}]}
+{"type":"GENERIC","source":"MODEL","created_at":"2026-11-25T08:10:06Z","content":"Command exited with code 0.\n\nCommand output:\na"}
+{"type":"PLANNER_RESPONSE","source":"MODEL","created_at":"2026-11-25T08:14:41Z","content":"One file."}
+`)
+	if len(msgs) != 4 || msgs[1].TurnMS != 0 || msgs[3].TurnMS != 281000 {
+		t.Fatalf("unexpected: %+v", msgs)
+	}
+}
+
 func TestAgyTranscript(t *testing.T) {
 	msgs := parse(t, "agy", `{"type":"USER_INPUT","source":"USER_EXPLICIT","content":"<USER_REQUEST>\nlist files\n</USER_REQUEST>\n<ADDITIONAL_METADATA>x</ADDITIONAL_METADATA>"}
 {"type":"PLANNER_RESPONSE","source":"MODEL","tool_calls":[{"name":"run_command","args":{"CommandLine":"\"ls -la\"","toolSummary":"\"List files\""}}]}

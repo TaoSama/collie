@@ -26,7 +26,10 @@ type Message struct {
 	Input   string   `json:"input,omitempty"`
 	Output  string   `json:"output,omitempty"`
 	Error   bool     `json:"error,omitempty"`
-	at      int64    // where in the log its line starts
+	// TurnMS: this message ends a turn (Codex, agy) that took this long, so the
+	// steps before it can fold away once the turn is done.
+	TurnMS int64 `json:"turn_ms,omitempty"`
+	at     int64 // where in the log its line starts
 }
 
 // transcript incrementally parses an agent's JSONL session log.
@@ -38,11 +41,12 @@ type transcript struct {
 	tools   map[string]*Message
 	pending []*Message // agy: tool calls waiting for their output, in order
 	lastID  string
-	dropped int   // messages trimmed off the front, so positions stay stable
-	partial bool  // offset may be mid-line: skip to the next line first
-	began   int64 // where reading started (0: the top of the log)
-	lineAt  int64 // where the line being parsed starts
-	limit   int64 // stop reading here (0: at the end)
+	dropped int       // messages trimmed off the front, so positions stay stable
+	partial bool      // offset may be mid-line: skip to the next line first
+	began   int64     // where reading started (0: the top of the log)
+	lineAt  int64     // where the line being parsed starts
+	asked   time.Time // agy: when the turn being read began
+	limit   int64     // stop reading here (0: at the end)
 }
 
 const (
@@ -471,20 +475,27 @@ func (t *transcript) codexLine(line []byte) bool {
 	var e struct {
 		Type    string `json:"type"`
 		Payload struct {
-			Type      string          `json:"type"`
-			Role      string          `json:"role"`
-			Content   json.RawMessage `json:"content"`
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-			Input     json.RawMessage `json:"input"`
-			CallID    string          `json:"call_id"`
-			Output    json.RawMessage `json:"output"`
+			Type       string          `json:"type"`
+			Role       string          `json:"role"`
+			Content    json.RawMessage `json:"content"`
+			Name       string          `json:"name"`
+			Arguments  json.RawMessage `json:"arguments"`
+			Input      json.RawMessage `json:"input"`
+			CallID     string          `json:"call_id"`
+			Output     json.RawMessage `json:"output"`
+			DurationMS int64           `json:"duration_ms"` // event_msg task_complete: how long the turn took
 		} `json:"payload"`
 	}
-	if json.Unmarshal(line, &e) != nil || e.Type != "response_item" {
+	if json.Unmarshal(line, &e) != nil {
 		return false
 	}
 	p := e.Payload
+	if e.Type == "event_msg" && p.Type == "task_complete" {
+		return t.endTurn(p.DurationMS)
+	}
+	if e.Type != "response_item" {
+		return false
+	}
 	switch p.Type {
 	case "message":
 		if p.Role != "user" && p.Role != "assistant" {
@@ -528,6 +539,26 @@ func (t *transcript) codexLine(line []byte) bool {
 	return false
 }
 
+// endTurn marks the last message of a finished turn with how long it took.
+func (t *transcript) endTurn(ms int64) bool {
+	n := len(t.msgs)
+	if ms <= 0 || n == 0 || t.msgs[n-1].Kind == "user" {
+		return false
+	}
+	t.msgs[n-1].TurnMS = ms
+	return true
+}
+
+// agyTime reads a step's created_at; zero when it is missing or unreadable,
+// which leaves the turn without a time.
+func agyTime(s string) time.Time {
+	at, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return at
+}
+
 var agyRequestRe = regexp.MustCompile(`(?s)<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>`)
 
 // agyLine parses Antigravity CLI's brain/<id>/.system_generated/logs/transcript.jsonl.
@@ -536,6 +567,7 @@ func (t *transcript) agyLine(line []byte) bool {
 		Type      string `json:"type"`
 		Source    string `json:"source"`
 		Content   string `json:"content"`
+		CreatedAt string `json:"created_at"`
 		ToolCalls []struct {
 			Name string          `json:"name"`
 			Args json.RawMessage `json:"args"`
@@ -556,12 +588,18 @@ func (t *transcript) agyLine(line []byte) bool {
 			return false
 		}
 		t.add(&Message{Kind: "user", Text: text})
+		t.asked = agyTime(e.CreatedAt)
 		return true
 	case "PLANNER_RESPONSE":
 		changed := false
 		if strings.TrimSpace(e.Content) != "" {
 			t.add(&Message{Kind: "assistant", Text: e.Content})
 			changed = true
+			// An answer that calls no tools ends the turn.
+			if at := agyTime(e.CreatedAt); len(e.ToolCalls) == 0 && !t.asked.IsZero() && at.After(t.asked) {
+				t.endTurn(at.Sub(t.asked).Milliseconds())
+				t.asked = time.Time{}
+			}
 		}
 		for _, c := range e.ToolCalls {
 			m := &Message{Kind: "tool", Name: c.Name, Input: agyToolSummary(c.Args)}

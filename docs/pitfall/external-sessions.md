@@ -27,3 +27,11 @@ Claude Code 进入 worktree（`EnterWorktree`）时会把自己的进程 `chdir`
 ## Codex App 的线程列表先滤掉 worker，再截断
 
 `codexAppRows`（`internal/collie/desktop.go`）读 App 的 `threads` 表。Collie 自己 worker 的线程也在表里，而且通常最新。要是 SQL 先 `LIMIT` 再在 Go 里滤掉 worker，worker 越多，App 自己的线程被挤掉越多（曾经 7 天内 29 个只显示 16 个）。所以 SQL 不加 `LIMIT`，Go 里滤完 worker 再数满 `codexMax`。ACTIVE 自动化写入的线程（`automations/<id>/automation.toml` 的 `target_thread_id`）不受上限限制。三个桌面应用的侧栏都会列出旧会话，所以 Collie 不按时间截断（曾经只看 7 天内，macair 22 个 Codex 线程只显示 6 个），每个应用只按各自的上限（Claude 和 Antigravity 是 `desktopMax`，Codex 是 `codexMax`）保留最新的，每台机器分别计数。
+
+## Antigravity 索引里的 CLI 会话，记录在 CLI 的目录
+
+Antigravity 桌面 App 的 `conversation_summaries.db` 也列出 agy CLI 起的会话，但这些会话的 `brain/<id>/.system_generated/logs/` 在 `~/.gemini/antigravity-cli` 下，不在 App 的 `~/.gemini/antigravity`。`agyDesktopRows`（`internal/collie/desktop.go`）两处都找，只找 App 目录时打开会显示「还没有找到这个会话的记录」。
+
+## 一轮做完折成「已工作 Xm Ys」
+
+Codex 和 Antigravity 每几步就插一句过程消息，连续的工具调用很少超过 3 个，「N 个步骤」那种按连续工具合并的折叠收不起来，所以按轮折叠：解析时给一轮的最后一条消息标上 `turn_ms`，前端把它之前、上一条用户消息之后的过程收成一行（`drawThread`）。Codex 用日志里 `event_msg` 的 `task_complete.duration_ms`；Antigravity 没有轮结束的记录，把「有内容、不调用工具的 `PLANNER_RESPONSE`」当作结束，从 `USER_INPUT` 的 `created_at` 算起。被中断的轮没有 `task_complete`，不折叠。

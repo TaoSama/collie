@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -660,8 +661,12 @@ func (s *Server) agyDesktopRows() []desktopRow {
 		d := desktopRow{id: "ag-" + id, kind: "agy", app: app, surface: agySurface(src), session: id, title: messageTitle(title), cwd: cwd,
 			created: sqlTime(input), updated: sqlTime(mod), running: status == "CASCADE_RUN_STATUS_RUNNING"}
 		d.waiting = !d.running && notIdle
-		if f := filepath.Join(root, "brain", id, ".system_generated", "logs", "transcript.jsonl"); isFile(f) {
-			d.path, d.format = f, "agy"
+		// A conversation the CLI started keeps its log in the CLI's home.
+		for _, r := range slices.Compact([]string{root, s.agyCLIHome()}) {
+			if f := filepath.Join(r, "brain", id, ".system_generated", "logs", "transcript.jsonl"); isFile(f) {
+				d.path, d.format = f, "agy"
+				break
+			}
 		}
 		rows = append(rows, d)
 	}

@@ -506,10 +506,10 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   display: flex; flex-direction: column; gap: 0;
 }
 /* Rhythm: a turn gets real space; quiet rows (tools, events) sit close. */
-.thread > * + * { margin-top: 28px; }
-.thread > .tools + .tools, .thread > .event + .event, .thread > .event + .needs { margin-top: 8px; }
-.thread > .tools, .thread > * + .tools { margin-top: 14px; }
-.thread > .tools + .msg, .thread > .tools + .say { margin-top: 22px; }
+.thread > * + *, .turn-body > * + * { margin-top: 28px; }
+.thread > .tools + .tools, .thread > .event + .event, .thread > .event + .needs, .turn-body > .tools + .tools { margin-top: 8px; }
+.thread > .tools, .thread > * + .tools, .turn-body > * + .tools { margin-top: 14px; }
+.thread > .tools + .msg, .thread > .tools + .say, .turn-body > .tools + .msg { margin-top: 22px; }
 .chatbg .thread { overflow: visible; min-height: 100%; }
 /* "还在跑" follows the last message instead of sitting at the bottom. */
 .chatbg .thread:has(+ .working-row:not([hidden])) { min-height: 0; }
@@ -1684,6 +1684,21 @@ a.url:hover { text-decoration-color: currentColor; }
 .toolrun .errs { color: var(--attn); font-weight: var(--fw-medium); }
 .toolrun-body { padding-left: 14px; border-left: var(--bw) solid var(--line); margin: 2px 0 2px 3px; }
 
+/* a finished turn: its steps folded behind how long it worked */
+.turn { align-self: stretch; }
+.turn > summary {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 0 -8px; border-radius: calc(8px * var(--round));
+  cursor: pointer; list-style: none; color: var(--t-secondary); font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.1);
+}
+.turn > summary::-webkit-details-marker { display: none; }
+.turn > summary:hover { background: var(--bg-2); }
+.turn > summary svg { width: 15px; height: 15px; color: var(--t-icon); }
+.turn > summary .n { flex: 1; min-width: 0; }
+.turn > summary .chev { transition: transform .15s; }
+.turn[open] > summary .chev { transform: rotate(90deg); }
+.turn-body { display: flex; flex-direction: column; padding: 14px 0 4px; }
+.thread > .turn + .msg { margin-top: 14px; }
+
 /* sidebar groups per computer */
 .group h2 .dot { width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px; }
 .group h2 .tag, .meta .tag, .row .tag {
@@ -2299,6 +2314,7 @@ select.picked { display: none; }
   .tabs button { height: 40px; }
   .pref .seg button { min-width: 44px; justify-content: center; }
   .toolrun > summary { padding-block: 8px; }
+  .turn > summary { padding-block: 10px; }
   .choice .n { font-size: var(--fs-small); }
   .set-adv > summary { padding: 12px 0; }
   .keys { gap: 4px; }
