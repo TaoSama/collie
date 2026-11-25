@@ -16,6 +16,7 @@ const (
 	ErrCannotSend     = "cannot_send"
 	ErrHubUnavailable = "hub_unavailable"
 	ErrNotRunning     = "not_running" // the extension's program isn't up (the process side answers)
+	ErrUncertain      = "uncertain"   // channel.send: it may have gone out; never sent again
 )
 
 // Methods the host calls.
@@ -213,10 +214,13 @@ type Send struct {
 	Ref          string `json:"ref"`
 	Chat         string `json:"chat,omitempty"`
 	Text         string `json:"text"`
-	Kind         string `json:"kind"`
-	ReplyTo      string `json:"reply_to,omitempty"`
-	Images       []Blob `json:"images,omitempty"`
-	Files        []Blob `json:"files,omitempty"`
+	// Footer is the footer Text ends with, for a channel that sets it apart
+	// (larkx shows it as a quote); a plain channel just sends Text.
+	Footer  string `json:"footer,omitempty"`
+	Kind    string `json:"kind"`
+	ReplyTo string `json:"reply_to,omitempty"`
+	Images  []Blob `json:"images,omitempty"`
+	Files   []Blob `json:"files,omitempty"`
 	// Link is a download address for a file too big to send (result kind).
 	Link string `json:"link,omitempty"`
 }

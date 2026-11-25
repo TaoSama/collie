@@ -51,7 +51,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 - **herdr 0.8**。按 pane ID 查找 Agent，Collie 持久化自己启动的 Agent 名称。遇到 `launch_pending` 时，只有确认 Agent 空闲且终端无选择框才回退为粘贴输入。Claude 目录信任提示可能被报告为空闲，Collie 会结合终端内容识别并标记为待确认。
 - 往会话发消息一律走 `Herdr.Prompt`（发后回读确认，不要绕过它直接 `agent.prompt`）；tick 里不在列表中的 worker 不一定退出了：可能刚起来，或它那台电脑这轮没答话（`docs/pitfall/delivery.md`）
 - collie 常被 `kill -9`、被自更新 exec 替换，子进程得自己能退出：不要用 `script`/pty 包常驻程序，exec 后要回收旧子进程（`docs/pitfall/child-processes.md`）
-- 扩展（飞书、微信）只能经 `internal/extproto` 的协议和 Collie 说话，规范在 `extensions/README.md`：同一个扩展全局只跑一份，发送按 ref 只发一次、结果不明不重发；larkx 一行不改，触发在 Collie 侧判定（`docs/pitfall/extensions.md`）
+- 扩展（飞书、微信）只能经 `internal/extproto` 的协议和 Collie 说话，规范在 `extensions/README.md`：同一个扩展全局只跑一份，发送按 ref 只发一次、结果不明不重发；上游 LarkAgentX 一行不改，适配层在 `extensions/larkx/pkg/`，触发在 Collie 侧判定（`docs/pitfall/extensions.md`）
 - **同一会话的识别**。工作目录可能同时有多个会话。Antigravity 会通过会话索引和目录定位记录，匹配不到时显示终端输出。外部会话和 herdr 会话去重需核对会话 ID、来源和运行电脑。接管及发送限制见 [外部会话](docs/pitfall/external-sessions.md)。
 
 ## 目录结构

@@ -111,15 +111,16 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 	if !conv.AskAt.IsZero() {
 		vars["elapsed"] = elapsedText(time.Since(conv.AskAt))
 	}
-	full := text
+	full, footer := text, ""
 	if kind != extproto.KindProgress {
-		full += "\n\n" + renderFooter(h.footer(), vars)
+		footer = renderFooter(h.footer(), vars)
+		full += "\n\n" + footer
 	}
 	ref, err := newRef()
 	if err != nil {
 		return nil, err
 	}
-	o := &OutboxItem{Ref: ref, Conv: convID, Kind: kind, Text: full, Trigger: trig, State: outPending, At: time.Now()}
+	o := &OutboxItem{Ref: ref, Conv: convID, Kind: kind, Text: full, Footer: footer, Trigger: trig, State: outPending, At: time.Now()}
 	if len(files) > 0 {
 		if m := h.manifest(conv.Ext); m == nil || !m.has(capSend) {
 			return nil, fmt.Errorf("%s 只能发文字", conv.Ext)
@@ -172,7 +173,7 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 	var res extproto.SendResult
 	o.Tries++
 	if r.man.has(capSend) {
-		send := extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref, Chat: conv.Chat, Text: o.Text, Kind: o.Kind, ReplyTo: o.ReplyTo}
+		send := extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref, Chat: conv.Chat, Text: o.Text, Footer: o.Footer, Kind: o.Kind, ReplyTo: o.ReplyTo}
 		for _, f := range o.Files {
 			b, rerr := os.ReadFile(f.Path)
 			if rerr != nil {
@@ -208,8 +209,7 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 	case unreachable(err):
 		log.Printf("ext %s: send %s: %v", r.man.ID, o.Ref, err)
 		return false
-	// larkx answers an unknown result with this text and no code.
-	case strings.Contains(err.Error(), "可能已经发出") || extproto.IsCode(err, extproto.DeliveryUncertain):
+	case extproto.IsCode(err, extproto.ErrUncertain):
 		o.State, o.Reason, o.DoneAt = extproto.DeliveryUncertain, err.Error(), time.Now()
 	default:
 		o.State, o.Reason, o.DoneAt = extproto.DeliveryFailed, err.Error(), time.Now()

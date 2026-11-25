@@ -427,7 +427,7 @@ func (r *extRun) handle(ctx context.Context, method string, params json.RawMessa
 	switch method {
 	case extproto.MChannelReceive:
 		if !r.man.has(capReceive) {
-			return struct{}{}, nil // e.g. larkx's own /agent: Collie reads its archive instead
+			return struct{}{}, nil // it said it doesn't: Collie reads its archive instead
 		}
 		var in extproto.Receive
 		if err := json.Unmarshal(params, &in); err != nil {

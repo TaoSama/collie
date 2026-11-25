@@ -565,7 +565,7 @@ func extEnv(m *ExtManifest, dir, data string, pathDirs []string) []string {
 	var env []string
 	keep := extEnvKeep
 	// For development: COLLIE_EXT_PASS_ENV names more variables to pass on
-	// (LARKX_PERSONA_BACKEND=fixture runs larkx without an account).
+	// (COLLIE_LARKX_FAKE=1 runs larkx without an account).
 	keep = append(keep, strings.Fields(strings.ReplaceAll(os.Getenv("COLLIE_EXT_PASS_ENV"), ",", " "))...)
 	for _, k := range keep {
 		v, ok := os.LookupEnv(k)
