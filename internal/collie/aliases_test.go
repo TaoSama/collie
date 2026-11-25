@@ -177,19 +177,21 @@ func TestAliasShell(t *testing.T) {
 // discovery runs the real shells against a home made up for the test.
 func TestDiscoverAliases(t *testing.T) {
 	for _, sh := range []string{"bash", "zsh"} {
-		bin, err := exec.LookPath(sh)
-		if err != nil {
+		if _, err := exec.LookPath(sh); err != nil {
 			t.Logf("no %s here", sh)
 			continue
 		}
 		home := t.TempDir()
 		t.Setenv("HOME", home)
-		t.Setenv("SHELL", bin)
+		noZDOTDIR(t)
 		rc := "echo noisy rc file\n" +
 			"alias ccf='ANTHROPIC_BASE_URL=\"$ANTHROPIC_BASE_URL\" ANTHROPIC_AUTH_TOKEN=\"" + fakeToken + "\" claude --model \"fable[1m]\"'\n" +
 			"alias cx='command codex -m gpt-5.5 -c model_reasoning_effort=high'\n" +
 			"alias ll='ls -l'\n"
 		os.WriteFile(filepath.Join(home, "."+sh+"rc"), []byte(rc), 0o600)
+		if !readsRC(t, home, sh) {
+			continue
+		}
 		rep, err := discoverAliases(context.Background(), home)
 		if err != nil {
 			t.Fatalf("%s: %v", sh, err)
@@ -273,8 +275,9 @@ func TestAliasViewsMergeAndStale(t *testing.T) {
 func TestGetAliasesNodeOnly(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("SHELL", "/bin/bash")
-	os.WriteFile(filepath.Join(home, ".bashrc"), []byte("alias cc='claude --model opus'\n"), 0o600)
+	noZDOTDIR(t)
+	rc := accountRC(t, home)
+	os.WriteFile(filepath.Join(home, rc), []byte("alias cc='claude --model opus'\n"), 0o600)
 	hub := &Server{home: home}
 	w := httptest.NewRecorder()
 	hub.getAliases(w, httptest.NewRequest("GET", "/api/aliases", nil))
@@ -288,7 +291,7 @@ func TestGetAliasesNodeOnly(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &rep); err != nil || w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	if len(rep.Aliases) != 1 || rep.Aliases[0].Name != "cc" || rep.Aliases[0].Model != "opus" || rep.RC != "~/.bashrc" {
+	if len(rep.Aliases) != 1 || rep.Aliases[0].Name != "cc" || rep.Aliases[0].Model != "opus" || rep.RC != "~/"+rc {
 		t.Errorf("%+v", rep)
 	}
 }
@@ -296,8 +299,8 @@ func TestGetAliasesNodeOnly(t *testing.T) {
 func TestSuperAliasesHub(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("SHELL", "/bin/bash")
-	os.WriteFile(filepath.Join(home, ".bashrc"), []byte("alias cx='codex -m gpt-5.5'\nalias g=git\n"), 0o600)
+	noZDOTDIR(t)
+	os.WriteFile(filepath.Join(home, accountRC(t, home)), []byte("alias cx='codex -m gpt-5.5'\nalias g=git\n"), 0o600)
 	s := &Server{home: home, herdr: newHerdr(filepath.Join(home, "missing.sock"), "hub", home)}
 	w := httptest.NewRecorder()
 	s.superAliases(w, httptest.NewRequest("GET", "/api/super/aliases", nil))

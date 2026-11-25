@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -45,17 +46,18 @@ func TestRCAliasOrder(t *testing.T) {
 // follows the rc file.
 func TestDiscoverAliasesInRCOrder(t *testing.T) {
 	for _, sh := range []string{"bash", "zsh"} {
-		bin, err := exec.LookPath(sh)
-		if err != nil {
+		if _, err := exec.LookPath(sh); err != nil {
 			t.Logf("no %s here", sh)
 			continue
 		}
 		home := t.TempDir()
 		t.Setenv("HOME", home)
-		t.Setenv("SHELL", bin)
 		noZDOTDIR(t)
 		rc := "alias zcx='codex'\nalias ccx='claude --model opus'\nalias acc='agy'\nalias mcc='claude'\n"
 		os.WriteFile(filepath.Join(home, "."+sh+"rc"), []byte(rc), 0o600)
+		if !readsRC(t, home, sh) {
+			continue
+		}
 		rep, err := discoverAliases(context.Background(), home)
 		if err != nil {
 			t.Fatalf("%s: %v", sh, err)
@@ -68,6 +70,33 @@ func TestDiscoverAliasesInRCOrder(t *testing.T) {
 			t.Errorf("%s: %v, want %v", sh, names, want)
 		}
 	}
+}
+
+// Collie reads aliases with the account's own login shell, which a test
+// can't change ($SHELL doesn't count), so these follow whatever it is.
+
+// accountRC: the rc file (".zshrc") Collie reads aliases from in home for
+// this account. Skips the test when the login shell is neither bash nor zsh.
+func accountRC(t *testing.T, home string) string {
+	t.Helper()
+	login := loginShell()
+	if b := path.Base(login); b != "bash" && b != "zsh" {
+		t.Skipf("login shell %q", login)
+	}
+	name, _, _ := aliasShell(home, login)
+	return "." + name + "rc"
+}
+
+// readsRC: whether Collie reads sh's rc file in home as it is now. A zsh
+// account never reads ~/.bashrc; a bash one reads ~/.zshrc when there is
+// no ~/.bashrc.
+func readsRC(t *testing.T, home, sh string) bool {
+	t.Helper()
+	if accountRC(t, home) != "."+sh+"rc" {
+		t.Logf("%s: the account logs in with %s, which doesn't read ~/.%src", sh, loginShell(), sh)
+		return false
+	}
+	return true
 }
 
 func noZDOTDIR(t *testing.T) {
