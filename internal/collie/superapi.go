@@ -1,6 +1,8 @@
 package collie
 
 import (
+	"github.com/TaoSama/collie/internal/extproto"
+
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -309,13 +311,14 @@ func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger) {
 
 func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text     string   `json:"text"`
-		Thread   string   `json:"thread"`
-		Re       string   `json:"re"`
-		Options  []string `json:"options"`
-		Check    bool     `json:"check"`
-		To       string   `json:"to"`
-		Progress bool     `json:"progress"`
+		Text     string          `json:"text"`
+		Thread   string          `json:"thread"`
+		Re       string          `json:"re"`
+		Options  []string        `json:"options"`
+		Check    bool            `json:"check"`
+		To       string          `json:"to"`
+		Progress bool            `json:"progress"`
+		Files    []extproto.Blob `json:"files"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -338,7 +341,7 @@ func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, _, ok := channelOf(body.Thread); ok && s.ext != nil {
 		kind := s.ext.replyKind(body.Thread, body.To != "", body.Progress)
-		sent, err := s.ext.sendOut(body.Thread, body.Text, kind, s.sup.routerRunInfo(), "")
+		sent, err := s.ext.sendOutFiles(body.Thread, body.Text, kind, s.sup.routerRunInfo(), "", body.Files)
 		if err != nil {
 			writeJSON(w, 400, map[string]any{"error": err.Error()})
 			return
@@ -351,6 +354,10 @@ func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
 			s.sup.mu.Unlock()
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "sent": sent.Ref})
+		return
+	}
+	if len(body.Files) > 0 {
+		writeJSON(w, 400, map[string]any{"error": "--file only goes to an extension conversation (ext:… thread or --to)"})
 		return
 	}
 	e, warn := s.sup.Reply(body.Thread, body.Text, body.Re, body.Options, body.Check)

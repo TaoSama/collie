@@ -175,6 +175,8 @@ func parseReply(args []string, in io.Reader, tty bool) (map[string]any, error) {
 	check := fs.Bool("check", false, "mark as needing the human's review or action (without --opt)")
 	to := fs.String("to", "", "send to an extension's own chat with the human (e.g. wechat), only when they asked for it")
 	progress := fs.Bool("progress", false, "a short note while still working, in an extension conversation (no footer)")
+	var files flagList
+	fs.Var(&files, "file", "a picture or file on this computer to send with it, to an extension conversation (repeatable)")
 	if err := parseArgs(fs, args); err != nil {
 		return nil, err
 	}
@@ -201,6 +203,13 @@ func parseReply(args []string, in io.Reader, tty bool) (map[string]any, error) {
 	}
 	if *progress {
 		body["progress"] = true
+	}
+	if len(files) > 0 {
+		blobs, err := readReplyFiles(files)
+		if err != nil {
+			return nil, err
+		}
+		body["files"] = blobs
 	}
 	return body, nil
 }

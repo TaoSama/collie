@@ -3,9 +3,12 @@ package collie
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -76,6 +79,12 @@ func newRef() (string, error) {
 // sendOut sends text to the conversation of thread. kind says what it is
 // (answer, progress, result, push). It returns the stored item.
 func (h *extHost) sendOut(thread, text, kind string, ri runInfo, trig string) (*OutboxItem, error) {
+	return h.sendOutFiles(thread, text, kind, ri, trig, nil)
+}
+
+// sendOutFiles also sends pictures and files; they wait on the hub's disk
+// with the send, so a retry has them.
+func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig string, files []extproto.Blob) (*OutboxItem, error) {
 	_, convID, ok := channelOf(thread)
 	if !ok {
 		return nil, fmt.Errorf("%s is not an extension conversation", thread)
@@ -111,6 +120,26 @@ func (h *extHost) sendOut(thread, text, kind string, ri runInfo, trig string) (*
 		return nil, err
 	}
 	o := &OutboxItem{Ref: ref, Conv: convID, Kind: kind, Text: full, Trigger: trig, State: outPending, At: time.Now()}
+	if len(files) > 0 {
+		if m := h.manifest(conv.Ext); m == nil || !m.has(capSend) {
+			return nil, fmt.Errorf("%s 只能发文字", conv.Ext)
+		}
+		dir := filepath.Join(h.home, "ext-outbox", ref)
+		for i, f := range files {
+			b, err := base64.StdEncoding.DecodeString(f.Data)
+			if err != nil {
+				return nil, fmt.Errorf("file %d: %v", i+1, err)
+			}
+			p := filepath.Join(dir, fmt.Sprintf("%d-%s", i, uploadName(f.Name)))
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(p, b, 0o600); err != nil {
+				return nil, err
+			}
+			o.Files = append(o.Files, OutFile{Path: p, Name: f.Name, Mime: f.Mime})
+		}
+	}
 	if kind == extproto.KindAnswer || kind == extproto.KindProgress {
 		o.ReplyTo = conv.AskMsg
 	}
@@ -143,8 +172,22 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 	var res extproto.SendResult
 	o.Tries++
 	if r.man.has(capSend) {
-		err = r.call(ctx, extproto.MChannelSend, extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref,
-			Chat: conv.Chat, Text: o.Text, Kind: o.Kind, ReplyTo: o.ReplyTo}, &res)
+		send := extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref, Chat: conv.Chat, Text: o.Text, Kind: o.Kind, ReplyTo: o.ReplyTo}
+		for _, f := range o.Files {
+			b, rerr := os.ReadFile(f.Path)
+			if rerr != nil {
+				o.State, o.Reason, o.DoneAt = extproto.DeliveryFailed, "附件不见了："+f.Name, time.Now()
+				h.store.putOutIf(o, outPending)
+				return true
+			}
+			blob := extproto.Blob{Name: f.Name, Mime: f.Mime, Data: base64.StdEncoding.EncodeToString(b)}
+			if strings.HasPrefix(f.Mime, "image/") {
+				send.Images = append(send.Images, blob)
+			} else {
+				send.Files = append(send.Files, blob)
+			}
+		}
+		err = r.call(ctx, extproto.MChannelSend, send, &res)
 	} else {
 		var out extproto.ActionResult
 		args := map[string]any{"chat": conv.Chat, "text": o.Text}

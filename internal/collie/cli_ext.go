@@ -1,11 +1,14 @@
 package collie
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -125,4 +128,32 @@ func cliExtDo(args []string) error {
 	}
 	fmt.Println(text)
 	return nil
+}
+
+// replyFileMost bounds a file sent with `collie reply --file`.
+const replyFileMost = 50 << 20
+
+// readReplyFiles reads files for `collie reply --file`, on the computer the
+// CLI runs on.
+func readReplyFiles(paths []string) ([]map[string]string, error) {
+	var out []map[string]string
+	for _, p := range paths {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return nil, err
+		}
+		if fi.IsDir() || fi.Size() > replyFileMost {
+			return nil, fmt.Errorf("%s: not a file, or larger than %d MB", p, replyFileMost>>20)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
+		mime := http.DetectContentType(b)
+		if i := strings.IndexByte(mime, ';'); i > 0 {
+			mime = mime[:i]
+		}
+		out = append(out, map[string]string{"name": filepath.Base(p), "mime": mime, "data": base64.StdEncoding.EncodeToString(b)})
+	}
+	return out, nil
 }

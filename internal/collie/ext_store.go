@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -73,6 +74,14 @@ type OutboxItem struct {
 	Tries     int       `json:"tries,omitempty"`
 	At        time.Time `json:"at"`
 	DoneAt    time.Time `json:"done_at,omitempty"`
+	Files     []OutFile `json:"files,omitempty"`
+}
+
+// OutFile is a picture or file a send carries, kept on the hub's disk.
+type OutFile struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+	Mime string `json:"mime"`
 }
 
 const outPending = "pending"
@@ -290,6 +299,15 @@ func (st *extStore) expireStale(before time.Time) {
 }
 
 func (st *extStore) trimOutbox(now time.Time) {
+	for _, o := range st.outs("") {
+		if o.At.Before(now.Add(-outboxKeep)) && o.State != outPending {
+			for _, f := range o.Files {
+				if err := os.Remove(f.Path); err != nil && !os.IsNotExist(err) {
+					log.Printf("ext: drop a sent file: %v", err)
+				}
+			}
+		}
+	}
 	if _, err := st.db.Exec(`DELETE FROM ext_outbox WHERE at < ? AND state != ?`, now.Add(-outboxKeep).Unix(), outPending); err != nil {
 		log.Printf("ext: trim outbox: %v", err)
 	}
