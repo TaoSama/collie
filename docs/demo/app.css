@@ -1152,7 +1152,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
 dialog.sheet[open] { display: flex; flex-direction: column; overflow: hidden; }
 dialog.sheet > form { flex: 1 1 auto; min-height: 0; max-height: none; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 6px; }
-.sheet-head h3 { margin: 0; font-size: calc(var(--fs-lead) + 1px); letter-spacing: var(--ls-title); }
+.sheet-head h3 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: calc(var(--fs-lead) + 1px); letter-spacing: var(--ls-title); }
 .sheet-body { overflow: auto; flex: 1; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
 .sheet-note { margin: 0; padding: 0 20px 4px; font-size: var(--fs-small); line-height: calc(var(--lh-ui) + 0.1); }
 .sheet .field { padding: 10px 20px; }
@@ -1607,7 +1607,7 @@ a.url:hover { text-decoration-color: currentColor; }
   border: var(--bw) solid var(--line); border-radius: calc(28px * var(--round)); padding: 0;
 }
 .ask .sheet-head { padding: 24px 24px 4px; }
-.ask-text { margin: 0; padding: 6px 24px 4px; color: var(--t-secondary); font-size: var(--fs-body); line-height: calc(var(--lh-ui) + 0.15); white-space: pre-line; }
+.ask-text { margin: 0; padding: 6px 24px 4px; color: var(--t-secondary); font-size: var(--fs-body); line-height: calc(var(--lh-ui) + 0.15); white-space: pre-line; overflow-wrap: anywhere; }
 .ask .field { padding: 10px 24px 4px; }
 .ask .field input { width: 100%; }
 .ask .sheet-foot { flex-direction: column; gap: 10px; padding: 20px 18px 18px; border-top: 0; }
