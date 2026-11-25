@@ -226,7 +226,7 @@
     if (pickPop.parentNode !== host) host.append(pickBack, pickPop);
     // Options without an icon keep its place when others have one, so the names line up.
     const iconGap = [...sel.options].some((o) => o.dataset.glyph || o.dataset.dot) ? `<span class="pi"></span>` : "";
-    const row = (o) => `<button type="button" class="po${o.selected ? " on" : ""}" role="option" aria-selected="${o.selected}" data-v="${esc(o.value)}" ${o.disabled ? "disabled" : ""}>
+    const row = (o) => `<button type="button" class="po${o.selected ? " on" : ""}" role="option" aria-selected="${o.selected}" data-i="${o.index}" ${o.disabled ? "disabled" : ""}>
       ${optIcon(o) || iconGap}<span class="pl"><span>${esc(o.textContent)}</span>${o.dataset.sub ? `<small>${esc(o.dataset.sub)}</small>` : ""}</span>
       <svg class="ck" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`;
     let html = sel.dataset.title ? `<div class="ph">${esc(sel.dataset.title)}</div>` : "";
@@ -269,8 +269,9 @@
     if (!o || !pickOpen) return;
     const sel = pickOpen;
     closePick(true);
-    if (sel.value === o.dataset.v) return;
-    sel.value = o.dataset.v;
+    // By position: a placeholder may share its value with a real option.
+    if (sel.selectedIndex === +o.dataset.i) return;
+    sel.selectedIndex = +o.dataset.i;
     syncPick(sel);
     sel.dispatchEvent(new Event("input", { bubbles: true }));
     sel.dispatchEvent(new Event("change", { bubbles: true }));
@@ -694,6 +695,11 @@
   }
 
   const machineName = (id) => (state.machines || []).find((m) => m.id === (id || ""))?.name || id || "本机";
+  // Every computer picker offers and draws its list the same way (machines.js).
+  collieMachines.init({ esc });
+  const machineUp = (m) => m.local ? state.ok !== false : !!m.online;
+  const machineChoices = (keep, others) => collieMachines.choices(state.machines || [{ id: "", name: "本机", local: true }], { keep, others, isUp: machineUp });
+  const machineOptions = (list, cur, def) => collieMachines.options(list, { cur, def, isUp: machineUp });
   const isCollieOwned = (v) => isLocalRouter(v) || isWorker(v.name);
 
   // "09:00", "明天 09:00", "11月24日 09:00".
@@ -2371,11 +2377,10 @@
     // What was picked here over the defaults: picking only an agent leaves the
     // computer at its default, not unset.
     const t = targetNow();
-    const ms = (state.machines || [{ id: "", name: "本机", local: true }]).filter((m) => !m.hub && (m.local ? state.ok !== false : m.online || m.id === t.machine));
+    const ms = machineChoices(t.machine);
     const fill = (sel, html) => { if (sel._html !== html) { sel._html = html; sel.innerHTML = html; } };
     const mSel = $("#t-machine"), kSel = $("#t-kind");
-    fill(mSel, ms.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}"
-      data-sub="${m.local ? "hub" : m.os || ""}${m.id === targetDefault.machine ? " · 默认" : ""}" ${m.id === t.machine ? "selected" : ""}>${esc(m.name)}</option>`).join(""));
+    fill(mSel, machineOptions(ms, t.machine, targetDefault.machine));
     const have = ms.find((m) => m.id === t.machine)?.agents;
     fill(kSel, AGENT_KINDS.map(([k, l]) => {
       const missing = Array.isArray(have) && !have.includes(k);
@@ -3152,8 +3157,8 @@
           <label>Alias<select name="${who}_alias" data-title="用哪个 alias 启动" data-value="${esc(alias || "")}"><option value="${esc(alias || "")}" selected>${esc(alias || "-")}</option></select></label>
           <label>模型<select name="${who}_model" data-title="模型" data-value="${esc(model || "")}"><option value="${esc(model || "")}" selected>${esc(model || "默认")}</option></select></label>
           <label>思考强度<select name="${who}_effort" data-pick="compact" data-title="思考强度" data-value="${esc(effort || "")}"><option value="${esc(effort || "")}" selected>${esc(EFFORT_LABEL[effort] || effort || "默认")}</option></select></label>`;
-    const many = (state.machines || []).length > 1;
-    const machinePick = (name, cur, title) => `<select name="${name}" data-title="${title}">${state.machines.map((m) => `<option value="${esc(m.id)}" data-dot="${m.local || m.online ? "online" : "offline"}" ${m.id === (cur || "") ? "selected" : ""}>${esc(m.name)}${m.local ? "（hub）" : m.online ? "" : "（离线）"}</option>`).join("")}</select>`;
+    const many = (cur) => machineChoices(cur || "").length > 1;
+    const machinePick = (name, cur, title) => `<select name="${name}" data-title="${title}">${machineOptions(machineChoices(cur || ""), cur || "")}</select>`;
     setTimeout(() => bindSettings($("#settings-form")));
     return `<form class="settings" id="settings-form">
       <section class="card set-sec">
@@ -3162,7 +3167,7 @@
           <label>Agent<select name="router_kind" data-title="Collie 自己用的 agent">${kindOpts(s.router_kind)}</select></label>
           ${modelPick("router", s.router_model, s.router_effort, s.router_alias)}
         </div>
-        ${many || s.router_machine ? `<div class="set-grid three"><label>电脑${machinePick("router_machine", s.router_machine, "Collie 自己在哪台电脑上运行")}<small>hub 连不上模型时换一台；记忆仍存在 hub 上，自动同步过去</small></label></div>` : ""}
+        ${many(s.router_machine) ? `<div class="set-grid three"><label>电脑${machinePick("router_machine", s.router_machine, "Collie 自己在哪台电脑上运行")}<small>hub 连不上模型时换一台；记忆仍存在 hub 上，自动同步过去</small></label></div>` : ""}
         <details class="set-adv" ${(s.router_args || []).length ? "open" : ""} ${s.router_alias ? "hidden" : ""}><summary>更多启动参数</summary>
           <label><input name="router_args" class="mono" value="${esc((s.router_args || []).join(" "))}" placeholder="例如 --permission-mode plan" autocorrect="off" autocapitalize="off" spellcheck="false"><small>原样加在启动命令后面，一般不用填</small></label>
         </details>
@@ -3175,8 +3180,8 @@
           ${modelPick("worker", s.worker_model, s.worker_effort, s.worker_alias)}
         </div>
         <div class="set-grid three">
-          ${many ? `<label>电脑${machinePick("worker_machine", s.worker_machine, "派活默认在哪台电脑")}</label>` : ""}
-          <label class="${many ? "span2" : "span3"}">目录<input name="worker_cwd" class="mono" value="${esc(tilde(s.worker_cwd))}" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
+          ${many(s.worker_machine) ? `<label>电脑${machinePick("worker_machine", s.worker_machine, "派活默认在哪台电脑")}</label>` : ""}
+          <label class="${many(s.worker_machine) ? "span2" : "span3"}">目录<input name="worker_cwd" class="mono" value="${esc(tilde(s.worker_cwd))}" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
         </div>
       </section>
 
@@ -4612,13 +4617,7 @@
     </section>`;
   }
 
-  // Computers by name, with the hub's first when it has any agent CLI and last when it has none.
-  function machineOrder(list, isHub) {
-    const hub = list.filter(isHub), rest = list.filter((m) => !isHub(m)).sort((a, b) => a.name.localeCompare(b.name));
-    return hub.some((m) => m.agents?.length) ? [...hub, ...rest] : [...rest, ...hub];
-  }
-
-  const machineList = (r) => machineOrder([...r.devices.filter((d) => d.kind === "machine"),
+  const machineList = (r) => collieMachines.order([...r.devices.filter((d) => d.kind === "machine"),
     { id: "", name: r.hub.name, hub: true, online: true, version: r.hub.version, agents: r.hub.agents, home: r.hub.home }], (m) => m.hub);
   function machineCards(r) {
     for (const id of mcOpen) if (id && !r.devices.some((d) => d.id === id)) mcOpen.delete(id);
@@ -8293,12 +8292,15 @@
   });
   let pickMachine = "";
   const recentKey = () => "recentDirs" + (pickMachine ? ":" + pickMachine : "");
+  // Other hubs' computers too: a session can be started there by hand.
   function renderMachinePick() {
-    const ms = machineOrder((state.machines || []).filter((m) => m.local ? state.ok : m.online), (m) => m.local);
+    const ms = machineChoices(undefined, true);
     $("#l-machine-field").hidden = ms.length < 2;
     if (!ms.some((m) => m.id === pickMachine)) pickMachine = ms[0]?.id || "";
-    $("#l-machines").innerHTML = ms.map((m) => `<button type="button" class="${m.id === pickMachine ? "on" : ""}" data-m="${esc(m.id)}">
-      <span class="dot online"></span>${esc(m.name)}${m.local ? "<small>hub</small>" : ""}</button>`).join("");
+    const sel = $("#l-machine"), html = machineOptions(ms, pickMachine);
+    if (sel._html !== html) { sel._html = html; sel.innerHTML = html; }
+    sel.value = pickMachine;
+    syncPick(sel);
     markKinds();
     fillLaunchAliases();
   }
@@ -8326,10 +8328,8 @@
     $("#recent").innerHTML = recent.slice(0, 6).map((d) => `<button type="button" data-d="${esc(d)}">${esc(d)}</button>`).join("");
     browse(cwdInput.value);
   }
-  $("#l-machines").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-m]");
-    if (!b) return;
-    pickMachine = b.dataset.m;
+  $("#l-machine").addEventListener("change", (e) => {
+    pickMachine = e.target.value;
     store.set("machine", pickMachine);
     renderMachinePick();
     resetDir();

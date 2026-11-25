@@ -42,9 +42,10 @@
   const extIcon = (m) => `<span class="ext-icon" aria-hidden="true">${esc((m.label || m.name || m.id).slice(0, 1))}</span>`;
   const loginWord = (m) => m.contributes?.connector?.login === "secret" ? "填写密钥" : "登录" + (m.label || "");
 
+  // Until one is chosen, none is picked; drawn as every computer picker (machines.js).
   function machineOptions(ms, cur, pick) {
-    return (pick ? `<option value="" disabled selected>选一台电脑</option>` : "") +
-      ms.map((m) => `<option value="${esc(m.id)}" ${!pick && m.id === cur ? "selected" : ""}>${esc(m.name)}${m.online ? "" : "（离线）"}</option>`).join("");
+    const M = window.collieMachines;
+    return (pick ? `<option value="" disabled selected>选一台电脑</option>` : "") + M.options(M.choices(ms, { keep: cur }), { cur: pick ? undefined : cur });
   }
   const machineName = (ms, id) => (ms.find((x) => x.id === (id || "")) || {}).name || id || "hub";
 
@@ -128,7 +129,7 @@
     const convs = (inbox?.convs || []).filter((c) => c.ext === m.id);
     const machine = declarative(m) ? "" : m.local
       ? `<div class="ext-field"><span class="tm-lab">运行在</span><span>${esc(machineName(ms, m.local_on))}<small class="muted">本地扩展，在找到它的那台电脑上运行</small></span></div>`
-      : `<label class="ext-field"><span class="tm-lab">运行在</span><select data-ext-machine data-pick="compact">${machineOptions(ms, v.setting.machine || "", ask)}</select></label>
+      : `<label class="ext-field"><span class="tm-lab">运行在</span><select data-ext-machine data-pick="compact" data-title="在哪台电脑上运行">${machineOptions(ms, v.setting.machine || "", ask)}</select></label>
          <small class="muted ext-field-note">${ask ? "它的后端只在某一台电脑上：先选好再开启。" : ""}换电脑会先停掉原来那台上的，登录状态留在原来那台。</small>`;
     return `${pageHead(esc(m.name), `<span class="muted">${esc(m.version)} · ${m.market ? "市场" : m.local ? "本地" : "内置"}</span>`)}
       <div class="card ext-card" data-ext="${esc(m.id)}"><div class="form">
