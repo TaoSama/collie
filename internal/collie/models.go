@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -23,7 +24,7 @@ type ModelOpt struct {
 	ID      string   `json:"id"`
 	Label   string   `json:"label,omitempty"`
 	Note    string   `json:"note,omitempty"`
-	Efforts []string `json:"efforts,omitempty"` // empty: the kind's efforts
+	Efforts []string `json:"efforts"` // nil: the kind's efforts; empty: none
 }
 
 type ModelInfo struct {
@@ -170,7 +171,7 @@ func (s *Server) claudeModels(info *ModelInfo) {
 		if id == "" {
 			continue
 		}
-		o := ModelOpt{ID: id, Efforts: []string{}}
+		o := ModelOpt{ID: id}
 		for _, c := range strings.Split(caps, ",") {
 			switch strings.TrimSpace(c) {
 			case "effort":
@@ -238,20 +239,26 @@ func (s *Server) codexModels(ctx context.Context, info *ModelInfo) {
 			info.Models = append([]ModelOpt{{ID: info.Default, Note: "当前默认"}}, info.Models...)
 		}
 	}
-	union := map[string]bool{}
-	for _, m := range info.Models {
-		for _, e := range m.Efforts {
-			union[e] = true
-		}
+	if e := unionEfforts(info.Models); e != nil {
+		info.Efforts = e
 	}
-	if len(union) > 0 {
-		info.Efforts = nil
-		for _, e := range []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"} {
-			if union[e] {
-				info.Efforts = append(info.Efforts, e)
+}
+
+// effortOrder: every thinking level, lowest first.
+var effortOrder = []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+// unionEfforts: the levels any of the models offers, in order (nil: none).
+func unionEfforts(models []ModelOpt) []string {
+	var out []string
+	for _, e := range effortOrder {
+		for _, m := range models {
+			if slices.Contains(m.Efforts, e) {
+				out = append(out, e)
+				break
 			}
 		}
 	}
+	return out
 }
 
 // codexModelList asks a short-lived `codex app-server` for its models.
@@ -282,31 +289,13 @@ func codexModelList(ctx context.Context, bin string) []ModelOpt {
 		if id == "" {
 			id = d.ID
 		}
-		o := ModelOpt{ID: id, Label: d.Display, Note: d.Desc, Efforts: []string{}}
+		o := ModelOpt{ID: id, Label: d.Display, Note: d.Desc}
 		for _, e := range d.Efforts {
 			o.Efforts = append(o.Efforts, e.Effort)
 		}
 		list = append(list, o)
 	}
 	return list
-}
-
-var agyModelRe = regexp.MustCompile(`^(\S+)\t(.+)$`)
-
-func (s *Server) agyModels(ctx context.Context, info *ModelInfo) {
-	bin := findBin("agy", s.home)
-	if bin == "" {
-		return
-	}
-	out, err := exec.CommandContext(ctx, bin, "models").Output()
-	if err != nil {
-		return
-	}
-	for _, l := range strings.Split(string(out), "\n") {
-		if m := agyModelRe.FindStringSubmatch(strings.TrimSpace(l)); m != nil {
-			info.Models = append(info.Models, ModelOpt{ID: m[1], Label: m[2]})
-		}
-	}
 }
 
 // findBin locates an agent's program: PATH, the usual install places, then

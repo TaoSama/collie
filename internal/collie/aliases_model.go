@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -35,9 +36,18 @@ func aliasRuns(home string, a *LauncherAlias) string {
 				}
 			}
 		}
+	case "agy":
+		if model == "" {
+			// The list as last asked: asking takes longer than the hub waits.
+			list, id := agyKnownVariants(), ""
+			if v := flagValue(a.launchArgs(), "--settings"); v != "" {
+				id = agySettingsModel(home, v, list)
+			}
+			model, _ = agySplit(cmp.Or(id, agyDefault(home, list)))
+		}
 	case "codex":
 		if model == "" {
-			model = codexConfigModel(filepath.Join(cmp.Or(env("CODEX_HOME"), codexRoot(home)), "config.toml"), codexProfile(a.launchArgs()))
+			model = codexConfigModel(filepath.Join(cmp.Or(env("CODEX_HOME"), codexRoot(home)), "config.toml"), flagValue(a.launchArgs(), "-p", "--profile"))
 		}
 	}
 	return model
@@ -52,13 +62,14 @@ func claudeSettingsAt(root string) claudeSettings {
 	return c
 }
 
-// codexProfile: the profile a codex command line picks (-p / --profile).
-func codexProfile(args []string) string {
+// flagValue: the value a command line gives a flag under any of its names
+// ("-p x", "--profile=x").
+func flagValue(args []string, names ...string) string {
 	for i, w := range args {
-		if f, v, ok := strings.Cut(w, "="); ok && f == "--profile" {
+		if f, v, ok := strings.Cut(w, "="); ok && slices.Contains(names, f) {
 			return v
 		}
-		if (w == "-p" || w == "--profile") && i+1 < len(args) {
+		if slices.Contains(names, w) && i+1 < len(args) {
 			return args[i+1]
 		}
 	}

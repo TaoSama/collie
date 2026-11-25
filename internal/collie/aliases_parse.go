@@ -159,6 +159,16 @@ func skipEnvOpts(seg []string, i int, setEnv func(string)) int {
 
 // launchModel reads the model and effort a launcher's flags pin.
 func launchModel(kind string, args []string) (model, effort string) {
+	model, effort = launchFlags(kind, args)
+	if kind == "agy" {
+		m, e := agySplit(model) // --model gemini-3.8-flash-high
+		model, effort = m, cmp.Or(effort, e)
+	}
+	return model, effort
+}
+
+// launchFlags: the model and effort flags as given.
+func launchFlags(kind string, args []string) (model, effort string) {
 	for i := 0; i < len(args); i++ {
 		flag, val, inline := strings.Cut(args[i], "=")
 		next := func() string {
@@ -302,7 +312,7 @@ func showQuote(w string) string {
 // valueFlags: launch flags that take a value, by herdr kind.
 var valueFlags = map[string][]string{
 	"claude": {"--model", "--effort", "--allowedTools", "--permission-mode", "--resume", "--add-dir", "--settings", "--mcp-config"},
-	"agy":    {"--model", "--effort", "--conversation"},
+	"agy":    {"--model", "--effort", "--conversation", "--settings"},
 	"codex":  {"-m", "--model", "-c", "--config", "-a", "--ask-for-approval", "-s", "--sandbox", "-p", "--profile", "-C", "--cd"},
 }
 
@@ -321,6 +331,13 @@ func aliasArgs(a *LauncherAlias, args []string) []string {
 		}
 		has[f] = true
 	}
+	// Antigravity refuses another --effort for a model id that names its level.
+	levelled := false
+	if a.Kind == "agy" {
+		pinned, _ := launchFlags(a.Kind, a.launchArgs())
+		_, level := agySplit(pinned)
+		levelled = level != ""
+	}
 	var out []string
 	for i := 0; i < len(args); i++ {
 		w := args[i]
@@ -337,7 +354,7 @@ func aliasArgs(a *LauncherAlias, args []string) []string {
 		case model != "":
 			continue // an alias runs its own model (or the agent's default), never another
 		case effort != "":
-			if effort == a.Effort {
+			if effort == a.Effort || levelled {
 				continue
 			}
 		case has[f] && !slices.Contains(repeatFlags, f):

@@ -15,10 +15,9 @@ func TestSwitchCommands(t *testing.T) {
 		{"codex", [2]string{"gpt-6.1-sol", ""}, [2]string{"gpt-6.1-mini", ""}, []string{"/model gpt-6.1-mini"}},
 		{"codex", [2]string{"gpt-6.1-sol", "high"}, [2]string{"gpt-6.1-sol", "high"}, nil},
 		{"codex", [2]string{"gpt-6.1-sol", "high"}, [2]string{"", "low"}, nil}, // codex's level goes with a model
-		// Only what changed: a second command would wait on the first.
-		{"antigravity", [2]string{"gemini-4-neon", "high"}, [2]string{"gemini-4-neon", "low"}, []string{"/effort low"}},
-		{"agy", [2]string{"a", "high"}, [2]string{"b", "low"}, []string{"/model b", "/effort low"}},
-		{"claude", [2]string{"opus", "high"}, [2]string{"sonnet", "low"}, nil}, // would change every new session's default
+		// Both would change every new session's default.
+		{"claude", [2]string{"opus", "high"}, [2]string{"sonnet", "low"}, nil},
+		{"antigravity", [2]string{"gemini-4-neon", "high"}, [2]string{"gemini-4-neon", "low"}, nil},
 	} {
 		if got := switchCommands(c.kind, c.from, c.to); !slices.Equal(got, c.want) {
 			t.Errorf("switchCommands(%q, %q, %q) = %q, want %q", c.kind, c.from, c.to, got, c.want)

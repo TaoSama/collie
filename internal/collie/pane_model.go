@@ -12,9 +12,9 @@ const switchPause = 1500 * time.Millisecond
 
 // switchCommands: what to submit to a running agent to go from one model
 // and effort to another for the rest of the session. Codex takes both in one
-// /model (0.164 on); Antigravity has /effort for the thinking level. Claude
-// Code has none: its /model and /effort also save the pick as the default
-// for every new session, so it isn't switched from here.
+// /model (0.164 on). Claude Code and Antigravity have none: their /model and
+// /effort also save the pick as the default for every new session, so they
+// aren't switched from here.
 func switchCommands(kind string, from, to [2]string) []string {
 	var c []string
 	switch kinds[kind] {
@@ -25,13 +25,6 @@ func switchCommands(kind string, from, to [2]string) []string {
 				cmd += " --reasoning=" + to[1]
 			}
 			c = append(c, cmd)
-		}
-	case "agy":
-		if to[0] != from[0] && to[0] != "" {
-			c = append(c, "/model "+to[0])
-		}
-		if to[1] != from[1] && to[1] != "" {
-			c = append(c, "/effort "+to[1])
 		}
 	}
 	return c

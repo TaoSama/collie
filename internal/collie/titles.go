@@ -180,7 +180,7 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		}
 		run, _ := s.herdr.Run(local)
 		ps := paneSession{Title: t, Session: sess, Run: run}
-		if (kind == "claude" || kind == "codex") && sess != "" {
+		if sess != "" && (kind == "claude" || kind == "codex" || kind == "agy") {
 			if u := s.sessionUsage(kind, sess); u != nil {
 				if u.Model != "" {
 					ps.Ran = &[2]string{u.Model, u.Effort}
@@ -201,8 +201,8 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 // doesn't search for it again every few seconds.
 var sessionLogs sync.Map
 
-// sessionUsage is how full a Claude or Codex session's context is, and for
-// Claude the model and effort its latest reply used.
+// sessionUsage is how full a Claude, Codex or Antigravity session's context
+// is, and for Claude and Antigravity the model and effort its latest reply used.
 func (s *Server) sessionUsage(kind, session string) *ctxUsage {
 	key := kind + "\x00" + session
 	known, _ := sessionLogs.Load(key)

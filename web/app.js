@@ -2074,8 +2074,8 @@
     if (fresh && !renaming) { renaming = true; setTimeout(() => { renaming = false; renamedModels(); }); } // once for a burst of lists
     return info;
   }
-  // The levels a model offers, else the agent's.
-  const effortsOf = (info, m) => m?.efforts?.length ? m.efforts : (info.efforts || []);
+  // The levels a model offers (none: an empty list), else the agent's.
+  const effortsOf = (info, m) => m?.efforts || info.efforts || [];
   // Launcher aliases from each computer's shell rc file, as the hub last read them.
   let aliasInfo = null;
   function loadAliases(fresh) {
@@ -4385,7 +4385,7 @@
     mSel.value = model; eSel.value = effort;
     eSel.hidden = !effs.length;
     sess = { key, pane: v.pane_id, kind, machine, model, effort: run[1], tip: own ? "agent 自己的设置" : modelName(run[0]) + (run[1] ? "，思考 " + (EFFORT_LABEL[run[1]] || run[1]) : ""),
-      fixed: kind === "claude" ? "Claude Code 在会话里换模型会顺带改掉以后所有新会话的默认，这里只显示"
+      fixed: kind === "claude" || kind === "agy" ? `${kind === "claude" ? "Claude Code" : "Antigravity"} 在会话里换模型会顺带改掉以后所有新会话的默认，这里只显示`
         : remote ? "另一个 hub 上的会话，到那边去换"
         : !list.length ? "没读到这台电脑上这个 agent 的模型列表"
         : kind === "codex" && cmpVer(vers.codex || "0", CODEX_INLINE_MODEL) < 0 ? `Codex ${CODEX_INLINE_MODEL} 起才能在会话里直接换，这台是 ${vers.codex || "未知版本"}` : "" };

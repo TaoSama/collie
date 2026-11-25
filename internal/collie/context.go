@@ -20,7 +20,8 @@ import (
 type ctxUsage struct {
 	Used   int `json:"used"`
 	Window int `json:"window"`
-	// The model (as asked for, "[1m]" and all) and effort of Claude's latest reply.
+	// The model (as asked for, "[1m]" and all) and effort of Claude's or
+	// Antigravity's latest reply.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
 }
@@ -50,11 +51,25 @@ func contextUsage(path, format string, claudeWindow int) ctxUsage {
 	if err != nil {
 		return ctxUsage{}
 	}
+	mod, size := fi.ModTime(), fi.Size()
+	if format == "agy" {
+		// Its usage is in the conversation's database, written apart from the
+		// transcript (and to the -wal file until a checkpoint).
+		db := agyDB(path)
+		for _, f := range []string{db, db + "-wal"} {
+			if fi, err := os.Stat(f); err == nil {
+				size += fi.Size()
+				if fi.ModTime().After(mod) {
+					mod = fi.ModTime()
+				}
+			}
+		}
+	}
 	usageCache.Lock()
 	m, ok := usageCache.m[path]
 	usageCache.Unlock()
-	if !ok || !m.mod.Equal(fi.ModTime()) || m.size != fi.Size() {
-		m = usageMark{mod: fi.ModTime(), size: fi.Size(), u: readUsage(path, format, fi.Size())}
+	if !ok || !m.mod.Equal(mod) || m.size != size {
+		m = usageMark{mod: mod, size: size, u: readUsage(path, format, fi.Size())}
 		usageCache.Lock()
 		usageCache.m[path] = m
 		usageCache.Unlock()
@@ -145,13 +160,10 @@ func readUsage(path, format string, size int64) ctxUsage {
 
 // agyUsage: Antigravity keeps no usage in its transcript; its conversation
 // database does. Each model call's metadata (protobuf) carries a context
-// meter at field 1.9.10: 1 = tokens in the window now, 4 = the window.
-// path is <home>/brain/<id>/.system_generated/logs/transcript.jsonl.
+// meter at field 1.9.10: 1 = tokens in the window now, 4 = the window; and
+// the model it ran. path is <home>/brain/<id>/.system_generated/logs/transcript.jsonl.
 func agyUsage(path string) ctxUsage {
-	logs := filepath.Dir(path)
-	id := filepath.Base(filepath.Dir(filepath.Dir(logs)))
-	home := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(logs))))
-	db := filepath.Join(home, "conversations", id+".db")
+	db := agyDB(path)
 	if !isFile(db) {
 		return ctxUsage{}
 	}
@@ -165,16 +177,40 @@ func agyUsage(path string) ctxUsage {
 		return ctxUsage{}
 	}
 	defer rows.Close()
-	for rows.Next() {
+	var u ctxUsage
+	for rows.Next() && (u.Used == 0 || u.Model == "") {
 		var b []byte
 		if rows.Scan(&b) != nil {
 			continue
 		}
-		if u, ok := agyMeter(b); ok {
-			return u
+		if m, ok := agyMeter(b); ok && u.Used == 0 {
+			u.Used, u.Window = m.Used, m.Window
+		}
+		if u.Model == "" {
+			u.Model, u.Effort = agySplit(agyCallModel(b))
 		}
 	}
-	return ctxUsage{}
+	return u
+}
+
+// agyDB: the conversation database beside a transcript.
+func agyDB(path string) string {
+	logs := filepath.Dir(path)
+	id := filepath.Base(filepath.Dir(filepath.Dir(logs)))
+	home := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(logs))))
+	return filepath.Join(home, "conversations", id+".db")
+}
+
+// agyCallModel: the model id a call ran (field 3.28, "gemini-3.8-flash-low").
+func agyCallModel(b []byte) string {
+	for _, f3 := range pbBytes(b, 3) {
+		for _, m := range pbBytes(f3, 28) {
+			if modelNameRe.Match(m) {
+				return string(m)
+			}
+		}
+	}
+	return ""
 }
 
 func agyMeter(b []byte) (ctxUsage, bool) {

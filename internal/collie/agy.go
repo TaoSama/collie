@@ -133,9 +133,4 @@ func (s *Server) guessAgy(brain, pane, cwd string) string {
 // agyCLIHome is where the agy CLI keeps its conversations. The desktop app
 // keeps its own in ~/.gemini/antigravity (desktop.go); the CLI, in a
 // terminal or a herdr pane, uses antigravity-cli (older ones used the app's).
-func (s *Server) agyCLIHome() string {
-	if d := filepath.Join(s.home, ".gemini", "antigravity-cli"); isDir(d) {
-		return d
-	}
-	return filepath.Join(s.home, ".gemini", "antigravity")
-}
+func (s *Server) agyCLIHome() string { return agyRoot(s.home) }
