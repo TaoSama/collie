@@ -85,10 +85,6 @@ func noticesText(ns []notice) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// Seen notes that a page of Collie is open in front of you (the page says so
-// every 30 seconds while it is visible).
-func (sp *Super) Seen(url string) { sp.seenPage("", url, false) }
-
 // seenPage: page is in front of you, or (away) has just gone to the
 // background. You stop looking when the last page in front of you leaves,
 // not a minute later: a phone put away gets its notifications at once.

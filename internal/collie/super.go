@@ -161,10 +161,6 @@ func (sp *Super) addEntryLocked(role, thread, text, ref, tone string) *Entry {
 	return sp.addEntryReplyLocked(role, thread, text, ref, tone, nil, nil, false)
 }
 
-func (sp *Super) addEntryReLocked(role, thread, text, ref, tone string, re *Quote) *Entry {
-	return sp.addEntryReplyLocked(role, thread, text, ref, tone, re, nil, false)
-}
-
 func (sp *Super) addEntryReplyLocked(role, thread, text, ref, tone string, re *Quote, opts []string, check bool) *Entry {
 	return sp.appendEntryLocked(&Entry{ID: sp.st.nextID("e"), Role: role, Thread: thread, Text: text, At: time.Now(), Ref: ref, Tone: tone, Re: re, Options: opts, Check: check})
 }

@@ -114,11 +114,6 @@ func (sp *Super) messagesSize() int64 {
 	return 0
 }
 
-// loadedSize is everything a session reads up front (upFrontSize + messages.md), in bytes.
-func (sp *Super) loadedSize() int64 {
-	return sp.upFrontSize() + sp.messagesSize()
-}
-
 func (sp *Super) legacyMemory() bool {
 	return isFile(filepath.Join(sp.routerDir(), "memory.md"))
 }

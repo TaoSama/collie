@@ -147,14 +147,10 @@ func (s *Server) openShell(w http.ResponseWriter, r *http.Request, dir, label st
 	writeJSON(w, 200, withCwd(map[string]any{"pane_id": paneID, "workspace_id": wsID}, cwd, fallback))
 }
 
-// startAgent creates a workspace in cwd and starts a herdr agent in its pane.
-// An "agent_not_ready" error means the agent is up but sitting on a dialog.
-func (s *Server) startAgent(ctx context.Context, machine, herdrKind, name, cwd, label string, args []string) (paneID, wsID string, err error) {
-	return s.startAgentAs(ctx, machine, herdrKind, name, cwd, label, nil, args)
-}
-
-// startAgentAs is startAgent through a launcher alias in that computer's
-// shell (nil: the agent's own command).
+// startAgentAs creates a workspace in cwd and starts a herdr agent in its
+// pane, through a launcher alias in that computer's shell (nil: the agent's
+// own command). An "agent_not_ready" error means the agent is up but sitting
+// on a dialog.
 func (s *Server) startAgentAs(ctx context.Context, machine, herdrKind, name, cwd, label string, alias *LauncherAlias, args []string) (paneID, wsID string, err error) {
 	if err := s.agentMissing(machine, herdrKind); err != nil {
 		return "", "", err

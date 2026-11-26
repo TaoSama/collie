@@ -131,7 +131,6 @@
   const hubMarks = (h) => ["!" + h.key, "%21" + h.key];
   const hubOf = (text) => hubs.find((h) => hubMarks(h).some((m) => text.includes(m))) || null;
   const untag = (text, h) => hubMarks(h).reduce((t, m) => t.split(m).join(""), text);
-  const hubName = (k) => hubs.find((h) => h.key === k)?.name || "";
   function routeReq(path, body, hub) {
     const b = body === undefined ? undefined : JSON.stringify(body);
     const h = hub || hubOf(path + (b || ""));

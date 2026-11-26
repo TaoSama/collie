@@ -23,7 +23,6 @@ import (
 func (s *Server) superRoutes(mux *http.ServeMux) {
 	api := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.auth(h)) }
 	api("GET /api/super", s.superSnapshot)
-	api("GET /api/super/events", s.superEvents)
 	api("POST /api/super/say", s.superSay)
 	api("POST /api/super/reply", s.superReply)
 	api("POST /api/super/reply-files", s.stageReplyFile)
@@ -191,37 +190,6 @@ func (s *Server) superState(ctx context.Context) superView {
 
 func (s *Server) superSnapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.superState(r.Context()))
-}
-
-func (s *Server) superEvents(w http.ResponseWriter, r *http.Request) {
-	sse, ok := newSSE(w)
-	if !ok {
-		return
-	}
-	ch, done := s.sup.subscribe()
-	defer done()
-	var last []byte
-	tick := time.NewTicker(2 * time.Second)
-	defer tick.Stop()
-	beat := time.Now()
-	for {
-		sent, err := sse.sendChangedJSON("super", s.superState(r.Context()), &last)
-		if err != nil {
-			return
-		}
-		if sent {
-			beat = time.Now()
-		} else if time.Since(beat) > 15*time.Second {
-			sse.comment()
-			beat = time.Now()
-		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ch:
-		case <-tick.C:
-		}
-	}
 }
 
 // ---------------------------------------------------------------- conversation

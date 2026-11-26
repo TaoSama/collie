@@ -18,7 +18,7 @@ func TestFinishDreamSkillOptionsPendingDBAndLark(t *testing.T) {
 	sp.st.Settings.NotifyLark = true
 	sp.st.Settings.NotifyLevel = "quiet"
 	sp.seenAt = time.Now().Add(-5 * time.Minute)
-	sp.Seen("http://hub:7788")
+	sp.seenPage("", "http://hub:7788", false)
 	sp.seenAt = time.Now().Add(-5 * time.Minute)
 
 	at := time.Date(2026, 11, 24, 4, 5, 0, 0, time.Local)
@@ -188,9 +188,6 @@ func TestMemoryUpFrontSplitAnd10KBBudget(t *testing.T) {
 	}
 	if got := sp.messagesSize(); got != wantMsgs {
 		t.Fatalf("messagesSize() = %d, want %d", got, wantMsgs)
-	}
-	if got := sp.loadedSize(); got != wantUpFront+wantMsgs {
-		t.Fatalf("loadedSize() = %d, want %d", got, wantUpFront+wantMsgs)
 	}
 
 	rec := call("GET", "/api/super/memory", nil)
