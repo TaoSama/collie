@@ -124,24 +124,21 @@ func loadState(db *sql.DB) (*State, error) {
 		}
 	}
 
-	var trig []*Trigger
-	err = loadRows(db, `SELECT data FROM (SELECT data, n FROM triggers ORDER BY n DESC LIMIT 600) ORDER BY n`, func(t *Trigger) { trig = append(trig, t) })
-	if err != nil {
+	// Keep the entire pending queue alongside the recent history window.
+	if err := loadRows(db, `SELECT data FROM triggers
+		WHERE status = 'queued' OR id IN (SELECT id FROM triggers ORDER BY n DESC LIMIT ?)
+		ORDER BY n`, func(t *Trigger) { st.Triggers = append(st.Triggers, t) }, keepTriggers); err != nil {
 		return nil, err
 	}
-	// Anything still queued but older than the working set is pulled in too.
-	seen := map[string]bool{}
-	for _, t := range trig {
-		seen[t.ID] = true
-	}
-	loadRows(db, `SELECT data FROM triggers WHERE status='queued' ORDER BY n`, func(t *Trigger) {
-		if !seen[t.ID] {
-			trig = append([]*Trigger{t}, trig...)
-		}
-	})
-	st.Triggers = trig
 	loadRows(db, `SELECT data FROM (SELECT data, n FROM entries ORDER BY n DESC LIMIT 600) ORDER BY n`, func(e *Entry) { st.Entries = append(st.Entries, e) })
-	loadRows(db, `SELECT data FROM threads ORDER BY last_at DESC LIMIT 500`, func(t *Thread) { st.Threads[t.ID] = t })
+	// A subscribed thread still affects routing after its recent activity ages out.
+	const keepThreads = 500
+	if err := loadRows(db, `SELECT data FROM threads
+		WHERE id IN (SELECT id FROM threads ORDER BY last_at DESC LIMIT ?)
+		OR CASE WHEN json_valid(data) THEN json_array_length(data, '$.subscribers') > 0 END`,
+		func(t *Thread) { st.Threads[t.ID] = t }, keepThreads); err != nil {
+		return nil, err
+	}
 	loadRows(db, `SELECT data FROM workers`, func(w *Worker) { st.Workers[w.Name] = w })
 	loadRows(db, `SELECT data FROM timers`, func(t *Timer) { st.Timers = append(st.Timers, t) })
 	return st, nil
@@ -161,7 +158,7 @@ func saveState(db *sql.DB, st *State, deletedTimers []string) error {
 	}
 	js := func(v any) string { b, _ := json.Marshal(v); return string(b) }
 
-	put(`INSERT INTO kv(k,v) VALUES('seq',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, strconv.Itoa(st.Seq))
+	err = writeStateSeq(tx, st.Seq)
 	put(`INSERT INTO kv(k,v) VALUES('settings',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, js(st.Settings))
 	put(`INSERT INTO kv(k,v) VALUES('policies',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, js(st.Policies))
 	dismissed := make([]string, 0, len(st.Dismissed))
@@ -187,21 +184,24 @@ func saveState(db *sql.DB, st *State, deletedTimers []string) error {
 	}
 	put(`INSERT INTO kv(k,v) VALUES('pinned',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, js(pinned))
 	for _, t := range st.Triggers {
-		put(`INSERT INTO triggers(id,n,at,status,source,thread,data) VALUES(?,?,?,?,?,?,?)
-		     ON CONFLICT(id) DO UPDATE SET status=excluded.status, data=excluded.data`,
-			t.ID, idNum(t.ID), t.At.Unix(), t.Status, t.Source, t.Thread, js(t))
+		if err == nil {
+			err = writeTrigger(tx, t)
+		}
 	}
 	for _, th := range st.Threads {
-		put(`INSERT INTO threads(id,last_at,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET last_at=excluded.last_at, data=excluded.data`,
-			th.ID, th.LastAt.Unix(), js(th))
+		if err == nil {
+			err = writeThread(tx, th)
+		}
 	}
 	for _, w := range st.Workers {
-		put(`INSERT INTO workers(name,created_at,data) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`,
-			w.Name, w.CreatedAt.Unix(), js(w))
+		if err == nil {
+			err = writeWorker(tx, w)
+		}
 	}
 	for _, e := range st.Entries {
-		put(`INSERT INTO entries(id,n,at,thread,data) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`,
-			e.ID, idNum(e.ID), e.At.Unix(), e.Thread, js(e))
+		if err == nil {
+			err = writeEntry(tx, e)
+		}
 	}
 	for _, t := range st.Timers {
 		put(`INSERT INTO timers(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, t.ID, js(t))

@@ -83,10 +83,9 @@ func serve() {
 	if err != nil {
 		log.Fatalf("open %s: %v", dir, err)
 	}
-	srv.sup = sup
+	srv.setSuper(sup)
 	srv.ext = newExtHost(srv, sup, dir)
 	srv.auths = newAuth(sup.db, *token)
-	srv.herdr.onChange = sup.changed
 	loadAgentNames(sup.db, srv.herdr)
 	loadAgentRuns(sup.db, srv.herdr)
 
@@ -120,6 +119,15 @@ func serve() {
 	}
 	sup.flush()
 	os.Remove(filepath.Join(dir, "addr"))
+}
+
+func (s *Server) setSuper(sup *Super) {
+	s.sup = sup
+	s.herdr.onChange = func() {
+		sup.mu.Lock()
+		defer sup.mu.Unlock()
+		sup.changed()
+	}
 }
 
 func envOr(k, def string) string {

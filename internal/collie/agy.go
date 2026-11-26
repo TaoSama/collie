@@ -1,40 +1,56 @@
 package collie
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Antigravity does not tell herdr which conversation a pane is running, so we
-// pair them ourselves. Showing the wrong conversation would leak an unrelated
-// session into this pane, so a candidate must be provably this pane's:
-//
-//   - agy's own index (conversation_summaries.db) lists the pane's cwd as the
-//     conversation's workspace, exactly; and
-//   - the conversation was born after the agent started (when Collie knows the
-//     start time), or within the last few hours otherwise.
-//
-// Each transcript is claimed by at most one pane.
+type agyBinding struct {
+	pid      int
+	started  time.Time
+	checked  time.Time
+	path     string
+	previous []string // exclude older transcripts after a restart in the same second
+}
+
+type agyBindings struct {
+	sync.Mutex
+	byPane map[string]agyBinding
+}
+
+func (b *agyBindings) prune(alive map[string]bool) {
+	b.Lock()
+	defer b.Unlock()
+	for pane := range b.byPane {
+		if !alive[pane] {
+			delete(b.byPane, pane)
+		}
+	}
+}
 
 var agyIndex struct {
 	sync.Mutex
-	at time.Time
-	ws map[string][]string // conversation id → workspace paths
+	root string
+	at   time.Time
+	ws   map[string][]string // conversation id → workspace paths
 }
 
 func agyWorkspaces(root string) map[string][]string {
 	agyIndex.Lock()
 	defer agyIndex.Unlock()
-	if time.Since(agyIndex.at) < 3*time.Second && agyIndex.ws != nil {
+	if agyIndex.root == root && time.Since(agyIndex.at) < 3*time.Second && agyIndex.ws != nil {
 		return agyIndex.ws
 	}
-	agyIndex.at = time.Now()
+	agyIndex.root, agyIndex.at = root, time.Now()
 	m := map[string][]string{}
 	path := filepath.Join(root, "conversation_summaries.db")
 	if !isFile(path) {
@@ -69,43 +85,148 @@ func agyWorkspaces(root string) map[string][]string {
 	return m
 }
 
-func (s *Server) guessAgy(brain, pane, cwd string) string {
-	claimed.Lock()
-	defer claimed.Unlock()
-	for p, owner := range claimed.m {
-		if owner == pane && isFile(p) {
-			return p
+// agyPaneSession prefers the reported or resumed conversation. Without an ID,
+// a pane may bind to one conversation born in its current process generation.
+func (s *Server) agyPaneSession(ctx context.Context, pane, cwd, sessKind, value string) (path, id string) {
+	if value != "" {
+		path, _ = s.findTranscript("agy", sessKind, value, "", "")
+		if sessKind == "path" {
+			if path != "" && filepath.Base(path) == "transcript.jsonl" &&
+				filepath.Base(filepath.Dir(path)) == "logs" &&
+				filepath.Base(filepath.Dir(filepath.Dir(path))) == ".system_generated" {
+				return path, agyLogID(path)
+			}
+			return path, ""
 		}
+		if agyValidLogID(value) {
+			return path, value
+		}
+		return "", ""
 	}
-	if cwd == "" {
-		return ""
+	if pane == "" || s.herdr == nil {
+		return "", ""
 	}
-	cwd = strings.TrimSuffix(filepath.Clean(cwd), "/")
-	since, known := s.startedAt(pane)
-	if !known {
-		since = time.Now().Add(-6 * time.Hour)
+	checked := time.Now()
+	pid, args := s.agyForeground(ctx, pane)
+	var since time.Time
+	if pid != 0 {
+		since = agyProcessStart(ctx, pid)
 	}
-	index := agyWorkspaces(filepath.Dir(brain))
+	id = explicitExternalSession("agy", args)
+	var root string
+	var index map[string][]string
+	if !since.IsZero() && id == "" && cwd != "" {
+		root = s.agyCLIHome()
+		index = agyWorkspaces(root)
+	}
 
-	files, _ := filepath.Glob(filepath.Join(brain, "*", ".system_generated", "logs", "transcript.jsonl"))
-	type cand struct {
-		path string
-		born time.Time
+	s.agy.Lock()
+	defer s.agy.Unlock()
+	b := s.agy.byPane[pane]
+	if b.checked.After(checked) {
+		// A lookup that started later has already observed this pane.
+		return "", ""
 	}
-	var cs []cand
-	for _, f := range files {
-		if _, taken := claimed.m[f]; taken {
+	if s.agy.byPane == nil {
+		s.agy.byPane = map[string]agyBinding{}
+	}
+	if !since.IsZero() && (b.pid != pid || !b.started.Equal(since)) {
+		if !b.started.Equal(since) {
+			b.previous = nil
+		}
+		if b.path != "" {
+			b.previous = append(b.previous, b.path)
+		}
+		b.pid, b.started, b.path = pid, since, ""
+	}
+	b.checked = checked
+	if id != "" {
+		b.path = s.agyLog(id)
+		s.agy.byPane[pane] = b
+		return b.path, id
+	}
+	path = s.guessAgy(root, pane, cwd, since, index, b.previous)
+	if b.path == "" {
+		b.path = path
+	}
+	// A second candidate can appear after the initial match. Keep the prior
+	// claim for this generation, but stop exposing it while it is ambiguous.
+	s.agy.byPane[pane] = b
+	if path == "" || path != b.path {
+		return "", ""
+	}
+	return path, agyLogID(path)
+}
+
+func agyProcessStart(ctx context.Context, pid int) time.Time {
+	const startFormat = "Mon Jan _2 15:04:05 2006"
+	cmd := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "lstart=")
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "TZ=UTC")
+	out, err := cmd.Output()
+	if err != nil {
+		return time.Time{}
+	}
+	started, err := time.Parse(startFormat, strings.TrimSpace(string(out)))
+	if err != nil {
+		return time.Time{}
+	}
+	return started
+}
+
+func (s *Server) agyForeground(ctx context.Context, pane string) (pid int, args []string) {
+	var info struct {
+		ProcessInfo struct {
+			Foreground []struct {
+				PID  int      `json:"pid"`
+				Name string   `json:"name"`
+				Argv []string `json:"argv"`
+			} `json:"foreground_processes"`
+		} `json:"process_info"`
+	}
+	if err := s.herdr.Call(ctx, "pane.process_info", map[string]any{"pane_id": pane}, &info); err != nil {
+		return 0, nil
+	}
+	for _, p := range info.ProcessInfo.Foreground {
+		isAgy := externalKinds[strings.ToLower(p.Name)] == "agy"
+		cmd := 0
+		if len(p.Argv) > 0 {
+			cmd = progIndex(p.Argv)
+			isAgy = isAgy || externalKinds[progName(p.Argv)] == "agy"
+		}
+		if !isAgy || p.PID <= 0 {
 			continue
 		}
-		dir := filepath.Dir(filepath.Dir(filepath.Dir(f)))
-		match := false
-		for _, w := range index[filepath.Base(dir)] {
-			if w == cwd {
-				match = true
-				break
-			}
+		if pid != 0 {
+			return 0, nil
 		}
-		if !match {
+		pid = p.PID
+		if len(p.Argv) > cmd {
+			args = p.Argv[cmd+1:]
+		}
+	}
+	return pid, args
+}
+
+// guessAgy runs with s.agy held. Multiple candidates leave the pane unbound.
+func (s *Server) guessAgy(root, pane, cwd string, since time.Time, index map[string][]string, previous []string) string {
+	cwd = strings.TrimSuffix(filepath.Clean(cwd), "/")
+	claimed := map[string]bool{}
+	for _, p := range previous {
+		claimed[p] = true
+	}
+	for owner, binding := range s.agy.byPane {
+		if owner != pane {
+			claimed[binding.path] = true
+		}
+	}
+	var candidate string
+	for id, workspaces := range index {
+		if !slices.Contains(workspaces, cwd) || !agyValidLogID(id) {
+			continue
+		}
+		dir := filepath.Join(root, "brain", id)
+		f := filepath.Join(dir, ".system_generated", "logs", "transcript.jsonl")
+		if claimed[f] || !isFile(f) {
 			continue
 		}
 		di, err := os.Stat(dir)
@@ -116,18 +237,35 @@ func (s *Server) guessAgy(brain, pane, cwd string) string {
 		if bt := birthTime(di); !bt.IsZero() {
 			born = bt
 		}
-		if born.Before(since.Add(-10 * time.Second)) {
+		if born.Before(since) {
 			continue
 		}
-		cs = append(cs, cand{f, born})
+		if candidate != "" {
+			return ""
+		}
+		candidate = f
 	}
-	if len(cs) == 0 {
+	return candidate
+}
+
+func agyLogID(path string) string {
+	return filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(path))))
+}
+
+func agyValidLogID(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\*?[`)
+}
+
+func (s *Server) agyLog(id string) string {
+	if !agyValidLogID(id) {
 		return ""
 	}
-	// The earliest conversation after the start is the one the agent opened.
-	sort.Slice(cs, func(i, j int) bool { return cs[i].born.Before(cs[j].born) })
-	claimed.m[cs[0].path] = pane
-	return cs[0].path
+	for _, root := range []string{s.agyCLIHome(), filepath.Join(s.home, ".gemini", "antigravity")} {
+		if p := filepath.Join(root, "brain", id, ".system_generated", "logs", "transcript.jsonl"); isFile(p) {
+			return p
+		}
+	}
+	return ""
 }
 
 // agyCLIHome is where the agy CLI keeps its conversations. The desktop app

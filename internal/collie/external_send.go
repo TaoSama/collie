@@ -482,7 +482,9 @@ func (s *Server) codexDaemonSend(ctx context.Context, thread, text string, idle 
 			} `json:"turns"`
 		} `json:"thread"`
 	}
-	c.call("thread/read", map[string]any{"threadId": thread, "includeTurns": true}, &read)
+	if err := c.call("thread/read", map[string]any{"threadId": thread, "includeTurns": true}, &read); err != nil {
+		return err
+	}
 	running := ""
 	for _, t := range read.Thread.Turns {
 		if t.Status == "inProgress" {

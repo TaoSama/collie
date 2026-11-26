@@ -102,10 +102,22 @@ func newExtStore(db *sql.DB) *extStore {
 	return st
 }
 
+type inboxWriter interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+func putInboxConv(w inboxWriter, c *InboxConv) error {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	_, err = w.Exec(`INSERT INTO ext_convs(id,ext,last_at,data) VALUES(?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET last_at=excluded.last_at, data=excluded.data`, c.ID, c.Ext, c.LastAt.Unix(), string(b))
+	return err
+}
+
 func (st *extStore) putConvLocked(c *InboxConv) {
-	b, _ := json.Marshal(c)
-	if _, err := st.db.Exec(`INSERT INTO ext_convs(id,ext,last_at,data) VALUES(?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET last_at=excluded.last_at, data=excluded.data`, c.ID, c.Ext, c.LastAt.Unix(), string(b)); err != nil {
+	if err := putInboxConv(st.db, c); err != nil {
 		log.Printf("ext: save conversation: %v", err)
 	}
 }
@@ -134,20 +146,6 @@ func (st *extStore) update(id string, fn func(c *InboxConv)) (InboxConv, bool) {
 	return *c, true
 }
 
-// upsert makes sure the conversation exists (made with mk), then applies fn.
-func (st *extStore) upsert(id string, mk func() *InboxConv, fn func(c *InboxConv)) InboxConv {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	c := st.convs[id]
-	if c == nil {
-		c = mk()
-		st.convs[id] = c
-	}
-	fn(c)
-	st.putConvLocked(c)
-	return *c
-}
-
 func (st *extStore) list(ext string) []InboxConv {
 	st.mu.Lock()
 	out := make([]InboxConv, 0, len(st.convs))
@@ -166,22 +164,35 @@ func (st *extStore) list(ext string) []InboxConv {
 	return out
 }
 
-// addMsg stores a message of an open conversation; false when it was there.
-func (st *extStore) addMsg(m InboxMsg) bool {
-	b, _ := json.Marshal(m)
-	res, err := st.db.Exec(`INSERT OR IGNORE INTO ext_msgs(conv,id,at,data) VALUES(?,?,?,?)`, m.Conv, m.ID, m.At.UnixMilli(), string(b))
+// putInboxMsg returns false with no error only for an existing message.
+func putInboxMsg(w inboxWriter, m InboxMsg) (bool, error) {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return false, err
+	}
+	res, err := w.Exec(`INSERT INTO ext_msgs(conv,id,at,data) VALUES(?,?,?,?) ON CONFLICT(conv,id) DO NOTHING`, m.Conv, m.ID, m.At.UnixMilli(), string(b))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func trimInboxMsgs(w inboxWriter, conv string) error {
+	_, err := w.Exec(`DELETE FROM ext_msgs WHERE conv = ? AND id NOT IN (SELECT id FROM ext_msgs WHERE conv = ? ORDER BY at DESC LIMIT ?)`,
+		conv, conv, inboxKeepMsgs)
+	return err
+}
+
+func (st *extStore) addMsg(m InboxMsg) {
+	added, err := putInboxMsg(st.db, m)
 	if err != nil {
 		log.Printf("ext: save message: %v", err)
-		return false
+	} else if added {
+		if err := trimInboxMsgs(st.db, m.Conv); err != nil {
+			log.Printf("ext: trim messages: %v", err)
+		}
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return false
-	}
-	if _, err := st.db.Exec(`DELETE FROM ext_msgs WHERE conv = ? AND id NOT IN (SELECT id FROM ext_msgs WHERE conv = ? ORDER BY at DESC LIMIT ?)`,
-		m.Conv, m.Conv, inboxKeepMsgs); err != nil {
-		log.Printf("ext: trim messages: %v", err)
-	}
-	return true
 }
 
 func (st *extStore) hasMsg(conv, id string) bool {
@@ -194,10 +205,18 @@ func (st *extStore) hasMsg(conv, id string) bool {
 
 // msgs is a conversation's stored messages, oldest first.
 func (st *extStore) msgs(conv string, since time.Time) []InboxMsg {
-	var out []InboxMsg
-	loadRows(st.db, `SELECT data FROM ext_msgs WHERE conv = ? AND at > ? ORDER BY at`,
-		func(m *InboxMsg) { out = append(out, *m) }, conv, since.UnixMilli())
+	out, err := st.readMsgs(conv, since)
+	if err != nil {
+		log.Printf("ext: read messages: %v", err)
+	}
 	return out
+}
+
+func (st *extStore) readMsgs(conv string, since time.Time) ([]InboxMsg, error) {
+	var out []InboxMsg
+	err := loadRows(st.db, `SELECT data FROM ext_msgs WHERE conv = ? AND at > ? ORDER BY at`,
+		func(m *InboxMsg) { out = append(out, *m) }, conv, since.UnixMilli())
+	return out, err
 }
 
 func (st *extStore) dropMsgs(conv string) {
@@ -261,10 +280,10 @@ func (st *extStore) outs(conv string, states ...string) []*OutboxItem {
 }
 
 // recentOuts is conv's sends since a time.
-func (st *extStore) recentOuts(conv string, since time.Time) []*OutboxItem {
+func (st *extStore) recentOuts(conv string, since time.Time) ([]*OutboxItem, error) {
 	var out []*OutboxItem
-	loadRows(st.db, `SELECT data FROM ext_outbox WHERE conv = ? AND at >= ? ORDER BY at`, func(o *OutboxItem) { out = append(out, o) }, conv, since.Unix())
-	return out
+	err := loadRows(st.db, `SELECT data FROM ext_outbox WHERE conv = ? AND at >= ? ORDER BY at`, func(o *OutboxItem) { out = append(out, o) }, conv, since.Unix())
+	return out, err
 }
 
 // lastOut is conv's latest send, nil when none.
@@ -318,15 +337,29 @@ func (st *extStore) trimOutbox(now time.Time) {
 }
 
 func (st *extStore) kv(k string) string {
-	var v string
-	if err := st.db.QueryRow(`SELECT v FROM kv WHERE k = ?`, k).Scan(&v); err != nil && err != sql.ErrNoRows {
+	v, err := st.readKV(k)
+	if err != nil {
 		log.Printf("ext: read %s: %v", k, err)
 	}
 	return v
 }
 
+func (st *extStore) readKV(k string) (string, error) {
+	var v string
+	err := st.db.QueryRow(`SELECT v FROM kv WHERE k = ?`, k).Scan(&v)
+	if err == sql.ErrNoRows {
+		err = nil
+	}
+	return v, err
+}
+
 func (st *extStore) setKV(k, v string) {
-	if _, err := st.db.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, k, v); err != nil {
+	if err := st.writeKV(k, v); err != nil {
 		log.Printf("ext: save %s: %v", k, err)
 	}
+}
+
+func (st *extStore) writeKV(k, v string) error {
+	_, err := st.db.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, k, v)
+	return err
 }

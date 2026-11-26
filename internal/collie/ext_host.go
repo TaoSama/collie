@@ -24,6 +24,7 @@ const (
 	extRedialWait    = 10 * time.Second
 	extStatusEvery   = time.Minute
 	extArchiveEvery  = 10 * time.Minute
+	extArchiveRetry  = time.Second
 	extInterestEvery = 30 * time.Second
 	extCallWait      = 30 * time.Second
 	extLoginWait     = 50 * time.Second // under the reverse proxy's 60 s: a slow first step is retried by the page
@@ -50,6 +51,7 @@ type extHost struct {
 	cfgMu    sync.Mutex // one configure at a time: an old program stops before a new one starts
 	marketMu sync.Mutex // the marketplaces' list and tokens
 	sending  sync.Map   // refs being sent right now
+	starting sync.Map   // conversation IDs with a dedicated worker launch in flight
 	mu       sync.Mutex
 	cat      map[string]*ExtManifest
 	sets     map[string]ExtSetting
@@ -315,6 +317,7 @@ func (r *extRun) housekeep(ctx context.Context, peer *extproto.Peer) {
 	defer status.Stop()
 	defer archive.Stop()
 	defer interest.Stop()
+	var retryArchive <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -324,11 +327,18 @@ func (r *extRun) housekeep(ctx context.Context, peer *extproto.Peer) {
 			r.h.retrySends(r)
 		case <-archive.C:
 			r.signalPull()
+		case <-retryArchive:
+			retryArchive = nil
+			r.signalPull()
 		case <-interest.C:
 			r.sendInterest(ctx)
 		case <-r.pull:
 			if r.man.has(capArchive) && r.running() {
-				r.pullArchive(ctx)
+				if r.pullArchive(ctx) {
+					retryArchive = time.After(extArchiveRetry)
+				} else {
+					retryArchive = nil
+				}
 			}
 		}
 	}
@@ -448,33 +458,48 @@ func (r *extRun) handle(ctx context.Context, method string, params json.RawMessa
 
 // pullArchive reads every new message since the cursor. The first time
 // (no cursor yet) it only moves the cursor to now: history isn't new.
-func (r *extRun) pullArchive(ctx context.Context) {
+// A storage failure asks housekeeping to retry before messages go stale.
+func (r *extRun) pullArchive(ctx context.Context) bool {
 	r.pulling.Lock()
 	defer r.pulling.Unlock()
 	key := "ext_cursor:" + r.man.ID
-	cursor := r.h.store.kv(key)
+	cursor, err := r.h.store.readKV(key)
+	if err != nil {
+		log.Printf("ext %s: read archive cursor: %v", r.man.ID, err)
+		return true
+	}
 	baseline := cursor == ""
 	for i := 0; i < 50 && ctx.Err() == nil; i++ {
 		var out extproto.ArchiveChanges
 		args := map[string]any{"contribution": r.man.Contributes.Connector.ID, "cursor": cursor, "limit": 50}
 		if err := r.call(ctx, extproto.MArchiveChanges, args, &out); err != nil {
 			log.Printf("ext %s: archive: %v", r.man.ID, err)
-			return
+			return false
 		}
 		for _, b := range out.Batches {
-			r.h.archived(r, b, baseline)
+			if err := r.h.archived(r, b, baseline); err != nil {
+				log.Printf("ext %s: store archive page: %v", r.man.ID, err)
+				return true
+			}
 		}
 		if out.Next != "" {
+			if err := r.h.store.writeKV(key, out.Next); err != nil {
+				log.Printf("ext %s: save archive cursor: %v", r.man.ID, err)
+				return true
+			}
 			cursor = out.Next
-			r.h.store.setKV(key, cursor)
 		}
 		if !out.More {
 			break
 		}
 	}
 	if baseline && cursor == "" {
-		r.h.store.setKV(key, "0") // nothing yet: later messages are all new
+		if err := r.h.store.writeKV(key, "0"); err != nil { // nothing yet: later messages are all new
+			log.Printf("ext %s: save initial archive cursor: %v", r.man.ID, err)
+			return true
+		}
 	}
+	return false
 }
 
 // view is what the 接入 page shows of an extension.

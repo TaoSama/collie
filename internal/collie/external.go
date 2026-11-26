@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -221,6 +220,7 @@ func (s *Server) externalSessions() []*External {
 		return []*External{}
 	}
 	var cands []*proc
+	children := map[int][]int{}
 	for _, p := range ps {
 		kind := externalKinds[p.name]
 		if kind == "" || p.tty == "" || strings.HasPrefix(p.tty, "?") {
@@ -228,6 +228,7 @@ func (s *Server) externalSessions() []*External {
 		}
 		// One agent can be a wrapper plus its real process; keep the outer one.
 		if parent := ps[p.ppid]; parent != nil && externalKinds[parent.name] == kind {
+			children[parent.pid] = append(children[parent.pid], p.pid)
 			continue
 		}
 		cands = append(cands, p)
@@ -269,8 +270,8 @@ func (s *Server) externalSessions() []*External {
 		if kind != "agy" {
 			e.launch = memoFor(p.pid, e.Started).launch
 		}
-		s.locateExternal(e, p)
 		e.reg = regOf[p.pid]
+		s.locateExternal(e, p, children[p.pid]...)
 		s.reachable(e)
 		if e.path != "" {
 			if fi, err := os.Stat(e.path); err == nil {
@@ -293,7 +294,7 @@ func (s *Server) externalSessions() []*External {
 	}
 	aliases, aliasesAt := s.localAliasesAt()
 	for _, e := range list {
-		e.CanTakeOver = e.Session != ""
+		e.CanTakeOver = e.Session != "" && e.path != "" && e.Cwd != ""
 		if e.Session != "" {
 			listed[e.Session] = true
 		}
@@ -326,18 +327,15 @@ func (s *Server) externalSessions() []*External {
 func (s *Server) reachable(e *External) {
 	switch e.Kind {
 	case "claude":
-		if e.reg == nil {
+		if e.reg == nil || e.Session != e.reg.SessionID {
 			e.ReadOnly = "找不到这个 Claude 会话的登记信息，只能看"
 			return
 		}
 		e.Status = e.reg.state()
-		if e.Session == "" {
-			e.Session = e.reg.SessionID
-		}
 		e.CanSend, e.ReadOnly = e.reg.canSend()
 	case "codex":
-		if e.Session == "" {
-			e.ReadOnly = "这个 Codex 还没开始对话：先在那边说第一句，之后就能从这里发消息"
+		if e.path == "" {
+			e.ReadOnly = "还没有确认这个 Codex 进程对应的会话记录"
 			return
 		}
 		ids, err := s.codexLoaded()
@@ -350,86 +348,11 @@ func (s *Server) reachable(e *External) {
 			e.CanSend = true
 		}
 	default:
-		e.ReadOnly = "Antigravity 不支持从外面发消息；要对话可以在 herdr 里接管"
-	}
-}
-
-var conversationRe = regexp.MustCompile(`^[0-9a-f-]{16,}$`)
-
-// locateExternal finds the conversation file an external agent is writing.
-func (s *Server) locateExternal(e *External, p *proc) {
-	since := e.Started.Add(-5 * time.Second)
-	switch e.Kind {
-	case "claude":
-		root := cmp.Or(e.launchEnv("CLAUDE_CONFIG_DIR"), claudeRoot(s.home))
-		// Claude Code registers each interactive process with its session id.
-		var reg struct {
-			SessionID string `json:"sessionId"`
-		}
-		if b, err := os.ReadFile(filepath.Join(root, "sessions", strconv.Itoa(p.pid)+".json")); err == nil && json.Unmarshal(b, &reg) == nil && reg.SessionID != "" {
-			e.Session = reg.SessionID
-			if m, _ := filepath.Glob(filepath.Join(root, "projects", "*", reg.SessionID+".jsonl")); len(m) > 0 {
-				e.path, e.format = m[0], "claude"
-				return
-			}
-		}
-		if e.Cwd != "" {
-			slug := strings.NewReplacer("/", "-", ".", "-", "_", "-").Replace(e.Cwd)
-			if f := newestSince(filepath.Join(root, "projects", slug, "*.jsonl"), since); f != "" {
-				e.path, e.format = f, "claude"
-				e.Session = strings.TrimSuffix(filepath.Base(f), ".jsonl")
-			}
-		}
-	case "codex":
-		root := cmp.Or(e.launchEnv("CODEX_HOME"), codexRoot(s.home))
-		files, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*.jsonl"))
-		var best string
-		var bestAt time.Time
-		for _, f := range files {
-			fi, err := os.Stat(f)
-			if err != nil || fi.ModTime().Before(since) {
-				continue
-			}
-			id, cwd := codexMeta(f)
-			if cwd != e.Cwd || fi.ModTime().Before(bestAt) {
-				continue
-			}
-			best, bestAt, e.Session = f, fi.ModTime(), id
-		}
-		if best != "" {
-			e.path, e.format = best, "codex"
-		}
-	case "agy":
-		brain := filepath.Join(s.agyCLIHome(), "brain")
-		for i, a := range p.args {
-			if (a == "--conversation" || a == "-c") && i+1 < len(p.args) && conversationRe.MatchString(p.args[i+1]) {
-				f := filepath.Join(brain, p.args[i+1], ".system_generated", "logs", "transcript.jsonl")
-				if isFile(f) {
-					e.Session, e.path, e.format = p.args[i+1], f, "agy"
-					return
-				}
-			}
-		}
-		if e.Cwd == "" {
+		if e.path == "" {
+			e.ReadOnly = "还没有确认这个 Antigravity 进程对应的会话记录"
 			return
 		}
-		index := agyWorkspaces(filepath.Dir(brain))
-		var bestAt time.Time
-		for id, wss := range index {
-			match := false
-			for _, w := range wss {
-				match = match || w == strings.TrimSuffix(filepath.Clean(e.Cwd), "/")
-			}
-			if !match {
-				continue
-			}
-			f := filepath.Join(brain, id, ".system_generated", "logs", "transcript.jsonl")
-			fi, err := os.Stat(f)
-			if err != nil || fi.ModTime().Before(since) || fi.ModTime().Before(bestAt) {
-				continue
-			}
-			e.Session, e.path, e.format, bestAt = id, f, "agy", fi.ModTime()
-		}
+		e.ReadOnly = "Antigravity 不支持从外面发消息；要对话可以在 herdr 里接管"
 	}
 }
 
@@ -440,37 +363,6 @@ func (e *External) launchEnv(name string) string {
 		return ""
 	}
 	return e.launch.env[name]
-}
-
-func newestSince(glob string, since time.Time) string {
-	files, _ := filepath.Glob(glob)
-	var best string
-	var at time.Time
-	for _, f := range files {
-		if fi, err := os.Stat(f); err == nil && !fi.ModTime().Before(since) && fi.ModTime().After(at) {
-			best, at = f, fi.ModTime()
-		}
-	}
-	return best
-}
-
-// codexMeta reads a rollout's session id and cwd from its first line.
-func codexMeta(path string) (id, cwd string) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", ""
-	}
-	defer f.Close()
-	r := bufio.NewReaderSize(f, 64<<10)
-	line, _ := r.ReadBytes('\n')
-	var m struct {
-		Payload struct {
-			ID  string `json:"id"`
-			Cwd string `json:"cwd"`
-		} `json:"payload"`
-	}
-	json.Unmarshal(line, &m)
-	return m.Payload.ID, m.Payload.Cwd
 }
 
 // externalByID looks a session up in a list at most a few seconds old.
@@ -689,7 +581,7 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "这个会话已经结束了"})
 		return
 	}
-	if e.Session == "" || e.Cwd == "" {
+	if e.Session == "" || e.Cwd == "" || (!e.desktop && e.path == "") {
 		writeJSON(w, 409, map[string]any{"error": "找不到这个会话的记录，没法在 herdr 里续上"})
 		return
 	}

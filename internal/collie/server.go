@@ -37,29 +37,12 @@ type Server struct {
 	port       int      // hub only: listening port, for addresses
 	publicURLs []string // hub only: addresses given with -url, shown first
 
-	startMu sync.Mutex
-	started map[string]time.Time // pane → when Collie started an agent there
+	agy agyBindings // Antigravity transcripts inferred for the local panes
 
 	aliases aliasBook    // hub only: launcher aliases each computer has
 	sysmon  *sysMonitor  // this computer's load and tokens; nil in tests
 	wakes   paneWake     // streams to nudge when input reaches a pane
 	direct  directTokens // node only: tokens for a browser on this computer
-}
-
-func (s *Server) markStarted(pane string) {
-	s.startMu.Lock()
-	defer s.startMu.Unlock()
-	if s.started == nil {
-		s.started = map[string]time.Time{}
-	}
-	s.started[pane] = time.Now()
-}
-
-func (s *Server) startedAt(pane string) (time.Time, bool) {
-	s.startMu.Lock()
-	defer s.startMu.Unlock()
-	t, ok := s.started[pane]
-	return t, ok
 }
 
 // Agent kinds Collie offers in its launcher, mapped to herdr's --kind values.
@@ -767,7 +750,6 @@ func (s *Server) startAgentAs(ctx context.Context, machine, herdrKind, name, cwd
 func (s *Server) noteStarted(paneID, name string, err error) {
 	var he *HerdrError
 	if err == nil || (errors.As(err, &he) && he.Code == "agent_not_ready") {
-		s.markStarted(paneID)
 		s.herdr.Remember(paneID, name)
 	}
 }

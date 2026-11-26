@@ -158,6 +158,7 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 			alive[p.ID] = true
 		}
 		s.herdr.pruneRuns(alive, func(m string) bool { return m == "" })
+		s.agy.prune(alive)
 	}
 	archived := s.archivedIDs()
 	for _, a := range agents {
@@ -175,12 +176,11 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		case "codex":
 			t = s.codexThreadName(sess)
 		case "agy":
-			if sess == "" {
-				// Antigravity doesn't tell herdr its conversation; pair it like the chat view does.
-				if p, _ := s.findTranscript("agy", "", "", local, deref(a.Cwd)); p != "" {
-					sess = filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(p))))
-				}
+			sessKind, value := "", ""
+			if a.Session != nil {
+				sessKind, value = a.Session.Kind, a.Session.Value
 			}
+			_, sess = s.agyPaneSession(ctx, local, deref(a.Cwd), sessKind, value)
 			t = s.agyTitle(sess)
 		}
 		if t = cleanTitle(t); t == "" {
