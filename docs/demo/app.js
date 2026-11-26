@@ -1901,6 +1901,7 @@
     inflight: null,
     openTimer: 0,
     closeTimer: 0,
+    lastPointerDownAt: 0,
   };
   const HS_ICONS = {
     claude: GLYPHS.claude,
@@ -1952,10 +1953,12 @@
       anchorSelector,
     };
     $$("[data-hdr-slots]").forEach((el) => {
+      const inactive = !!el.closest("[hidden]");
+      const viewOpts = inactive ? { ...opts, openId: "", pinnedId: "", anchorSelector: "" } : opts;
       if (typeof window.collieHeaderStatus.patch === "function") {
-        window.collieHeaderStatus.patch(el, hdrStatus.slots, opts);
+        window.collieHeaderStatus.patch(el, hdrStatus.slots, viewOpts);
       } else {
-        const html = window.collieHeaderStatus.render(hdrStatus.slots, opts);
+        const html = window.collieHeaderStatus.render(hdrStatus.slots, viewOpts);
         if (el._html !== html) el.innerHTML = el._html = html;
         el.hidden = !html;
       }
@@ -2043,7 +2046,11 @@
       renderHeaderStatus();
     }, HDR_HOVER_CLOSE_MS);
   });
+  document.addEventListener("pointerdown", () => {
+    hdrStatus.lastPointerDownAt = Date.now();
+  }, { capture: true, passive: true });
   document.addEventListener("focusin", (e) => {
+    if (Date.now() - hdrStatus.lastPointerDownAt < 500) return;
     const tog = e.target.closest?.("[data-hs-toggle]");
     if (!tog || hdrStatus.pinnedId) return;
     let focusVisible = false;

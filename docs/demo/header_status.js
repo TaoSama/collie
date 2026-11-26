@@ -309,12 +309,37 @@
         expandedFolds: opts.expandedFolds,
       };
 
+      const st = slot.status;
+      const title = st?.title || slot.label || slot.name || slot.id;
+      const items = st?.items || [];
+      const hasErr = slot.state === "error" || (!!st?.error && !items.length);
+      const tone = st?.tone || (hasErr ? "warn" : "");
+      const compact = compactFallback(slot);
+      const deskHtml = renderDesktopMain(slot, opts);
+      const mobIcoHtml = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
+        || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
+      const bodyHtml = renderPanelBodyInner(slot, slotOpts);
+
       if (!wrap) {
         const frag = parseFrag(renderSlot(slot, opts));
         wrap = frag.firstElementChild;
+        const dEl = wrap.querySelector(".hs-desktop");
+        if (dEl) dEl._hsHtml = deskHtml;
+        const mEl = wrap.querySelector(".hs-mobile-ico");
+        if (mEl) mEl._hsHtml = mobIcoHtml;
+        const bEl = wrap.querySelector(".hs-body");
+        if (bEl) bEl._hsHtml = bodyHtml;
         if (open) {
-          const panel = wrap.querySelector(".hs-panel");
-          if (panel) panel.classList.add("is-entering");
+          const sc = wrap.querySelector(":scope > .hs-scrim");
+          const pn = wrap.querySelector(":scope > .hs-panel");
+          if (sc) {
+            sc.classList.add("is-entering");
+            sc.addEventListener("animationend", () => sc.classList.remove("is-entering"), { once: true });
+          }
+          if (pn) {
+            pn.classList.add("is-entering");
+            pn.addEventListener("animationend", () => pn.classList.remove("is-entering"), { once: true });
+          }
         }
         container.insertBefore(wrap, container.children[i] || null);
         continue;
@@ -329,13 +354,6 @@
       wrap.classList.toggle("is-pinned", pinned);
 
       // 1. Update trigger text/classes/bars in place (no teardown).
-      const st = slot.status;
-      const title = st?.title || slot.label || slot.name || slot.id;
-      const items = st?.items || [];
-      const hasErr = slot.state === "error" || (!!st?.error && !items.length);
-      const tone = st?.tone || (hasErr ? "warn" : "");
-      const compact = compactFallback(slot);
-
       const trig = wrap.querySelector(":scope > .hs-trigger");
       if (trig) {
         const trigCls = `hs-trigger${toneCls(tone)}`;
@@ -345,20 +363,13 @@
         if (trig.getAttribute("title") !== title) trig.setAttribute("title", title);
 
         const deskEl = trig.querySelector(".hs-desktop");
-        if (deskEl) {
-          const deskHtml = renderDesktopMain(slot, opts);
-          if (deskEl._hsHtml !== deskHtml) {
-            morphChildren(deskEl, parseFrag(deskHtml));
-            deskEl._hsHtml = deskHtml;
-          }
+        if (deskEl && deskEl._hsHtml !== deskHtml) {
+          morphChildren(deskEl, parseFrag(deskHtml));
+          deskEl._hsHtml = deskHtml;
         }
         const mobIcoEl = trig.querySelector(".hs-mobile-ico");
-        if (mobIcoEl) {
-          const mobIcoHtml = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
-            || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
-          if (mobIcoEl._hsHtml !== mobIcoHtml) {
-            mobIcoEl.innerHTML = mobIcoEl._hsHtml = mobIcoHtml;
-          }
+        if (mobIcoEl && mobIcoEl._hsHtml !== mobIcoHtml) {
+          mobIcoEl.innerHTML = mobIcoEl._hsHtml = mobIcoHtml;
         }
         const mobTextEl = trig.querySelector(".hs-mobile-t");
         if (mobTextEl && mobTextEl.textContent !== compact) {
@@ -366,21 +377,13 @@
         }
       }
 
-      // 2. Toggle scrim & panel visibility in place; only play open animation on closed -> open.
+      // 2. Patch panel content BEFORE unhiding on open so the very first paint
+      //    already has final layout and content (no empty/flash frame).
       const scrim = wrap.querySelector(":scope > .hs-scrim");
-      if (scrim && scrim.hidden !== !open) scrim.hidden = !open;
       const panel = wrap.querySelector(":scope > .hs-panel");
       if (!panel) continue;
-      if (panel.hidden !== !open) panel.hidden = !open;
       panel.classList.toggle("is-pinned", pinned);
       if (panel.getAttribute("aria-label") !== title) panel.setAttribute("aria-label", title);
-      if (!wasOpen && open) {
-        panel.classList.remove("is-entering");
-        void panel.offsetWidth;
-        panel.classList.add("is-entering");
-      } else if (wasOpen && !open) {
-        panel.classList.remove("is-entering");
-      }
 
       // 3. Patch panel header metadata/spinner in place.
       const phTitle = panel.querySelector(".hs-ph-t b");
@@ -398,34 +401,54 @@
 
       // 4. Patch panel body in place while preserving scrollTop / clicked anchor.
       const body = panel.querySelector(".hs-body");
-      if (body) {
-        const bodyHtml = renderPanelBodyInner(slot, slotOpts);
-        if (body._hsHtml !== bodyHtml) {
-          const prevScroll = body.scrollTop;
-          let anchorOffset = null;
-          if (open && opts.anchorSelector) {
-            const anchorEl = body.querySelector(opts.anchorSelector);
-            if (anchorEl) {
-              anchorOffset = anchorEl.getBoundingClientRect().top - body.getBoundingClientRect().top;
-            }
+      if (body && body._hsHtml !== bodyHtml) {
+        const prevScroll = body.scrollTop;
+        let anchorOffset = null;
+        if (wasOpen && open && opts.anchorSelector) {
+          const anchorEl = body.querySelector(opts.anchorSelector);
+          if (anchorEl) {
+            anchorOffset = anchorEl.getBoundingClientRect().top - body.getBoundingClientRect().top;
           }
-          morphChildren(body, parseFrag(bodyHtml));
-          body._hsHtml = bodyHtml;
-          if (open) {
-            if (anchorOffset !== null && opts.anchorSelector) {
-              const nextAnchor = body.querySelector(opts.anchorSelector);
-              if (nextAnchor) {
-                const nextOffset = nextAnchor.getBoundingClientRect().top - body.getBoundingClientRect().top;
-                const target = prevScroll + (nextOffset - anchorOffset);
-                body.scrollTop = Math.max(0, Math.min(body.scrollHeight - body.clientHeight, target));
-              } else {
-                body.scrollTop = prevScroll;
-              }
+        }
+        morphChildren(body, parseFrag(bodyHtml));
+        body._hsHtml = bodyHtml;
+        if (wasOpen && open) {
+          if (anchorOffset !== null && opts.anchorSelector) {
+            const nextAnchor = body.querySelector(opts.anchorSelector);
+            if (nextAnchor) {
+              const nextOffset = nextAnchor.getBoundingClientRect().top - body.getBoundingClientRect().top;
+              const target = prevScroll + (nextOffset - anchorOffset);
+              body.scrollTop = Math.max(0, Math.min(body.scrollHeight - body.clientHeight, target));
             } else {
               body.scrollTop = prevScroll;
             }
+          } else {
+            body.scrollTop = prevScroll;
           }
         }
+      }
+
+      // 5. Toggle scrim & panel visibility; add .is-entering BEFORE unhiding so
+      //    the enter animation starts on frame 0 without a pre-animation flash.
+      if (!wasOpen && open) {
+        if (scrim) {
+          scrim.classList.add("is-entering");
+          scrim.hidden = false;
+          scrim.addEventListener("animationend", () => scrim.classList.remove("is-entering"), { once: true });
+        }
+        panel.classList.add("is-entering");
+        panel.hidden = false;
+        panel.addEventListener("animationend", () => panel.classList.remove("is-entering"), { once: true });
+      } else if (wasOpen && !open) {
+        if (scrim) {
+          scrim.classList.remove("is-entering");
+          scrim.hidden = true;
+        }
+        panel.classList.remove("is-entering");
+        panel.hidden = true;
+      } else {
+        if (scrim && scrim.hidden !== !open) scrim.hidden = !open;
+        if (panel.hidden !== !open) panel.hidden = !open;
       }
     }
   }
