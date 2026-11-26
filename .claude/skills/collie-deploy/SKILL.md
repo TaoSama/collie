@@ -59,7 +59,7 @@ go version -m dist/collie-linux-amd64 | grep -E 'vcs\.(revision|modified)'
 - 不要在主工作区构建，那里可能有别人未提交的改动。也不要用 worktree 构建，Go 会把提交记错：
   - 在 `.claude/worktrees/` 下的 worktree 里，Go 认不出 worktree 的 `.git` 文件，会往上找到主仓库，把主工作区的 HEAD 记成 `vcs.revision`；
   - 放在 `/tmp` 下的 worktree 则完全不记录提交。
-- 确认后正式发布：`cp dist/checksums.txt /tmp/checksums.dry && sh scripts/release.sh "$V"`。脚本会重新构建、打标签、推送标签并建 Release（需要 `gh` 已登录）。重新构建的产物应和 dry 的一致：`diff /tmp/checksums.dry dist/checksums.txt`。
+- 确认后运行 `sh scripts/release.sh "$V" --publish`。脚本核对当前提交、标签、四平台产物和校验和，再推送标签并把同一批产物上传到 Release（需要 `gh` 已登录）。
 - 建 Release 偶尔返回 HTTP 500，标签和 Release 已经建出来但资产没传全。用 `gh release view "$V" --repo TaoSama/collie --json assets -q '.assets[].name'` 对照 `dist/` 里的 `collie-*` 和 `checksums.txt`。缺了就不要补传或重建这个版本，node 可能已经看到它了，直接把 N 加一重新发布，后面都用新的 `$V`。
 
 ## 2. 切换 hub
@@ -142,5 +142,5 @@ api '/api/update?machine=<id>' POST   # 期望 {"ok":true,"from":…,"version":"
 
 ## 5. 收尾
 
-- `rm -rf "$WT"`，删掉 `/tmp/checksums.dry` 和私钥临时文件，`ssh "${SSH_OPTS[@]}" -p "$PORT" -O exit "root@$HOST"` 关掉主连接。
+- `rm -rf "$WT"`，删掉私钥临时文件，`ssh "${SSH_OPTS[@]}" -p "$PORT" -O exit "root@$HOST"` 关掉主连接。
 - 报告内容：`$V`、`$TARGET`、hub 切换前后的 PID、每台 node 的结果，以及第 4 步四项核对的输出。
