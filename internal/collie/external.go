@@ -54,6 +54,8 @@ type External struct {
 	// through; AliasChoices: the aliases that fit as well, when they differ.
 	Alias        string   `json:"alias,omitempty"`
 	AliasChoices []string `json:"alias_choices,omitempty"`
+	Scheduled    bool     `json:"scheduled,omitempty"`
+	Pinned       bool     `json:"pinned,omitempty"`
 
 	path, format string
 	// startDir: where it was started, to resume it there (empty: Cwd).
@@ -211,6 +213,12 @@ var externalCache struct {
 	list []*External
 }
 
+func forgetExternal() {
+	externalCache.Lock()
+	externalCache.at = time.Time{}
+	externalCache.Unlock()
+}
+
 // externalSessions finds interactive agents on this machine outside herdr.
 func (s *Server) externalSessions() []*External {
 	externalCache.Lock()
@@ -323,10 +331,40 @@ func (s *Server) externalSessions() []*External {
 	list = append(list, s.desktopSessions(regs, listed, now)...)
 	// Collie's own workers (a herdr pane while they run, its history after)
 	// are listed as Collie's, not as the computer's other sessions.
+	var codexAuto, codexPin map[string]bool
+	claudeSched := map[string]map[string]bool{}
+	claudeScheduled := func(dir, session string) bool {
+		if dir == "" || session == "" {
+			return false
+		}
+		m, ok := claudeSched[dir]
+		if !ok {
+			m = claudeScheduledIn(dir)
+			claudeSched[dir] = m
+		}
+		return m[session]
+	}
 	kept := list[:0]
 	for _, e := range list {
 		if !collieSession(e.Title) {
 			e.HumanAt = humanAt(e.path, e.format)
+			if e.Session != "" {
+				switch e.Kind {
+				case "codex":
+					if !e.desktop {
+						if codexAuto == nil {
+							codexAuto = s.codexScheduledIDs()
+							codexPin = s.codexPinnedIDs()
+						}
+						e.Scheduled = codexAuto[e.Session]
+						e.Pinned = codexPin[e.Session]
+					}
+				case "claude":
+					if !e.Scheduled {
+						e.Scheduled = claudeScheduled(e.Cwd, e.Session) || claudeScheduled(e.startDir, e.Session)
+					}
+				}
+			}
 			kept = append(kept, e)
 		}
 	}

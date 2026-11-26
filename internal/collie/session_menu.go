@@ -58,6 +58,72 @@ func (s *Server) unarchiveSession(w http.ResponseWriter, r *http.Request) {
 	s.setNativeArchive(w, r, false)
 }
 
+// POST /api/sessions/{id}/pin {kind, surface?, pinned}.
+func (s *Server) pinSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Kind    string `json:"kind"`
+		Surface string `json:"surface"`
+		Pinned  bool   `json:"pinned"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, 400, map[string]any{"error": "缺少会话"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	var err error
+	switch externalKinds[body.Kind] {
+	case "codex":
+		err = s.codexPin(ctx, id, body.Pinned)
+	case "agy":
+		if body.Surface != surfaceCLI {
+			err = s.agyPin(ctx, id, body.Pinned)
+		}
+	case "claude":
+	default:
+		writeJSON(w, 400, map[string]any{"error": "无法识别这个会话的 Agent"})
+		return
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			err = errors.New("等待电脑响应超时，请重试")
+		}
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	forgetDesktopRows()
+	forgetExternal()
+	forgetPinned()
+	forgetLocalTitles()
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) codexPin(ctx context.Context, thread string, pinned bool) error {
+	var section any
+	if pinned {
+		section = codexPinnedSectionID
+	}
+	return s.codexThread(ctx, "thread/section/move", map[string]any{"threadId": thread, "sectionId": section})
+}
+
+func (s *Server) agyPin(ctx context.Context, conversation string, pinned bool) error {
+	err := postAgyApp(ctx, agyConversations+"UpdateConversation", map[string]any{
+		"conversationId": conversation,
+		"annotations":    map[string]any{"pinned": pinned},
+	})
+	if agyConversationMissing(err) {
+		return errors.New("Antigravity 无法打开这个会话，没能更新置顶状态")
+	}
+	if err != nil {
+		return fmt.Errorf("Antigravity 没能更新置顶状态：%w", err)
+	}
+	return nil
+}
+
 // POST /api/sessions/{id}/archive or /unarchive {kind, surface?, just_closed?}.
 func (s *Server) setNativeArchive(w http.ResponseWriter, r *http.Request, archived bool) {
 	var body struct {

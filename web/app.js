@@ -747,16 +747,30 @@
   }
 
   // ───────────────────────────── sidebar
-  function itemHTML(v, attrs = "") {
+  let lastSideRow = "";
+  const schedIco = (on) => on ? `<span class="sched-ico" title="有定时任务">${collieIcons.svg("clock")}</span>` : "";
+  const rowActsHTML = (id, key, pinned, archived) => {
+    if (!key) return "";
+    const pinBtn = archived ? "" : `<button type="button" class="row-act pin-act${pinned ? " on" : ""}" data-row-act="pin" data-row="${esc(id)}" title="${pinned ? "取消置顶" : "置顶"}" aria-label="${pinned ? "取消置顶" : "置顶"}" aria-pressed="${pinned ? "true" : "false"}">${ICON_PIN}</button>`;
+    const archBtn = `<button type="button" class="row-act arch-act" data-row-act="archive" data-row="${esc(id)}" title="${archived ? "取消归档" : "归档"}" aria-label="${archived ? "取消归档" : "归档"}">${CTX_ICONS.archive}</button>`;
+    return `<span class="row-acts">${pinBtn}${archBtn}</span>`;
+  };
+  function itemHTML(v, attrs = "", opts = {}) {
     const where = (state.machines || []).length > 1 ? machineName(v.machine) + " · " : "";
     const named = v.is_agent && !isLocalRouter(v) && (!isWorker(v.name) || byTopic()) && v.name && !autoName(v.name) && v.topic && v.topic !== v.name ? v.name + " · " : "";
     const sub = isLocalRouter(v) ? "Collie 停在一个对话框上"
       : v.is_agent ? `${named}${KIND_LABEL[v.kind] || v.kind} · ${where}${base(tilde(v.cwd))}` : where + tilde(v.cwd);
     const name = v.is_agent ? title(v) : termName(v);
-    return `<li><a class="item ${view === "pane" && v.pane_id === current ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}" title="${esc(name)}">
+    const owned = isCollieOwned(v) && !isLocalRouter(v);
+    const nameHTML = owned || v.scheduled
+      ? `<span class="nm">${esc(name)}</span>${schedIco(v.scheduled)}${owned ? `<span class="by-collie">Collie 派出</span>` : ""}`
+      : esc(name);
+    const active = (view === "pane" && v.pane_id === current) || (!view && lastSideRow === v.pane_id);
+    const acts = rowActsHTML(v.pane_id, opts.key, opts.pinned, opts.archived);
+    return `<li class="${acts ? "srow" : ""}${opts.pinned ? " is-pinned" : ""}"><a class="item ${active ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}" title="${esc(name)}">
       <span class="glyph">${glyph(v)}</span>
-      <span class="body"><div class="name">${isCollieOwned(v) && !isLocalRouter(v) ? `<span class="nm">${esc(name)}</span><span class="by-collie">Collie 派出</span>` : esc(name)}</div><div class="sub">${esc(sub)}</div></span>
-      <span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span></a></li>`;
+      <span class="body"><div class="name">${nameHTML}</div><div class="sub">${esc(sub)}</div></span>
+      <span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span></a>${acts}</li>`;
   }
 
   const machineName = (id) => (state.machines || []).find((m) => m.id === (id || ""))?.name || id || "本机";
@@ -1093,6 +1107,7 @@
       closeRun();
     }
     view = next; current = next === "ext" ? null : id;
+    if (next === "pane" || next === "ext") lastSideRow = id || "";
     const nextKey = routeKeyFor(next, id);
     const byIdx = wasExistingIdx ? scrollByIdx.get(navCur) : null;
     const saved = (byIdx && byIdx.routeKey === nextKey ? byIdx : null)
@@ -4190,34 +4205,51 @@
     marksVersion++;
     renderSessions();
   }
+  // Codex reads native pin back from state_5.sqlite; agy desktop combines
+  // native annotation with hub marks; Claude and agy CLI store pin in hub marks.
+  const isRowPinned = (nativePinned, kind, src, surface, mark) => {
+    if (kind === "codex") return !!nativePinned;
+    if (kind === "agy" && src === "ext" && surface !== "cli") return !!(nativePinned || mark?.pinned);
+    return !!mark?.pinned;
+  };
   function sideRows() {
     const many = (state.machines || []).length > 1;
     const rowAttrs = (id, m) => ` data-row="${esc(id)}"${m?.unread ? " data-unread" : ""}`;
     const unreadDot = `<span class="dot done" title="未读"></span>`;
-    const extRow = (e, key, m) => {
+    const extRow = (e, key, m, pinned, archived) => {
       const open = e.live && e.status === "idle";
       const where = [e.app || KIND_LABEL[e.kind] || e.kind, many && e.machine ? machineName(e.machine) : "", e.live && !open ? "" : ago(e.updated || e.started)].filter(Boolean).join(" · ");
       const dot = e.live ? `<span class="dot ${esc(e.status || "unknown")}" title="${esc(EXT_STATE[e.status] || "正在运行")}"></span>` : m?.unread ? unreadDot : "";
       const name = m?.title || extName(e);
-      return `<li><a class="item ${e.live ? "" : "ended"} ${view === "ext" && extCur === e.id ? "active" : ""}"${rowAttrs(e.id, m)} href="#/x/${encodeURIComponent(e.id)}" title="${esc(name)}">
+      const nameHTML = e.scheduled ? `<span class="nm">${esc(name)}</span>${schedIco(true)}` : esc(name);
+      const active = (view === "ext" && extCur === e.id) || (!view && lastSideRow === e.id);
+      const acts = rowActsHTML(e.id, key, pinned, archived);
+      return `<li class="${acts ? "srow" : ""}${pinned ? " is-pinned" : ""}"><a class="item ${e.live ? "" : "ended"} ${active ? "active" : ""}"${rowAttrs(e.id, m)} href="#/x/${encodeURIComponent(e.id)}" title="${esc(name)}">
         <span class="glyph">${sessionGlyph(e.kind, e.surface)}</span>
-        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(where)}</div></span>${dot}</a></li>`;
+        <span class="body"><div class="name">${nameHTML}</div><div class="sub">${esc(where)}</div></span>${dot}</a>${acts}</li>`;
     };
-    const histRow = (h, key, m) => {
+    const histRow = (h, key, m, pinned, archived) => {
       const sub = [KIND_LABEL[h.kind] || h.kind, many ? machineName(h.machine) : "", ago(h.ended)].filter(Boolean).join(" · ");
       const name = m?.title || histName(h);
-      return `<li><a class="item ended ${view === "ext" && extCur === "h:" + h.id ? "active" : ""}"${rowAttrs("h:" + h.id, m)} href="#/h/${encodeURIComponent(h.id)}" title="${esc(name)}">
+      const nameHTML = h.scheduled ? `<span class="nm">${esc(name)}</span>${schedIco(true)}` : esc(name);
+      const rid = "h:" + h.id;
+      const active = (view === "ext" && extCur === rid) || (!view && lastSideRow === rid);
+      const acts = rowActsHTML(rid, key, pinned, archived);
+      return `<li class="${acts ? "srow" : ""}${pinned ? " is-pinned" : ""}"><a class="item ended ${active ? "active" : ""}"${rowAttrs(rid, m)} href="#/h/${encodeURIComponent(h.id)}" title="${esc(name)}">
         <span class="glyph">${sessionGlyph(h.kind, "cli")}</span>
-        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(sub)}</div></span>${m?.unread ? unreadDot : ""}</a></li>`;
+        <span class="body"><div class="name">${nameHTML}</div><div class="sub">${esc(sub)}</div></span>${m?.unread ? unreadDot : ""}</a>${acts}</li>`;
     };
     const pane = (a, term) => {
-      const key = term ? "" : markKey(a.machine, a.kind, a.session), m = marks[key];
+      const kind = term ? "" : shortKind(a.kind);
+      const key = term || isLocalRouter(a) ? "" : markKey(a.machine, a.kind, a.session), m = marks[key];
+      const archived = isCollieArchived({ kind, mark: m });
+      const pinned = !term && !isLocalRouter(a) && isRowPinned(a.pinned, kind, "pane", "cli", m);
       // Marked unread, a resting agent reads as finished and not looked at.
       const v = m?.unread && a.status === "idle" ? { ...a, status: "done" } : a;
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
-      return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, human: +new Date(a.human_at || 0), machine: a.machine || "", cwd: a.cwd,
-        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true, archived: !!a.archived };
+      return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m), { key, pinned, archived }), bucket, kind, rank, t: 0, human: +new Date(a.human_at || 0), machine: a.machine || "", cwd: a.cwd,
+        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, surface: "cli", ws: a.workspace_id, live: true, archived: !!a.archived, scheduled: !!a.scheduled, pinned };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -4236,14 +4268,18 @@
       return r;
     };
     const extRows = ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
-      const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
-      return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
-        t: new Date(e.updated || e.started), human: +new Date(e.human_at || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, surface: e.surface, live: !!e.live });
+      const kind = shortKind(e.kind), machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
+      const archived = isCollieArchived({ kind, mark: m });
+      const pinned = isRowPinned(e.pinned, kind, "ext", e.surface, m);
+      return rest({ id: e.id, src: "ext", html: extRow(e, key, m, pinned, archived), kind, bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
+        t: new Date(e.updated || e.started), human: +new Date(e.human_at || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, surface: e.surface, live: !!e.live, scheduled: !!e.scheduled, pinned });
     });
     const histRows = hist.filter((h) => !collieRan(h)).map((h) => {
-      const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
-      return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), human: +new Date(h.human_at || h.ended), machine, cwd: h.cwd,
-        key, mark: m, session: h.session || "", name: m?.title || histName(h), live: false });
+      const kind = shortKind(h.kind), machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
+      const archived = isCollieArchived({ kind, mark: m });
+      const pinned = isRowPinned(h.pinned, kind, "hist", "cli", m);
+      return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m, pinned, archived), kind, bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), human: +new Date(h.human_at || h.ended), machine, cwd: h.cwd,
+        key, mark: m, session: h.session || "", name: m?.title || histName(h), surface: "cli", live: false, scheduled: !!h.scheduled, pinned });
     });
     // An app can list a session herdr ran too (Antigravity's lists the CLI's):
     // one row each, the app's while it runs there, herdr's otherwise.
@@ -4258,12 +4294,22 @@
   }
   // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {
-    if (sideView === "status") return STATUS_GROUPS.map(([key, label]) => ({ key, label, rows: rows.filter((r) => r.bucket === key) }));
+    const sortRows = (list) => list.sort((x, y) => (y.pinned ? 1 : 0) - (x.pinned ? 1 : 0) || x.rank - y.rank || y.t - x.t);
+    if (sideView === "status") {
+      const pinned = rows.filter((r) => r.pinned && r.bucket !== "attn");
+      const rest = rows.filter((r) => !r.pinned || r.bucket === "attn");
+      return [
+        { key: "attn", label: "需要你", rows: sortRows(rest.filter((r) => r.bucket === "attn")) },
+        { key: "pinned", label: "置顶", rows: sortRows([...pinned]) },
+        ...STATUS_GROUPS.filter(([k]) => k !== "attn").map(([key, label]) => ({ key, label, rows: sortRows(rest.filter((r) => r.bucket === key)) })),
+      ];
+    }
+    const pinned = rows.filter((r) => r.pinned && r.bucket !== "attn");
     // A project is its folder's name on one computer: a repository and its
     // worktrees (wherever they live) are one project.
     const by = new Map();
     for (const r of rows) {
-      if (r.bucket === "attn") continue;
+      if (r.bucket === "attn" || r.pinned) continue;
       const path = repoOf(r.cwd), label = path ? base(path) : "其他", key = r.machine + "\n" + label;
       if (!by.has(key)) by.set(key, { key, machine: r.machine, label, paths: new Set(), project: true, rows: [], last: 0 });
       const g = by.get(key);
@@ -4277,9 +4323,13 @@
       g.title = [...g.paths].join("\n");
       // The same project on another computer says which.
       if (groups.some((o) => o !== g && o.label === g.label)) g.on = machineName(g.machine);
-      g.rows.sort((x, y) => x.rank - y.rank || y.t - x.t);
+      sortRows(g.rows);
     }
-    return [{ key: "attn", label: "需要你", rows: rows.filter((r) => r.bucket === "attn") }, ...groups];
+    return [
+      { key: "attn", label: "需要你", rows: sortRows(rows.filter((r) => r.bucket === "attn")) },
+      { key: "pinned", label: "置顶", rows: sortRows([...pinned]) },
+      ...groups,
+    ];
   }
   const sideHere = (r) => view === "ext" ? r.id === extCur : view === "pane" && r.id === current;
   // Opening a session marked unread reads it, once per opening: marking the
@@ -4322,7 +4372,7 @@
 
     const groupHTML = (g) => {
       const open = g.rows.filter((r) => r.rank < ENDED_RANK), ended = g.rows.filter((r) => r.rank >= ENDED_RANK);
-      let shown = extAll ? ended : ended.slice(0, RECENT_N);
+      let shown = extAll || g.key === "pinned" ? ended : ended.slice(0, RECENT_N);
       const cur = view === "ext" && extCur && ended.find((r) => r.id === extCur && !shown.includes(r));
       if (cur) shown = [...shown, cur];
       const fk = (g.project ? "p:" : "status:") + g.key, dflt = !g.project && g.key === "term";
@@ -4333,7 +4383,7 @@
         ? `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Collie 派一个。</li>` : "";
       return `<details class="group ${g.project ? "proj" : ""}" data-fold="${esc(fk)}" data-dflt="${dflt ? 1 : 0}" ${folded ? "" : "open"}>
         <summary${g.title ? ` title="${esc(g.title)}"` : ""}><h2>${g.project ? FOLDER_SVG : ""}<span class="gname">${esc(g.label)}</span>${g.on ? `<span class="gon">${esc(g.on)}</span>` : ""}<span class="count">${esc(count)}</span></h2></summary>
-        <ul class="list ${g.key === "attn" ? "attn" : ""}">${[...open, ...shown].map((r) => r.html).join("")}${empty}${ended.length > RECENT_N
+        <ul class="list ${g.key === "attn" ? "attn" : ""}">${[...open, ...shown].map((r) => r.html).join("")}${empty}${g.key !== "pinned" && ended.length > RECENT_N
           ? `<li><button type="button" class="more-row" data-act="ext-more">${extAll ? "收起" : `还有 ${ended.length - RECENT_N} 个`}</button></li>` : ""}</ul>
       </details>`;
     };
@@ -4515,6 +4565,7 @@
     unread: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>',
     read: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
     copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
+    pin: ICON_PIN,
     archive: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></svg>',
     close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   };
@@ -4525,11 +4576,13 @@
     closeAttach();
     ctxRow = row;
     const unread = !!row.mark?.unread;
+    const archived = isCollieArchived(row);
     const items = row.term ? [["close", "关闭", false]] : [
       ["rename", "重命名", !typesRename(row) && !row.session],
       [unread ? "read" : "unread", unread ? "标记为已读" : "标记为未读", !row.key],
       ["copy", "复制对话 ID", !row.session],
-      ["archive", isCollieArchived(row) ? "取消归档" : "归档", !row.key],
+      ...(archived ? [] : [["pin", row.pinned ? "取消置顶" : "置顶", !row.key]]),
+      ["archive", archived ? "取消归档" : "归档", !row.key],
     ];
     ctxPop.innerHTML = `<div class="ph">${esc(row.term || row.name)}</div>` + items.map(([act, label, off]) =>
       `<button type="button" class="po${act === "close" ? " danger" : ""}" role="menuitem" data-ctx="${act}" ${off ? "disabled" : ""}><span class="pi">${CTX_ICONS[act]}</span><span class="pl"><span>${label}</span></span></button>`).join("");
@@ -4572,6 +4625,7 @@
       const row = sideByRow.get(a.dataset.row);
       if (!hold || !row) return;
       hold.fired = true;
+      if (!view) { lastSideRow = row.id; renderSessions(); }
       openCtx(row, hold.x, hold.y);
     }, HOLD_MS);
   });
@@ -4584,6 +4638,18 @@
   // events that close it again (and open the row); cancel them.
   sideBox.addEventListener("touchend", (e) => { if (hold?.fired) e.preventDefault(); }, { passive: false });
   sideBox.addEventListener("click", (e) => {
+    const actBtn = e.target.closest("[data-row-act]");
+    if (actBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const row = sideByRow.get(actBtn.dataset.row);
+      if (row) {
+        const p = actBtn.dataset.rowAct === "pin" ? pinRow(row, !row.pinned) : archiveRow(row, !isCollieArchived(row));
+        p.catch((err) => toast(err.message, "attn"));
+      }
+      hold = null;
+      return;
+    }
     if (hold?.fired) { e.preventDefault(); e.stopPropagation(); }
     hold = null;
   }, true);
@@ -4607,6 +4673,7 @@
     if (act === "copy") { await copy(r.session); toast("已复制 " + r.session); }
     else if (act === "unread" || act === "read") await setMark(r.key, { unread: act === "unread" });
     else if (act === "rename") await renameRow(r);
+    else if (act === "pin") await pinRow(r, !r.pinned);
     else if (act === "archive") await archiveRow(r, !isCollieArchived(r));
     else if (act === "close") await closeTerm(r);
   }
@@ -4623,6 +4690,32 @@
       if (r.src === "ext") loadExternal();
     }
     toast("已改名为「" + name + "」");
+  }
+  const changingPin = new Set();
+  async function pinRow(r, pinned) {
+    if (!r.key || changingPin.has(r.key)) return;
+    changingPin.add(r.key);
+    try {
+      const nativeCodex = r.kind === "codex";
+      const nativeAgy = r.kind === "agy" && r.src === "ext" && r.surface !== "cli";
+      if (nativeCodex || nativeAgy) {
+        await api(`/api/sessions/${sessionPath(r)}/pin`, { body: { kind: r.kind, surface: r.surface || "", pinned } });
+      }
+      if (!nativeCodex) {
+        await setMark(r.key, { pinned });
+      }
+      if (nativeCodex || nativeAgy) {
+        if (r.src === "pane") { const a = state.agents.find((x) => x.pane_id === r.id); if (a) a.pinned = pinned; }
+        else if (r.src === "ext") { const e = ext.find((x) => x.id === r.id); if (e) e.pinned = pinned; }
+        else if (r.src === "hist") { const h = hist.find((x) => "h:" + x.id === r.id); if (h) h.pinned = pinned; }
+        renderSessions();
+        if (r.src === "ext") loadExternal();
+        if (r.src === "hist") loadHistory();
+      }
+      toast(pinned ? "已置顶" : "已取消置顶");
+    } finally {
+      changingPin.delete(r.key);
+    }
   }
   const changingArchive = new Set();
   async function archiveRow(r, archived) {

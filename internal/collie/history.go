@@ -25,8 +25,10 @@ type Ended struct {
 	Name     string    `json:"name,omitempty"`
 	IsRouter *bool     `json:"is_router,omitempty"` // nil for records written before roles were stored
 	Session  string    `json:"session"`
-	Ended    time.Time `json:"ended"`
-	HumanAt  time.Time `json:"human_at,omitzero"` // the human's last message in it, else its start
+	Ended     time.Time `json:"ended"`
+	HumanAt   time.Time `json:"human_at,omitzero"` // the human's last message in it, else its start
+	Scheduled bool      `json:"scheduled,omitempty"`
+	Pinned    bool      `json:"pinned,omitempty"`
 }
 
 const maxEnded = 40
@@ -174,7 +176,48 @@ func (s *Server) listHistory(w http.ResponseWriter, r *http.Request) {
 	history.Unlock()
 	list = s.withoutArchived(list)
 	sort.SliceStable(list, func(i, j int) bool { return list[i].Ended.After(list[j].Ended) })
-	writeJSON(w, 200, map[string]any{"sessions": list})
+	pins := map[string]map[string]bool{}
+	scheds := map[string]map[string]bool{}
+	localClaude := map[string]map[string]bool{}
+	out := make([]*Ended, len(list))
+	for i, e := range list {
+		cp := *e
+		if cp.Session != "" {
+			switch cp.Kind {
+			case "codex":
+				p, ok := pins[cp.Machine]
+				if !ok {
+					p = s.pinnedOn(cp.Machine)
+					pins[cp.Machine] = p
+				}
+				cp.Pinned = p[cp.Session]
+				sc, ok := scheds[cp.Machine]
+				if !ok {
+					sc = s.scheduledOn(cp.Machine)
+					scheds[cp.Machine] = sc
+				}
+				cp.Scheduled = sc[cp.Session]
+			case "claude":
+				if cp.Machine == "" {
+					m, ok := localClaude[cp.Cwd]
+					if !ok {
+						m = claudeScheduledIn(cp.Cwd)
+						localClaude[cp.Cwd] = m
+					}
+					cp.Scheduled = m[cp.Session]
+				} else {
+					sc, ok := scheds[cp.Machine]
+					if !ok {
+						sc = s.scheduledOn(cp.Machine)
+						scheds[cp.Machine] = sc
+					}
+					cp.Scheduled = sc[cp.Session]
+				}
+			}
+		}
+		out[i] = &cp
+	}
+	writeJSON(w, 200, map[string]any{"sessions": out})
 }
 
 func (s *Server) deleteHistory(w http.ResponseWriter, r *http.Request) {

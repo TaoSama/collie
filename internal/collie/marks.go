@@ -25,12 +25,13 @@ type sessionMark struct {
 	Archived       bool            `json:"archived,omitempty"` // legacy Claude archive
 	CollieArchived bool            `json:"collie_archived,omitempty"`
 	Archive        *sessionArchive `json:"archive,omitempty"`
+	Pinned         bool            `json:"pinned,omitempty"`
 	Title          string          `json:"title,omitempty"`
 	At             time.Time       `json:"at"`
 }
 
 func (m *sessionMark) empty() bool {
-	return !m.Unread && !m.Archived && !m.CollieArchived && m.Title == ""
+	return !m.Unread && !m.Archived && !m.CollieArchived && !m.Pinned && m.Title == ""
 }
 
 // Keep all archived sessions so they can be restored. Other marks age out.
@@ -60,7 +61,7 @@ func (s *Server) saveMarks(next map[string]*sessionMark) error {
 	if len(next) > maxMarks {
 		keys := make([]string, 0, len(next))
 		for key, mark := range next {
-			if !mark.CollieArchived && !mark.Archived {
+			if !mark.CollieArchived && !mark.Archived && !mark.Pinned {
 				keys = append(keys, key)
 			}
 		}
@@ -99,6 +100,7 @@ func (s *Server) setMark(w http.ResponseWriter, r *http.Request) {
 		Archived       *bool           `json:"archived"`
 		CollieArchived *bool           `json:"collie_archived"`
 		Archive        *sessionArchive `json:"archive"`
+		Pinned         *bool           `json:"pinned"`
 		Title          *string         `json:"title"`
 	}
 	if !decode(w, r, &body) {
@@ -130,6 +132,9 @@ func (s *Server) setMark(w http.ResponseWriter, r *http.Request) {
 		if !m.CollieArchived {
 			m.Archive = nil
 		}
+	}
+	if body.Pinned != nil {
+		m.Pinned = *body.Pinned
 	}
 	if body.Title != nil {
 		m.Title = *body.Title

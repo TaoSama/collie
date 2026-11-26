@@ -2026,11 +2026,46 @@ select.picked { display: none; }
 .event:has(> .wstate) > span:nth-child(3) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .event > .wstate { font-size: var(--fs-small); color: var(--t-meta); white-space: nowrap; }
 
-/* sidebar: Collie's agents among yours */
-/* A long name gives way, not the badge after it. */
-.item .name:has(.by-collie) { display: flex; align-items: center; }
-.item .name .nm { min-width: 0; margin-right: 6px; overflow: hidden; text-overflow: ellipsis; }
+/* sidebar: Collie's agents among yours, scheduled clock icon, and row hover/selected actions */
+/* A long name gives way, not the badge or clock icon after it. */
+.item .name:has(.by-collie, .sched-ico) { display: flex; align-items: center; gap: 5px; }
+.item .name .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.item .name .sched-ico { flex: none; display: inline-flex; align-items: center; color: var(--t-icon); }
+.item .name .sched-ico svg { width: 13px; height: 13px; }
 .item .name .by-collie { flex: none; margin-left: auto; /* all badges line up at the right */ padding: 0 5px; border: var(--bw) solid var(--line-2); border-radius: calc(5px * var(--round)); font: var(--fw-medium) calc(var(--fs-micro) + 0.5px)/16px var(--sans, inherit); color: var(--t-meta); vertical-align: 1px; white-space: nowrap; }
+.srow { position: relative; }
+.row-acts {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; gap: 2px;
+  opacity: 0; pointer-events: none; transition: opacity .12s;
+}
+.row-act {
+  position: relative; width: 24px; height: 24px; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: calc(6px * var(--round)); background: transparent; color: var(--t-icon);
+  cursor: pointer; transition: background .12s, color .12s;
+}
+.row-act svg { width: 14px; height: 14px; stroke-width: calc(1.7 * var(--stroke)); }
+.row-act:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.row-act.pin-act.on { color: var(--pin); }
+.row-act.pin-act.on .pin-body { fill: color-mix(in srgb, currentColor 22%, transparent); }
+@media (hover: hover) {
+  .srow:hover > .item { background: var(--bg-3); padding-right: 60px; }
+  .srow:hover > .item.active { background: var(--sel-bg); }
+  .attn .srow:hover > .item { background: var(--attn-soft); }
+  .srow:hover > .row-acts { opacity: 1; pointer-events: auto; }
+}
+.srow:has(> .item.active) > .item,
+.srow:focus-within > .item { padding-right: 60px; }
+.srow:has(> .item.active) > .row-acts,
+.srow:focus-within > .row-acts { opacity: 1; pointer-events: auto; }
+@media (pointer: coarse) {
+  .row-acts { gap: 4px; }
+  .row-act { width: 32px; height: 32px; }
+  .row-act::after { content: ""; position: absolute; inset: -6px -2px; }
+  .row-act svg { width: 16px; height: 16px; }
+  .srow:has(> .item.active) > .item,
+  .srow:focus-within > .item { padding-right: 78px; }
+}
 .list .empty-hint { list-style: none; padding: 4px 0; }
 
 /* scrollbars: thin and quiet; the sidebar's shows only while you're on it */

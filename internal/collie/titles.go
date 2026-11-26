@@ -180,6 +180,10 @@ type paneSession struct {
 	HumanAt time.Time `json:"human_at,omitzero"`
 	// Archived: its agent's own archive has it (archived.go).
 	Archived bool `json:"archived,omitempty"`
+	// Scheduled: has an active scheduled task / automation (session_meta.go).
+	Scheduled bool `json:"scheduled,omitempty"`
+	// Pinned: pinned in its agent's own sidebar (session_meta.go).
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // localSessions maps this machine's agent panes (local ids) to their sessions.
@@ -198,6 +202,19 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		s.agy.prune(alive)
 	}
 	archived := s.archivedIDs()
+	var codexAuto, codexPin map[string]bool
+	claudeSched := map[string]map[string]bool{}
+	claudeScheduled := func(dir, session string) bool {
+		if dir == "" || session == "" {
+			return false
+		}
+		m, ok := claudeSched[dir]
+		if !ok {
+			m = claudeScheduledIn(dir)
+			claudeSched[dir] = m
+		}
+		return m[session]
+	}
 	for _, a := range agents {
 		local, machine := split(a.PaneID)
 		if machine != "" {
@@ -238,6 +255,19 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		}
 		run, _ := s.herdr.Run(local)
 		ps := paneSession{Title: t, Session: sess, Run: run, Archived: archived[sess]}
+		if sess != "" {
+			switch kind {
+			case "codex":
+				if codexAuto == nil {
+					codexAuto = s.codexScheduledIDs()
+					codexPin = s.codexPinnedIDs()
+				}
+				ps.Scheduled = codexAuto[sess]
+				ps.Pinned = codexPin[sess]
+			case "claude":
+				ps.Scheduled = claudeScheduled(deref(a.Cwd), sess)
+			}
+		}
 		if sess != "" && (kind == "claude" || kind == "codex" || kind == "agy") {
 			ps.HumanAt = humanAt(s.sessionLog(kind, sess), kind)
 			if u := s.sessionUsage(kind, sess); u != nil {
@@ -294,10 +324,15 @@ func (s *Server) sessionUsage(kind, session string) *ctxUsage {
 	return &u
 }
 
-// getTitles: GET /api/titles?archived=<ids>; the hub names the ended
-// sessions it remembers here, and hears which of them are archived.
+// getTitles: GET /api/titles?archived=<ids>&dir=<cwd>; the hub names the ended
+// sessions it remembers here, and hears which of them are archived, pinned or scheduled.
 func (s *Server) getTitles(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"sessions": s.titlesFor("", r.Context()), "archived": s.archivedAmong(splitIDs(r.URL.Query().Get("archived")))})
+	writeJSON(w, 200, map[string]any{
+		"sessions":  s.titlesFor("", r.Context()),
+		"archived":  s.archivedAmong(splitIDs(r.URL.Query().Get("archived"))),
+		"pinned":    s.codexPinnedList(),
+		"scheduled": s.scheduledList(r.URL.Query()["dir"]),
+	})
 }
 
 // titlesFor returns the cached titles of one machine ("" = this one) and
@@ -307,13 +342,23 @@ type titleCache struct {
 	m       map[string]paneSession
 	loading bool
 	// archived: those of its ended sessions it says are archived (nil: it didn't say).
-	archived map[string]bool
+	archived  map[string]bool
+	pinned    map[string]bool
+	scheduled map[string]bool
 }
 
 var titles = struct {
 	sync.Mutex
 	by map[string]*titleCache
 }{by: map[string]*titleCache{}}
+
+func forgetLocalTitles() {
+	titles.Lock()
+	if c := titles.by[""]; c != nil {
+		c.at = time.Time{}
+	}
+	titles.Unlock()
+}
 
 func (s *Server) titlesFor(machine string, ctx context.Context) map[string]paneSession {
 	titles.Lock()
@@ -335,16 +380,23 @@ func (s *Server) titlesFor(machine string, ctx context.Context) map[string]paneS
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
 		var got map[string]paneSession
-		var archived map[string]bool
+		var archived, pinned, scheduled map[string]bool
 		if machine == "" {
 			got = s.localSessions(ctx)
 		} else if client, err := s.herdr.Client(machine); err == nil {
-			u := "http://node/api/titles?archived=" + url.QueryEscape(strings.Join(s.endedOn(machine), ","))
+			q := url.Values{}
+			q.Set("archived", strings.Join(s.endedOn(machine), ","))
+			for _, dir := range s.endedClaudeDirsOn(machine) {
+				q.Add("dir", dir)
+			}
+			u := "http://node/api/titles?" + q.Encode()
 			req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
 			if resp, err := client.Do(req); err == nil {
 				var body struct {
-					Sessions map[string]paneSession `json:"sessions"`
-					Archived *[]string              `json:"archived"`
+					Sessions  map[string]paneSession `json:"sessions"`
+					Archived  *[]string              `json:"archived"`
+					Pinned    *[]string              `json:"pinned"`
+					Scheduled *[]string              `json:"scheduled"`
 				}
 				if json.NewDecoder(resp.Body).Decode(&body) == nil && body.Sessions != nil {
 					got = body.Sessions
@@ -354,6 +406,18 @@ func (s *Server) titlesFor(machine string, ctx context.Context) map[string]paneS
 							archived[id] = true
 						}
 					}
+					if body.Pinned != nil {
+						pinned = map[string]bool{}
+						for _, id := range *body.Pinned {
+							pinned[id] = true
+						}
+					}
+					if body.Scheduled != nil {
+						scheduled = map[string]bool{}
+						for _, id := range *body.Scheduled {
+							scheduled[id] = true
+						}
+					}
 				}
 				resp.Body.Close()
 			}
@@ -361,7 +425,7 @@ func (s *Server) titlesFor(machine string, ctx context.Context) map[string]paneS
 		titles.Lock()
 		c.loading, c.at = false, time.Now()
 		if got != nil {
-			c.m, c.archived = got, archived
+			c.m, c.archived, c.pinned, c.scheduled = got, archived, pinned, scheduled
 		}
 		titles.Unlock()
 	}

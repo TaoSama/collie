@@ -69,6 +69,8 @@ type desktopRow struct {
 	created, updated    time.Time
 	running             bool // the app says a turn is running (Codex, Antigravity)
 	waiting             bool // stopped, with something still to come (an Antigravity timer)
+	scheduled           bool // has an active scheduled task / automation
+	pinned              bool // pinned in the app's own sidebar
 }
 
 var desktopCache struct {
@@ -114,7 +116,7 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 		if listed[d.session] {
 			continue
 		}
-		e := &External{ID: d.id, Kind: d.kind, Cwd: d.cwd, App: d.app, Surface: d.surface, Started: d.created, Session: d.session, Title: d.title, Updated: d.updated, path: d.path, format: d.format, desktop: true}
+		e := &External{ID: d.id, Kind: d.kind, Cwd: d.cwd, App: d.app, Surface: d.surface, Started: d.created, Session: d.session, Title: d.title, Updated: d.updated, Scheduled: d.scheduled, Pinned: d.pinned, path: d.path, format: d.format, desktop: true}
 		if e.path != "" {
 			if fi, err := os.Stat(e.path); err == nil && fi.ModTime().After(e.Updated) {
 				e.Updated = fi.ModTime()
@@ -272,13 +274,14 @@ func (s *Server) claudeDesktopDirs() []string {
 }
 
 type claudeDesktopJSON struct {
-	SessionID    string `json:"sessionId"`
-	CliSessionID string `json:"cliSessionId"`
-	Cwd          string `json:"cwd"`
-	Title        string `json:"title"`
-	Archived     bool   `json:"isArchived"`
-	Created      int64  `json:"createdAt"`
-	Activity     int64  `json:"lastActivityAt"`
+	SessionID       string `json:"sessionId"`
+	CliSessionID    string `json:"cliSessionId"`
+	Cwd             string `json:"cwd"`
+	Title           string `json:"title"`
+	Archived        bool   `json:"isArchived"`
+	ScheduledTaskID string `json:"scheduledTaskId"`
+	Created         int64  `json:"createdAt"`
+	Activity        int64  `json:"lastActivityAt"`
 }
 
 // Index files are read again only when they change.
@@ -325,7 +328,7 @@ func (s *Server) claudeDesktopRows(dirs []string) []desktopRow {
 			if local == "" {
 				local = v.CliSessionID
 			}
-			d := desktopRow{id: "cd-" + local, kind: "claude", app: appClaude, surface: surfaceDesktop, session: v.CliSessionID, title: v.Title, cwd: v.Cwd, created: time.UnixMilli(v.Created), updated: last}
+			d := desktopRow{id: "cd-" + local, kind: "claude", app: appClaude, surface: surfaceDesktop, session: v.CliSessionID, title: v.Title, cwd: v.Cwd, created: time.UnixMilli(v.Created), updated: last, scheduled: v.ScheduledTaskID != ""}
 			rows = append(rows, d)
 		}
 	}
@@ -374,11 +377,16 @@ func (s *Server) codexAppRows() []desktopRow {
 	for _, id := range s.codexAutomationThreads() {
 		automation[id] = true
 	}
+	sectionCol := "''"
+	var hasSection int
+	if db.QueryRow(`SELECT count(*) FROM pragma_table_info('threads') WHERE name = 'thread_section_id'`).Scan(&hasSection) == nil && hasSection > 0 {
+		sectionCol = "COALESCE(thread_section_id, '')"
+	}
 	// No LIMIT: Collie's own workers are told apart in Go below, and they
 	// mustn't take the places of the App's threads; nor may the newer
-	// threads push out an automation's.
+	// threads push out an automation's or a pinned thread.
 	q := `SELECT id, COALESCE(NULLIF(name,''), NULLIF(title,''), first_user_message), COALESCE(first_user_message, ''), cwd, rollout_path,
-		COALESCE(created_at_ms, created_at*1000), COALESCE(updated_at_ms, updated_at*1000), COALESCE(originator, '')
+		COALESCE(created_at_ms, created_at*1000), COALESCE(updated_at_ms, updated_at*1000), COALESCE(originator, ''), ` + sectionCol + `
 		FROM threads WHERE archived = 0 AND source = 'vscode' ORDER BY updated_at DESC`
 	res, err := db.Query(q)
 	if err != nil {
@@ -388,9 +396,9 @@ func (s *Server) codexAppRows() []desktopRow {
 	var rows []desktopRow
 	kept := 0
 	for res.Next() {
-		var id, title, first, cwd, rollout, originator string
+		var id, title, first, cwd, rollout, originator, sectionID string
 		var created, updated int64
-		if res.Scan(&id, &title, &first, &cwd, &rollout, &created, &updated, &originator) != nil {
+		if res.Scan(&id, &title, &first, &cwd, &rollout, &created, &updated, &originator, &sectionID) != nil {
 			continue
 		}
 		// A Collie worker's thread, named by Codex after its task: listed
@@ -398,14 +406,16 @@ func (s *Server) codexAppRows() []desktopRow {
 		if collieSession(first) {
 			continue
 		}
-		if !automation[id] {
+		scheduled := automation[id]
+		pinned := sectionID == codexPinnedSectionID
+		if !scheduled && !pinned {
 			if kept == codexMax {
 				continue
 			}
 			kept++
 		}
 		app := codexClient(originator, cwd)
-		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, surface: codexSurface(originator), session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated)}
+		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, surface: codexSurface(originator), session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated), scheduled: scheduled, pinned: pinned}
 		if p := codexRollout(rollout); p != "" {
 			d.path, d.format = p, "codex"
 			d.running = codexTurnRunning(p)
@@ -683,6 +693,10 @@ func (s *Server) agyDesktopRows() []desktopRow {
 	}
 	defer res.Close()
 	archived := s.archivedIDs()
+	var agySched map[string]bool
+	if !cliOnly {
+		agySched = s.agyScheduledIDs()
+	}
 	var rows []desktopRow
 	for res.Next() {
 		var id, title, preview, uris, status, src string
@@ -712,6 +726,10 @@ func (s *Server) agyDesktopRows() []desktopRow {
 		}
 		d := desktopRow{id: "ag-" + id, kind: "agy", app: app, surface: surface, session: id, title: messageTitle(title), cwd: cwd,
 			created: sqlTime(input), updated: sqlTime(mod), running: status == "CASCADE_RUN_STATUS_RUNNING"}
+		if surface != surfaceCLI {
+			d.scheduled = agySched[id]
+			d.pinned = agyPinned(root, id)
+		}
 		d.waiting = !d.running && notIdle
 		// A conversation the CLI started keeps its log in the CLI's home.
 		for _, r := range slices.Compact([]string{root, s.agyCLIHome()}) {

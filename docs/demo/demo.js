@@ -44,7 +44,7 @@
   const agent = (o) => ({ workspace_label: o.name, title: "", is_agent: true, machine: o.pane_id.includes("@") ? o.pane_id.split("@")[1] : "", session: "0193a1c2-" + o.workspace_id.replace(/\W/g, "") + "-demo", ...o });
   const agents = [
     agent({ pane_id: "w1:p1", workspace_id: "w1", name: "collie", is_router: true, kind: "claude", status: "idle", cwd: "/home/alex/.collie/router" }),
-    agent({ pane_id: "w2:p1@macbook", workspace_id: "w2@macbook", name: "claude-1", kind: "claude", status: "working", cwd: "/Users/alex/code/shop-web", topic: "首页加暗色模式", run: ["claude-opus-5-5[1m]", "high"], context: { used: 120000, window: 1000000 } }),
+    agent({ pane_id: "w2:p1@macbook", workspace_id: "w2@macbook", name: "claude-1", kind: "claude", status: "working", cwd: "/Users/alex/code/shop-web", topic: "首页加暗色模式", run: ["claude-opus-5-5[1m]", "high"], context: { used: 120000, window: 1000000 }, scheduled: true }),
     agent({ pane_id: "w3:p1", workspace_id: "w3", name: "codex-1", kind: "codex", status: "blocked", cwd: "/home/alex/code/shop-api", topic: "修复 /orders 分页的边界问题", run: ["gpt-6.1-sol", "high"], context: { used: 214000, window: 272000 } }),
     agent({ pane_id: "w4:p1", workspace_id: "w4", name: "agy-1", kind: "agy", status: "waiting", cwd: "/home/alex/code/shop-api", topic: "整理数据库迁移脚本", run: ["", ""] }),
     agent({ pane_id: "w5:p1", workspace_id: "w5", name: "fix-flaky-test", kind: "codex", status: "working", cwd: "/home/alex/code/shop-api", topic: "修复订单分页测试的偶发失败", run: ["gpt-6.1-sol", "medium"], context: { used: 48000, window: 272000 } }),
@@ -229,7 +229,7 @@
     { id: "x1", kind: "claude", pid: 4242, cwd: "/Users/alex/code/notes", app: "iTerm", surface: "cli", started: ago(90), session: "s1", title: "周报草稿", updated: ago(20), machine: "macbook", status: "idle", can_send: false, live: true },
     { id: "x3", kind: "codex", pid: 5120, cwd: "/home/alex/code/shop-api", app: "VS Code", surface: "cli", started: ago(30), session: "s5", title: "排查 Redis 连接泄漏", updated: ago(1), status: "working", can_send: false, read_only: "这个 Codex 会话没有在共享后台里运行（旧版本，或用了独立的后台），只能看", live: true },
     { id: "cd-2", kind: "claude", pid: 4310, cwd: "/Users/alex/code/shop-web", app: "Claude 桌面版", surface: "desktop", started: ago(240), session: "s2", title: "重构购物车状态管理", updated: ago(55), machine: "macbook", status: "idle", can_send: true, live: true },
-    { id: "cx-7", kind: "codex", pid: 0, cwd: "/Users/alex/code/shop-web", app: "Codex 桌面版", surface: "desktop", started: ago(300), session: "s7", title: "检查结算页的无障碍问题", updated: ago(70), machine: "macbook", status: "idle", can_send: true, live: true },
+    { id: "cx-7", kind: "codex", pid: 0, cwd: "/Users/alex/code/shop-web", app: "Codex 桌面版", surface: "desktop", started: ago(300), session: "s7", title: "检查结算页的无障碍问题", updated: ago(70), machine: "macbook", status: "idle", can_send: true, live: true, scheduled: true },
   ];
   const history = [
     { id: "h1", kind: "codex", cwd: "/home/alex/code/shop-api", name: "codex-3", session: "s3", ended: ago(60 * 20), topic: "升级 Go 到 1.25" },
@@ -678,15 +678,22 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if (p === "/api/marks") {
       if (method === "POST") {
         const m = { ...marks[body.key] };
-        for (const k of ["unread", "archived", "collie_archived", "title"]) if (body[k] !== undefined) m[k] = body[k];
+        for (const k of ["unread", "archived", "collie_archived", "pinned", "title"]) if (body[k] !== undefined) m[k] = body[k];
         if (body.collie_archived !== undefined) {
           delete m.archived;
           if (!body.collie_archived) delete m.archive;
           else if (body.archive) m.archive = body.archive;
         }
-        if (m.unread || m.archived || m.collie_archived || m.title) marks[body.key] = m; else delete marks[body.key];
+        if (m.unread || m.archived || m.collie_archived || m.pinned || m.title) marks[body.key] = m; else delete marks[body.key];
       }
       return json({ marks });
+    }
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/pin$/))) {
+      const sid = decodeURIComponent(m[1]).split("@")[0];
+      for (const list of [agents, external, history]) {
+        for (const item of list) if (item.session === sid) item.pinned = !!body.pinned;
+      }
+      return json({ ok: true });
     }
     if (/^\/api\/sessions\/[^/]+\/(rename|archive|unarchive)$/.test(p)) return json({ ok: true });
     if (p === "/api/hubs") return json({ hubs: [] });
