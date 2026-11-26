@@ -214,6 +214,11 @@ func (h *extHost) startLocked(m *ExtManifest, set ExtSetting) {
 	go r.loop(ctx)
 }
 
+// featureOn: that part of Collie is turned on in 接入 (off until it is).
+func (h *extHost) featureOn(name string) bool {
+	return h != nil && h.setting(name).Enabled
+}
+
 func (h *extHost) run(id string) *extRun {
 	h.mu.Lock()
 	defer h.mu.Unlock()

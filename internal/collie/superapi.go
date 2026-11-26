@@ -101,6 +101,8 @@ type superView struct {
 	QueuedRouter int    `json:"queued_router"`
 	Paused       bool   `json:"paused"`
 	WorkerTitle  string `json:"worker_title,omitempty"`
+	// Workbench: the 工作台 is turned on in 接入 (its entry shows).
+	Workbench bool `json:"workbench"`
 	// Follow: the next time Collie set itself to look at something again.
 	Follow *followView `json:"follow,omitempty"`
 }
@@ -113,9 +115,10 @@ type followView struct {
 func (s *Server) superState(ctx context.Context) superView {
 	sp := s.sup
 	live, _ := sp.liveAgents(withCachedLists(ctx))
+	wb := s.workbenchOn() // before sp.mu: an extension's setting may ask where Collie runs
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	v := superView{Router: routerView{Kind: sp.st.Settings.RouterKind, Status: "asleep"}, Paused: sp.st.Settings.Paused, WorkerTitle: sp.st.Settings.WorkerTitle}
+	v := superView{Router: routerView{Kind: sp.st.Settings.RouterKind, Status: "asleep"}, Paused: sp.st.Settings.Paused, WorkerTitle: sp.st.Settings.WorkerTitle, Workbench: wb}
 	if a, ok := live[routerName]; ok {
 		v.Router = routerView{Alive: true, Status: a.Status, PaneID: a.Pane, Kind: a.Kind}
 		if asked := sp.routerAskedAt; a.Status == "working" && !asked.IsZero() {

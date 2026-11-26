@@ -432,6 +432,7 @@
     const ev = new EventSource("/api/events");
     ev.addEventListener("super", (e) => {
       sup = normSup(JSON.parse(e.data));
+      applyWorkbench();
       notifyPending();
       renderSide();
       if (view === "collie") renderSuper();
@@ -634,6 +635,14 @@
   // Optimistic pin toggles before the hub's next stream frame lands: id -> { pinned, item }.
   const pinnedLocal = new Map();
   const AT_BOTTOM_PX = 36;
+  // The 工作台 is an extension turned on in 接入: off, its entry hides and
+  // its page is left. Unknown until the first snapshot (then it counts as on).
+  const wbOn = () => sup.workbench !== false;
+  function applyWorkbench() {
+    $("#nav-wb").hidden = !wbOn();
+    if (!wbOn() && view === "wb") location.hash = narrow() ? "" : "#/collie";
+  }
+
   function normSup(s) {
     s.hasPending = Array.isArray(s.pending);
     s.entries ||= []; s.workers ||= []; s.pending ||= []; s.pinned ||= []; s.router ||= { status: "asleep" };
@@ -990,13 +999,13 @@
     else if (h.startsWith("#/auto/")) { next = "auto"; id = h.slice(7); }
     else if (h === "#/devices") next = "devices";
     else if (h === "#/prefs") next = "prefs";
-    else if (h === "#/wb" || h.startsWith("#/wb/")) { next = "wb"; id = decodeURIComponent(h.slice(5)); }
+    else if ((h === "#/wb" || h.startsWith("#/wb/")) && wbOn()) { next = "wb"; id = decodeURIComponent(h.slice(5)); }
     else if (!narrow()) {
       // Desktop has no empty home: reopen where you were on fresh launch, else Collie.
       let dest = "#/collie";
       if (!booted && !h) {
         const last = store.get("last", "#/collie");
-        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto(\/hooks\/[\w%./-]+)?|devices|prefs|wb(\/[a-z0-9-]+)?)$/.test(last);
+        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto(\/hooks\/[\w%./-]+)?|devices|prefs|wb(\/[a-z0-9-]+)?)$/.test(last) && (wbOn() || !last.startsWith("#/wb"));
         if (ok) dest = last;
       }
       replaceHash(dest);
@@ -8478,6 +8487,7 @@
     const v = store.get(SNAP_KEY, null);
     if (v?.v !== SNAP_VERSION) return false;
     sup = normSup(v.sup);
+    $("#nav-wb").hidden = !wbOn();
     for (const [k, st] of v.remote || []) remote.set(k, { state: st });
     setLocalState(v.local);
     ext = v.ext || []; hist = v.hist || []; marks = v.marks || {}; autoData = v.auto || {};
@@ -8537,7 +8547,7 @@
     const [ses, su, st] = await Promise.allSettled([api("/api/session"), api("/api/super"), api("/api/state")]);
     // Turned away (the login form is up), or no hub and nothing to show yet.
     if (ses.status === "rejected" && (ses.reason?.message === "unauthorized" || !fromSnap)) return;
-    if (su.status === "fulfilled") sup = normSup(su.value);
+    if (su.status === "fulfilled") { sup = normSup(su.value); applyWorkbench(); }
     if (st.status === "fulfilled") setLocalState(st.value);
     if (fromSnap) {
       renderSide();

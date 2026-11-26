@@ -1,12 +1,13 @@
 package collie
 
 import (
+	"log"
 	"net/http"
 	"time"
 )
 
 func (s *Server) wbRoutes(mux *http.ServeMux) {
-	api := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.auth(h)) }
+	api := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.auth(s.wbOnly(h))) }
 	api("GET /api/wb", s.wbGet)
 	api("POST /api/wb", s.wbSave)
 	api("POST /api/wb/token", s.wbToken)
@@ -15,6 +16,36 @@ func (s *Server) wbRoutes(mux *http.ServeMux) {
 	// reach too: Collie and its workers run on any of them.
 	api("GET /api/super/wb/ls", s.wbList)
 	api("GET /api/super/wb/read/{id}", s.wbReadModule)
+}
+
+// workbenchOn: the 工作台 is turned on in 接入.
+func (s *Server) workbenchOn() bool { return s.ext.featureOn(featureWorkbench) }
+
+// wbOnly answers 409 while the workbench is off: its data stays, unread.
+func (s *Server) wbOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.workbenchOn() {
+			writeJSON(w, 409, map[string]any{"error": wbOffText})
+			return
+		}
+		h(w, r)
+	}
+}
+
+const wbOffText = "工作台没打开：在「接入」里打开它"
+
+// workbenchToggled: the page shows or hides its entry, and ROUTER.md gains
+// or drops its lines on `collie wb`.
+func (s *Server) workbenchToggled() {
+	sp := s.sup
+	sp.mu.Lock()
+	sp.changed()
+	sp.mu.Unlock()
+	go func() {
+		if err := sp.writeRouterFiles(); err != nil {
+			log.Printf("router files: %v", err)
+		}
+	}()
 }
 
 // wbModuleView is a module as the page sees it: no token, only whether one is set.

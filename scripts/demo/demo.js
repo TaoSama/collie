@@ -127,7 +127,7 @@
   }
   const sup = () => ({
     router: { alive: true, status: routerStatus, pane_id: "w1:p1", kind: "claude", context: 23, used: 230000, window: 1000000, effort: "medium", rotate_at: 70, machine: "macbook", alias: "ccl5" },
-    entries, pending: computePending(), pinned: computePinned(), workers, queued: 0, queued_router: 0, paused: false, earlier: true, worker_title: settings.settings.worker_title,
+    entries, pending: computePending(), pinned: computePinned(), workers, queued: 0, queued_router: 0, paused: false, earlier: true, worker_title: settings.settings.worker_title, workbench: true,
     follow: { next: new Date(new Date().setHours(33, 0, 0, 0)).toISOString(), next_text: "复查首页暗色模式的回归测试" }, // a check-again tomorrow 09:00
   });
   let routerStatus = "idle";
@@ -504,7 +504,9 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
   const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}",
     machines: [{ id: "", name: "hub", os: "linux/amd64", agents: [], local: true, online: true }, { id: "mini", name: "mac-mini", os: "darwin/arm64", agents: ["claude"], online: true }],
     extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu" } },
-      proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } }] };
+      proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } },
+    { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", runtime: { feature: "workbench" },
+      description: "钉网页和 Collie 自己的页面，按模块决定给不给 Agent 读。打开后侧栏底部出现田字格入口。" }, setting: { id: "workbench", enabled: true } }] };
   const inboxConvs = [
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },

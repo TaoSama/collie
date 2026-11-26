@@ -2,6 +2,8 @@
 
 工作台是侧栏底部田字格图标打开的页面（`#/wb`，模块页是 `#/wb/<id>`）。人在这里钉自己关心的网页和 Collie 的页面，并为每个模块决定给不给 Agent。Collie 不在这里存业务数据。
 
+工作台是内置扩展（`extensions/workbench/`，`runtime.feature`），在「接入」里打开才生效，默认关闭，升级也不自动打开。关闭时：侧栏入口隐藏，`#/wb` 回首页；`/api/wb*` 和 `/api/super/wb/*` 回 409，`collie wb` 跟着报错；ROUTER.md 里不写 `collie wb` 那段；keep 快照停；做梦不看工作台；其他扩展声明的模块也不显示。数据（模块、布局、token、快照、记忆笔记）一律不删，重新打开原样回来。开关一变，hub 推一次 super 事件（`workbench` 字段）并重写 ROUTER.md。
+
 ## 模块
 
 - **网页**（`kind: web`）：

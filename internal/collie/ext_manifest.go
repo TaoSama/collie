@@ -34,6 +34,9 @@ type ExtManifest struct {
 		Command json.RawMessage `json:"command,omitempty"` // "path" or {"GOOS-GOARCH": "path"}
 		Builtin string          `json:"builtin,omitempty"`
 		Args    []string        `json:"args,omitempty"`
+		// Feature: a part of Collie itself that 接入 turns on and off; no
+		// program runs (built-in catalog only, its id the feature's name).
+		Feature string `json:"feature,omitempty"`
 	} `json:"runtime"`
 	Source *struct {
 		Base  string            `json:"base"`  // pinned to a commit
@@ -194,6 +197,11 @@ const (
 	chatSelf    = "self" // a chat kind: your chat with yourself
 )
 
+// featureWorkbench: the 工作台, an extension turned on in 接入.
+const featureWorkbench = "workbench"
+
+var extFeatures = map[string]bool{featureWorkbench: true}
+
 var extIDRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // builtinExts are the extensions compiled into collie: `collie ext-<name>`.
@@ -212,6 +220,11 @@ func (m *ExtManifest) validate() error {
 		return fmt.Errorf("bad id %q", m.ID)
 	case m.Name == "" || m.Version == "":
 		return fmt.Errorf("name and version are required")
+	case m.Runtime.Feature != "":
+		if !extFeatures[m.Runtime.Feature] || m.ID != m.Runtime.Feature || m.Local || m.Market != nil || len(m.Runtime.Command) > 0 || m.Runtime.Builtin != "" {
+			return fmt.Errorf("feature %q: only Collie's own (%v), built in, under the same id", m.Runtime.Feature, extFeatures)
+		}
+		return nil
 	case m.declarative():
 		if len(m.Contributes.Workbench) == 0 {
 			return fmt.Errorf("an extension without a program must declare contributes.workbench")

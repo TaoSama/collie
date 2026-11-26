@@ -82,7 +82,7 @@ type ExtWorkbenchItem struct {
 
 // extWorkbench lists the 工作台 modules extensions that are on declare.
 func (s *Server) extWorkbench() []ExtWorkbenchItem {
-	if s.ext == nil {
+	if s.ext == nil || !s.workbenchOn() {
 		return nil
 	}
 	var out []ExtWorkbenchItem
