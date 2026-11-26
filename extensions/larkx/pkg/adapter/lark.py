@@ -192,6 +192,7 @@ class Feishu:
         self.qr_status = QR_WAITING
         self.names = _Names()
         self.recent = collections.OrderedDict()  # message id -> (root id, text)
+        self.pending_docs = set()  # comments being handed to the hub
         self.own_cids = collections.OrderedDict()  # what this adapter sent: its echo is not news
         self._mu = threading.Lock()
         self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self._deliver_doc_comments, self.signed_out)
@@ -278,23 +279,27 @@ class Feishu:
             if not what or not dm.id:
                 continue
             with self._mu:
-                seen = mid in self.recent
-            if seen:
-                continue
-            body = (richtext.to_text(L, protobuf_to_dict(dm.richText)) if dm.HasField("richText") else "") or dm.content
-            sender = str(dm.fromId)
-            # The text opens with who did what, so a comment never starts with the trigger word:
-            # nothing here asks for an answer that could not be sent.
-            m = {"id": mid, "chat_id": DOC_CHAT + (feed.id or dm.docFeedId), "chat": feed.title or "云文档",
-                 "chat_kind": "doc", "sender": sender, "owner": bool(self.me) and sender == self.me,
-                 "sender_name": self.user_name(sender, ""), "thread": feed.id or dm.docFeedId,
-                 "text": "（%s%s）\n%s" % (what, "：" + feed.url if feed.url else "", body.strip())}
-            if dm.createTime:
-                at = dm.createTime / (1000 if dm.createTime > 10 ** 12 else 1)
-                m["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
-            # Feed updates repeat earlier comments. Only remember those the hub accepted.
-            if on_message(m):
-                self._remember(mid, "", "")
+                if mid in self.recent or mid in self.pending_docs:
+                    continue
+                self.pending_docs.add(mid)
+            try:
+                body = (richtext.to_text(L, protobuf_to_dict(dm.richText)) if dm.HasField("richText") else "") or dm.content
+                sender = str(dm.fromId)
+                # The text opens with who did what, so a comment never starts with the trigger word:
+                # nothing here asks for an answer that could not be sent.
+                m = {"id": mid, "chat_id": DOC_CHAT + (feed.id or dm.docFeedId), "chat": feed.title or "云文档",
+                     "chat_kind": "doc", "sender": sender, "owner": bool(self.me) and sender == self.me,
+                     "sender_name": self.user_name(sender, ""), "thread": feed.id or dm.docFeedId,
+                     "text": "（%s%s）\n%s" % (what, "：" + feed.url if feed.url else "", body.strip())}
+                if dm.createTime:
+                    at = dm.createTime / (1000 if dm.createTime > 10 ** 12 else 1)
+                    m["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+                # Feed updates repeat earlier comments. Only remember those the hub accepted.
+                if on_message(m) is not False:
+                    self._remember(mid, "", "")
+            finally:
+                with self._mu:
+                    self.pending_docs.remove(mid)
 
     def _deliver(self, msg, on_message, got=None):
         try:

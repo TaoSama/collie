@@ -25,7 +25,7 @@ RESTORE_RETRY = 60
 QR_RENEWALS = 3
 LOAD_WAIT = 40  # a sign-in started while the packages install waits this long (the host's is 50)
 SENT_KEEP = 7 * 86400
-DOC_RECEIVE_RETRY = 2  # seconds between handoffs while the hub is unavailable
+DOC_RECEIVE_WAITS = (2, 5, 15)  # seconds between attempts to hand a comment to the hub
 QR_HINTS = {"waiting": "用飞书 App 扫码登录", "scanned": "已扫码，请在手机上确认"}
 
 log = logging.getLogger("larkx")
@@ -344,14 +344,18 @@ class Extension:
         self.changed()
 
     def _received(self, m, stop):
-        while True:
+        waits = (0, *DOC_RECEIVE_WAITS) if m.get("chat_kind") == "doc" else (0,)
+        for wait in waits:
+            if wait and stop.wait(wait):
+                break
             try:
                 self.peer.call("channel.receive", {"contribution": ID, "message": m})
                 return True
             except peer.Error as e:
                 log.warning("handing over message %s: %s", m.get("id"), e.message)
-                if e.code != "hub_unavailable" or m.get("chat_kind") != "doc" or stop.wait(DOC_RECEIVE_RETRY):
-                    return False
+                if e.code not in ("hub_unavailable", "timeout"):
+                    break
+        return False
 
     def changed(self):
         self.peer.notify("connector.changed", {"contribution": ID, "scope": "status"})
