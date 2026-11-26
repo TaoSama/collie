@@ -38,7 +38,7 @@ Antigravity 桌面 App 的 `conversation_summaries.db` 也列出 agy CLI 起的�
 
 ## 没有 Antigravity App 的电脑读 CLI 自己的索引
 
-App 的 `~/.gemini/antigravity/conversation_summaries.db` 也列出 CLI 起的会话，所以有它的电脑只读它，不再读 CLI 的，免得同一个会话列两次。Linux 上没有 App，`agyDesktopRows`（`internal/collie/desktop.go`）改读 CLI 自己的 `~/.gemini/antigravity-cli/conversation_summaries.db`。这样在 herdr 外起的、已经结束的 CLI 会话也能列出来，并能在 herdr 里继续。两份索引的表结构相同，但 CLI 在自己的索引里不填 `source`，所以从它读出的行都按 CLI 的会话算。空会话（`step_count = 0`）照样不列。
+App 的 `~/.gemini/antigravity/conversation_summaries.db` 也列出 CLI 起的会话，所以有它的电脑只读它，不再读 CLI 的，免得同一个会话列两次。Linux 上没有 App，`agyDesktopRows`（`internal/collie/desktop.go`）改读 CLI 自己的 `~/.gemini/antigravity-cli/conversation_summaries.db`。这样在 herdr 外起的、已经结束的 CLI 会话也能列出来，并能在 herdr 里继续。两份索引的表结构相同，但 CLI 在自己的索引里不填 `source`，所以从它读出的行都按 CLI 的会话算。空会话（`step_count = 0`）照样不列。CLI 的索引里还可能留着会话已被删掉的行，这种行既打不开也续不上，所以找不到 `brain/<id>/…/transcript.jsonl` 的行也不列。
 
 ## Antigravity 没建成的会话留在索引里
 

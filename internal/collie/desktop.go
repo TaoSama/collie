@@ -701,6 +701,11 @@ func (s *Server) agyDesktopRows() []desktopRow {
 				break
 			}
 		}
+		// The CLI's own index can keep a row whose conversation is gone;
+		// nothing would open or resume it.
+		if cliOnly && d.path == "" {
+			continue
+		}
 		rows = append(rows, d)
 	}
 	return rows
