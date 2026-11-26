@@ -224,3 +224,67 @@ func TestMemoryUpFrontSplitAnd10KBBudget(t *testing.T) {
 		t.Fatalf("expected ~10 KB sessionStart warning above 20 KB, got:\n%s", s)
 	}
 }
+
+// 11-26: Collie ran on another computer, and the clean-up only looked at the
+// hub's herdr. The last dream's session there kept the name collie-dream, so
+// every new dream's agent failed to be named, and each failure left its
+// workspace behind.
+func TestOldDreamsClosedOnCollieComputer(t *testing.T) {
+	hub, mac := newFakeHerdr(t), newFakeHerdr(t)
+	sp := newRouterTestSuper(t, hub)
+	h := sp.s.herdr
+	h.mu.Lock()
+	h.remote["mac"] = &Machine{ID: "mac", Name: "mac", Online: true, conn: &herdrConn{dial: mac.dial}}
+	h.mu.Unlock()
+	hub.add("w1", dreamLabel, "", "", "/hub") // the hub's own: not this computer's to clear
+	mac.add("w21", dreamLabel, dreamName, "claude", "/router")
+	mac.add("w22", "renamed by hand", dreamName+"-x", "claude", "/router")
+	mac.add("w23", "renamed by hand", "", "claude", "/router")
+	mac.panes["w23:p1"].name = dreamName
+	delete(mac.panes, "w21:p1") // a workspace whose agent is gone
+	mac.add("w5", "work", "worker-1", "claude", "/work")
+
+	sp.closeOldDreams(context.Background(), "mac")
+
+	if _, ok := mac.ws["w21"]; ok {
+		t.Error("the last dream's workspace on Collie's computer stayed open")
+	}
+	if _, ok := mac.ws["w23"]; ok {
+		t.Error("the agent holding the dream's name stayed")
+	}
+	for _, ws := range []string{"w22", "w5"} {
+		if _, ok := mac.ws[ws]; !ok {
+			t.Errorf("%s closed, but it is not a dream", ws)
+		}
+	}
+	if _, ok := hub.ws["w1"]; !ok {
+		t.Error("closed the hub's workspace while clearing mac")
+	}
+}
+
+// A dream whose agent came up but could not start closes its workspace.
+func TestDreamFailedStartClosesWorkspace(t *testing.T) {
+	f := newFakeHerdr(t)
+	sp := newRouterTestSuper(t, f)
+	// Holds the name but isn't listed as an agent, so nothing clears it first.
+	f.add("w9", "shell", dreamName, "", "/x")
+	if err := sp.StartDream(context.Background(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	for until := time.Now().Add(10 * time.Second); sp.dreaming(); {
+		if time.Now().After(until) {
+			t.Fatal("the dream neither started nor failed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, label := range f.ws {
+		if label == dreamLabel {
+			t.Errorf("failed dream left its workspace %s", id)
+		}
+	}
+	if _, ok := f.ws["w9"]; !ok {
+		t.Error("closed a workspace that is not a dream's")
+	}
+}

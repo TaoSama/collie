@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ const (
 
 type dreamRun struct {
 	at        time.Time
+	machine   string // the computer it runs on, "" for the hub
 	started   bool // the dream session is up and has its prompt
 	worked    bool
 	idleAt    time.Time
@@ -139,9 +141,9 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		sp.mu.Unlock()
 		return errors.New("Collie 正在整理记忆")
 	}
-	sp.dream = &dreamRun{at: time.Now(), reason: reason}
 	kind := sp.st.Settings.RouterKind
 	prev, machine := sp.routerOnLocked(), sp.routerMachineLocked()
+	sp.dream = &dreamRun{at: time.Now(), machine: machine, reason: reason}
 	aliasName := sp.st.Settings.RouterAlias
 	sp.setRouterOn(machine, aliasName)
 	args := sp.dreamArgsLocked()
@@ -175,8 +177,9 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 				sp.mu.Unlock()
 			}
 		}
-		sp.closeWorkspaces(bg, routerLabel)
-		sp.closeWorkspaces(bg, dreamLabel)
+		sp.closeWorkspaces(bg, routerLabel, prev, machine)
+		sp.closeWorkspaces(bg, dreamLabel, prev)
+		sp.closeOldDreams(bg, machine)
 		if err := sp.writeRouterFiles(); err != nil {
 			log.Printf("router files: %v", err)
 		}
@@ -192,9 +195,12 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 		_, bin := sp.routerTarget(machine)
 		alias := sp.launchAlias(bg, machine, aliasName, kinds[kind], dreamName)
 		sp.noteAliasFallback(machine, aliasName, alias)
-		if _, _, err := sp.s.startAgentAs(bg, machine, kinds[kind], dreamName, sp.routerCwd(machine), dreamLabel, alias, args); err != nil {
+		if _, ws, err := sp.s.startAgentAs(bg, machine, kinds[kind], dreamName, sp.routerCwd(machine), dreamLabel, alias, args); err != nil {
 			var he *HerdrError
 			if !(errors.As(err, &he) && he.Code == "agent_not_ready") {
+				if ws != "" { // not left behind holding a shell, or the agent it started
+					sp.closeWorkspace(context.WithoutCancel(bg), ws)
+				}
 				fail(err)
 				return
 			}
@@ -215,7 +221,7 @@ func (sp *Super) StartDream(ctx context.Context, reason string) error {
 				break
 			}
 			if !errors.As(err, &he) || (he.Code != "agent_not_ready" && he.Code != "agent_not_found") || time.Now().After(deadline) {
-				sp.closeWorkspaces(context.Background(), dreamLabel)
+				sp.closeWorkspaces(context.Background(), dreamLabel, machine)
 				fail(err)
 				return
 			}
@@ -275,7 +281,7 @@ func (sp *Super) driveDream(ctx context.Context, d *dreamRun, live map[string]li
 }
 
 func (sp *Super) finishDream(ctx context.Context, d *dreamRun, ok bool) {
-	sp.closeWorkspaces(ctx, dreamLabel)
+	sp.closeWorkspaces(ctx, dreamLabel, d.machine)
 	summary, skills, fixes := "", "", ""
 	if err := sp.syncRouter(ctx); err != nil {
 		log.Printf("dream: %v", err)
@@ -373,17 +379,38 @@ func dreamSummary(path string) string {
 	return ""
 }
 
-func (sp *Super) closeWorkspaces(ctx context.Context, label string) {
+// closeWorkspaces closes the workspaces labelled label on the given
+// computers ("" is the hub): Collie and its dreams run on router_machine, so
+// the hub's own herdr alone is not where they are.
+func (sp *Super) closeWorkspaces(ctx context.Context, label string, machines ...string) {
 	if sp.s == nil || sp.s.herdr == nil {
 		return
 	}
 	wss, err := sp.s.herdr.Workspaces(ctx)
 	if err != nil {
+		log.Printf("close %s workspaces: %v", label, err)
 		return
 	}
 	for _, ws := range wss {
-		if _, m := split(ws.ID); ws.Label == label && m == "" {
-			sp.s.herdr.Call(ctx, "workspace.close", map[string]any{"workspace_id": ws.ID}, nil)
+		if ws.Label == label && slices.Contains(machines, machineOf(ws.ID)) {
+			sp.closeWorkspace(ctx, ws.ID)
+		}
+	}
+}
+
+// closeOldDreams clears what earlier dreams left on machine: their
+// workspaces, and any agent still holding the dream's name there under
+// another label, which would make the new dream's agent unnamable.
+func (sp *Super) closeOldDreams(ctx context.Context, machine string) {
+	sp.closeWorkspaces(ctx, dreamLabel, machine)
+	agents, err := sp.s.herdr.Agents(ctx)
+	if err != nil {
+		log.Printf("dream: list agents: %v", err)
+		return
+	}
+	for _, a := range agents {
+		if deref(a.Name) == dreamName && machineOf(a.PaneID) == machine && a.WorkspaceID != "" {
+			sp.closeWorkspace(ctx, a.WorkspaceID)
 		}
 	}
 }
