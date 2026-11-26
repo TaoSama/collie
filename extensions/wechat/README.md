@@ -34,7 +34,9 @@
 | Collie → 扩展 | `channel.interest` | 每 30 秒一次：哪些聊天有启用中的定时或待发结果，决定续期提醒 |
 | Collie → 扩展 | `connector.status` | `detail` 里有绑定人、阶段、连续错误、上次成功轮询、回复窗口剩余、剩余额度、待发回复 |
 
-「查看会话列表」这类快捷指令由 Collie 处理：本包导出 `DirectoryQuery(text) (status string, ok bool)`，status 为 `""`、`"active"` 或 `"idle"`。
+「查看会话列表」这类快捷指令由 Collie 处理：本包导出 `DirectoryQuery(text) (status string, ok bool)`，status 为 `""`、`"active"` 或 `"idle"`；Collie 收到绑定人的这类消息时不交给 Router，直接用 `channel.send{kind:answer, reply_to}` 回会话列表（`internal/collie/ext_directory.go`）。
+
+超过 40 MiB 的文件不经过本扩展：Collie 发 24 小时有效的签名下载链接，`answer` 写在正文里，`result` 放在 `link`，本扩展按下载模式发「摘要 + 完整结果下载：链接」（`../README.md` 第 3.7 节）。
 
 ## 数据
 
@@ -141,4 +143,30 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 
 ## 实测
 
-还没有用真实账号实测。上线前按 `../README.md` 第 10 节第 7 条走一遍「扫码、收、发、重启后不重复」，结果记在这里，注明日期和版本。
+2026-11-26，开发实例（devbox，未发版）：打开扩展后 `connector.login.step{}` 从 `ilinkai.weixin.qq.com` 拿到真二维码（`liteapp.weixin.qq.com/q/…?bot_type=3`），再问一次 `step:"qr"` 长轮询 8 秒回 `wait`；没有扫码，后面的步骤还没用真号走过。
+
+上线前用真号按下面走一遍，结果记在这里，注明日期和版本：
+
+1. 「接入」打开微信，运行在 hub，点登录，出现二维码。
+2. 用要绑定的微信扫码：界面变成「已扫码，请在手机上确认」；手机上确认。
+3. 如果微信要求输入手机上显示的数字：界面出现输入框，填入后继续轮询直到「已登录」；填错时提示重填。
+4. 状态变为已登录，`detail` 里有绑定人；收件箱出现「你和 bot 的私聊」，开关默认打开。
+5. 登录前发给 bot 的旧消息不处理（基线）。
+6. 给 bot 发一句普通请求：Collie 收到（事件里来源 `ext:wechat`），回复带尾标、Markdown 原样发回微信。
+7. 发「查看会话列表」：不经过 Router，直接回会话列表。
+8. 让 agent `collie reply --thread ext:wechat:… --file` 发一张图、一个小文件、一个超过 40 MiB 的文件：前两个是微信里的图片和文件，最后一个是下载链接，手机能打开下载，24 小时后链接失效。
+9. 进度：`--progress` 最多 3 条。
+10. 重启 Collie（或关掉再打开扩展）：不重新要求扫码，已回复的消息不再回复，没回复的继续。
+11. 在手机上退出 bot 或等登录过期：状态变为未登录（`-14`），重新扫码后游标和额度清空重来。
+12. 等回复窗口用完（或额度 10 条用完）：回复变成「等你在微信发一条消息后送达」，再发一条后补发。
+
+### 登录协议里哪些是推断的
+
+腾讯没有正式公开 iLink 的扫码登录协议，下面这些是推断的，还没有用真号核对过：
+
+- `get_qrcode_status` 的状态值和拼写：`wait`、`scaned`、`scaned_but_redirect`（带 `redirect_host`，之后到那个 host 继续轮询）、`expired`、`need_verifycode`、`verify_code_blocked`、`binded_redirect`、`confirmed`。
+- 验证码只在 `need_verifycode` 之后的那一次请求带 `verify_code`；之后的轮询不再带。数字不对时服务端再回一次 `need_verifycode`。
+- 二维码 5 分钟过期、最多刷新 3 次，是本地的约束，不是服务端规定。
+- `confirmed` 带回 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`baseurl`，扫码的人（`ilink_user_id`）就是绑定人。
+- 请求头 `iLink-App-Id: bot`、`iLink-App-ClientVersion`（2.4.6 按字节拼成整数），`get_bot_qrcode` 的 `local_token_list` 带上本机用过的旧 token。
+- `getupdates` 回 `errcode -14` 表示登录过期。

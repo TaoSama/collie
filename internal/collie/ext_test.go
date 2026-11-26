@@ -698,12 +698,12 @@ func TestExtSendFiles(t *testing.T) {
 	feed(t, dir, "fakew", fakeMsg{Chat: "u1", ChatName: "我", ID: "w1", Sender: "u1", SenderName: "我", Mine: true, Text: "截图给我"})
 	waitFor(t, "a trigger", func() bool { return len(extTriggers(sp, "ext:fakew")) == 1 })
 	png := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nxx"))
-	o, err := h.sendOutFiles("ext:fakew:u1", "在这", extproto.KindAnswer, runInfo{}, "", []extproto.Blob{{Name: "a.png", Mime: "image/png", Data: png}})
+	o, err := h.sendOutFiles("ext:fakew:u1", "在这", extproto.KindAnswer, runInfo{}, "", []sendFile{{Name: "a.png", Mime: "image/png", Data: png}})
 	if err != nil || len(o.Files) != 1 {
 		t.Fatalf("%+v %v", o, err)
 	}
 	waitFor(t, "sent", func() bool { x := h.store.out(o.Ref); return x != nil && x.State == extproto.DeliverySent })
-	if _, err := h.sendOutFiles("ext:fake:c1", "x", extproto.KindAnswer, runInfo{}, "", []extproto.Blob{{Name: "a.png", Mime: "image/png", Data: png}}); err == nil {
+	if _, err := h.sendOutFiles("ext:fake:c1", "x", extproto.KindAnswer, runInfo{}, "", []sendFile{{Name: "a.png", Mime: "image/png", Data: png}}); err == nil {
 		t.Fatal("an actions-only extension can't take files")
 	}
 }

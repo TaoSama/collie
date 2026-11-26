@@ -83,6 +83,9 @@ type OutFile struct {
 	Path string `json:"path"`
 	Name string `json:"name"`
 	Mime string `json:"mime"`
+	// Link: too big to go through the extension, it goes as this download
+	// link (ext_links.go) instead.
+	Link string `json:"link,omitempty"`
 }
 
 const outPending = "pending"

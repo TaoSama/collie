@@ -35,6 +35,14 @@ codeload 的 tar 包是整个仓库（几十 MB），devbox 走 Corplink 代理�
 
 在 Claude Code 的 Bash 里，`pkill -f` 的模式会匹配到执行它的那个 shell 自己（命令行里就有这个字符串），把当前命令一起杀掉（exit 144）。先 `pgrep` 拿到 pid 再单独 `kill`。
 
+## 回复带的文件不走 JSON 正文
+
+API 的 `decode` 把请求体限在 1 MiB，base64 的文件放在 `/api/super/reply` 里，超过约 750 KB 就成了「invalid JSON body」。`collie reply --file` 改为先把每个文件流式传到 `/api/super/reply-files`，回复里只带 id；hub 仍接受旧 CLI 的内联 `data`。超过 40 MiB 的文件改发签名下载链接（`extensions/README.md` 第 3.7 节）：channel.send 一帧最多 64 MiB，base64 后的大文件装不下。
+
+## 验证码之后接着轮询
+
+微信扫码后可能要求输入手机上显示的数字。提交数字后扩展通常回 `kind:"qr"`（继续等确认），不是 `done`：界面要接着按 `step` 轮询，不能停在「没通过」。
+
 ## 验证
 
 - `go test ./internal/collie -run 'TestExt|TestLarkxFake'`：测试扩展（测试二进制自己当 `ext-fake`）走完整流程；`TestLarkxFake` 用真实的 larkx 包（上游文件 + 自带适配层）和它的假飞书，要设的变量见 `extensions/larkx/README.md`。

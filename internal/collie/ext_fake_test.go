@@ -178,7 +178,7 @@ func fakeExtMain(args []string) int {
 		case extproto.MChannelSend:
 			var p extproto.Send
 			json.Unmarshal(raw, &p)
-			appendSent(map[string]any{"ref": p.Ref, "chat": p.Chat, "text": p.Text, "kind": p.Kind})
+			appendSent(map[string]any{"ref": p.Ref, "chat": p.Chat, "text": p.Text, "kind": p.Kind, "link": p.Link, "files": len(p.Images) + len(p.Files)})
 			if strings.Contains(p.Text, "DEFER") {
 				go func() {
 					time.Sleep(100 * time.Millisecond)

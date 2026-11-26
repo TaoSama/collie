@@ -1,15 +1,16 @@
 package collie
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // `collie ext list` and `collie ext do <ext> <action> [--arg k=v]... [--json '{…}']`:
@@ -130,11 +131,9 @@ func cliExtDo(args []string) error {
 	return nil
 }
 
-// replyFileMost bounds a file sent with `collie reply --file`.
-const replyFileMost = 50 << 20
-
-// readReplyFiles reads files for `collie reply --file`, on the computer the
-// CLI runs on.
+// readReplyFiles checks the files for `collie reply --file`, on the
+// computer the CLI runs on: their names and types, and the paths
+// uploadReplyFiles sends ahead of the reply.
 func readReplyFiles(paths []string) ([]map[string]string, error) {
 	var out []map[string]string
 	for _, p := range paths {
@@ -145,15 +144,54 @@ func readReplyFiles(paths []string) ([]map[string]string, error) {
 		if fi.IsDir() || fi.Size() > replyFileMost {
 			return nil, fmt.Errorf("%s: not a file, or larger than %d MB", p, replyFileMost>>20)
 		}
-		b, err := os.ReadFile(p)
+		f, err := os.Open(p)
 		if err != nil {
 			return nil, err
 		}
-		mime := http.DetectContentType(b)
+		head := make([]byte, 512)
+		n, err := io.ReadFull(f, head)
+		if cerr := f.Close(); cerr != nil {
+			return nil, cerr
+		}
+		if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+			return nil, err
+		}
+		mime := http.DetectContentType(head[:n])
 		if i := strings.IndexByte(mime, ';'); i > 0 {
 			mime = mime[:i]
 		}
-		out = append(out, map[string]string{"name": filepath.Base(p), "mime": mime, "data": base64.StdEncoding.EncodeToString(b)})
+		out = append(out, map[string]string{"name": filepath.Base(p), "mime": mime, "path": p})
 	}
 	return out, nil
 }
+
+// uploadReplyFiles streams each file to the hub, which keeps it for the
+// reply; the reply names it by the id it got (big files don't fit a JSON body).
+func uploadReplyFiles(files []map[string]string) error {
+	for _, f := range files {
+		fh, err := os.Open(f["path"])
+		if err != nil {
+			return err
+		}
+		fi, err := fh.Stat()
+		if err != nil {
+			fh.Close()
+			return err
+		}
+		out, err := cliDo("POST", "/api/super/reply-files", fh, fi.Size(), "application/octet-stream", replyUploadWait)
+		fh.Close()
+		if err != nil {
+			return fmt.Errorf("uploading %s: %w", f["name"], err)
+		}
+		var res struct{ ID string }
+		if err := json.Unmarshal(out, &res); err != nil || res.ID == "" {
+			return fmt.Errorf("uploading %s: the hub answered %q", f["name"], strings.TrimSpace(string(out)))
+		}
+		delete(f, "path")
+		f["id"] = res.ID
+	}
+	return nil
+}
+
+// replyUploadWait bounds one file's upload.
+const replyUploadWait = 30 * time.Minute

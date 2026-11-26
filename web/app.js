@@ -3246,7 +3246,10 @@
         const r = await api(`/api/ext/${encodeURIComponent(id)}/login`, { body: { step: f.dataset.extSecret, secret: f.secret.value } });
         f.secret.value = "";
         const st = r.step || {};
-        if (st.done) { extLogin = null; toast("已登录"); } else extLogin = { id, kind: st.kind, label: st.label, step: st.step, hint: st.hint, error: st.error || "没通过，再试一次" };
+        if (st.done) { extLogin = null; toast("已登录"); }
+        else if (st.kind === "secret") extLogin = { id, kind: st.kind, label: st.label, step: st.step, hint: st.hint, error: st.error || "没通过，再试一次" };
+        // Taken, the sign-in goes on (WeChat: the phone's number, then the scan is confirmed).
+        else { extLogin = { id, kind: st.kind, step: st.step, img: r.qr || extLogin?.img, hint: st.hint, error: st.error }; extLoginStep(id, st.step); return; }
         await fetchAuto("ext").catch(() => {});
         drawAuto(autoData.settings);
       } else if (f.id === "ext-settings-form") {

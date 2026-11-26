@@ -179,6 +179,10 @@ func (h *extHost) incoming(r *extRun, in incomingMsg) {
 	if request == "" && len(in.Files) == 0 && len(in.Unsupported) == 0 {
 		return
 	}
+	if status, ok := directoryAsk(m, in, request); ok && len(in.Files) == 0 {
+		h.answerDirectory(conv, in, status)
+		return
+	}
 	text := h.requestText(m, conv, in, request)
 	h.hand(conv, in, text)
 }
@@ -440,6 +444,7 @@ func saveBlob(b extproto.Blob) (string, error) {
 // next request resumes them).
 func (h *extHost) housekeep() {
 	h.store.trimOutbox(time.Now())
+	h.trimStaged(time.Now())
 	h.store.expireStale(time.Now().Add(-outboxGiveUp))
 	for _, c := range h.store.list("") {
 		if c.Worker == "" {

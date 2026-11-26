@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TaoSama/collie/extensions"
+	"github.com/TaoSama/collie/extensions/wechat"
 	"github.com/TaoSama/collie/internal/extproto"
 )
 
@@ -197,7 +198,7 @@ var extIDRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // builtinExts are the extensions compiled into collie: `collie ext-<name>`.
 // A manifest naming a builtin that isn't here is left out of the catalog.
-var builtinExts = map[string]func(args []string) int{}
+var builtinExts = map[string]func(args []string) int{"wechat": wechat.Main}
 
 func (m *ExtManifest) has(capability string) bool {
 	return contains(m.Contributes.Connector.Capabilities, capability)

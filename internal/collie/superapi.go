@@ -1,8 +1,6 @@
 package collie
 
 import (
-	"github.com/TaoSama/collie/internal/extproto"
-
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -28,6 +26,7 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("GET /api/super/events", s.superEvents)
 	api("POST /api/super/say", s.superSay)
 	api("POST /api/super/reply", s.superReply)
+	api("POST /api/super/reply-files", s.stageReplyFile)
 	api("POST /api/super/dismiss", s.superDismiss)
 	api("POST /api/super/pin", s.superPin)
 	api("POST /api/super/spawn", s.superSpawn)
@@ -58,6 +57,7 @@ func (s *Server) superRoutes(mux *http.ServeMux) {
 	api("POST /api/super/dream", s.superDream)
 	api("POST /api/super/router/restart", s.superRestartRouter)
 	mux.HandleFunc("POST /hooks/{source}", s.webhook)
+	mux.HandleFunc("GET /dl/{ref}/{n}", s.serveDownload) // signed, no sign-in (ext_links.go)
 }
 
 // ---------------------------------------------------------------- snapshot
@@ -311,14 +311,14 @@ func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger) {
 
 func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text     string          `json:"text"`
-		Thread   string          `json:"thread"`
-		Re       string          `json:"re"`
-		Options  []string        `json:"options"`
-		Check    bool            `json:"check"`
-		To       string          `json:"to"`
-		Progress bool            `json:"progress"`
-		Files    []extproto.Blob `json:"files"`
+		Text     string     `json:"text"`
+		Thread   string     `json:"thread"`
+		Re       string     `json:"re"`
+		Options  []string   `json:"options"`
+		Check    bool       `json:"check"`
+		To       string     `json:"to"`
+		Progress bool       `json:"progress"`
+		Files    []sendFile `json:"files"`
 	}
 	if !decode(w, r, &body) {
 		return

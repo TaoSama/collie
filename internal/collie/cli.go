@@ -38,19 +38,30 @@ func runCLI(cmd string, args []string) {
 }
 
 func cliCall(method, path string, body any) ([]byte, error) {
-	base, tok, err := cliTarget()
-	if err != nil {
-		return nil, err
-	}
 	var rd io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		rd = bytes.NewReader(b)
 	}
-	req, _ := http.NewRequest(method, base+path, rd)
+	return cliDo(method, path, rd, -1, "application/json", 30*time.Second)
+}
+
+// cliDo makes one request to the hub; size is the body's length (-1 unknown).
+func cliDo(method, path string, rd io.Reader, size int64, contentType string, wait time.Duration) ([]byte, error) {
+	base, tok, err := cliTarget()
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(method, base+path, rd)
+	if err != nil {
+		return nil, err
+	}
+	if size >= 0 {
+		req.ContentLength = size
+	}
 	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	req.Header.Set("Content-Type", contentType)
+	resp, err := (&http.Client{Timeout: wait}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("collie server unreachable: %w", err)
 	}
@@ -176,7 +187,7 @@ func parseReply(args []string, in io.Reader, tty bool) (map[string]any, error) {
 	to := fs.String("to", "", "send to an extension's own chat with the human (e.g. wechat), only when they asked for it")
 	progress := fs.Bool("progress", false, "a short note while still working, in an extension conversation (no footer)")
 	var files flagList
-	fs.Var(&files, "file", "a picture or file on this computer to send with it, to an extension conversation (repeatable)")
+	fs.Var(&files, "file", "a picture or file on this computer to send with it, to an extension conversation (repeatable; over 40 MB it goes as a 24-hour download link)")
 	if err := parseArgs(fs, args); err != nil {
 		return nil, err
 	}
@@ -221,6 +232,11 @@ func cliReply(args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if files, ok := body["files"].([]map[string]string); ok {
+		if err := uploadReplyFiles(files); err != nil {
+			return err
+		}
 	}
 	b, err := cliCall("POST", "/api/super/reply", body)
 	if err == nil {
@@ -602,7 +618,8 @@ Flags may go before or after the text; text that has to spell a flag (say "--opt
   ` + "`{{BIN}} reply --thread ext:… \"…\"`" + ` goes back to that chat with a footer (Markdown is fine),
   not to chat:main. Reply once per request with the result; ` + "`--progress \"…\"`" + ` sends a short
   note while a long job runs (WeChat allows few messages, so use it rarely). A timer whose
-  thread is ` + "`ext:…`" + ` wants its result sent there the same way.
+  thread is ` + "`ext:…`" + ` wants its result sent there the same way. ` + "`--file PATH`" + ` (repeatable)
+  sends a picture or file with the reply; one over 40 MB goes as a download link good for 24 hours.
 - Send to a chat app only where the request came from. Use ` + "`{{BIN}} reply --to wechat \"…\"`" + `
   only when the human explicitly asks for something to be pushed to WeChat.
 

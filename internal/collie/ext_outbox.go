@@ -82,9 +82,20 @@ func (h *extHost) sendOut(thread, text, kind string, ri runInfo, trig string) (*
 	return h.sendOutFiles(thread, text, kind, ri, trig, nil)
 }
 
+// sendFile is a picture or file to send: in the request (Data, base64), or
+// uploaded ahead with `collie reply --file` (ID, ext_links.go).
+type sendFile struct {
+	Name string `json:"name"`
+	Mime string `json:"mime"`
+	Data string `json:"data,omitempty"`
+	ID   string `json:"id,omitempty"`
+}
+
 // sendOutFiles also sends pictures and files; they wait on the hub's disk
-// with the send, so a retry has them.
-func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig string, files []extproto.Blob) (*OutboxItem, error) {
+// with the send, so a retry has them. A file too big to go through the
+// extension goes as a download link: in the text, before the footer, or as
+// the result's link.
+func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig string, files []sendFile) (*OutboxItem, error) {
 	_, convID, ok := channelOf(thread)
 	if !ok {
 		return nil, fmt.Errorf("%s is not an extension conversation", thread)
@@ -111,36 +122,39 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 	if !conv.AskAt.IsZero() {
 		vars["elapsed"] = elapsedText(time.Since(conv.AskAt))
 	}
+	ref, err := newRef()
+	if err != nil {
+		return nil, err
+	}
+	o := &OutboxItem{Ref: ref, Conv: convID, Kind: kind, Trigger: trig, State: outPending, At: time.Now()}
+	if len(files) > 0 {
+		if m := h.manifest(conv.Ext); m == nil || !m.has(capSend) {
+			return nil, fmt.Errorf("%s 只能发文字", conv.Ext)
+		}
+		var links []string
+		for i, f := range files {
+			of, err := h.keepFile(o, i, f)
+			if err != nil {
+				if rerr := os.RemoveAll(filepath.Join(h.home, "ext-outbox", ref)); rerr != nil {
+					log.Printf("ext: drop the files of an unsent %s: %v", ref, rerr)
+				}
+				return nil, fmt.Errorf("file %d: %v", i+1, err)
+			}
+			if of.Link != "" {
+				links = append(links, of.Name+"："+of.Link)
+			}
+			o.Files = append(o.Files, of)
+		}
+		if len(links) > 0 && kind != extproto.KindResult {
+			text += "\n\n文件太大，发下载链接（24 小时内有效）：\n" + strings.Join(links, "\n")
+		}
+	}
 	full, footer := text, ""
 	if kind != extproto.KindProgress {
 		footer = renderFooter(h.footer(), vars)
 		full += "\n\n" + footer
 	}
-	ref, err := newRef()
-	if err != nil {
-		return nil, err
-	}
-	o := &OutboxItem{Ref: ref, Conv: convID, Kind: kind, Text: full, Footer: footer, Trigger: trig, State: outPending, At: time.Now()}
-	if len(files) > 0 {
-		if m := h.manifest(conv.Ext); m == nil || !m.has(capSend) {
-			return nil, fmt.Errorf("%s 只能发文字", conv.Ext)
-		}
-		dir := filepath.Join(h.home, "ext-outbox", ref)
-		for i, f := range files {
-			b, err := base64.StdEncoding.DecodeString(f.Data)
-			if err != nil {
-				return nil, fmt.Errorf("file %d: %v", i+1, err)
-			}
-			p := filepath.Join(dir, fmt.Sprintf("%d-%s", i, uploadName(f.Name)))
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				return nil, err
-			}
-			if err := os.WriteFile(p, b, 0o600); err != nil {
-				return nil, err
-			}
-			o.Files = append(o.Files, OutFile{Path: p, Name: f.Name, Mime: f.Mime})
-		}
-	}
+	o.Text, o.Footer = full, footer
 	if kind == extproto.KindAnswer || kind == extproto.KindProgress {
 		o.ReplyTo = conv.AskMsg
 	}
@@ -150,6 +164,48 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 		go h.trySend(r, o)
 	}
 	return o, nil
+}
+
+// keepFile puts file i of send o into the send's folder on the hub, and
+// gives one too big to go through the extension its link.
+func (h *extHost) keepFile(o *OutboxItem, i int, f sendFile) (OutFile, error) {
+	dir := filepath.Join(h.home, "ext-outbox", o.Ref)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return OutFile{}, err
+	}
+	of := OutFile{Path: filepath.Join(dir, fmt.Sprintf("%d-%s", i, uploadName(f.Name))), Name: f.Name, Mime: f.Mime}
+	var size int64
+	if f.ID != "" {
+		src, ok := h.stagedPath(f.ID)
+		if !ok {
+			return OutFile{}, fmt.Errorf("bad upload id")
+		}
+		if err := os.Rename(src, of.Path); err != nil {
+			return OutFile{}, fmt.Errorf("the upload is gone (it waits %s): %v", stagedKeep, err)
+		}
+		fi, err := os.Stat(of.Path)
+		if err != nil {
+			return OutFile{}, err
+		}
+		size = fi.Size()
+	} else {
+		b, err := base64.StdEncoding.DecodeString(f.Data)
+		if err != nil {
+			return OutFile{}, err
+		}
+		if err := os.WriteFile(of.Path, b, 0o600); err != nil {
+			return OutFile{}, err
+		}
+		size = int64(len(b))
+	}
+	if size > extFileInlineMost {
+		link, err := h.fileLink(o.Ref, i, o.At)
+		if err != nil {
+			return OutFile{}, err
+		}
+		of.Link = link
+	}
+	return of, nil
 }
 
 // trySend makes one attempt; false when the extension could not be reached
@@ -174,7 +230,12 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 	o.Tries++
 	if r.man.has(capSend) {
 		send := extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref, Chat: conv.Chat, Text: o.Text, Footer: o.Footer, Kind: o.Kind, ReplyTo: o.ReplyTo}
+		var links []string
 		for _, f := range o.Files {
+			if f.Link != "" { // too big: its link is in the text, or the result's
+				links = append(links, f.Link)
+				continue
+			}
 			b, rerr := os.ReadFile(f.Path)
 			if rerr != nil {
 				o.State, o.Reason, o.DoneAt = extproto.DeliveryFailed, "附件不见了："+f.Name, time.Now()
@@ -187,6 +248,9 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 			} else {
 				send.Files = append(send.Files, blob)
 			}
+		}
+		if len(links) > 0 && o.Kind == extproto.KindResult {
+			send.Link = strings.Join(links, "\n")
 		}
 		err = r.call(ctx, extproto.MChannelSend, send, &res)
 	} else {

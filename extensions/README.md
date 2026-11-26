@@ -9,7 +9,7 @@
 | `larkx/` | 飞书（以你本人的身份） | 下载包：上游按锁定 commit 逐个文件下载，一行不改；适配层（Python）在 `larkx/pkg/`，随 collie 打包 |
 | `wechat/` | 微信（iLink bot） | 内置：Go 代码在本目录，编进 collie 二进制，作为 `collie ext-wechat` 子进程运行 |
 
-自带的只有这两个，其他扩展都从扩展市场安装（第 9 节），开发时也可以放进本地目录。
+自带的只有这两个，都**默认关闭**：在「接入」打开并登录后才收发消息。其他扩展都从扩展市场安装（第 9 节），开发时也可以放进本地目录。
 
 Collie 侧的实现在 `internal/collie/ext*.go`（宿主、进程、安装）、`internal/collie/inbox.go`（收件箱和触发）和 `internal/extproto/`（协议）。界面在「自动化 → 接入」和「自动化 → 收件箱」。
 
@@ -157,7 +157,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.logout` | `{}` | `{}`，同时删掉自己存的登录态（`connector.secrets.delete`） |
 | `connector.archive.changes` | `{cursor?, limit?}` | `{batches:[{chat:{id,name,kind,updated_at,muted?}, messages:[{id,sender_id,sender_name,mine?,type,text,at,media?}]}], next, more}`。`next` 是下次的游标，`more` 表示还有 |
 | `connector.actions.do` | `{name, args, request_id}` | `{text, files?: [{path, mime?}], items?: […]}`。`files` 是扩展所在电脑上的本地路径，`items` 是结构化结果，Collie 原样转给调用方。**同一个 `request_id` 最多执行一次**；结果不明时不再执行，回错误 |
-| `channel.send` | `{ref, chat, text, footer?, kind, reply_to?, images?, files?, link?}`（`text` 以尾标 `footer` 结尾，想把尾标排成别的样子的扩展可以拆开） | `{message_id?}`，或 `{deferred:true, reason}`（暂时发不了，扩展自己排队，之后用 `channel.delivery` 报告）。**同一个 `ref` 最多发一次** |
+| `channel.send` | `{ref, chat, text, footer?, kind, reply_to?, images?, files?, link?}`（`text` 以尾标 `footer` 结尾，想把尾标排成别的样子的扩展可以拆开；超过 40 MiB 的文件不放进 `images/files`，改发下载链接，见 3.7） | `{message_id?}`，或 `{deferred:true, reason}`（暂时发不了，扩展自己排队，之后用 `channel.delivery` 报告）。**同一个 `ref` 最多发一次** |
 | `channel.working` | `{chat, message_id}` | `{}`。Collie 把这条消息当成请求接下了（Router 或专属 agent 开始处理）；扩展在原应用里标出来，失败只记日志 |
 | `channel.interest` | `{chats:[chat_id…]}` | `{}`。哪些会话有启用中的定时任务或待发结果；有 `interest` 能力的扩展据此决定要不要提醒续期。Collie 每 30 秒发一次 |
 
@@ -219,6 +219,15 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 - 每次调用一个新的 `request_id`。同一个扩展的并发调用由扩展自己决定是否串行。
 - **审计**：Collie 只记扩展 id、动作名、耗时和成败（日志和 `ext_audit` 表，保留最近 2000 条），不记参数和结果。
 
+### 3.7 大文件：签名下载链接
+
+`collie reply --file` 先把每个文件流式上传到 hub（`POST /api/super/reply-files`，单个最多 512 MiB，24 小时内没被回复带走就删掉），回复里只带上传得到的 id。hub 把文件和这次发送一起存在 `COLLIE_HOME/ext-outbox/<ref>/`（保留 7 天）。
+
+- 不超过 40 MiB 的文件照常放进 `channel.send` 的 `images/files`（base64 要装进一帧 `extproto.MaxFrame`）。
+- 更大的文件不交给扩展，改发链接 `<hub 对外地址>/dl/<ref>/<序号>?exp=<到期>&sig=<签名>`：`answer`、`push` 写进正文、尾标之前；`result` 放进 `link`（微信按下载模式发「摘要 + 完整结果下载：链接」两条）。
+- 链接免登录、只读这一个文件，**24 小时**后失效（从这次发送创建时算，所以重试时链接不变）。签名是 HMAC-SHA256，密钥由 hub 的令牌派生；签名不对、过期、文件不在，一律 404。
+- 链接的地址取 hub 的启动参数 `--url`（不用浏览器上报的地址，那可能是内网或明文 http）；没配就不发，直接报错。下载页不能登录、单独沙箱（`Content-Security-Policy: sandbox`），只能下载。
+
 ## 4. 消息怎么流动（Collie 侧的约定）
 
 ```
@@ -229,6 +238,7 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 
 - **会话**：一个外部聊天对应一个线程 `ext:<id>:<chat_id>`。收件箱列出所有会话，**默认不处理**。你本人发的触发词在任何会话都生效；会话开关只管别人的消息：打开后（再加「任何人可唤起」）别人的触发词才算，也只有打开的会话保留消息记录。
 - **触发**：有一个全局触发词（默认 `/ai`，在「接入」里改）。只有以触发词开头的消息才算请求；没打开「任何人可唤起」的会话只认你本人。清单里 `defaults.conversations` 为 `owner` 的扩展（微信），绑定人的会话不需要触发词。
+- **快捷指令**：微信里你单独发一句「查看会话列表」「有哪些空闲任务」这类话（判定见 `wechat.DirectoryQuery`，带别的意图就不算），Collie 不经过 Router，直接回会话列表（按目录和电脑分组，忙的排前面），作为这条消息的回复（`internal/collie/ext_directory.go`）。
 - **交给谁**：每个会话选 Collie（Router）或专属 agent（订阅该线程的 worker）。专属 agent 跑在扩展所在的电脑（接入里扩展的「运行在」）：扩展的专属设置优先于「设置」里的派活电脑。扩展在 hub 上时不起 agent（hub 不跑 agent），回一句说明请你把扩展改到一台电脑上。启动失败的说明不带尾标。
 - **回复**：默认原路返回。专属 agent 一轮的最后一条消息、Router 的 `collie reply --thread ext:…`，都会带上尾标，发回原会话。只有定时任务把发到设成某个会话，或者 `collie reply --to <id>`，才会发到别的渠道。
 - **尾标**：全局模板，可用 `{agent} {model} {effort} {elapsed} {machine} {worker} {ctx} {time} {by}`，留空时用默认模板。尾标也用来识别自己发出的消息，避免回环。
@@ -326,7 +336,7 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 
 ## 11. 新增一个扩展
 
-1. 建 `extensions/<id>/collie-extension.json` 和 `README.md`。内置扩展再写 `package <id>`，并在 `internal/collie/main.go` 登记 `ext-<id>`。
+1. 建 `extensions/<id>/collie-extension.json` 和 `README.md`。内置扩展再写 `package <id>`，并在 `internal/collie/ext_manifest.go` 的 `builtinExts` 登记（`collie ext-<id>` 由 `internal/collie/main.go` 分派）。没登记的内置清单不进目录。
 2. 选定收消息的方式（`archive` 或 `receive`）和发消息的方式（`actions` 或 `send`），照第 3 节实现。
 3. 按第 10 节写测试。
 4. `go build ./... && go vet ./... && go test ./... -count=1` 通过后提交。清单通过 `extensions/embed.go` 自动进入内置目录。
