@@ -59,6 +59,7 @@
 
   function mount(app) {
     const { api, toast, esc, ask, openLink } = app;
+    const goHome = app.goHome || ((replace) => { if (replace) location.replace("#/wb"); else location.hash = "#/wb"; });
     const $ = (s) => document.querySelector(s);
     let cfg = null, cur = "", seq = 0;
 
@@ -72,7 +73,7 @@
     const linkAttr = (m) => (m.kind === "link" ? ` data-wb-link="${esc(m.url)}"` : "");
 
     function navHTML() {
-      return `<div class="wb-nav-home"><a class="wb-item ${cur ? "" : "on"}" href="#/wb"><span class="wb-ico">${window.collieIcons?.svg("layout-dashboard") || "▦"}</span><span>工作台首页</span></a></div>` +
+      return `<div class="wb-nav-home"><a class="wb-item ${cur ? "" : "on"}" href="#/wb" data-wb-home><span class="wb-ico">${window.collieIcons?.svg("layout-dashboard") || "▦"}</span><span>工作台首页</span></a></div>` +
         arrange(cfg).map((g) => `<div class="wb-group">${esc(g.title)}</div>` + g.modules.map((m) =>
           `<a class="wb-item ${cur === m.id ? "on" : ""}" href="${href(m)}"${linkAttr(m)} title="${esc(m.title)}"><span class="wb-ico">${icon(m)}</span><span>${esc(m.title)}</span>${m.share !== "off" ? `<span class="wb-dot" title="给 Agent：${SHARE[m.share]}"></span>` : ""}${m.kind === "web" && m.embed !== "iframe" ? '<span class="wb-out">↗</span>' : ""}</a>`).join("")).join("") +
         `<button type="button" class="wb-item wb-add" data-wb-add><span class="wb-ico">＋</span><span>添加网页</span></button>`;
@@ -125,7 +126,7 @@
 
     function headHTML(m) {
       $("#wb-name").innerHTML = m
-        ? `<a class="wb-crumb" href="#/wb" title="回到工作台首页">${window.collieIcons?.svg("layout-dashboard") || ""}<span>工作台</span></a><span class="wb-sep" aria-hidden="true">/</span><span class="wb-cur">${esc(m.title)}</span>`
+        ? `<a class="wb-crumb" href="#/wb" data-wb-home title="回到工作台首页">${window.collieIcons?.svg("layout-dashboard") || ""}<span>工作台</span></a><span class="wb-sep" aria-hidden="true">/</span><span class="wb-cur">${esc(m.title)}</span>`
         : "工作台";
       $("#wb-meta").textContent = m ? [host(m.url), m.embed === "iframe" ? "嵌入" : "新标签打开", ...(m.hub_login ? ["hub 保管登录"] : []), "给 Agent：" + SHARE[m.share]].join(" · ") : "把你关心的网页和页面放在这里，选哪些交给 Agent";
       $("#wb-acts").innerHTML = m ? `
@@ -138,7 +139,7 @@
 
     function render() {
       const m = mod(cur);
-      if (cur && (!m || m.kind === "link")) { location.replace("#/wb"); return; }
+      if (cur && (!m || m.kind === "link")) { goHome(true); return; }
       $("#v-wb").classList.toggle("wb-on-page", !!m);
       headHTML(m);
       $("#wb-nav").innerHTML = navHTML();
@@ -274,7 +275,7 @@
       next.modules = next.modules.filter((m) => m.id !== editing.id);
       await save(next, purge);
       dlg.close();
-      if (cur === editing.id) location.hash = "#/wb";
+      if (cur === editing.id) goHome();
     }
 
     async function groupMenu(gid) {
@@ -313,6 +314,12 @@
       }
     };
     $("#v-wb").addEventListener("click", (e) => {
+      if (e.target.closest("[data-wb-home]")) {
+        if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        goHome();
+        return;
+      }
       const t = e.target.closest("[data-wb-link],[data-wb-add],[data-wb-edit],[data-wb-group],[data-wb-newgroup],[data-wb-send],[data-wb-reload],[data-wb-open]");
       if (!t) return;
       e.preventDefault();

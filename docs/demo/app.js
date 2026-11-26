@@ -923,7 +923,10 @@
   // Track in-app history depth on history.state so the header back button pops
   // back to the exact caller view when available, and falls back inside Collie
   // on deep links or fresh standalone PWA launches without exiting the app.
+  const normHash = (h) => (!h || h === "#" ? "#/" : h === "#/wb/" ? "#/wb" : h);
   let navCur = typeof history.state?.collieIdx === "number" ? history.state.collieIdx : 0;
+  let navHash = normHash(location.hash);
+  const navTrail = new Map([[navCur, navHash]]);
   let booted = false;
   // Saved reading position per history entry (collieIdx) and per logical route.
   const scrollByIdx = new Map();
@@ -1047,12 +1050,30 @@
     if (typeof history.state?.collieIdx === "number") {
       navCur = history.state.collieIdx;
     } else {
+      const prev = booted ? navHash : "";
       navCur = booted ? navCur + 1 : 0;
-      history.replaceState({ ...(history.state || {}), collieIdx: navCur }, "");
+      for (const k of navTrail.keys()) if (k > navCur) navTrail.delete(k);
+      history.replaceState({ ...(history.state || {}), collieIdx: navCur, ...(prev ? { colliePrev: prev } : {}) }, "");
     }
   }
   function replaceHash(hash) {
     history.replaceState({ ...(history.state || {}), collieIdx: navCur }, "", hash);
+    navHash = normHash(hash);
+    navTrail.set(navCur, navHash);
+  }
+  function prevHistoryHash() {
+    if (navCur <= 0) return "";
+    if (navTrail.has(navCur - 1)) return navTrail.get(navCur - 1);
+    return history.state?.colliePrev ? normHash(history.state.colliePrev) : "";
+  }
+  function goWbHome(forceReplace = false) {
+    if (normHash(location.hash) === "#/wb") return;
+    if (!forceReplace && navCur > 0 && prevHistoryHash() === "#/wb") {
+      history.back();
+      return;
+    }
+    replaceHash("#/wb");
+    route();
   }
   function fallbackHash() {
     if (view === "wb" && current) return "#/wb";
@@ -1074,7 +1095,9 @@
     const app = $("#app").classList, st = { ...(history.state || {}) };
     if (!app.contains("has-file")) delete st.file;
     if (!app.contains("has-run")) delete st.run;
-    history.pushState({ ...st, ...add, collieIdx: ++navCur }, "", location.hash);
+    const prev = navHash;
+    history.pushState({ ...st, ...add, collieIdx: ++navCur, colliePrev: prev }, "", location.hash);
+    navTrail.set(navCur, navHash);
   }
   function goBack(replaceAtRoot = false) {
     if (navCur > 0) {
@@ -1098,6 +1121,8 @@
     const wasExistingIdx = typeof history.state?.collieIdx === "number";
     syncHistoryIndex();
     let h = location.hash;
+    navHash = normHash(h);
+    navTrail.set(navCur, navHash);
     let next = null, id = null;
     if (h.startsWith("#/d/")) { openDecision(h.slice(4)); return; }
     if (h.startsWith("#/p/")) { next = "pane"; id = decodeURIComponent(h.slice(4)); }
@@ -5149,7 +5174,7 @@
   // ───────────────────────────── workbench (workbench.js)
   // A shortcut module opens one of Collie's pages on a given tab.
   const workbench = window.collieWorkbench.mount({
-    api, toast, esc, ask,
+    api, toast, esc, ask, goHome: goWbHome,
     openLink([v, tab]) {
       if (v === "auto") { autoTab = tab; store.set("autoTab", tab); }
       if (v === "devices") { devTab = tab; store.set("devTab", tab); }
@@ -9482,7 +9507,12 @@
     const deep = location.hash;
     if (narrow() && typeof history.state?.collieIdx !== "number" && deep.length > 2) {
       history.replaceState({ collieIdx: 0 }, "", "#/");
-      history.pushState({ collieIdx: 1 }, "", deep);
+      navTrail.clear();
+      navTrail.set(0, "#/");
+      history.pushState({ collieIdx: 1, colliePrev: "#/" }, "", deep);
+      navCur = 1;
+      navHash = normHash(deep);
+      navTrail.set(1, navHash);
     }
     route();
     booted = true;
