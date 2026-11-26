@@ -360,6 +360,11 @@ func (sp *Super) routerRunInfo() runInfo {
 	return ri
 }
 
+const (
+	runInfoTries = 4
+	runInfoWait  = 2 * time.Second
+)
+
 // workerRunInfo is a worker, for the footer of its answers.
 func (sp *Super) workerRunInfo(w *Worker) runInfo {
 	ri := runInfo{Agent: agentLabel(w.Kind), Worker: w.Name, Model: modelLabel(w.Model), Effort: w.Effort}
@@ -367,8 +372,14 @@ func (sp *Super) workerRunInfo(w *Worker) runInfo {
 	// What its latest reply used, from its own log: started through an
 	// alias, it has no model of its own to go by.
 	if local, machine := split(w.PaneID); w.PaneID != "" {
-		if ps, ok := sp.s.titlesFor(machine, context.Background())[local]; ok && ps.Ran != nil {
-			run = ps.Ran
+		// The cache may be older than its first reply: a stale read starts
+		// a reload, so wait for that a few times before going without.
+		for i := 0; i < runInfoTries; i++ {
+			if ps, ok := sp.s.titlesFor(machine, context.Background())[local]; ok && ps.Ran != nil {
+				run = ps.Ran
+				break
+			}
+			time.Sleep(runInfoWait)
 		}
 	}
 	if run != nil && run[0] != "" {
