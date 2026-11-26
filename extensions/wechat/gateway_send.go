@@ -33,7 +33,10 @@ func (g *Gateway) handleSend(ctx context.Context, p extproto.Send) (extproto.Sen
 		return extproto.SendResult{}, extproto.Errorf(extproto.ErrInvalidParams, "channel.send needs ref and chat")
 	}
 	if !g.active() {
-		return extproto.SendResult{}, extproto.Errorf(extproto.ErrNotSignedIn, "WeChat is not ready")
+		if !g.stopped && !g.state.IsReadyForActivePolling() {
+			return extproto.SendResult{}, extproto.Errorf(extproto.ErrNotReady, "WeChat is establishing its baseline")
+		}
+		return extproto.SendResult{}, extproto.Errorf(extproto.ErrNotSignedIn, "WeChat is not signed in")
 	}
 	ctx = withTrace(ctx, createMessageTrace(p.Chat, p.Ref))
 	switch p.Kind {

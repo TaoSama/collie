@@ -210,7 +210,7 @@ func (h *extHost) keepFile(o *OutboxItem, i int, f sendFile) (OutFile, error) {
 }
 
 // trySend makes one attempt; false when the extension could not be reached
-// (the send stays pending). Anything the extension answered is final. One
+// or is still starting (the send stays pending). One
 // ref is tried by one goroutine at a time, and a result only lands while
 // the send is still pending: a delivery event that came first wins.
 func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
@@ -271,6 +271,8 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 		o.State, o.Reason = extproto.DeliveryDeferred, res.Reason
 	case err == nil:
 		o.State, o.MessageID, o.DoneAt = extproto.DeliverySent, res.MessageID, time.Now()
+	case extproto.IsCode(err, extproto.ErrNotReady):
+		return false
 	case unreachable(err):
 		log.Printf("ext %s: send %s: %v", r.man.ID, o.Ref, err)
 		return false
@@ -313,10 +315,13 @@ func (h *extHost) retrySends(r *extRun) {
 }
 
 // delivered records what the extension says became of a send.
-func (h *extHost) delivered(r *extRun, d extproto.Delivery) {
-	o := h.store.out(d.Ref)
+func (h *extHost) delivered(r *extRun, d extproto.Delivery) error {
+	o, err := h.store.readOut(d.Ref)
+	if err != nil {
+		return err
+	}
 	if o == nil || !strings.HasPrefix(o.Conv, r.man.ID+":") {
-		return
+		return nil
 	}
 	o.State, o.Reason = d.State, d.Reason
 	if d.MessageID != "" {
@@ -325,7 +330,7 @@ func (h *extHost) delivered(r *extRun, d extproto.Delivery) {
 	if d.State != extproto.DeliveryDeferred {
 		o.DoneAt = time.Now()
 	}
-	h.store.putOutIf(o, outPending, extproto.DeliveryDeferred)
+	return h.store.putOutIf(o, outPending, extproto.DeliveryDeferred)
 }
 
 // interestChats: chats with a send still waiting or a timer set to send there.

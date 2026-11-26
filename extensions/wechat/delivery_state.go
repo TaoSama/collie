@@ -53,6 +53,8 @@ type DeliveryOutboxItem struct {
 	DeferReason   string `json:"deferReason,omitempty"`
 	ReceiptStatus string `json:"receiptStatus,omitempty"` // accepted | uncertain
 	ExpiresAt     int64  `json:"expiresAt,omitempty"`
+
+	ReceiptMessageID string `json:"receiptMessageId,omitempty"`
 	// NotificationKind and NotificationIdentity keep a pushed result's
 	// immutable identity for recovery.
 	NotificationKind     string `json:"notificationKind,omitempty"`

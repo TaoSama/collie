@@ -15,11 +15,12 @@ func TestResultStorePruneWritesOnlyChanges(t *testing.T) {
 	fingerprint := func() string { return "account" }
 	var reports []string
 	writes := 0
-	s, err := newResultStore(dir, fingerprint, func(ref, state, reason string) {
-		if state != DeliveryExpired || reason != reasonExpired || writes != 3 {
+	s, err := newResultStore(dir, fingerprint, func(ref, state, reason string) error {
+		if state != DeliveryExpired || reason != reasonExpired || writes != 2 {
 			t.Fatalf("report %q: state=%q reason=%q checkpoints=%d", ref, state, reason, writes)
 		}
 		reports = append(reports, ref)
+		return nil
 	})
 	mustNoErr(t, err)
 	rtcHook(t, func(step, target string) error {
@@ -85,5 +86,37 @@ func TestResultStorePruneRetriesFailedCheckpoint(t *testing.T) {
 	mustNoErr(t, err)
 	if got := reloaded.plans[plan.ID]; writes != 2 || got == nil || got.Status != ResultClaimed {
 		t.Fatalf("after retry: checkpoints=%d plan=%+v", writes, got)
+	}
+}
+
+func TestResultStoreExpiryAfterFailedCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, resultsFileName)
+	var reports []string
+	s, err := newResultStore(dir, func() string { return "account" }, func(ref, state, reason string) error {
+		if state == DeliveryExpired && reason == reasonExpired {
+			reports = append(reports, ref)
+		}
+		return nil
+	})
+	mustNoErr(t, err)
+	plan := rtdPlan(nil)
+	_, err = s.create(plan, rtdBytes)
+	mustNoErr(t, err)
+	failure := errors.New("checkpoint did not finish")
+	fail := true
+	rtcHook(t, func(step, target string) error {
+		if step == "rename" && target == path && fail {
+			return failure
+		}
+		return nil
+	})
+	if err := s.prune(plan.RetainedUntil); !errors.Is(err, failure) {
+		t.Fatalf("expiry save error = %v", err)
+	}
+	fail = false
+	mustNoErr(t, s.prune(plan.RetainedUntil))
+	if !slices.Equal(reports, []string{plan.Key}) {
+		t.Fatalf("expiry reports = %v, want [%s]", reports, plan.Key)
 	}
 }

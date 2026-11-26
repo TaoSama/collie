@@ -80,6 +80,7 @@ func (x *extension) run(g *Gateway, done chan struct{}) {
 		x.loop.do(func() { g.loop.sleep(g.ctx, msDuration(pollBackoffMs(failures+1))) })
 	}
 	if err == nil && !g.Stopped() {
+		x.wakeOutbox()
 		err = g.RunLoop(x.opt.pollEvery, onError, onError)
 	}
 	if errors.Is(err, ErrSessionExpired) {

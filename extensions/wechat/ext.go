@@ -54,6 +54,7 @@ type extension struct {
 
 	mu          sync.Mutex
 	initialized bool
+	restoring   bool
 	creds       *Credentials
 	oldTokens   []string
 	qr          *pendingQR
@@ -108,7 +109,12 @@ func (x *extension) handle(ctx context.Context, method string, params json.RawMe
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err
 		}
-		g := x.currentGateway()
+		x.mu.Lock()
+		g, restoring := x.gateway, x.restoring
+		x.mu.Unlock()
+		if g == nil && restoring {
+			return nil, extproto.Errorf(extproto.ErrNotReady, "WeChat is restoring its login")
+		}
 		if g == nil {
 			return nil, extproto.Errorf(extproto.ErrNotSignedIn, "WeChat is not signed in")
 		}
@@ -156,7 +162,7 @@ func (x *extension) initialize(ctx context.Context, raw json.RawMessage) (any, e
 		return nil, extproto.Errorf(extproto.ErrInvalidParams, "initialize needs data_dir")
 	}
 	x.mu.Lock()
-	x.dataDir, x.initialized = filepath.Clean(p.Extension.DataDir), true
+	x.dataDir, x.initialized, x.restoring = filepath.Clean(p.Extension.DataDir), true, true
 	x.mu.Unlock()
 	// Restoring the login is slow work: it runs after the answer.
 	go x.restore()
@@ -165,6 +171,15 @@ func (x *extension) initialize(ctx context.Context, raw json.RawMessage) (any, e
 
 // restore loads the saved login and starts serving it.
 func (x *extension) restore() {
+	defer func() {
+		x.mu.Lock()
+		x.restoring = false
+		g := x.gateway
+		x.mu.Unlock()
+		if g == nil {
+			x.wakeOutbox()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), hostCallTimeout)
 	defer cancel()
 	var out extproto.Secrets
@@ -235,10 +250,10 @@ func rememberToken(tokens []string, token string) []string {
 	return tokens
 }
 
-func (x *extension) currentGateway() *Gateway {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	return x.gateway
+func (x *extension) wakeOutbox() {
+	if err := x.peer.Notify(extproto.EChanged, extproto.Changed{Contribution: contributionID, Scope: "outbox"}); err != nil {
+		writeLogLine(map[string]any{"event": "outbox_notify_failed", "errorType": SanitizeErrorType(err)}, "")
+	}
 }
 
 func (x *extension) setState(state, message string) {
