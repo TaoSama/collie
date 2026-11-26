@@ -2209,7 +2209,26 @@ select.picked { display: none; }
 .ext-out { display: block; margin-top: 4px; font-size: var(--fs-tiny); color: var(--t-meta); }
 .ext-out.attn { color: var(--attn); }
 .ext-out.bad { color: var(--danger); }
-.events-seg, .inbox-filter { margin-bottom: 12px; }
+.events-seg { margin-bottom: 12px; }
+/* 收件箱's filters: chips with their counts, sliding sideways on a phone; 全部已读 at the end. */
+.inbox-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; min-width: 0; }
+.inbox-chips { position: relative; display: flex; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.inbox-chips::-webkit-scrollbar { display: none; }
+.inbox-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 12px; flex: none; border: var(--bw) solid var(--line-2); border-radius: 999px; background: var(--bg); color: var(--t-secondary); font-size: var(--btn-fs); white-space: nowrap; transition: background .12s, border-color .12s, color .12s; }
+.inbox-chip:hover { border-color: var(--fg-4); color: var(--fg); }
+.inbox-chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: var(--fw-medium); }
+.inbox-chip .src-logo { margin-right: 0; }
+.inbox-chip-n { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--bg-3); color: var(--t-secondary); font-size: var(--fs-tiny); line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.inbox-chip.on .inbox-chip-n { background: color-mix(in srgb, var(--on-accent) 22%, transparent); color: inherit; }
+.inbox-chip[data-tone="attn"]:not(.on) .inbox-chip-n { background: var(--attn); color: var(--on-attn); }
+.inbox-chip:focus-visible { outline: none; box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--fg) 10%, transparent); }
+.inbox-read-all { flex: none; }
+.inbox-read-all > svg { width: 15px; height: 15px; }
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  .inbox-read-all { padding: 0 8px; }
+  .inbox-read-all > span { display: none; } /* the icon, its title says it */
+}
+.inbox-at { margin-right: 4px; color: var(--attn); font-weight: var(--fw-medium); }
 .inbox-split { display: grid; grid-template-columns: minmax(240px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .inbox-split .card { margin-bottom: 0; }
 .inbox-row { cursor: pointer; }

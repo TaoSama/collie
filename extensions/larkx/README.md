@@ -31,6 +31,7 @@
 - **@自己唤起**（默认开）：你本人发的消息里用飞书的 @ 真的 @ 了自己（AT 元素的 userId 是你，不是打出来的文字），也算请求，交给 Collie 时去掉这个 @。别人 @ 你不算。和触发词一样，一收到就先加「在做了」。
 - **群话题各开对话**（默认开）：群里不在话题里的请求开一段新对话（回复会在它下面开出话题），之后这个话题里的请求接着这段对话；私聊照旧是一段对话。关掉后群里的请求都进同一段对话。
 - **收件箱显示**：「接入」里飞书扩展有三个开关，默认都开：免打扰的会话不显示、Meego 需求同步群不显示、Meego 缺陷同步群不显示。Meego 为每个需求或缺陷建的群，群描述就是它的链接（`…/story/detail/<id>` 或 `…/issue/detail/<id>`，域名 `meego.*` 或 `project.*`），适配层据此给消息带上 `chat_tags`（`meego-story`、`meego-issue`）；群名带「[需求同步群]」「[缺陷同步群]」的也算。只认群名不够：飞书把群名截到 64 个字符，长标题的「- [缺陷同步群]」常被截掉（2026-11-26 实测 54 个 Meego 群里有 19 个这样漏掉）。还没带过标签的旧会话按群名规则隐藏。它们是 Collie 自己的设置（清单里的 `x-hide`），改了不会重启扩展。隐藏只影响列表，你本人发的触发词照常处理。
+- **已读和未读**（能力 `read`）：Collie 每 30 秒问一次每个会话在飞书里的未读数（`chats.PullChatsByIdsRequest`，100 个一批，不用一小时的名字缓存），以飞书的数为准。普通会话是 `lastMessagePositionBadgeCount - readPositionBadgeCount`；话题群（`chatMode` 3）飞书的数是未读的话题，用 `lastThreadPositionBadgeCount - readThreadPositionBadgeCount`。别人 @ 你或 @所有人（AT 元素的 userId 是你或 `all`）的消息带 `at_me`。设置里「在 Collie 里读过的同步为飞书已读」（默认关）打开后，在收件箱打开会话或点「全部已读」，适配层用 `messages.PutReadMessagesRequest` 把会话读到最后一条（`maxPosition` 取当时的 `lastMessagePosition`，答复里的 `readPosition` 不到它就算失败）；话题群的已读是按话题记的，不同步。已读位置只会往前走，给更小的 `maxPosition` 什么也不改。
 - **私聊的名字**：私聊在飞书里没有会话名。对方发来的消息用对方的名字；你自己发的，用会话成员（`chats.PullChatChattersRequest`）找出对方；只有你一个人的是「和自己」，名字是「你的名字（我）」。都拿不到时显示「私聊」加 id 末 6 位，悬停看完整 id，不再出现「还不知道对方是谁」。已有会话下次收到消息时更新名字。
 - **免打扰**：会话在飞书里设了免打扰（会话信息的 `isRemind` 为 false），消息带上 `muted: true`。Collie 的收件箱不为它提醒，未读数照常显示但用灰色。会话信息缓存一小时，所以在飞书里改了免打扰，最多一小时后跟上。
 - **收消息**：websocket 推来的每条消息都用 `channel.receive` 交给 Collie，会话开关、谁能唤起和触发词在 Collie 侧判定。系统消息不交；图片和文件（20 MB 以内）下载后作为附件交过去；引用的消息在本次运行见过时带上原文。自己发出的帖子推回来时按 `cid` 认出来丢掉，不会再触发。
@@ -50,6 +51,8 @@ COLLIE_LARKX_UPSTREAM=/path/to/upstream COLLIE_LARKX_DEPS=/path/to/deps go test 
 开发实例里想不登录就看效果：`COLLIE_EXT_PASS_ENV=COLLIE_LARKX_FAKE COLLIE_LARKX_FAKE=1 collie ...`，扫码后收件箱出现两个示例会话。
 
 ## 实测
+
+- 2026-11-26：Collie 原来自己数的未读和飞书差得多，原因有两个：Collie 只数扩展运行以后推来的消息（话题群还把话题里的回复也算上），而且从来不知道你在飞书里读过。线上 218 个会话里，飞书已读的有 89 个，Collie 认为已读的只有 4 个，两边数一致的只有 5 个。309 个会话问一轮未读数约 2.7 秒（4 批）。
 
 - 2026-11-26：276 个群里由 Meego 建的 54 个（15 个需求、39 个缺陷）描述都是对应的 story/issue 链接，按描述全部认出；其余 222 个群没有一个被认成 Meego 群。
 

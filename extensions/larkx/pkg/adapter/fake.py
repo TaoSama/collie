@@ -62,7 +62,7 @@ class Fake:
             {"id": "m1", "chat_id": "c_dm", "chat": "示例联系人", "chat_kind": "dm", "sender": "u_a",
              "sender_name": "示例联系人", "owner": False, "text": "周五的会改到几点？", "at": now},
             {"id": "m2", "chat_id": "c_group", "chat": "示例群", "chat_kind": "group", "sender": "u_b",
-             "sender_name": "示例同事", "owner": False, "text": "大家好", "at": now},
+             "sender_name": "示例同事", "owner": False, "text": "@示例账号 大家好", "at_me": True, "at": now},
             {"id": "m3", "chat_id": "c_self", "chat": ACCOUNT, "chat_kind": "self", "sender": ME,
              "sender_name": ACCOUNT, "owner": True, "text": "/ai 今天有什么会", "at": now},
         ):
@@ -71,6 +71,21 @@ class Fake:
             on_message(m)
         while not stop.is_set() and self.signed_in:
             self.wake.wait(1)
+
+    # Unread counts as the fake Feishu has them: more than came while Collie ran.
+    UNREAD = {"c_dm": 3, "c_group": 2}
+
+    def unread(self, chats):
+        return {c: {"unread": self.UNREAD[c]} for c in chats if c in self.UNREAD}
+
+    def mark_read(self, chats):
+        self.UNREAD = dict(self.UNREAD)  # this Feishu's own, not the class's
+        for c in chats:
+            if c in self.UNREAD:
+                self.UNREAD[c] = 0
+        with open(os.path.join(os.environ.get("COLLIE_EXTENSION_DATA", "."), "fake-read.jsonl"), "a") as f:
+            f.write(json.dumps({"chats": chats}) + "\n")
+        return [c for c in chats if c in self.UNREAD], {c: "飞书里没有这个会话" for c in chats if c not in self.UNREAD}
 
     def mark_working(self, message_id, got=None):
         if message_id not in self.marked:

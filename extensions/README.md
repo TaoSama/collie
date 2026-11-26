@@ -105,6 +105,7 @@ COLLIE_HOME/ext/<id>/
 | `interest` | `channel.interest` | 接收「哪些会话在等结果」（微信续期提醒用） |
 | `working` | `channel.working` | Collie 接下一条请求时告诉扩展，扩展在原应用里标出「在处理」（飞书：表情回复） |
 | `header_status` | `connector.header_status` | 在会话页顶部标题栏右侧槽位显示结构化状态与明细弹层 |
+| `read` | `connector.read.state`、`connector.read.mark` | 原应用自己的未读数，以及把在 Collie 里读过的会话在原应用里标为已读 |
 
 三类扩展：
 
@@ -165,6 +166,8 @@ COLLIE_HOME/ext/<id>/
 | `channel.send` | `{ref, chat, text, footer?, kind, reply_to?, images?, files?, link?}`（`text` 以尾标 `footer` 结尾，想把尾标排成别的样子的扩展可以拆开；超过 40 MiB 的文件不放进 `images/files`，改发下载链接，见 3.7） | `{message_id?}`，或 `{deferred:true, reason}`（暂时发不了，扩展自己排队，之后用 `channel.delivery` 报告）。**同一个 `ref` 最多发一次** |
 | `channel.working` | `{chat, message_id}` | `{}`。Collie 把这条消息当成请求接下了（Router 或专属 agent 开始处理）；扩展在原应用里标出来，失败只记日志 |
 | `channel.settings` | `{trigger, ignored?}` | `{}`。有 `working` 能力的扩展会收到当前的触发词（启动时一次，改了再发）。你本人发的、以触发词开头的消息一定会被接下，扩展可以不等 Collie 就先标出来；同一条消息只标一次。先标时要和 Collie 一样严：只标本人的、10 分钟内的新消息，`ignored` 为 true（来源策略不接这个扩展的请求）时一条也不标 |
+| `connector.read.state` | `{chats:[chat_id…]}` | `{chats:{chat_id:{unread}}}`：每个会话在原应用里的未读数，读不到的不写。Collie 启动 5 秒后问一次，之后每 30 秒问一次，每次最多 200 个会话。原应用的数为准：你在原应用里读过的会话，在 Collie 里也变成已读；你在 Collie 里读过、原应用还不知道的那部分，Collie 自己记着（`read_base`），之后新来的消息照常算未读 |
+| `connector.read.mark` | `{chats:[chat_id…]}` | `{marked:[…], failed?:{chat_id: 原因}}`：在原应用里把这些会话标为已读，读到最新一条。只在你开了 `x-read-back` 开关时，你在收件箱打开会话或点「全部已读」后调用 |
 | `channel.interest` | `{chats:[chat_id…]}` | `{}`。哪些会话有启用中的定时任务或待发结果；有 `interest` 能力的扩展据此决定要不要提醒续期。Collie 每 30 秒发一次 |
 
 `kind`：`answer`（回复一条消息）、`progress`（处理中的进度）、`result`（定时任务或后台任务的结果）、`push`（你明确要求推送）。
@@ -178,7 +181,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.secrets.load` | `{contribution}` | `{data?}`：上次存的 base64 |
 | `connector.secrets.save` | `{contribution, data}` | `{}`。在扩展所在的电脑上写 `secrets.json`，不经过 hub |
 | `connector.secrets.delete` | `{contribution}` | `{}` |
-| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, folded?, chat_tags?, mention?, thread?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。`folded`：在原应用的会话列表里被折叠了，收件箱不列出它。`chat_tags`：会话在种类之外的身份（例如项目工具为某个缺陷建的群），供 `x-hide` 的 `tag:` 规则使用；知道才写，Collie 记下最近一次写的。`mention`：本人在消息里真的 @ 了自己（扩展已经把这个 @ 从 `text` 里去掉），和触发词一样算请求。`thread`：群里自成一段对话的话题；有它时，这条请求进 `ext:<id>:<chat_id>#<thread>` 线程，有自己的专属 agent，回复挂在这个话题的请求下。私聊不带。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
+| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, folded?, chat_tags?, at_me?, mention?, thread?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。`folded`：在原应用的会话列表里被折叠了，收件箱不列出它。`at_me`：别人在这条消息里 @ 了你或 @所有人，收件箱的「@我」据此列出未读的会话。`chat_tags`：会话在种类之外的身份（例如项目工具为某个缺陷建的群），供 `x-hide` 的 `tag:` 规则使用；知道才写，Collie 记下最近一次写的。`mention`：本人在消息里真的 @ 了自己（扩展已经把这个 @ 从 `text` 里去掉），和触发词一样算请求。`thread`：群里自成一段对话的话题；有它时，这条请求进 `ext:<id>:<chat_id>#<thread>` 线程，有自己的专属 agent，回复挂在这个话题的请求下。私聊不带。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
 | 事件 `connector.changed` | `{contribution, scope: inbox\|chats\|status\|outbox}` | 有新消息或状态变了；有 `archive` 能力时 Collie 收到就去拉。最多每 3 秒一次 |
 | 事件 `channel.delivery` | `{contribution, ref, state: sent\|deferred\|uncertain\|failed\|expired, message_id?, reason?}` | 一次发送最后怎样了。`uncertain` 表示可能已发出，**不会再重发** |
 
@@ -274,7 +277,9 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 
 字段加 `"x-secret": true` 是密钥（API Key、访问令牌）：接入页用密码框，填过的只显示「已设置」；值存在 hub 的 `COLLIE_HOME/ext/<id>/config-secrets.json`（0600），不进 hub 的数据库、不进日志，只在启动程序时放进 `initialize.config`。没有程序的声明式扩展，由 hub 里用到它的功能按 id 和字段名读取。
 
-布尔字段加 `"x-hide"` 是收件箱的显示规则，由 Collie 自己执行，开着时生效：`"muted"` 隐藏免打扰的会话，`"name:<文字>"` 隐藏名字里带这段文字的会话，`"tag:<标签>"` 隐藏扩展用 `chat_tags` 标了这个标签的会话。可以写一条，也可以写成数组，命中任一条就隐藏。这类字段不传给程序判断，改了也不重启程序；隐藏只影响收件箱列表，触发照常。
+布尔字段加 `"x-hide"` 是收件箱的显示规则，由 Collie 自己执行，开着时生效：`"muted"` 隐藏免打扰的会话，`"name:<文字>"` 隐藏名字里带这段文字的会话，`"tag:<标签>"` 隐藏扩展用 `chat_tags` 标了这个标签的会话。可以写一条，也可以写成数组，命中任一条就隐藏。
+
+布尔字段加 `"x-read-back": true` 是「在 Collie 里读过的同步为原应用已读」的开关（要有 `read` 能力），同样是 Collie 自己的，不传给程序，改了不重启。会改你在原应用里的状态，默认应当关。这类字段不传给程序判断，改了也不重启程序；隐藏只影响收件箱列表，触发照常。
 
 不要把 Collie 已经统一管理的东西做成扩展配置，比如触发词、尾标、谁能唤起、交给谁。
 

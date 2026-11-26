@@ -313,11 +313,14 @@ func (r *extRun) session(ctx context.Context) error {
 }
 
 // housekeep: status now and then, the archive when told and as a fallback,
-// interest for extensions that want it, and sends still pending.
+// interest and read state for extensions that want them, and sends still pending.
 func (r *extRun) housekeep(ctx context.Context, peer *extproto.Peer) {
 	status := time.NewTicker(extStatusEvery)
 	archive := time.NewTicker(extArchiveEvery)
 	interest := time.NewTicker(extInterestEvery)
+	read := time.NewTicker(extReadEvery)
+	defer read.Stop()
+	firstRead := time.After(extReadFirst)
 	defer status.Stop()
 	defer archive.Stop()
 	defer interest.Stop()
@@ -336,6 +339,10 @@ func (r *extRun) housekeep(ctx context.Context, peer *extproto.Peer) {
 			r.signalPull()
 		case <-interest.C:
 			r.sendInterest(ctx)
+		case <-firstRead:
+			r.syncRead(ctx)
+		case <-read.C:
+			r.syncRead(ctx)
 		case <-r.pull:
 			if r.man.has(capArchive) && r.running() {
 				if r.pullArchive(ctx) {

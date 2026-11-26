@@ -507,6 +507,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] },
       self_mention: { type: "boolean", title: "@自己唤起", description: "你在消息里 @ 自己，也算唤起 agent。", default: true },
       group_topics: { type: "boolean", title: "群话题各开对话", description: "群里每个话题各用一段对话。", default: true },
+      read_back: { type: "boolean", title: "在 Collie 里读过的同步为飞书已读", description: "在收件箱里打开会话、点「全部已读」时，也在飞书里标为已读。会改你在飞书上的未读状态；话题群不同步。", default: false, "x-read-back": true },
       hide_muted: { type: "boolean", title: "免打扰的会话不显示", description: "关掉后照样显示，未读数是灰色，也不提醒。", default: true, "x-hide": "muted" },
       hide_meego_story: { type: "boolean", title: "Meego 需求同步群不显示", description: "Meego 为需求建的群：群描述是需求链接，群名带「[需求同步群]」。群名太长被截短时也认得出。", default: true, "x-hide": ["tag:meego-story", "name:[需求同步群]"] },
       hide_meego_bug: { type: "boolean", title: "Meego 缺陷同步群不显示", description: "Meego 为缺陷建的群：群描述是缺陷链接，群名带「[缺陷同步群]」。群名太长被截短时也认得出。", default: true, "x-hide": ["tag:meego-issue", "name:[缺陷同步群]"] } } } };
@@ -525,6 +526,8 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "你的微信", kind: "dm", last_at: ago(6), preview: "你: 部署好了吗", on: true, owner: true, handler: "collie" },
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
+    { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(12), preview: "赵六: @你 今晚的灰度帮忙盯一下", unread: 4, at_me: true, on: false, handler: "agent" },
+    { id: "larkx:oc_6", ext: "larkx", chat: "oc_6", label: "飞书", name: "王小明", kind: "dm", last_at: ago(60 * 26), preview: "王小明: 好的，周一见", on: false, handler: "agent" },
     { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", unread: 12, muted: true, on: false, handler: "agent" },
     { id: "larkx:oc_4", ext: "larkx", chat: "oc_4", label: "飞书", name: "登录页改版 - [需求同步群]", kind: "group", last_at: ago(30), preview: "Meego: 状态变更为开发中", unread: 3, on: false, handler: "agent", hidden: true },
   ];
@@ -622,11 +625,16 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       return json({ setting: v?.setting, view: v });
     }
     if (/^\/api\/ext\/[^/]+\/login$/.test(p)) return json({ step: { done: true } });
-    if (p === "/api/inbox") return json({ convs: inboxConvs, trigger: extData.trigger || "/ai" });
+    if (p === "/api/inbox") return json({ convs: inboxConvs, trigger: extData.trigger || "/ai", read_back: {} });
+    if (p === "/api/inbox/read" && method === "POST") {
+      const cs = inboxConvs.filter((x) => body.ids.includes(x.id));
+      for (const c of cs) { c.unread = 0; c.at_me = false; }
+      return json({ read: cs.length });
+    }
     if (p === "/api/inbox/conv" && method === "POST") {
       const c = inboxConvs.find((x) => x.id === body.id);
       if (c) for (const k of ["on", "anyone", "handler"]) if (body[k] != null) c[k] = body[k];
-      if (c && body.seen) c.unread = 0;
+      if (c && body.seen) { c.unread = 0; c.at_me = false; }
       return json({ conv: c });
     }
     if (p === "/api/inbox/conv") {

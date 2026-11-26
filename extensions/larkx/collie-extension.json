@@ -3,7 +3,7 @@
   "id": "larkx",
   "label": "飞书",
   "name": "飞书（以你本人身份）",
-  "version": "0.4.11",
+  "version": "0.4.12",
   "icon": "icon.png",
   "description": "用你自己的飞书账号和 agent 对话：扫码登录后，飞书会话出现在收件箱。你在任意会话里发一条以触发词开头的消息，Collie 先给它点个「在做了」，做完以你的名义回复，格式照常显示，末尾带一段尾标。",
   "warning": "用的是飞书网页版接口，飞书升级后可能失效；登录状态只存在运行它的那台电脑上；用公司账号前先确认公司规定。",
@@ -44,7 +44,8 @@
         "login",
         "receive",
         "send",
-        "working"
+        "working",
+        "read"
       ]
     },
     "channel": {
@@ -86,6 +87,13 @@
         "title": "群话题各开对话",
         "description": "群里每个话题各用一段对话。",
         "default": true
+      },
+      "read_back": {
+        "type": "boolean",
+        "title": "在 Collie 里读过的同步为飞书已读",
+        "description": "在收件箱里打开会话、点「全部已读」时，也在飞书里标为已读。会改你在飞书上的未读状态；话题群不同步。",
+        "default": false,
+        "x-read-back": true
       },
       "hide_muted": {
         "type": "boolean",

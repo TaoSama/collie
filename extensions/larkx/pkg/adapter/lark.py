@@ -30,6 +30,9 @@ DOC_FEED_NEWS = (1, 2, 5)  # PushDocFeedRequest.Status NEW, UPDATE, CREATE
 DOC_KINDS = {1: "在文档里@了你", 2: "评论了文档", 3: "回复了评论"}  # DocMessage.Type MENTION, COMMENT, REPLY
 DOC_CHAT = "doc:"  # a document's comments are a chat of their own
 MEDIA_MOST = 20 << 20
+CHAT_TOPICS = 3  # Chat.ChatMode THREAD_V2: a topic group, whose unread count is new topics
+READ_BATCH = 100  # chats a PullChatsByIdsRequest
+AT_ALL = "all"  # the user id of an @所有人
 NAME_TTL = 3600
 RECENT_MOST = 2000
 # A group Meego (飞书项目) opened for one story or issue: its description is the
@@ -94,6 +97,15 @@ def chat_tags(info):
     link = MEEGO_LINK.fullmatch((info.get("description") or "").strip())
     name = info.get("name") or ""
     return ["meego-" + kind for kind, tag in MEEGO_NAME.items() if link and link.group(1) == kind or tag in name]
+
+
+def unread_of(info):
+    """A chat's unread count as Feishu's own list shows it: messages, or new topics in a topic group."""
+    if info.get("chatMode") == CHAT_TOPICS:
+        last, read = info.get("lastThreadPositionBadgeCount"), info.get("readThreadPositionBadgeCount")
+    else:
+        last, read = info.get("lastMessagePositionBadgeCount"), info.get("readPositionBadgeCount")
+    return max(0, int(last or 0) - int(read or 0))
 
 
 def make_auth(U, region, saved, on_save):
@@ -287,6 +299,8 @@ class Feishu:
             text, mention = self._written(sender, data)
             if mention:
                 out["mention"] = True
+            elif sender != self.me and self._at_me(data):
+                out["at_me"] = True
         elif mtype in (MSG_IMAGE, MSG_FILE):
             text = ""
             blob = self._download(msg)
@@ -341,6 +355,45 @@ class Feishu:
             while len(self.recent) > RECENT_MOST:
                 self.recent.popitem(last=False)
             return True
+
+    def chats_now(self, chats):
+        """Chats as Feishu has them right now (not the hour-old ones names use), by id."""
+        out = {}
+        ids = [c for c in chats if str(c).isdigit()]
+        for i in range(0, len(ids), READ_BATCH):
+            r = self.client.api("chats.PullChatsByIdsRequest", {"chatIds": ids[i:i + READ_BATCH]}) or {}
+            out.update(r.get("chats") or {})
+        return out
+
+    def unread(self, chats):
+        """Each chat's unread count in Feishu; chats it doesn't know are left out."""
+        return {k: {"unread": unread_of(v)} for k, v in self.chats_now(chats).items()}
+
+    def mark_read(self, chats):
+        """Marks chats read up to their last message, as opening them in Feishu does. Topic groups keep
+        a read position a topic at a time, so they are left alone. Answers (marked, {chat: why not})."""
+        marked, failed = [], {}
+        infos = self.chats_now(chats)
+        for chat in chats:
+            info = infos.get(chat)
+            if info is None:
+                failed[chat] = "飞书里没有这个会话"
+            elif info.get("chatMode") == CHAT_TOPICS:
+                failed[chat] = "话题群不支持"
+            elif unread_of(info) == 0:
+                marked.append(chat)
+            else:
+                last = int(info.get("lastMessagePosition") or 0)
+                try:
+                    got = self.client.api("messages.PutReadMessagesRequest", {"chatId": chat, "maxPosition": last}) or {}
+                except Exception as e:
+                    failed[chat] = str(e)[:200]
+                    continue
+                if int(got.get("readPosition", last)) < last:
+                    failed[chat] = "飞书没有接受（已读到 %s，最新 %d）" % (got.get("readPosition"), last)
+                else:
+                    marked.append(chat)
+        return marked, failed
 
     def chat_info(self, chat):
         """The chat as the signed-in person sees it (name, isRemind…), kept an hour like names."""
@@ -466,6 +519,11 @@ class Feishu:
         if data.get("title"):
             text = "**%s**\n%s" % (data["title"], text)
         return text, mention
+
+    def _at_me(self, data):
+        """Someone @-mentions you, or everyone."""
+        users = richtext.at_users(self.U.L, data.get("richText") or {})
+        return bool(self.me) and self.me in users or AT_ALL in users
 
     def _self_mention(self, sender, rich):
         """Your own message @-mentioning yourself is a request too (the switch @自己唤起)."""

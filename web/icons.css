@@ -19,7 +19,6 @@
 .src-logo { width: 14px; height: 14px; flex: none; object-fit: contain; border-radius: calc(4px * var(--round)); background: var(--logo-bg); box-shadow: 0 0 0 var(--bw) var(--line); }
 .row .meta .src { display: inline-flex; align-items: center; gap: 5px; }
 .row .meta .src > svg { width: 12.5px; height: 12.5px; color: var(--t-icon); }
-.inbox-filter button .src-logo { margin-right: 6px; }
 
 /* An empty list says so under an icon of what would be there. */
 .empty-row.with-ico { display: grid; justify-items: center; gap: 8px; }

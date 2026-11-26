@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -398,6 +399,13 @@ class Mentions(unittest.TestCase):
         f.self_mention = False
         self.assertFalse(f.normalize(self.msg("4", "u_me", at_rich("u_me", "我", " x"))).get("mention"))
 
+    def test_at_me(self):
+        f = self.feishu()
+        self.assertTrue(f.normalize(self.msg("1", "u_a", at_rich("u_me", "我", " 看看")))["at_me"])
+        self.assertTrue(f.normalize(self.msg("2", "u_a", at_rich("all", "所有人", " 开会")))["at_me"], "@所有人 too")
+        self.assertNotIn("at_me", f.normalize(self.msg("3", "u_a", at_rich("u_b", "乙", " 你看"))))
+        self.assertNotIn("at_me", f.normalize(self.msg("4", "u_me", at_rich("u_me", "我", " x"))), "your own @ is a request, not news")
+
     def test_self_mention_marked_at_once(self):
         import threading
         import time
@@ -693,3 +701,42 @@ class Protocol(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Read(unittest.TestCase):
+    """Unread counts as Feishu shows them, and marking chats read."""
+
+    def test_unread_of(self):
+        self.assertEqual(lark.unread_of({"chatMode": 1, "lastMessagePositionBadgeCount": 50, "readPositionBadgeCount": 42}), 8)
+        self.assertEqual(lark.unread_of({"chatMode": 1, "lastMessagePositionBadgeCount": 6, "readPositionBadgeCount": 6}), 0)
+        topics = {"chatMode": 3, "lastThreadPositionBadgeCount": 120, "readThreadPositionBadgeCount": 107,
+                  "lastMessagePositionBadgeCount": 9, "readPositionBadgeCount": 0}
+        self.assertEqual(lark.unread_of(topics), 13, "a topic group counts new topics")
+        self.assertEqual(lark.unread_of({}), 0)
+
+    def feishu(self, chats):
+        f = lark.Feishu(U, "feishu", lambda d: None)
+        calls = []
+
+        def api(name, data):
+            calls.append((name, data))
+            if name == "chats.PullChatsByIdsRequest":
+                return {"chats": {k: v for k, v in chats.items() if k in data["chatIds"]}}
+            return {}
+        f.client = types.SimpleNamespace(api=api)
+        return f, calls
+
+    def test_unread_and_mark(self):
+        f, calls = self.feishu({
+            "1": {"chatMode": 1, "lastMessagePosition": 30, "lastMessagePositionBadgeCount": 9, "readPositionBadgeCount": 4},
+            "2": {"chatMode": 3, "lastThreadPositionBadgeCount": 2, "readThreadPositionBadgeCount": 0},
+            "3": {"chatMode": 1, "lastMessagePositionBadgeCount": 1, "readPositionBadgeCount": 1},
+        })
+        self.assertEqual(f.unread(["1", "2", "3", "4", "doc:x"]), {"1": {"unread": 5}, "2": {"unread": 2}, "3": {"unread": 0}})
+        self.assertEqual(calls[0][1]["chatIds"], ["1", "2", "3", "4"], "one call for them all, documents left out")
+        calls.clear()
+        marked, failed = f.mark_read(["1", "2", "3", "4"])
+        self.assertEqual(marked, ["1", "3"])
+        self.assertEqual(set(failed), {"2", "4"}, "a topic group, and a chat Feishu doesn't have")
+        self.assertEqual([c for c in calls if c[0] == "messages.PutReadMessagesRequest"],
+                         [("messages.PutReadMessagesRequest", {"chatId": "1", "maxPosition": 30})], "only the unread one, up to its last message")

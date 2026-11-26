@@ -44,6 +44,7 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("GET /api/inbox", s.inboxList)
 	api("GET /api/inbox/conv", s.inboxConv)
 	api("POST /api/inbox/conv", s.inboxSetConv)
+	api("POST /api/inbox/read", s.inboxRead)
 }
 
 func (s *Server) extList(w http.ResponseWriter, r *http.Request) {
@@ -224,12 +225,17 @@ func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 	convs := s.ext.store.list(r.URL.Query().Get("ext"))
 	out := make([]convView, 0, len(convs))
 	hides := map[string][]string{}
+	readBack := map[string]bool{} // extensions that mark what you read here read in the app too
 	for _, c := range convs {
 		v := convView{InboxConv: c, Label: c.Ext}
 		if m := s.ext.manifest(c.Ext); m != nil {
 			v.Label = extLabel(m)
 			if _, ok := hides[c.Ext]; !ok {
-				hides[c.Ext] = m.hides(s.ext.setting(c.Ext).Config)
+				cfg := s.ext.setting(c.Ext).Config
+				hides[c.Ext] = m.hides(cfg)
+				if m.readBack(cfg) {
+					readBack[c.Ext] = true
+				}
 			}
 		}
 		v.Hidden = hiddenInInbox(c, hides[c.Ext])
@@ -238,7 +244,7 @@ func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, v)
 	}
-	writeJSON(w, 200, map[string]any{"convs": out, "trigger": s.ext.trigger()})
+	writeJSON(w, 200, map[string]any{"convs": out, "trigger": s.ext.trigger(), "read_back": readBack})
 }
 
 // hiddenInInbox: folded in the chat app, or caught by a rule switched on.
@@ -302,9 +308,6 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 		if body.Handler != nil && (*body.Handler == handlerCollie || *body.Handler == handlerAgent) {
 			c.Handler = *body.Handler
 		}
-		if body.Seen || body.On != nil {
-			c.Unread = 0
-		}
 		if body.On != nil && *body.On {
 			c.Handed = time.Now() // what came before isn't context for the first request
 		}
@@ -313,10 +316,26 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "no conversation " + body.ID})
 		return
 	}
+	if body.Seen || body.On != nil {
+		s.ext.readConvs([]string{c.ID})
+		c, _ = s.ext.store.conv(c.ID)
+	}
 	if body.On != nil && !*body.On {
 		s.ext.store.dropMsgs(c.ID) // a closed chat keeps only its preview (§7)
 	}
 	writeJSON(w, 200, map[string]any{"conv": c})
+}
+
+// inboxRead marks conversations read (收件箱's 全部已读): in Collie, and in
+// the chat app where read-back is on.
+func (s *Server) inboxRead(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	writeJSON(w, 200, map[string]any{"read": s.ext.readConvs(body.IDs)})
 }
 
 // marketView is a marketplace with what is installed from it.

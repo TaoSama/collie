@@ -194,6 +194,8 @@ type Message struct {
 	// ChatTags: what the chat is besides its kind, for the 收件箱 rules
 	// (x-hide "tag:<tag>"), e.g. a group a project tool opened for one issue.
 	ChatTags []string `json:"chat_tags,omitempty"`
+	// AtMe: someone else @-mentioned the signed-in person, or everyone.
+	AtMe bool `json:"at_me,omitempty"`
 	// Mention: the signed-in person @-mentioned themselves (the @ already
 	// taken out of Text): a request like the trigger word.
 	Mention     bool     `json:"mention,omitempty"`
@@ -349,4 +351,33 @@ const MChannelInterest = "channel.interest"
 type Interest struct {
 	Contribution string   `json:"contribution,omitempty"`
 	Chats        []string `json:"chats"`
+}
+
+// MReadState asks a read-capable extension how many messages each chat has
+// unread in the chat app itself.
+const MReadState = "connector.read.state"
+
+// MReadMark marks chats read in the chat app.
+const MReadMark = "connector.read.mark"
+
+// ReadChats is the params of connector.read.state and connector.read.mark.
+type ReadChats struct {
+	Contribution string   `json:"contribution,omitempty"`
+	Chats        []string `json:"chats"`
+}
+
+// ReadStates is connector.read.state's result: the chats it could read,
+// the rest left as they are.
+type ReadStates struct {
+	Chats map[string]ChatRead `json:"chats"`
+}
+
+type ChatRead struct {
+	Unread int `json:"unread"`
+}
+
+// ReadMarked is connector.read.mark's result: the chats marked, and why the others weren't.
+type ReadMarked struct {
+	Marked []string          `json:"marked"`
+	Failed map[string]string `json:"failed,omitempty"`
 }

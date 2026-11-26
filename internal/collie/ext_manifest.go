@@ -198,7 +198,13 @@ type ExtConfigProp struct {
 	// "name:<text>" chats whose name has it, "tag:<tag>" chats the extension
 	// tagged so. The program doesn't read it, so changing it restarts nothing.
 	Hide hideRules `json:"x-hide,omitempty"`
+	// ReadBack: a switch (a boolean) that, on, has chats you read in Collie
+	// marked read in the chat app too (capability read). Collie's, like Hide.
+	ReadBack bool `json:"x-read-back,omitempty"`
 }
+
+// collies: the switch is Collie's own, not the program's.
+func (p ExtConfigProp) collies() bool { return len(p.Hide) > 0 || p.ReadBack }
 
 // hideRules is x-hide: a rule, or a list of them.
 type hideRules []string
@@ -228,7 +234,7 @@ func validHide(rule string) bool {
 func (m *ExtManifest) programConfig(cfg map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range cfg {
-		if m.Configuration == nil || len(m.Configuration.Properties[k].Hide) == 0 {
+		if m.Configuration == nil || !m.Configuration.Properties[k].collies() {
 			out[k] = v
 		}
 	}
@@ -250,6 +256,20 @@ func (m *ExtManifest) hides(cfg map[string]any) []string {
 	return out
 }
 
+// readBack: a read-back switch is on in cfg (at its default when never saved).
+func (m *ExtManifest) readBack(cfg map[string]any) bool {
+	if m.Configuration == nil || !m.has(capRead) {
+		return false
+	}
+	cfg = m.configWithDefaults(cfg)
+	for k, p := range m.Configuration.Properties {
+		if on, _ := cfg[k].(bool); on && p.ReadBack {
+			return true
+		}
+	}
+	return false
+}
+
 // Connector capabilities (extensions/README.md §2).
 const (
 	capStatus       = "status"
@@ -261,6 +281,7 @@ const (
 	capSend         = "send"
 	capInterest     = "interest"
 	capWorking      = "working"
+	capRead         = "read"
 	chatSelf        = "self"  // a chat kind: your chat with yourself
 	chatGroup       = "group" // a chat kind: a group
 )
@@ -285,6 +306,9 @@ func (m *ExtManifest) validate() error {
 		for k, p := range m.Configuration.Properties {
 			if len(p.Hide) > 0 && (p.Type != "boolean" || slices.ContainsFunc(p.Hide, func(r string) bool { return !validHide(r) })) {
 				return fmt.Errorf("config %s: x-hide is a boolean's, %q, %q<text> or %q<tag>", k, hideMuted, hideNamePrefix, hideTagPrefix)
+			}
+			if p.ReadBack && p.Type != "boolean" {
+				return fmt.Errorf("config %s: x-read-back is a boolean's", k)
 			}
 		}
 	}

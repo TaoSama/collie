@@ -486,6 +486,40 @@ func TestLarkxFake(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(dir, "ext", "larkx", "data", "fake-reactions.jsonl"))
 		return strings.Contains(string(b), `"message_id": "m3", "key": "OnIt"`)
 	})
+	// Read state: Feishu's counts stand over Collie's;
+	// what you read here stays read, and is marked read in Feishu once
+	// read-back is on (a switch of Collie's: the program keeps running).
+	waitFor(t, "@-mentioned in the group", func() bool { c, _ := h.store.conv("larkx:c_group"); return c.AtMe && c.Unread == 1 })
+	r.syncRead(ctx)
+	dm, _ := h.store.conv("larkx:c_dm")
+	grp, _ := h.store.conv("larkx:c_group")
+	if dm.Unread != 3 || grp.Unread != 2 || !grp.AtMe {
+		t.Fatalf("Feishu's counts: dm %+v, group %+v", dm, grp)
+	}
+	readLog := filepath.Join(dir, "ext", "larkx", "data", "fake-read.jsonl")
+	if h.readConvs([]string{"larkx:c_dm"}) != 1 {
+		t.Fatal("read in Collie")
+	}
+	r.syncRead(ctx)
+	if dm, _ = h.store.conv("larkx:c_dm"); dm.Unread != 0 || dm.AppUnread != 3 {
+		t.Fatalf("read here, Feishu not told: %+v", dm)
+	}
+	if _, err := os.Stat(readLog); err == nil {
+		t.Fatal("read-back is off by default")
+	}
+	if _, err := h.configure("larkx", func(x *ExtSetting) { x.Config = map[string]any{"region": "feishu", "read_back": true} }); err != nil {
+		t.Fatal(err)
+	}
+	if h.run("larkx") != r {
+		t.Fatal("read-back is Collie's switch: no restart")
+	}
+	h.readConvs([]string{"larkx:c_dm"})
+	waitFor(t, "marked read in Feishu", func() bool {
+		b, _ := os.ReadFile(readLog)
+		c, _ := h.store.conv("larkx:c_dm")
+		return strings.Contains(string(b), "c_dm") && c.AppUnread == 0 && c.ReadBase == 0
+	})
+
 	h.store.update("larkx:c_dm", func(c *InboxConv) { c.On = true; c.AskMsg = "m1"; c.AskAt = time.Now() })
 	o, err := h.sendOut("ext:larkx:c_dm", "改到 **三点**", extproto.KindAnswer, runInfo{Agent: "Codex"}, "")
 	if err != nil {
@@ -1082,5 +1116,39 @@ func TestExtHeaderStatus(t *testing.T) {
 	}
 	if slots := fetch(""); len(slots) != 0 {
 		t.Fatalf("disabled again: %+v", slots)
+	}
+}
+
+// The app's count stands over Collie's; what you read in Collie stays read
+// as more comes, until you read on in the app.
+func TestInboxAppRead(t *testing.T) {
+	var c InboxConv
+	if !c.appRead(5) || c.Unread != 5 {
+		t.Fatalf("the app's count: %+v", c)
+	}
+	c.AtMe = true
+	c.markRead()
+	if c.Unread != 0 || c.AtMe || c.ReadBase != 5 {
+		t.Fatalf("read in Collie: %+v", c)
+	}
+	if c.appRead(5) {
+		t.Fatal("nothing new")
+	}
+	c.appRead(7)
+	if c.Unread != 2 {
+		t.Fatalf("two came since: %+v", c)
+	}
+	c.AtMe = true
+	c.appRead(1)
+	if c.Unread != 0 || c.ReadBase != 1 || c.AtMe {
+		t.Fatalf("read on in the app: %+v", c)
+	}
+	c.appRead(0)
+	if c.ReadBase != 0 || c.Unread != 0 {
+		t.Fatalf("all read in the app: %+v", c)
+	}
+	c.appRead(-3)
+	if c.AppUnread != 0 {
+		t.Fatalf("never below zero: %+v", c)
 	}
 }

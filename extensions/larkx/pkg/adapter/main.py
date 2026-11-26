@@ -72,6 +72,11 @@ class Extension:
             return {}
         if method == "channel.working":
             return self.working(params)
+        if method == "connector.read.state":
+            return {"chats": self._backend().unread(params.get("chats") or [])}
+        if method == "connector.read.mark":
+            marked, failed = self._backend().mark_read(params.get("chats") or [])
+            return {"marked": marked, "failed": failed}
         if method == "channel.settings":
             self.trigger, self.ignored = params.get("trigger") or "", bool(params.get("ignored"))
             if self.backend is not None:
@@ -188,10 +193,14 @@ class Extension:
             log.error("recording send %s: %s", ref, e)
         return {"message_id": mid}
 
-    def working(self, p):
+    def _backend(self):
+        """The signed-in backend, or the error to answer."""
         if self.backend is None or not self.account:
             raise peer.Error("not_signed_in", "飞书没有登录")
-        self.backend.mark_working(p.get("message_id") or "")  # once: your own request may be marked already
+        return self.backend
+
+    def working(self, p):
+        self._backend().mark_working(p.get("message_id") or "")  # once: your own request may be marked already
         return {}
 
     # Sends already made, by ref: a ref goes out once, across restarts.

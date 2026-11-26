@@ -50,7 +50,7 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 			}
 			c.setAsk(topic, func(a *ConvAsk) { a.AskMsg, a.AskAt, a.AskBy = in.ID, time.Now(), in.SenderName })
 			c.Handed = in.At
-			c.Unread = 0
+			c.markRead()
 		}
 	}
 

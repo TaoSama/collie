@@ -2939,7 +2939,14 @@
       const below = msgs ? msgs.scrollHeight - msgs.scrollTop : 0;
       if (sig !== body._sig) {
         body._sig = sig; body._dsig = dsig;
+        const slid = body.querySelector(".inbox-chips")?.scrollLeft || 0;
         body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxFilter);
+        // The filters slide sideways on a phone: where they were, the chosen one in view.
+        const chips = body.querySelector(".inbox-chips"), on = chips?.querySelector(".on");
+        if (chips) {
+          chips.scrollLeft = slid;
+          if (on && (on.offsetLeft < chips.scrollLeft || on.offsetLeft + on.offsetWidth > chips.scrollLeft + chips.clientWidth)) chips.scrollLeft = on.offsetLeft - 8;
+        }
       } else if (dsig !== body._dsig && $("#inbox-detail")) {
         body._dsig = dsig;
         $("#inbox-detail").innerHTML = collieExt.detailHTML(inboxCur, inboxDetail, r?.trigger);
@@ -3608,6 +3615,16 @@
     if (!b) return;
     if (b.dataset.eventsSub) { eventsSub = b.dataset.eventsSub; store.set("eventsSub", eventsSub); drawAuto(autoData.triggers); return; }
     if (b.dataset.inboxFilter) { inboxFilter = b.dataset.inboxFilter; store.set("inboxFilter", inboxFilter); drawAuto(autoData.inbox); return; }
+    if (b.hasAttribute("data-inbox-read-all")) {
+      const r = autoData.inbox, ids = collieExt.inboxShown(r, inboxFilter).filter((c) => c.unread > 0);
+      const back = [...new Set(ids.filter((c) => r?.read_back?.[c.ext]).map((c) => c.label))];
+      if (back.length && !(await ask({ title: `把 ${ids.length} 个会话标为已读？`, text: `${back.join("、")}里也会标为已读（接入里开着「同步为已读」）。`, ok: "全部已读" }))) return;
+      busy(b);
+      try { const res = await api("/api/inbox/read", { body: { ids: ids.map((c) => c.id) } }); toast(`${res.read} 个会话已读`); }
+      catch (err) { toast(err.message, "attn"); }
+      await fetchAuto("inbox").catch(() => {});
+      drawAuto(autoData.inbox); return;
+    }
     if (b.hasAttribute("data-conv-close")) { inboxCur = ""; inboxDetail = null; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-conv-on")) { setConv({ on: b.getAttribute("aria-checked") !== "true" }); return; }
     if (b.dataset.convSet) { setConv({ [b.dataset.convSet]: b.dataset.convSet === "anyone" ? b.dataset.v === "true" : b.dataset.v }); return; }

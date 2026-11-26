@@ -31,6 +31,13 @@ type InboxConv struct {
 	LastAt  time.Time `json:"last_at"`
 	Preview string    `json:"preview,omitempty"`
 	Unread  int       `json:"unread,omitempty"`
+	// AtMe: an unread message @-mentions you, or everyone.
+	AtMe bool `json:"at_me,omitempty"`
+	// AppUnread: the chat app's own unread count (capability read), counted
+	// up between its reports; ReadBase: how much of it you read in Collie
+	// without the app knowing. Unread is AppUnread - ReadBase.
+	AppUnread int `json:"app_unread,omitempty"`
+	ReadBase  int `json:"read_base,omitempty"`
 	// Muted in the chat app: never an alert in Collie, its unread count grey.
 	Muted bool `json:"muted,omitempty"`
 	// Folded away in the chat app's list: left out of the inbox list.
@@ -56,6 +63,26 @@ type InboxConv struct {
 }
 
 func (c *InboxConv) thread() string { return extThreadPrefix + c.ID }
+
+// markRead: you have read it in Collie. The app's count stays where it is
+// until the app is told or you read it there.
+func (c *InboxConv) markRead() {
+	c.Unread, c.AtMe, c.ReadBase = 0, false, c.AppUnread
+}
+
+// appRead takes the chat app's unread count; false when nothing changed.
+// A count under what you read in Collie means you read on there: the base
+// follows it down.
+func (c *InboxConv) appRead(n int) bool {
+	was := *c
+	n = max(n, 0)
+	c.AppUnread, c.ReadBase = n, min(c.ReadBase, n)
+	c.Unread = n - c.ReadBase
+	if c.Unread == 0 {
+		c.AtMe = false
+	}
+	return c.AppUnread != was.AppUnread || c.ReadBase != was.ReadBase || c.Unread != was.Unread || c.AtMe != was.AtMe
+}
 
 // threadOf is a topic's thread ("" the chat's own).
 func (c *InboxConv) threadOf(topic string) string {

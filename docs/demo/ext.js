@@ -247,13 +247,31 @@
   const unreadText = (n) => n > 99 ? "99+" : String(n);
 
   // 收件箱: every chat of every extension; the open one beside it.
+  // The filters of 收件箱, in order; an extension's own when there are several.
+  const atMe = (c) => c.at_me && c.unread > 0;
+  const FILTERS = [
+    ["all", "全部", () => true],
+    ["unread", "未读", (c) => c.unread > 0],
+    ["dm", "单聊", (c) => c.kind === "dm" || c.kind === "self"],
+    ["at", "@我", atMe],
+    ["group", "群聊", (c) => c.kind === "group"],
+    ["on", "处理中", (c) => c.on],
+  ];
+  const listed = (r) => (r?.convs || []).filter((c) => !c.hidden); // folded, or switched off in 接入
+  // What a filter lists: one of FILTERS, or an extension's id.
+  function inboxShown(r, filter) {
+    const f = FILTERS.find(([k]) => k === (filter || "all"));
+    return listed(r).filter(f ? f[2] : (c) => c.ext === filter);
+  }
+
   function inboxHTML(r, cur, detail, filter) {
-    const convs = (r?.convs || []).filter((c) => !c.hidden); // folded, or switched off in 接入
-    const unread = convs.filter((c) => c.unread > 0);
-    const shown = convs.filter((c) => filter === "on" ? c.on : filter === "unread" ? c.unread > 0 : filter && filter !== "all" ? c.ext === filter : true);
+    const convs = listed(r);
+    const shown = inboxShown(r, filter);
     const exts = [...new Set(convs.map((c) => c.ext))];
-    const chips = [["all", "全部"], ["unread", `未读 ${unread.length}`], ["on", `处理中 ${convs.filter((c) => c.on).length}`], ...exts.map((x) => [x, convs.find((c) => c.ext === x)?.label || x, logo(x)])]
-      .map(([k, l, lg]) => `<button type="button" data-inbox-filter="${esc(k)}" class="${(filter || "all") === k ? "on" : ""}">${lg || ""}${esc(l)}</button>`).join("");
+    const chip = (k, label, n, lg = "") => `<button type="button" data-inbox-filter="${esc(k)}" class="inbox-chip${(filter || "all") === k ? " on" : ""}"${k === "at" && n ? ' data-tone="attn"' : ""}>${lg}${esc(label)}<span class="inbox-chip-n">${n}</span></button>`;
+    const chips = FILTERS.map(([k, l, f]) => chip(k, l, convs.filter(f).length)).join("")
+      + (exts.length > 1 ? exts.map((x) => chip(x, convs.find((c) => c.ext === x)?.label || x, convs.filter((c) => c.ext === x).length, logo(x))).join("") : "");
+    const unreadHere = shown.some((c) => c.unread > 0);
     // Unread: the name in full ink and a count (grey when muted in the chat
     // app); read: no count, the preview quieter. The tile is the chat's kind
     // with its app's logo in the corner.
@@ -266,15 +284,16 @@
         <span class="inbox-ava" title="${esc(c.label)} · ${esc(kind)}">${ico(KIND_ICON[c.kind] || "message-circle")}${logo(c.ext)}</span>
         <div class="inbox-main">
           <div class="inbox-l1"><b class="inbox-name"${name !== c.chat ? ` title="${esc(name)}"` : ""}>${esc(name)}</b>${c.muted ? `<span class="inbox-mute" title="在原应用里设了免打扰">${ico("bell-off")}</span>` : ""}${c.on ? `<span class="pill plain info inbox-on">处理中</span>` : ""}<time class="inbox-time" datetime="${esc(c.last_at || "")}" title="${esc(when(c.last_at))}">${esc(shortTime(c.last_at))}</time></div>
-          <div class="inbox-l2"><span class="inbox-prev">${esc(preview)}</span>${n ? `<span class="inbox-unread${c.muted ? " muted" : ""}" title="${n} 条未读${c.muted ? "（免打扰）" : ""}">${unreadText(n)}</span>` : ""}</div>
+          <div class="inbox-l2"><span class="inbox-prev">${atMe(c) ? `<span class="inbox-at">[有人@我]</span>` : ""}${esc(preview)}</span>${n ? `<span class="inbox-unread${c.muted ? " muted" : ""}" title="${n} 条未读${c.muted ? "（免打扰）" : ""}">${unreadText(n)}</span>` : ""}</div>
           ${c.on ? outLine(c.out) : ""}
         </div></li>`;
     };
     const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;
     if (!convs.length) return intro + `<div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
-    return intro + `<div class="seg inbox-filter">${chips}</div>
+    return intro + `<div class="inbox-bar"><div class="inbox-chips" role="tablist" aria-label="筛选会话">${chips}</div>
+        <button type="button" class="btn small ghost inbox-read-all" data-inbox-read-all aria-label="全部已读" ${unreadHere ? "" : "disabled"} title="把当前列表里的会话都标为已读">${ico("check-check")}<span>全部已读</span></button></div>
       <div class="inbox-split ${cur ? "has-cur" : ""}">
-        <div class="card inbox-list"><ul class="rows">${shown.map(row).join("") || `<li class="empty-row">没有</li>`}</ul></div>
+        <div class="card inbox-list"><ul class="rows">${shown.map(row).join("") || `<li class="empty-row">${filter === "unread" || filter === "at" ? "都读过了" : "没有"}</li>`}</ul></div>
         <div class="inbox-detail" id="inbox-detail">${detailHTML(cur, detail, r?.trigger)}</div>
       </div>`;
   }
@@ -321,5 +340,5 @@
   function logo(id) { const u = icons[id]; return u ? `<img class="src-logo" src="${esc(u)}" alt="">` : ""; }
   const known = () => Object.keys(icons).length > 0;
 
-  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, convHTML, detailHTML, timerChannels, label, logo, known, learn, stateOf };
+  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, inboxShown, convHTML, detailHTML, timerChannels, label, logo, known, learn, stateOf };
 })();
