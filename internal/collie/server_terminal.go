@@ -3,6 +3,8 @@ package collie
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -136,6 +138,18 @@ func isUnpaintedBlankRow(line string) bool {
 	return true
 }
 
+// logInterrupting notes input from a page that can stop an agent's turn: Esc,
+// ctrl+c, or escape sequences (one split in two reads as Esc). herdr logs only
+// failed sends, so without this an unexplained "Interrupted" can't be traced
+// to a page. Only the shape of the text is logged, never what was typed.
+func (s *Server) logInterrupting(r *http.Request, pane, what string) {
+	who := "the master token"
+	if _, d := s.identity(r); d != nil {
+		who = d.Name
+	}
+	log.Printf("pane %s: %s from %s", pane, what, who)
+}
+
 func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text  string `json:"text"`
@@ -146,6 +160,9 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	ctx := r.Context()
+	if n := strings.Count(body.Text, "\x1b"); n > 0 {
+		s.logInterrupting(r, id, fmt.Sprintf("%d bytes holding %d Esc", len(body.Text), n))
+	}
 	if body.Text != "" {
 		if err := s.herdr.SendText(ctx, id, body.Text); err != nil {
 			fail(w, err)
@@ -172,6 +189,9 @@ func (s *Server) sendKeys(w http.ResponseWriter, r *http.Request) {
 	if len(body.Keys) == 0 || len(body.Keys) > 64 {
 		writeJSON(w, 400, map[string]any{"error": "keys required"})
 		return
+	}
+	if slices.ContainsFunc(body.Keys, func(k string) bool { return k == "esc" || k == "ctrl+c" }) {
+		s.logInterrupting(r, r.PathValue("id"), "keys "+strings.Join(body.Keys, " "))
 	}
 	if err := s.herdr.SendKeys(r.Context(), r.PathValue("id"), body.Keys...); err != nil {
 		fail(w, err)
