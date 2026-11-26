@@ -1,0 +1,484 @@
+gateway/tests/gateway/baseline.test.ts: WeChatGateway refuses pollOnce/run without baseline established
+gateway/tests/gateway/baseline.test.ts: WeChatGateway establishBaseline drains history to empty batch without forwarding or replying
+gateway/tests/gateway/baseline.test.ts: Baseline resume upon interruption and refuse baseline when normal processed keys exist
+gateway/tests/gateway/engine-outbox.test.ts: refreshed budget drains the old engine reply before admission and ${remainsFull ? "retains cursor after one bounded retry" : "admits the new request directly"}
+gateway/tests/gateway/engine-outbox.test.ts: ${tool ? "tool-backed" : "pure chat"} engine outbox resumes the frozen reply after budget exhaustion and process restart
+gateway/tests/gateway/engine-outbox.test.ts: pending engine reply fails safely when engine is disabled, without Controller fallback or new sends
+gateway/tests/gateway/engine-outbox.test.ts: ${fault} failure after final receipt is recovered without repeating model or WeChat send
+gateway/tests/gateway/engine-outbox.test.ts: accepted empty reply receipt survives journal pruning and restart without retrieval or sends
+gateway/tests/gateway/engine-outbox.test.ts: ${status} engine receipt persists acknowledgement once and never repeats journal I/O after restart
+gateway/tests/gateway/image-delivery.test.ts: poll persists the command before delivery, sends image before completion text and checkpoints the cursor
+gateway/tests/gateway/image-delivery.test.ts: uncertain image is quarantined with evidence and never emits completion text or repeats after restart
+gateway/tests/gateway/image-delivery.test.ts: an uncertain image cannot block a following chat in the same batch
+gateway/tests/gateway/image-delivery.test.ts: text rejection resumes text without redownloading or replaying accepted image
+gateway/tests/gateway/image-delivery.test.ts: expired or unavailable attachments persist failure evidence and cannot block following chats or replay after restart
+gateway/tests/gateway/image-delivery.test.ts: authentication and server failures remain actionable and do not permanently quarantine an attachment
+gateway/tests/gateway/image-delivery.test.ts: an expired second image preserves the first receipt and allows the following chat without completion text or replay
+gateway/tests/gateway/image-delivery.test.ts: permanent image failure remains quarantined after its processed key is evicted and state is reloaded
+gateway/tests/gateway/image-delivery.test.ts: a peer refresh during an ordinary image upload defers safely without stopping inbound processing or rerunning the model
+gateway/tests/gateway/inbound-media.test.ts: an image alone is stored as chat context without any WeChat reply
+gateway/tests/gateway/inbound-media.test.ts: a failed image download falls back to the fixed notice
+gateway/tests/gateway/inbound-media.test.ts: text with an image is forwarded after storing it, and a failed image is flagged to the leader
+gateway/tests/gateway/inbound-steering.test.ts: polling deduplicates repeated root and supplemental messages while steering a running query
+gateway/tests/gateway/latency.test.ts: every message in a batch is recorded before processing and later messages expose batch waiting
+gateway/tests/gateway/latency.test.ts: poison-chat telemetry does not block valid messages or cursor progress
+gateway/tests/gateway/latency.test.ts: a failed Controller request retains the cursor and does not falsely record acceptance
+gateway/tests/gateway/latency.test.ts: a throwing telemetry sink preserves real Gateway success and failure semantics
+gateway/tests/gateway/latency.test.ts: Controller HTTP retries keep message trace and a valid attempt header without logging request data
+gateway/tests/gateway/leader-engine.test.ts: Codex reply engine ${allowed ? 'handles duplicate page messages once' : 'skips duplicate unauthorized messages'}
+gateway/tests/gateway/leader-images.test.ts: an image sent right after its question joins the running leader turn as pixels
+gateway/tests/gateway/leader-images.test.ts: an image sent before its question is staged for the leader turn that answers it
+gateway/tests/gateway/notification-client.test.ts: notification client uses bounded pending POST, exact Bearer paths and strict claim/receipt/get
+gateway/tests/gateway/notification-client.test.ts: strict notification parser rejects ${name}
+gateway/tests/gateway/notification-client.test.ts: notification parser allows expired pending projection, uncertain claim and exact UTF8 budget
+gateway/tests/gateway/notification-client.test.ts: notification parser accepts exact new and legacy claim windows, including expiry clipping
+gateway/tests/gateway/notification-client.test.ts: progress notifications preserve independent identity, strict metadata and source type
+gateway/tests/gateway/notification-client.test.ts: terminal parts preserve source identity and strict ordered metadata while legacy JSON stays unchanged
+gateway/tests/gateway/notification-client.test.ts: multipart terminal text preserves whitespace continuations without permitting empty bodies
+gateway/tests/gateway/notification-client.test.ts: notification client accepts one large UTF8 body and JSON escaped text beyond the old response limit
+gateway/tests/gateway/notification-client.test.ts: notification response budget accepts a fully escaped exact 8MiB terminal part
+gateway/tests/gateway/notification-client.test.ts: notification parser allows only source-specific kinds and preserves generic source
+gateway/tests/gateway/notification-client.test.ts: notification identity binds source type and ID even for shared kind and text
+gateway/tests/gateway/notification-client.test.ts: claim never retries ${mode}
+gateway/tests/gateway/notification-client.test.ts: receipt retries only identical evidence with a finite budget and no claim or send
+gateway/tests/gateway/notification-client.test.ts: receipt gives up after three failures and rejects auth without retry
+gateway/tests/gateway/notification-client.test.ts: notification lists reject overfull, duplicate, foreign-chat and malformed projections
+gateway/tests/gateway/notification-client.test.ts: notifications enforce request identity and response byte budgets
+gateway/tests/gateway/notification-client.test.ts: notification request aborts at its deadline, including a late success response
+gateway/tests/gateway/notification-client.test.ts: notification deadlines bound an uncooperative fetch and an unfinished response stream
+gateway/tests/gateway/notification-client.test.ts: invalid notification JSON does not echo the untrusted body and is not retried
+gateway/tests/gateway/notification-client.test.ts: notification request releases ${mode} bodies and abort listeners
+gateway/tests/gateway/notification-client.test.ts: receipt retries release each unsuccessful streaming HTTP response before the next attempt
+gateway/tests/gateway/notification-client.test.ts: successful notification requests also remove deadline listeners
+gateway/tests/gateway/notification-delivery.test.ts: terminal notification is one plain-text send with deterministic evidence ID and no state reset
+gateway/tests/gateway/notification-delivery.test.ts: ${source} result Markdown is sent verbatim
+gateway/tests/gateway/notification-delivery.test.ts: long notification preserves all Markdown and Unicode across bounded chunks
+gateway/tests/gateway/notification-delivery.test.ts: failed Markdown notification is permanently uncertain without another send after restart
+gateway/tests/gateway/notification-delivery.test.ts: goal ${kind} is delivered unchanged to synthetic iLink exactly once
+gateway/tests/gateway/notification-delivery.test.ts: uncertain goal notification remains permanent across gateway restart
+gateway/tests/gateway/notification-delivery.test.ts: claim cannot change ${sourceType} source type with the same ID, kind and text
+gateway/tests/gateway/notification-delivery.test.ts: missing prerequisites, expired budgets and stop perform no list/claim/send
+gateway/tests/gateway/notification-delivery.test.ts: notifications deliver by default without a feature flag
+gateway/tests/gateway/notification-delivery.test.ts: missing-context older records do not block reachable chat notifications
+gateway/tests/gateway/notification-delivery.test.ts: over 128 contexts use per-chat lookups and rotate bounded cycles without starvation
+gateway/tests/gateway/notification-delivery.test.ts: round robin gives each reachable chat one notification before returning to a busy chat
+gateway/tests/gateway/notification-delivery.test.ts: notification delivery is single-flight and limited to one outbox item per cycle
+gateway/tests/gateway/notification-delivery.test.ts: lost claim response resumes the existing unattempted send after restart without reclaiming
+gateway/tests/gateway/notification-delivery.test.ts: post-claim ${mode} prevents sending and retains the appropriate evidence
+gateway/tests/gateway/notification-delivery.test.ts: post-claim exhausted budget defers durably and resumes only after new inbound context
+gateway/tests/gateway/notification-delivery.test.ts: post-claim ${field} mismatch fails closed
+gateway/tests/gateway/notification-delivery.test.ts: an item expired or context lost after listing is never claimed
+gateway/tests/gateway/notification-delivery.test.ts: notification rejects invalid or unrecognized receipts: ${JSON.stringify(response)}
+gateway/tests/gateway/notification-delivery.test.ts: notification accepts supported successful response: ${JSON.stringify(response)}
+gateway/tests/gateway/notification-delivery.test.ts: ordinary replies share the empty-object success contract
+gateway/tests/gateway/notification-delivery.test.ts: network send errors record uncertainty and receipt retry never resends
+gateway/tests/gateway/notification-delivery.test.ts: notification failure diagnostic is sanitized and follows permanent receipt: ${errorType}
+gateway/tests/gateway/notification-delivery.test.ts: notification diagnostic write failure keeps uncertainty permanent and never resends
+gateway/tests/gateway/notification-delivery.test.ts: a short diagnostic write stops the run loop without its stderr error callback or another send
+gateway/tests/gateway/notification-delivery.test.ts: closed real stderr pipe exits CLI with code 2 after uncertainty, without replay on restart
+gateway/tests/gateway/notification-delivery.test.ts: failed notification receipt persistence does not emit a persisted-failure diagnostic or resend
+gateway/tests/gateway/notification-delivery.test.ts: run loop reports a sanitized send failure even without consuming the delivery summary
+gateway/tests/gateway/notification-delivery.test.ts: accepted send with exhausted receipt retries leaves claim queryable, never sends again
+gateway/tests/gateway/notification-delivery.test.ts: ordinary reply recovery failure still delivers pending notifications and preserves the original error
+gateway/tests/gateway/notification-delivery.test.ts: run loop starts notification work alongside inbound polling and isolates notification errors
+gateway/tests/gateway/notification-delivery.test.ts: stop remains terminal when runLoop is called after stopping
+gateway/tests/gateway/notification-delivery.test.ts: notification work does not create a processing phase or hide stale inbound health
+gateway/tests/gateway/notification-delivery.test.ts: notification cleanup does not erase a concurrent inbound polling health phase
+gateway/tests/gateway/notification-delivery.test.ts: stop after the first notification chunk cancels the remaining chunks and records uncertainty
+gateway/tests/gateway/notification-delivery.test.ts: blocked notification work does not prevent inbound polling or replace its health phase
+gateway/tests/gateway/notification-delivery.test.ts: CLI poll-once processes notifications only after a successful inbound cycle
+gateway/tests/gateway/notification-delivery.test.ts: CLI ignores legacy notification environment and check/healthcheck/baseline never list or send
+gateway/tests/gateway/notification-recovery.test.ts: claim intent is durable before dispatch and lost response resumes the same attempt via GET
+gateway/tests/gateway/notification-recovery.test.ts: recovery rejects changed notification ${field}
+gateway/tests/gateway/notification-recovery.test.ts: receipt intent survives restart and retries only the receipt
+gateway/tests/gateway/notification-recovery.test.ts: partial budget exhaustion defers durably and continues frozen chunks after refreshed context
+gateway/tests/gateway/notification-recovery.test.ts: lost defer response recovers matching remote marker without reusing the old attempt
+gateway/tests/gateway/notification-recovery.test.ts: defer marker mismatch fails closed and preserves the durable intent
+gateway/tests/gateway/notification-recovery.test.ts: claimed recovery with exhausted local budget defers without another network send
+gateway/tests/gateway/notification-recovery.test.ts: in-flight uncertainty is sealed before any budget defer can reopen the attempt
+gateway/tests/gateway/notification-recovery.test.ts: expired partial delivery keeps outbox and acknowledged reply evidence
+gateway/tests/gateway/notification-recovery.test.ts: an exhausted account blocks every notification until a real inbound refreshes the shared allowance
+gateway/tests/gateway/notification-recovery.test.ts: chat lookup network failure still gives an independent chat a delivery turn
+gateway/tests/gateway/notification-recovery.test.ts: pending ordinary reply reserves its chat budget against progress notifications
+gateway/tests/gateway/notification-recovery.test.ts: pending ordinary reply does not block a final notification
+gateway/tests/gateway/notification-recovery.test.ts: an existing blocked progress reference does not hide a new final notification
+gateway/tests/gateway/notification-recovery.test.ts: crash before receipt intent preserves in-flight evidence and never defers an ambiguous send
+gateway/tests/gateway/notification-recovery.test.ts: failed durable claim intent prevents the Controller claim request
+gateway/tests/gateway/notification-recovery.test.ts: progress claim recovery yields to a pending ordinary reply through durable defer
+gateway/tests/gateway/notification-recovery.test.ts: claim cancellation before send produces a durable defer without an uncertain receipt
+gateway/tests/gateway/notification-recovery.test.ts: context changes during typing safely defer before any message request
+gateway/tests/gateway/notification-recovery.test.ts: TTL expiry between chunks retains acknowledged partial evidence without fabricating a receipt
+gateway/tests/gateway/notification-recovery.test.ts: complete chunk acknowledgements recover a failed receipt-intent write with exhausted budget${expiredLease ? " and projected uncertainty" : ""}
+gateway/tests/gateway/notification-recovery.test.ts: accepted receipt intent survives TTL expiry and projected uncertainty without another send
+gateway/tests/gateway/notification-recovery.test.ts: a successful final chunk crossing TTL records its real receipt without resending
+gateway/tests/gateway/notification-recovery.test.ts: an unsendable pending reference skips large Controller GET bodies until the budget is refreshed
+gateway/tests/gateway/notification-recovery.test.ts: a stale progress claim conflict cannot starve a final notification in the same chat
+gateway/tests/gateway/notification-recovery.test.ts: a notification with little send time remaining is delivered while typing stays pending
+gateway/tests/gateway/poll.test.ts: pollOnce deduplicates within and across pages while isolating chats${blockedEndpoint ?
+gateway/tests/gateway/poll.test.ts: Poison batch: CHAT_NOT_ALLOWED skips unallowed chat and lets cursor advance for valid chat
+gateway/tests/gateway/poll.test.ts: ambiguous multipart failure is isolated durably while later chats and the cursor advance
+gateway/tests/gateway/progress-delivery.test.ts: notification worker checks for new progress while getupdates remains in flight
+gateway/tests/gateway/progress-delivery.test.ts: three progress events and the final result each trigger typing and preserve original Markdown
+gateway/tests/gateway/progress-delivery.test.ts: terminal outbox parts retain pure whitespace continuations without truncation or summaries
+gateway/tests/gateway/progress-delivery.test.ts: new claim permits a complete multipart notification beyond the ordinary 60 second budget
+gateway/tests/gateway/progress-delivery.test.ts: legacy claim reserves receipt time and records incomplete multipart timeout as uncertain
+gateway/tests/gateway/recovery-latency.test.ts: ${source} frozen reads, sends and receipts share an old-message recovery attempt rather than the triggering inbound
+gateway/tests/gateway/recovery-latency.test.ts: terminal receipt retries each receive an independent trace and never re-read or re-send
+gateway/tests/gateway/recovery-latency.test.ts: ${status} recovery becomes silent after a durable engine acknowledgement, including after restart
+gateway/tests/gateway/recovery-latency.test.ts: ${status} retries after ${failureAt} acknowledgement failure and becomes silent only after persistence
+gateway/tests/gateway/recovery-latency.test.ts: acknowledged terminal audit entries do not block accepted cleanup or pending delivery
+gateway/tests/gateway/recovery-latency.test.ts: failed frozen reads remain pending, retain original error and emit failure on the old message only
+gateway/tests/gateway/reply-fairness.test.ts: fresh nonempty replies yield budget to deferred chunks, including after restart
+gateway/tests/gateway/reply-fairness.test.ts: a failed admission recovery read does not reject the new message or erase its old reply
+gateway/tests/gateway/reply-fairness.test.ts: a failed admission engine acknowledgement admits new work and retries only its receipt
+gateway/tests/gateway/reply-fairness.test.ts: global recovery skips another active chat's ${status} engine item until its query finishes
+gateway/tests/gateway/reply-fairness.test.ts: ${pressure} backpressure recovery keeps the caller's active chat eligible
+gateway/tests/gateway/reply-fairness.test.ts: fresh budget quarantines uncertain old chunks without GET, resend or re-POST
+gateway/tests/gateway/reply-fairness.test.ts: a concurrent unrelated recovery cannot bypass refreshed chat's deferred reply
+gateway/tests/gateway/reply-outbox.test.ts: real local HTTP: budget defers, new inbound refreshes, restart GET resumes frozen chunks without re-POST
+gateway/tests/gateway/reply-outbox.test.ts: unknown legacy context queues reply without creating window or blocking another chat
+gateway/tests/gateway/reply-outbox.test.ts: persistently rejected reply stops after bounded attempts without blocking the chat
+gateway/tests/gateway/reply-outbox.test.ts: a restart after the final recorded refusal expires the reply without another send
+gateway/tests/gateway/reply-unavailable.test.ts: HTTP ${status} expires its reply, unblocks same-chat progress and survives restart with acknowledgements
+gateway/tests/gateway/reply-unavailable.test.ts: unavailable queue head leaves another chat's reply reachable in the next bounded flush
+gateway/tests/gateway/reply-unavailable.test.ts: ${source} uncertain evidence stays quarantined before unavailable lookup
+gateway/tests/gateway/reply-unavailable.test.ts: uncertainty recorded while reply GET is in flight takes priority over permanent unavailability
+gateway/tests/gateway/reply-unavailable.test.ts: ${status} lookup failure remains pending and can recover on the next GET
+gateway/tests/gateway/steered-image.test.ts: steered image downloads use the follow-up identity while final delivery belongs to the root query
+gateway/tests/gateway/unsupported-media.test.ts: image-only inbound gets one fixed notice without a Controller turn
+gateway/tests/gateway/unsupported-media.test.ts: a deferred notice is recovered once after restart and never re-sent for a replay
+gateway/tests/gateway/unsupported-media.test.ts: a notice whose send completed before a crash is not delivered again
+gateway/tests/gateway/unsupported-media.test.ts: unauthorized chats and baseline history never receive the notice
+gateway/tests/gateway/unsupported-media.test.ts: unsupported content arriving during a running turn is not steered and is answered after it
+gateway/tests/results/delivery.test.ts: three text messages are preserved verbatim and never replayed after process restart
+gateway/tests/results/delivery.test.ts: long results send one model summary then complete attachment bytes
+gateway/tests/results/delivery.test.ts: unknown send persists inFlight and restart never retries it
+gateway/tests/results/delivery.test.ts: definitely unsubmitted step resumes after preceding acknowledged text without duplication
+gateway/tests/results/delivery.test.ts: normal replies preempt notifications before claim-side sends
+gateway/tests/results/delivery.test.ts: replies that arrive between result steps interrupt further steps safely
+gateway/tests/results/delivery.test.ts: progress never consumes reserved final three messages
+gateway/tests/results/delivery.test.ts: progress admission comes exclusively from the shared transport policy
+gateway/tests/results/delivery.test.ts: window and quota denial defer without creating ambiguous sends
+gateway/tests/results/delivery.test.ts: concurrent attempts for one immutable delivery share exactly one in-progress operation
+gateway/tests/results/delivery.test.ts: attachment preparation failures preserve an acknowledged summary for later continuation
+gateway/tests/results/delivery.test.ts: immutable result identity changes when content changes
+gateway/tests/results/delivery.test.ts: per-pass selection chooses the newest terminal result per chat
+gateway/tests/results/delivery.test.ts: a genuine context generation change interrupts the remaining result messages
+gateway/tests/results/delivery.test.ts: business and claim deadlines prevent new sends
+gateway/tests/results/dispatcher.test.ts: claim response loss recovers through GET and never makes a second claim or send
+gateway/tests/results/dispatcher.test.ts: accepted receipt response loss never replays a send after restart
+gateway/tests/results/dispatcher.test.ts: defer response loss recognizes exact lastDeferredAttemptId rather than marking unknown
+gateway/tests/results/dispatcher.test.ts: a ${terminal} deferred plan cannot starve later results for the same chat
+gateway/tests/results/dispatcher.test.ts: a matching receipt intent reconciles an expired uncertain plan without another send
+gateway/tests/results/dispatcher.test.ts: a receipt request 404 keeps its intent and never qualifies as a purged GET
+gateway/tests/results/dispatcher.test.ts: unknown transport send writes uncertain receipt and is never automatically replayed
+gateway/tests/results/dispatcher.test.ts: durable subordinate acceptance recovers a crash before receipt intent was written
+gateway/tests/results/dispatcher.test.ts: dispatch cooldown persists across restart and prevents repeated ticks from draining backlog
+gateway/tests/results/dispatcher.test.ts: pending ordinary reply keeps active results queued without claiming
+gateway/tests/results/dispatcher.test.ts: API outbox is private, bounded references only, and isolated by account
+gateway/tests/results/dispatcher.test.ts: a chat with no usable context marks ready results waiting without claiming or sending
+gateway/tests/results/dispatcher.test.ts: one blocked chat never prevents an independent authorized chat from delivering
+gateway/tests/results/dispatcher.test.ts: genuine inbound resume intent survives restart and waits until the ordinary reply finishes
+gateway/tests/results/dispatcher.test.ts: partly accepted results pin shared evidence across capacity eviction and resume with only the file
+gateway/tests/results/gateway-wiring.test.ts: a failed resume checkpoint retries the same admitted generation without renewing its quota
+gateway/tests/results/gateway-wiring.test.ts: an inbox checkpoint failure does not release result resumes before admission
+gateway/tests/results/gateway-wiring.test.ts: result failure still attempts one ${renewal} renewal for another chat and preserves the first error
+gateway/tests/results/gateway-wiring.test.ts: a ready result yields shared quota to another recipient's active inbound reply
+gateway/tests/results/gateway-wiring.test.ts: an expired recipient's pending reply does not block another recipient's ready result
+gateway/tests/results/notification-context-queue.test.ts: queued result notification ${newInbound ? "defers after a real inbound context change" : "sends when its context is unchanged"}
+gateway/tests/results/renewal-priority.test.ts: ${source} pending reply qualifies without Controller interest; reminder wins with ${remaining} sends
+gateway/tests/results/renewal-priority.test.ts: expiry reminder precedes ordinary reply even with ${remaining} sends remaining
+gateway/tests/results/renewal-priority.test.ts: expiry reminder precedes multipart text and unsent suffix resumes across restart and refresh
+gateway/tests/results/renewal-priority.test.ts: legacy unsent renewal checkpoint upgrades without permanently blocking ordinary replies
+gateway/tests/results/renewal-priority.test.ts: queued ordinary callers yield under the shared lock while concurrent notification passes send one reminder
+gateway/tests/results/renewal-priority.test.ts: unknown reminder never repeats or blocks a pending ordinary reply after restart
+gateway/tests/results/renewal-priority.test.ts: an explicitly rejected reminder releases priority once per account window: ${JSON.stringify(response)}
+gateway/tests/results/renewal-priority.test.ts: an ordinary explicitly rejected reply still retries its original checkpoint
+gateway/tests/results/renewal-priority.test.ts: local pending reply still receives reminder when Controller interest lookup is unavailable
+gateway/tests/results/renewal-priority.test.ts: a local ${evidence} reply awaiting bookkeeping does not qualify for a reminder
+gateway/tests/results/renewal-priority.test.ts: a local stale ${terminal} result reference does not qualify without Controller interest
+gateway/tests/results/renewal.test.ts: reminder becomes eligible exactly one hour before expiry and never after the window
+gateway/tests/results/renewal.test.ts: uninterested chats, short windows and inadmissible chats never get a reminder
+gateway/tests/results/renewal.test.ts: expiry reminder qualifies with any positive effective budget, regardless of the raw persisted counter
+gateway/tests/results/renewal.test.ts: shared persisted acknowledgement, unknown and terminal failures suppress all repeat sends
+gateway/tests/results/renewal.test.ts: a genuine new refreshedAt produces one new stable reminder after its own lead time
+gateway/tests/results/renewal.test.ts: queued send aborts on context, account, window or effective budget changes
+gateway/tests/results/renewal.test.ts: unknown network failure remains visible and never resubmits its persisted in-flight item
+gateway/tests/results/renewal.test.ts: single notifier does not enqueue concurrent duplicate reminders
+gateway/tests/results/renewal.test.ts: priority admission yields without deadlocking and terminal evidence releases ordinary sends
+gateway/tests/results/result-client.test.ts: materialization authenticates only configured Controller route and checks claim identity
+gateway/tests/results/result-client.test.ts: public signed artifact URLs map to Controller transport without sending bearer
+gateway/tests/results/result-client.test.ts: untrusted artifact destination is rejected before network (${String(mutate)})
+gateway/tests/results/result-client.test.ts: a cross-artifact URL cannot fetch a different file under the same origin
+gateway/tests/results/result-client.test.ts: download verifies immutable size, SHA256, MIME, and application file limit
+gateway/tests/results/result-client.test.ts: chunked download stops at expected bytes even without Content-Length
+gateway/tests/results/result-client.test.ts: request byte budgets and deadlines also constrain fetch implementations ignoring abort
+gateway/tests/results/result-client.test.ts: parent cancellation interrupts download body reads and releases its reader lock
+gateway/tests/results/result-client.test.ts: pending list refuses results belonging to another chat
+gateway/tests/results/result-client.test.ts: strict DTO rejects unsafe filenames, cross-chat artifacts and oversized text
+gateway/tests/results/result-client.test.ts: notification interest includes all allowed chats while validating the interested subset
+gateway/tests/results/result-client.test.ts: artifact transfer scales independently while control requests retain their 15s deadline
+gateway/tests/results/result-client.test.ts: short multi-chunk artifact never exposes unfilled preallocated bytes
+gateway/tests/runtime/account-context.test.ts: concurrent sends to different recipients share exactly ten charges and preserve each recipient token
+gateway/tests/runtime/account-context.test.ts: a genuine inbound refreshes the shared allowance, but another recipient's older input or replay cannot refill it
+gateway/tests/runtime/account-context.test.ts: refreshing the account budget cannot revive an expired recipient token window
+gateway/tests/runtime/account-context.test.ts: one account reminder across interested recipients survives restart and uses the remaining final send
+gateway/tests/runtime/account-context.test.ts: single legacy ledger retains spent quota and clock skew through migration and another restart
+gateway/tests/runtime/account-context.test.ts: multiple legacy ledgers combine known spending conservatively without multiplying account grants
+gateway/tests/runtime/account-context.test.ts: legacy migration honors a lower configured allowance and never tops up a higher configured allowance
+gateway/tests/runtime/account-context.test.ts: text submission cannot yield between its quota charge and starting the network request
+gateway/tests/runtime/account-context.test.ts: a peer inbound during image upload defers the image without charging the new account generation
+gateway/tests/runtime/account-context.test.ts: an interested recipient nearing 23 hours is reminded even after another recipient refreshes the account
+gateway/tests/runtime/checkpoint-durability.test.ts: checkpoint synchronizes file data before rename and the containing directory before returning
+gateway/tests/runtime/checkpoint-durability.test.ts: first checkpoint also synchronizes the entries of newly created parent directories
+gateway/tests/runtime/checkpoint-durability.test.ts: checkpoint retries synchronize ancestors after ${failureLevel} directory EIO
+gateway/tests/runtime/checkpoint-durability.test.ts: checkpoint process restart cannot forget ancestors created before a failed synchronization
+gateway/tests/runtime/checkpoint-durability.test.ts: checkpoint fails closed on directory ${stage} ${code} and releases opened descriptors
+gateway/tests/runtime/checkpoint-durability.test.ts: directory synchronization failure in reply intent prevents the transport send
+gateway/tests/runtime/context-policy.test.ts: context policy defaults are conservative and configuration accepts the resource limits
+gateway/tests/runtime/context-policy.test.ts: context policy rejects invalid numbers and settings above resource limits
+gateway/tests/runtime/context-policy.test.ts: unknown and expired windows defer both kinds of sends including the exact expiry boundary
+gateway/tests/runtime/context-policy.test.ts: independent queries share the context budget while preserving final sends
+gateway/tests/runtime/context-policy.test.ts: progress preserves three sends for final replies even after earlier final sends
+gateway/tests/runtime/context-policy.test.ts: consumeSend returns a new state and a deferred attempt preserves the original
+gateway/tests/runtime/context-policy.test.ts: invalid persisted counters fail closed without spending a send
+gateway/tests/runtime/context-policy.test.ts: local send deferrals carry a stable context-changed reason for callers
+gateway/tests/runtime/context-policy.test.ts: tightening a budget counts prior charges and never restores spent sends
+gateway/tests/runtime/context-policy.test.ts: raising a budget preserves a previous window's remaining allowance
+gateway/tests/runtime/context-policy.test.ts: invalid persisted initial grants fail closed without producing invalid remaining counters
+gateway/tests/runtime/delivery-state.test.ts: send charges persist across restart and a failed charge rolls back both counters
+gateway/tests/runtime/delivery-state.test.ts: restarting with a lower budget accounts for all sends spent under the old policy
+gateway/tests/runtime/delivery-state.test.ts: restarting with a higher budget cannot refill an old window but a new inbound grants the new budget
+gateway/tests/runtime/delivery-state.test.ts: invalid persisted initial grants are rejected before restart can authorize sends
+gateway/tests/runtime/delivery-state.test.ts: failed inbound checkpoints roll back budgets, tokens and timestamp watermarks
+gateway/tests/runtime/delivery-state.test.ts: changing the account identity or token clears all delivery state
+gateway/tests/runtime/delivery-state.test.ts: only timestamped new inbound messages refresh budget across restart
+gateway/tests/runtime/delivery-state.test.ts: missing, invalid, future and older inbound timestamps never refresh quota or block business
+gateway/tests/runtime/delivery-state.test.ts: per-recipient timestamp watermarks cannot refill the account budget with an older message in another chat
+gateway/tests/runtime/delivery-state.test.ts: small server clock skew grants a usable window while preserving its original timestamp for replay detection
+gateway/tests/runtime/delivery-state.test.ts: clock rollback and later replay never refill or extend a window granted from a skewed timestamp
+gateway/tests/runtime/delivery-state.test.ts: baseline inbound checkpoints tokens and watermarks without granting quota or accepting stale tokens
+gateway/tests/runtime/delivery-state.test.ts: watermark-only inbound preserves an existing budget and token across restart
+gateway/tests/runtime/delivery-state.test.ts: a saturated timestamp key set withholds refresh without blocking messages and advances on newer time
+gateway/tests/runtime/delivery-state.test.ts: outbox capacity retains existing references and permits idempotent retry at capacity
+gateway/tests/runtime/delivery-state.test.ts: outbox insertion, update and removal roll back if a durable checkpoint fails
+gateway/tests/runtime/delivery-state.test.ts: the durable outbox stores delivery references and receipts without message bodies
+gateway/tests/runtime/delivery-state.test.ts: legacy multipart flags are retired without changing durable delivery references
+gateway/tests/runtime/delivery-state.test.ts: outbox source survives restart and legacy references default to controller
+gateway/tests/runtime/delivery-state.test.ts: outbox rejects unknown source values before storing or restoring them
+gateway/tests/runtime/delivery-state.test.ts: the same outbox identity cannot switch reply stores through put or update
+gateway/tests/runtime/delivery-state.test.ts: engine acknowledgement marker persists and legacy references remain unacknowledged
+gateway/tests/runtime/delivery-state.test.ts: engine acknowledgement rejects malformed markers and acknowledgement of non-engine sources
+gateway/tests/runtime/delivery-state.test.ts: a failed engine acknowledgement checkpoint rolls back the in-memory marker
+gateway/tests/runtime/health.test.ts: Health tracker and checkGatewayHealth lifecycle and error sanitization
+gateway/tests/runtime/health.test.ts: Log error classification and output redaction verification
+gateway/tests/runtime/inbound-runner.test.ts: a failed head message blocks later messages in the same chat until retry succeeds
+gateway/tests/runtime/inbox.test.ts: inbound messages recover exact text, metadata and poll insertion order across restarts
+gateway/tests/runtime/inbox.test.ts: separate gateway inbox instances merge durable writes instead of overwriting each other
+gateway/tests/runtime/inbox.test.ts: retained messages accept exact retries at capacity and reject changed content or metadata
+gateway/tests/runtime/inbox.test.ts: inbox callers cannot mutate persisted input through put or list object references
+gateway/tests/runtime/inbox.test.ts: failed checkpoints keep memory and insertion order unchanged and clean up temporary files
+gateway/tests/runtime/inbox.test.ts: a changed account resets pending messages durably before allowing any access
+gateway/tests/runtime/inbox.test.ts: failed account reset does not expose old messages or switch the in-memory account
+gateway/tests/runtime/inbox.test.ts: missing account identity prevents old account access until the same identity returns
+gateway/tests/runtime/inbox.test.ts: input validation rejects malformed messages without modifying durable state
+gateway/tests/runtime/inbox.test.ts: disk corruption is never mistaken for an empty inbox, including another account's state
+gateway/tests/runtime/inbox.test.ts: disk size is checked before reading and only ENOENT means an empty inbox
+gateway/tests/runtime/inbox.test.ts: combined message body size causes backpressure before the durable file exceeds its budget
+gateway/tests/runtime/inbox.test.ts: invalid capacities and reduced restart capacity reject overflow without rewriting messages
+gateway/tests/runtime/inbox.test.ts: unsupported content is durable with empty text only when its kinds are present
+gateway/tests/runtime/inbox.test.ts: a lock left with this process PID by a previous instance is reclaimed without waiting
+gateway/tests/runtime/inbox.test.ts: an expired, partially written lock is still reclaimed
+gateway/tests/runtime/inbox.test.ts: media references survive restart, alone or with text, and malformed references are refused
+gateway/tests/runtime/lifecycle.test.ts: processing remains healthy through a 35s poll plus 90s model, then expires without fake successes
+gateway/tests/runtime/lifecycle.test.ts: stop completes one message and durable key, preserves cursor, then restart deduplicates and resumes
+gateway/tests/runtime/lifecycle.test.ts: stop during getupdates starts no Controller message and does not checkpoint an unprocessed page
+gateway/tests/runtime/lifecycle.test.ts: multipart sending has a finite 60s budget and persists only completed chunks
+gateway/tests/runtime/notification-diagnostics.test.ts: cause facts are bounded, handle aggregate/cyclic causes and never serialize arbitrary values
+gateway/tests/runtime/notification-diagnostics.test.ts: request failure preserves error identity and reveals only fixed request fields and cause codes
+gateway/tests/runtime/notification-diagnostics.test.ts: HTTP200 with a failing response body records body phase, never recovery
+gateway/tests/runtime/notification-diagnostics.test.ts: receipt retry budget remains three and auth remains one
+gateway/tests/runtime/notification-diagnostics.test.ts: timeout facts differ from a caller abort and response byte-budget rejection
+gateway/tests/runtime/notification-diagnostics.test.ts: successful skipped cycles, another recipient, and partial cycles cannot claim request recovery
+gateway/tests/runtime/notification-diagnostics.test.ts: separate outstanding requests must all succeed before a complete cycle emits recovery
+gateway/tests/runtime/notification-diagnostics.test.ts: all failures from one cycle survive firstError propagation and skipped work
+gateway/tests/runtime/notification-diagnostics.test.ts: schema and identity validation stay in their request; skipped cycles cannot recover them or retry a receipt
+gateway/tests/runtime/notification-diagnostics.test.ts: an uninstrumented local-stage failure is left unproven by a skipped cycle
+gateway/tests/runtime/notification-diagnostics.test.ts: reply schema rejection after JSON decoding is validation without extra requests or false recovery
+gateway/tests/runtime/notification-diagnostics.test.ts: complete download length, hash and image MIME rejection are validation without new retries
+gateway/tests/runtime/notification-diagnostics.test.ts: readiness is logged once; shutdown aborts and fatal diagnostic errors are not retried diagnostics
+gateway/tests/runtime/notification-diagnostics.test.ts: actual independent Gateway loop retries and reports recovery while inbound health remains separate
+gateway/tests/runtime/notification-recovery-store.test.ts: unresolved evidence survives a restart and recovers only after matching post-restart success
+gateway/tests/runtime/notification-recovery-store.test.ts: expired evidence is dropped with a log and does not block readiness
+gateway/tests/runtime/notification-recovery-store.test.ts: corrupt or unsafe state is logged and replaced by fresh diagnostics without failing cycles
+gateway/tests/runtime/notification-recovery-store.test.ts: overflow is bounded, persisted and keeps recovery unproven after restart
+gateway/tests/runtime/notification-recovery-store.test.ts: steady successful cycles never write; only evidence changes do
+gateway/tests/runtime/notification-recovery-store.test.ts: a failing store never changes cycle results
+gateway/tests/runtime/state.test.ts: failed processed checkpoint preserves reply progress in memory and on disk
+gateway/tests/runtime/state.test.ts: StateManager loads account readonly and writes atomic state with 0600 permissions
+gateway/tests/runtime/state.test.ts: StateManager fails closed on corrupted credentials or corrupted state file without leaking secrets
+gateway/tests/runtime/state.test.ts: reply intent and acknowledgment roll back safely when durable checkpoints fail
+gateway/tests/runtime/state.test.ts: renewal delivery can replace only an unsent legacy checkpoint
+gateway/tests/runtime/state.test.ts: login replacement clears durable reply delivery intents
+gateway/tests/runtime/state.test.ts: reply state capacity only evicts completed deliveries and keeps uncertain intents
+gateway/tests/runtime/state.test.ts: unknown reply quarantine preserves evidence and fails closed if its checkpoint cannot persist
+gateway/tests/runtime/state.test.ts: permanent image failure persists, blocks replay and rolls back failed checkpoints
+gateway/tests/runtime/state.test.ts: corrupt permanent failure state fails closed
+gateway/tests/runtime/state.test.ts: active external delivery evidence is retained until its owner releases it
+gateway/tests/runtime/state.test.ts: reported remaining budget honors a lowered policy and expired window
+gateway/tests/runtime/state.test.ts: renewal rejection is one durable transition that blocks replay and rolls back failed checkpoints
+gateway/tests/runtime/state.test.ts: invalid renewal rejection markers fail closed without changing attachment failure compatibility
+gateway/tests/runtime/telemetry.test.ts: message identity remains stable across attempts without logging chat or message contents
+gateway/tests/runtime/telemetry.test.ts: telemetry drops non-allowlisted secrets and invalid numeric values
+gateway/tests/runtime/telemetry.test.ts: async trace contexts remain separate and restore the caller context
+gateway/tests/runtime/telemetry.test.ts: spans pair success and failure without swallowing the original error
+gateway/tests/runtime/telemetry.test.ts: a throwing logger cannot turn a successful action into failure or replace an action failure
+gateway/tests/runtime/telemetry.test.ts: failed event and diagnostic sinks cannot interrupt actions or replace their original failures
+gateway/tests/runtime/telemetry.test.ts: calling telemetry without a context produces no event
+gateway/tests/runtime/telemetry.test.ts: default telemetry preserves stdout JSON${closedStderr ? " with stderr closed" : " and writes JSON events to stderr"}
+gateway/tests/runtime/transfer-budget.test.ts: local transfer allowance scales with trusted byte size and remains bounded
+gateway/tests/wechat/cdn-download.test.ts: AES-128-ECB decryption matches the published vector with PKCS7 padding
+gateway/tests/wechat/cdn-download.test.ts: AES keys accept image hex, base64 raw bytes and base64 hex text
+gateway/tests/wechat/cdn-download.test.ts: image and file items become bounded CDN references
+gateway/tests/wechat/cdn-download.test.ts: download URLs stay on the WeChat CDN
+gateway/tests/wechat/cdn-download.test.ts: an encrypted image downloads, decrypts and is sniffed with its hash
+gateway/tests/wechat/cdn-download.test.ts: files keep a safe display name and extension MIME
+gateway/tests/wechat/cdn-download.test.ts: size caps reject declared and streamed oversize bodies
+gateway/tests/wechat/cdn-download.test.ts: non-image bytes, HTTP errors and network failures are download errors
+gateway/tests/wechat/file-client.test.ts: client authorizes FILE upload and confirms its type=4 send against the shared durable ledger
+gateway/tests/wechat/file-client.test.ts: file upload failure and local size or integrity rejection never consume chat quota
+gateway/tests/wechat/file-client.test.ts: file response loss persists unknown outcome before restart and forbids every replay
+gateway/tests/wechat/file-client.test.ts: explicit file rejection clears uncertainty and retry preserves deterministic client ID
+gateway/tests/wechat/file-client.test.ts: file and ordinary text sends use one chat lock and cannot overspend the final shared send
+gateway/tests/wechat/file-client.test.ts: admission guard is checked before consuming the last non-reserved file send
+gateway/tests/wechat/file-client.test.ts: file and text cannot overlap sendmessage requests for the same chat
+gateway/tests/wechat/file-client.test.ts: new context or renewed window during CDN upload cancels the old file before final submission
+gateway/tests/wechat/file-client.test.ts: shared admission policy can yield a file after upload without consuming quota or creating uncertainty
+gateway/tests/wechat/file-delivery.test.ts: file final send consumes quota after upload and persists acknowledgement before returning
+gateway/tests/wechat/file-delivery.test.ts: unknown final outcome survives restart and refuses every upload or send replay
+gateway/tests/wechat/file-delivery.test.ts: explicit rejection is retryable with the same message identity
+gateway/tests/wechat/file-delivery.test.ts: upload failure, local budget rejection and context changes never leave unknown delivery
+gateway/tests/wechat/file-delivery.test.ts: concurrent same-key file requests upload independently but submit only once under the shared chat lock
+gateway/tests/wechat/file-delivery.test.ts: file reply overall deadline bounds uploads and unknown sends that ignore cancellation
+gateway/tests/wechat/file-delivery.test.ts: changed metadata cannot reuse a committed delivery identity
+gateway/tests/wechat/file-upload.test.ts: file upload uses FILE authorization, exact AES bytes and plaintext string length
+gateway/tests/wechat/file-upload.test.ts: integrity and local size checks reject before authorizing any upload
+gateway/tests/wechat/file-upload.test.ts: local product limit is configurable and inclusive
+gateway/tests/wechat/file-upload.test.ts: upload-only retries preserve ciphertext, do not reauthorize and never send a message
+gateway/tests/wechat/file-upload.test.ts: authorization rejection and untrusted CDN targets never upload
+gateway/tests/wechat/file-upload.test.ts: cancelled or timed out uploads finish without sending messages
+gateway/tests/wechat/file-upload.test.ts: file transfer receives a size allowance while upload authorization stays bounded
+gateway/tests/wechat/file-upload.test.ts: authorization cannot inherit the longer file transfer deadline
+gateway/tests/wechat/file-upload.test.ts: parent cancellation interrupts an extended file transfer before any send
+gateway/tests/wechat/ilink-url.test.ts: iLink rejects unsafe account and explicit URLs before any credential-bearing request
+gateway/tests/wechat/ilink-url.test.ts: iLink preserves HTTPS regional/path endpoints and configured override, and requests redirect rejection
+gateway/tests/wechat/image-client.test.ts: shared admission policy checks every image and yields a 3 -> 2 batch without an unknown send
+gateway/tests/wechat/image-client.test.ts: image transport types, uploads encrypted bytes and confirms the final WeChat receipt
+gateway/tests/wechat/image-client.test.ts: image upload and delivery complete while ${endpoint} remains unresolved
+gateway/tests/wechat/image-client.test.ts: CDN acceptance followed by unknown WeChat receipt persists uncertainty and forbids all replay
+gateway/tests/wechat/image-client.test.ts: upload failure leaves a safely resumable image intent without claiming WeChat acceptance
+gateway/tests/wechat/image-client.test.ts: image send timeout is bounded even if its transport ignores abort
+gateway/tests/wechat/image-client.test.ts: a canceled image queue waiter cannot let a later text send bypass an active image upload
+gateway/tests/wechat/image-client.test.ts: account or context changes during image download prevent upload and sending
+gateway/tests/wechat/inbound-content.test.ts: voice speech-to-text becomes the message text
+gateway/tests/wechat/inbound-content.test.ts: quoted text or voice is prefixed, delimited and truncated to the named limit
+gateway/tests/wechat/inbound-content.test.ts: messages without usable text keep typed unsupported kinds
+gateway/tests/wechat/inbound-content.test.ts: mixed text and media forwards the text only
+gateway/tests/wechat/inbound-content.test.ts: pollBatch keeps voice, quoted and image-only messages with stable identities
+gateway/tests/wechat/inbound-identity.test.ts: server ${encoding} ID deduplicates a moved replay after restart and stays isolated by chat
+gateway/tests/wechat/inbound-identity.test.ts: old processed-message checkpoints retain client identities when a server ID is now present
+gateway/tests/wechat/inbound-identity.test.ts: messages without stable IDs preserve distinct commands and deduplicate only the same page position
+gateway/tests/wechat/markdown.test.ts: default reply chunks use a 3800 UTF-16-unit budget and preserve full source
+gateway/tests/wechat/markdown.test.ts: markdownToWeChat strips headers, bullets, and converts links with layout
+gateway/tests/wechat/markdown.test.ts: markdownToWeChat keeps citation-looking text while rendering Markdown and URLs
+gateway/tests/wechat/markdown.test.ts: legacy citation reconstruction only removes ordinary tokens
+gateway/tests/wechat/markdown.test.ts: preserves technical identifiers and inline code
+gateway/tests/wechat/markdown.test.ts: phone session summary separates numbered sessions and formerly glued headings
+gateway/tests/wechat/markdown.test.ts: emphasis handles word-adjacent stars and multiline content without leaking delimiters
+gateway/tests/wechat/markdown.test.ts: formatting keeps URL tokens, paths, arithmetic and opaque code contents
+gateway/tests/wechat/markdown.test.ts: display formatting preserves the complete long response when given the full-source budget
+gateway/tests/wechat/markdown.test.ts: emphasis spans the complete three-message result and preserves multiline closing whitespace
+gateway/tests/wechat/markdown.test.ts: large unmatched emphasis finishes within a bounded worker instead of rescanning every suffix
+gateway/tests/wechat/markdown.test.ts: preserves fenced code block contents without backticks
+gateway/tests/wechat/markdown.test.ts: code at display boundaries retains its indentation, trailing whitespace and blank lines
+gateway/tests/wechat/markdown.test.ts: inline code matches equal backtick runs and preserves shorter and longer runs inside
+gateway/tests/wechat/markdown.test.ts: backtick and tilde code fences protect contents using the opening run and indentation
+gateway/tests/wechat/markdown.test.ts: surrounding prose still formats when an unmatched inline delimiter precedes a code fence
+gateway/tests/wechat/markdown.test.ts: preserves link destination with special characters
+gateway/tests/wechat/markdown.test.ts: link scanning preserves nested labels, image labels, malformed destinations and code precedence
+gateway/tests/wechat/markdown.test.ts: large unmatched labels and malformed destinations finish without retrying every opener
+gateway/tests/wechat/markdown.test.ts: adjacent valid URL and path links avoid eagerly consuming each remaining destination suffix
+gateway/tests/wechat/markdown.test.ts: preserves one-time login credentials in bare URLs exactly
+gateway/tests/wechat/markdown.test.ts: truncation notice respects maxChars limit
+gateway/tests/wechat/markdown.test.ts: truncation never splits emoji surrogate pairs at any budget boundary
+gateway/tests/wechat/markdown.test.ts: rejects non-integer and non-finite message budgets
+gateway/tests/wechat/markdown.test.ts: multipart replies preserve all emoji without splitting surrogate pairs
+gateway/tests/wechat/markdown.test.ts: multipart replies preserve code indentation, blank lines and spaces exactly
+gateway/tests/wechat/media-delivery.test.ts: accepted images survive restart without downloading or uploading again
+gateway/tests/wechat/media-delivery.test.ts: ambiguous image send persists in-flight before network and refuses replay after restart
+gateway/tests/wechat/media-delivery.test.ts: explicit image rejection resumes with deterministic client ID but never repeats acknowledged images
+gateway/tests/wechat/media-delivery.test.ts: download and upload failures never create a pending send intent
+gateway/tests/wechat/media-delivery.test.ts: persisted digest includes immutable image hash and metadata rejects unsafe descriptors
+gateway/tests/wechat/media-delivery.test.ts: ignored cancellation is bounded before upload and during uncertain send
+gateway/tests/wechat/media-upload.test.ts: image upload encrypts captured Buffer and constructs the exact protocol fields
+gateway/tests/wechat/media-upload.test.ts: full upload URL takes precedence and arbitrary destinations are rejected before fetch
+gateway/tests/wechat/media-upload.test.ts: upload validates all supported signatures and caps bytes before any network call
+gateway/tests/wechat/media-upload.test.ts: server failures retry only upload and require HTTP 200 with a download header
+gateway/tests/wechat/media-upload.test.ts: upload deadline bounds dependencies that ignore AbortSignal without leaking request errors
+gateway/tests/wechat/poll-budget.test.ts: server long-poll hints update only the next HTTP timeout and include network margin
+gateway/tests/wechat/poll-budget.test.ts: invalid and unbounded server hints keep the last usable poll timeout
+gateway/tests/wechat/poll-budget.test.ts: expired-account ${codeField}=-14 never clears the cursor or retries
+gateway/tests/wechat/poll-budget.test.ts: poll carries timestamps without treating malformed values as fresh context
+gateway/tests/wechat/poll-budget.test.ts: health accepts the maximum hinted poll plus network and checkpoint margins
+gateway/tests/wechat/poll-budget.test.ts: empty HTTP 200 send body remains explicitly unknown
+gateway/tests/wechat/poll-budget.test.ts: inbound identity preserves client IDs and distinguishes adjacent lossless uint64 server IDs
+gateway/tests/wechat/poll-budget.test.ts: server-only inbound replay across cursor, index and restart never forwards or replenishes budget twice
+gateway/tests/wechat/reply-delivery.test.ts: default delivery formats the complete body and preserves over-budget code and emoji
+gateway/tests/wechat/reply-delivery.test.ts: transport renders Markdown before splitting and resumes the same display after restart
+gateway/tests/wechat/reply-delivery.test.ts: explicitly rejected chunk resumes after restart without replaying acknowledged chunks
+gateway/tests/wechat/reply-delivery.test.ts: ambiguous network outcome persists pending intent and forbids replay after restart
+gateway/tests/wechat/reply-delivery.test.ts: unconfirmed receipt forbids replay rather than treating unknown shape as rejection
+gateway/tests/wechat/reply-delivery.test.ts: zero-byte HTTP send response persists uncertainty and forbids replay after restart
+gateway/tests/wechat/reply-delivery.test.ts: JSON receipt ${JSON.stringify(response)} accepts delivery and prevents replay after restart
+gateway/tests/wechat/reply-delivery.test.ts: confirmed send followed by failed checkpoint remains uncertain in memory and on disk
+gateway/tests/wechat/reply-delivery.test.ts: changed reply body, recipient or chunk budget fails closed
+gateway/tests/wechat/reply-delivery.test.ts: typing failure leaves formatted body delivery available
+gateway/tests/wechat/reply-delivery.test.ts: formatted body delivery completes while ${endpoint} remains unresolved
+gateway/tests/wechat/reply-delivery.test.ts: upgrading a partially acknowledged raw Markdown plan preserves its original boundaries
+gateway/tests/wechat/reply-delivery.test.ts: frozen result fragments remain verbatim and occupy exactly their planned message
+gateway/tests/wechat/reply-delivery.test.ts: an unknown old Markdown send remains quarantined through the renderer upgrade
+gateway/tests/wechat/reply-delivery.test.ts: an old formatted plan with citation-looking text resumes its frozen chunks unchanged
+gateway/tests/wechat/reply-delivery.test.ts: an old sanitized formatted plan restores ordinary citations while protecting code and links
+gateway/tests/wechat/reply-delivery.test.ts: a legacy verbatim plan resumes its sanitized chunks without changing new deliveries
+gateway/tests/wechat/reply-delivery.test.ts: multipart timeout bounds an uncooperative send and persists its unknown outcome
+gateway/tests/wechat/reply-delivery.test.ts: concurrent logical replies serialize individual sends while preserving both contents
+gateway/tests/wechat/reply-queue.test.ts: queued text ${cancellation} sends no HTTP request and remains retryable after restart
+gateway/tests/wechat/reply-queue.test.ts: a continuation invalidated while queued creates no send intent and can resume
+gateway/tests/wechat/reply-queue.test.ts: canceling after HTTP submission preserves uncertainty and forbids replay after restart
+gateway/tests/wechat/send-receipt-cli.test.ts: CLI diagnostics exclude only validated telemetry and retain unrelated JSON and plain errors
+gateway/tests/wechat/send-receipt-cli.test.ts: real CLI accepts ${JSON.stringify(sendBody)} and persists inbound/result dedup across restart
+gateway/tests/wechat/send-receipt-cli.test.ts: real CLI records ${failure.errorType} as ${rejected ? "waiting for user" : "permanent uncertainty"} without diagnostic leaks
+gateway/tests/wechat/send-receipt-cli.test.ts: real CLI classifies Controller ${endpoint} HTTP ${status} separately from WeChat
+gateway/tests/wechat/send-receipt.test.ts: send receipt rejects ${JSON.stringify(response)} without exposing response
+gateway/tests/wechat/send-receipt.test.ts: ordinary and notification replies use the same success contract: ${JSON.stringify(response)}
+gateway/tests/wechat/send-receipt.test.ts: valid JSON objects may omit a return code and 64-bit string IDs remain lossless
+gateway/tests/wechat/send-receipt.test.ts: numeric message IDs require a nonnegative safe integer even with an explicit success code
+gateway/tests/wechat/send-receipt.test.ts: wire parser preserves 64-bit identifiers and never rewrites numeric-looking message bodies
+gateway/tests/wechat/send-receipt.test.ts: pre-existing uncertain notification is unchanged when the provider now returns an accepted shape
+gateway/tests/wechat/send-receipt.test.ts: HTTP ${status} is attributed to the service that returned it
+gateway/tests/wechat/typing.test.ts: typing obtains config then sends a signal with the expected protocol
+gateway/tests/wechat/typing.test.ts: tickets are reused for start and stop and isolated by user
+gateway/tests/wechat/typing.test.ts: overlapping typing during ${endpoint} is coalesced and later signals can refresh
+gateway/tests/wechat/typing.test.ts: changing accounts bypasses an old in-flight ${endpoint} and preserves the new ticket
+gateway/tests/wechat/typing.test.ts: ticket expires at 24 hours without refreshing its lifetime on reuse
+gateway/tests/wechat/typing.test.ts: changing either fingerprint or token clears all cached users
+gateway/tests/wechat/typing.test.ts: account changes during config cannot publish an old account ticket
+gateway/tests/wechat/typing.test.ts: invalid config ${Object.keys(config).join(",")} is not cached and backs off
+gateway/tests/wechat/typing.test.ts: rejected send receipt ${JSON.stringify(receipt)} invalidates its ticket
+gateway/tests/wechat/typing.test.ts: transport exceptions and sensitive receipts return false without diagnostics
+gateway/tests/wechat/typing.test.ts: missing account or context performs no requests
+gateway/tests/wechat/typing.test.ts: overall timeout bounds an abort-ignoring ${blockedEndpoint} and discards late completion
+gateway/tests/wechat/typing.test.ts: timeout covers the combined config and send budget
+gateway/tests/wechat/typing.test.ts: a late rejection after timeout cannot invalidate a recovered ticket
+gateway/tests/wechat/typing.test.ts: custom budgets cannot exceed 1000 ms
+gateway/tests/wechat/typing.test.ts: cache evicts the least recently used user beyond 1000 entries
