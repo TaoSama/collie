@@ -353,7 +353,7 @@ func (h *Herdr) call(ctx context.Context, method string, params any) (json.RawMe
 	if err != nil {
 		return raw, err
 	}
-	if method == "pane.send_keys" || method == "pane.send_text" {
+	if method == herdrPaneSendKeys || method == herdrPaneSendText {
 		if id, _ := p["pane_id"].(string); id != "" {
 			h.mu.Lock()
 			delete(h.asks, id)
@@ -603,10 +603,10 @@ func streamDialer(open func() (net.Conn, error), kind string) func(ctx context.C
 
 // Type types a line at a pane's prompt and presses enter.
 func (h *Herdr) Type(ctx context.Context, pane, text string) error {
-	if err := h.Call(ctx, "pane.send_text", map[string]any{"pane_id": pane, "text": text}, nil); err != nil {
+	if err := h.SendText(ctx, pane, text); err != nil {
 		return err
 	}
-	return h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"enter"}}, nil)
+	return h.SendKeys(ctx, pane, "enter")
 }
 
 // ScreenAsks reports whether a pane's screen shows a question with choices.
@@ -635,7 +635,7 @@ func (h *Herdr) ReadAsk(ctx context.Context, pane string) (string, error) {
 	if recent {
 		return res.Text, nil // pressed a moment ago: don't press again while it opens
 	}
-	if err := h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"shift+left"}}, nil); err != nil {
+	if err := h.SendKeys(ctx, pane, "shift+left"); err != nil {
 		return res.Text, err
 	}
 	for until := time.Now().Add(unfoldWait); time.Now().Before(until); {

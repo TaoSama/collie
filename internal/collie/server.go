@@ -562,13 +562,13 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
 	if body.Text != "" {
-		if err := s.herdr.Call(ctx, "pane.send_text", map[string]any{"pane_id": id, "text": body.Text}, nil); err != nil {
+		if err := s.herdr.SendText(ctx, id, body.Text); err != nil {
 			fail(w, err)
 			return
 		}
 	}
 	if body.Enter {
-		if err := s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": id, "keys": []string{"enter"}}, nil); err != nil {
+		if err := s.herdr.SendKeys(ctx, id, "enter"); err != nil {
 			fail(w, err)
 			return
 		}
@@ -588,7 +588,7 @@ func (s *Server) sendKeys(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "keys required"})
 		return
 	}
-	if err := s.herdr.Call(r.Context(), "pane.send_keys", map[string]any{"pane_id": r.PathValue("id"), "keys": body.Keys}, nil); err != nil {
+	if err := s.herdr.SendKeys(r.Context(), r.PathValue("id"), body.Keys...); err != nil {
 		fail(w, err)
 		return
 	}

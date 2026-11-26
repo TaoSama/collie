@@ -678,7 +678,7 @@ func (s *Server) stopWorker(ctx context.Context, name string) error {
 		// Esc stops the turn it is on, the way you would before closing it:
 		// Codex's turn lives in a shared daemon and would carry on without
 		// its window.
-		s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": wk.PaneID, "keys": []string{"esc"}}, nil)
+		s.herdr.SendKeys(ctx, wk.PaneID, "esc")
 		time.Sleep(700 * time.Millisecond)
 	}
 	if kinds[wk.Kind] == "codex" && wk.Session != "" {

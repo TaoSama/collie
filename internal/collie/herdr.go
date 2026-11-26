@@ -228,6 +228,19 @@ func (h *Herdr) Pane(ctx context.Context, id string) (Pane, error) {
 	return r.Pane, err
 }
 
+const (
+	herdrPaneSendText = "pane.send_text"
+	herdrPaneSendKeys = "pane.send_keys"
+)
+
+func (h *Herdr) SendText(ctx context.Context, paneID, text string) error {
+	return h.Call(ctx, herdrPaneSendText, map[string]any{"pane_id": paneID, "text": text}, nil)
+}
+
+func (h *Herdr) SendKeys(ctx context.Context, paneID string, keys ...string) error {
+	return h.Call(ctx, herdrPaneSendKeys, map[string]any{"pane_id": paneID, "keys": keys}, nil)
+}
+
 func (h *Herdr) Read(ctx context.Context, paneID, source, format string, lines int) (ReadResult, error) {
 	p := map[string]any{"pane_id": paneID, "source": source, "format": format, "strip_ansi": format != "ansi"}
 	if lines > 0 {

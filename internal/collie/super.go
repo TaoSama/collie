@@ -1660,7 +1660,7 @@ func (sp *Super) watchRouter(ctx context.Context, live map[string]liveAgent, sta
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		sp.s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": a.Pane, "keys": []string{"esc"}}, nil)
+		sp.s.herdr.SendKeys(ctx, a.Pane, "esc")
 		time.Sleep(2 * time.Second)
 		if err := sp.s.herdr.Prompt(ctx, sp.routerAgent(), fmt.Sprintf("%s: nothing on your screen changed for %d min, so Collie interrupted it. Carry on with what you were doing; the events you had are still yours to handle. A command that hangs is a job for a worker: hand it over.", routerRetryMark, mins)); err != nil {
 			log.Printf("router nudge: %v", err)
@@ -2634,12 +2634,12 @@ func (sp *Super) answerTrust(ctx context.Context, pane, dir string) bool {
 // Enter when the menu has a cursor, else its digit for a cursorless numbered menu.
 func (sp *Super) choose(ctx context.Context, pane string, c Choice) error {
 	if len(c.Keys) > 0 {
-		return sp.s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": c.Keys}, nil)
+		return sp.s.herdr.SendKeys(ctx, pane, c.Keys...)
 	}
 	if c.Text != "" {
-		return sp.s.herdr.Call(ctx, "pane.send_text", map[string]any{"pane_id": pane, "text": c.Text}, nil)
+		return sp.s.herdr.SendText(ctx, pane, c.Text)
 	}
-	return sp.s.herdr.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"enter"}}, nil)
+	return sp.s.herdr.SendKeys(ctx, pane, "enter")
 }
 
 // pickChoice finds the choice the router named: its number as shown ("3"),

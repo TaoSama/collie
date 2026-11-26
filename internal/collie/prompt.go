@@ -43,7 +43,7 @@ func (h *Herdr) Prompt(ctx context.Context, target, text string) error {
 		case v == promptUnknown && err == nil:
 			return nil // as herdr answered: no worse than before reading back
 		case more && v == promptTyped:
-			err = h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"enter"}}, nil)
+			err = h.SendKeys(ctx, pane, "enter")
 		case v == promptMissing && err != nil:
 			return err
 		// agent.get already turns "idle" under a dialog into "blocked".
@@ -291,11 +291,11 @@ func (h *Herdr) submit(ctx context.Context, target, pane, text string) error {
 // paste types text into a pane as one bracketed paste, which keeps
 // multi-line text one message, and presses enter.
 func (h *Herdr) paste(ctx context.Context, pane, text string) error {
-	if err := h.Call(ctx, "pane.send_text", map[string]any{"pane_id": pane, "text": "\x1b[200~" + text + "\x1b[201~"}, nil); err != nil {
+	if err := h.SendText(ctx, pane, "\x1b[200~"+text+"\x1b[201~"); err != nil {
 		return err
 	}
 	if err := sleepCtx(ctx, 300*time.Millisecond); err != nil {
 		return err
 	}
-	return h.Call(ctx, "pane.send_keys", map[string]any{"pane_id": pane, "keys": []string{"enter"}}, nil)
+	return h.SendKeys(ctx, pane, "enter")
 }
