@@ -498,7 +498,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
   // ───────────────────────────── extensions (接入, 收件箱)
   const larkx = { manifest_version: 1, id: "larkx", name: "飞书（以你本人身份）", version: "0.3.6", engines: { collie_protocol: 1 }, runtime: { command: "bin/larkx" },
     description: "用 LarkAgentX 扫码登录飞书网页版，以你本人的身份收发消息。收件箱列出你的飞书会话，打开某个会话后，发触发词即可交给 agent，回复以你的身份发出并带上尾标。",
-    warning: "走逆向的飞书网页版协议，不是官方接口：飞书升级后可能失效，账号可能被风控。",
+    warning: "走飞书网页版协议，不是官方接口：飞书升级后可能失效。",
     contributes: { connector: { id: "larkx", capabilities: ["status", "login", "archive", "actions"] }, channel: { format: "markdown" } },
     configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] } } } };
   const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}",

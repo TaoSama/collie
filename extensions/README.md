@@ -75,7 +75,7 @@ COLLIE_HOME/ext/<id>/
 | `id` | 是 | `^[a-z][a-z0-9-]{0,31}$`，等于目录名，也是线程 `ext:<id>:…` 和接口 `/api/ext/<id>` 里的名字 |
 | `name`、`description` | 是 | 界面显示 |
 | `version` | 是 | `MAJOR.MINOR.PATCH`。下载包的版本变了才重装 |
-| `warning` | 否 | 打开前必须看到的风险说明（非官方协议、封号风险等） |
+| `warning` | 否 | 打开前必须看到的风险说明（非官方协议、升级后可能失效等） |
 | `engines.collie_protocol` | 是 | `1`。和 Collie 的协议版本不同就不能打开 |
 | `contributes.workbench` | 否 | 工作台模块的声明（字段由工作台定义，Collie 原样转交）。只有这一项、没有 `runtime` 和 `connector` 的扩展是**声明式扩展**：打开就算生效，不起进程，也不需要 `engines` |
 | `runtime.command` | 是（二选一） | 包内相对路径，或 `{"<GOOS>-<GOARCH>": 路径}`。不能是绝对路径，不能用 `..` 逃出包目录 |
