@@ -639,9 +639,9 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "name must be lowercase letters, digits, - or _ (max 32), starting with a letter; 'collie' is reserved"})
 		return
 	}
-	cwd := s.expand(body.Cwd)
-	if !isDir(cwd) {
-		writeJSON(w, 400, map[string]any{"error": "directory not found: " + cwd})
+	cwd, err := resolveDir(s.home, body.Cwd)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
@@ -694,9 +694,9 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 
 // openShell opens a plain terminal: a herdr workspace in cwd, no agent.
 func (s *Server) openShell(w http.ResponseWriter, r *http.Request, dir, label string) {
-	cwd := s.expand(dir)
-	if !isDir(cwd) {
-		writeJSON(w, 400, map[string]any{"error": "directory not found: " + cwd})
+	cwd, err := resolveDir(s.home, dir)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
 	if label == "" {
@@ -794,7 +794,11 @@ func (s *Server) closeWorkspace(w http.ResponseWriter, r *http.Request) {
 
 // listDirs powers the directory picker in the launcher.
 func (s *Server) listDirs(w http.ResponseWriter, r *http.Request) {
-	dir := s.expand(r.URL.Query().Get("path"))
+	dir, err := resolveDir(s.home, r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
@@ -834,12 +838,15 @@ func expandIn(home, p string) string {
 	return path.Clean(p)
 }
 
-func (s *Server) tilde(p string) string {
-	if p == s.home {
+func (s *Server) tilde(p string) string { return tildeIn(s.home, p) }
+
+// tildeIn writes a path under home as "~" or "~/x"; others stay as they are.
+func tildeIn(home, p string) string {
+	if p == home {
 		return "~"
 	}
-	if strings.HasPrefix(p, s.home+"/") {
-		return "~" + p[len(s.home):]
+	if strings.HasPrefix(p, home+"/") {
+		return "~" + p[len(home):]
 	}
 	return p
 }

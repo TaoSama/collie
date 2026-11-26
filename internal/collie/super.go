@@ -1302,6 +1302,17 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		}
 		return nil, nil, fmt.Errorf("machine %q is not connected", machine)
 	}
+	if cwd == "" {
+		if st := sp.settings(); m.ID == st.WorkerMachine || (m.Local && st.WorkerMachine == "") {
+			cwd = st.WorkerCwd
+		}
+	}
+	// Checked where the worker runs: herdr would start a missing directory's
+	// shell in that computer's home without a word.
+	dir, err := sp.s.resolveDirOn(m, cwd)
+	if err != nil {
+		return nil, nil, err
+	}
 	sp.mu.Lock()
 	// takenLocked: herdr wants each agent's name its own, so one another
 	// agent has (a session of the human's, an old worker's pane) goes to a
@@ -1325,9 +1336,6 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 	if have != nil && !slices.Contains(have, kinds[kind]) {
 		sp.mu.Unlock()
 		return nil, nil, fmt.Errorf("%s has no %s installed (it has: %s); pick another computer or kind", m.Name, kind, strings.Join(append(have, "none")[:max(len(have), 1)], ", "))
-	}
-	if cwd == "" && (m.ID == sp.st.Settings.WorkerMachine || (m.Local && sp.st.Settings.WorkerMachine == "")) {
-		cwd = sp.st.Settings.WorkerCwd
 	}
 	if thread == "" {
 		thread = mainThread
@@ -1357,11 +1365,6 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		n := spareName(name, takenLocked)
 		log.Printf("spawn: %q is taken in herdr; the worker is %q", name, n)
 		name = n
-	}
-	dir := expandIn(m.Home, cwd)
-	if m.Local && !isDir(dir) {
-		sp.mu.Unlock()
-		return nil, nil, fmt.Errorf("directory not found: %s", dir)
 	}
 	w := &Worker{Name: name, Kind: kind, Model: model, Effort: effort, Machine: m.ID, Cwd: dir, Task: task, Thread: thread, CreatedBy: by, CreatedAt: time.Now(), Status: "starting", Session: resume}
 	w.Conv = spec.Conv

@@ -281,6 +281,11 @@ func cliSpawn(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The shell here may have turned "~" into this computer's home; the
+	// worker's computer reads "~" as its own.
+	if home, err := os.UserHomeDir(); err == nil && home != "/" {
+		*cwd = tildeIn(home, *cwd)
+	}
 	body := map[string]any{"kind": *kind, "cwd": *cwd, "name": *name, "task": t, "by": by(), "model": *model, "effort": *effort, "resume": *resume}
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "subscribe" {

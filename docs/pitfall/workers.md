@@ -20,3 +20,12 @@ alias 往往自带网关，网关只认它自己的模型（`ccx` 配 Fable 会�
 启动失败（`startAgentAs` 报错）或 agent 退回 shell（tick 判定 `workerDead`）时，先读屏幕尾部写进事件和给 Router 的消息，再关掉它的工作区。不关的话，侧栏会留一个空 shell，没人会去用它。
 
 代码：`Spawn`、`workerDead`、`paneTail`（`internal/collie/super.go`）。
+
+## 目录在 worker 那台电脑上检查
+
+Router 在 macpro 上跑 `collie spawn --machine devbox --cwd ~/x`，`~` 先被本机 shell 展开成 `/Users/<u>/x`。devbox 上没有这个目录，herdr 不报错，直接在家目录起 shell，worker 就在错的地方干活。
+
+- CLI 把本机 `$HOME` 开头的 `--cwd` 换回 `~/…` 再发（`cliSpawn`，`internal/collie/cli.go`）。
+- hub 派到别的电脑前，经 node 的 `/api/dirs` 确认目录在不在；node 上不存在、又在别人家目录下（`/Users/<u>`、`/home/<u>`、`/data00/home/<u>`、`/root`）的路径，换到本机家目录下同一位置；hub 记得的其他电脑家目录再试一次（`resolveDir`、`resolveDirOn`，`internal/collie/cwd.go`）。仍找不到就报错，不起 worker。spawn 的返回带 `cwd`，是实际用的目录。
+- 存在的路径原样用：devbox 上真有 `/Users/luwentao/Workspaces`，它不会被改。
+- 新建会话页面（`launchAgent`）、终端（`openShell`）和目录选择器走同一个 `resolveDir`。
