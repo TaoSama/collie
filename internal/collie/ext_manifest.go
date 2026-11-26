@@ -27,6 +27,8 @@ type ExtManifest struct {
 	Description     string `json:"description"`
 	Warning         string `json:"warning,omitempty"`
 	Homepage        string `json:"homepage,omitempty"`
+	Icon            string `json:"icon,omitempty"`  // an SVG in the package (ext_icon.go)
+	Color           string `json:"color,omitempty"` // #rrggbb its icon is drawn in
 	Engines         struct {
 		CollieProtocol int `json:"collie_protocol"`
 	} `json:"engines"`
@@ -81,6 +83,8 @@ type ExtManifest struct {
 	LocalOn string `json:"local_on,omitempty"`
 	// Market: installed from a marketplace repository (ext_market.go).
 	Market *ExtMarketRef `json:"market,omitempty"`
+	// IconURL: its icon as a data: URL, read by Collie (ext_icon.go).
+	IconURL string `json:"icon_url,omitempty"`
 }
 
 // declarative: nothing to run, only declarations (a 工作台 module): on is
@@ -402,6 +406,13 @@ func readExtCatalog(fsys fs.FS) ([]*ExtManifest, error) {
 		}
 		if m.Local {
 			return nil, fmt.Errorf("%s: local is set by Collie, not the manifest", f)
+		}
+		pkg, err := fs.Sub(fsys, path.Dir(f))
+		if err != nil {
+			return nil, err
+		}
+		if err := m.loadIcon(pkg); err != nil {
+			return nil, fmt.Errorf("%s: %v", f, err)
 		}
 		if m.Runtime.Builtin != "" && builtinExts[m.Runtime.Builtin] == nil {
 			continue

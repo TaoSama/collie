@@ -429,6 +429,9 @@ func readStrictManifest(f string) (*ExtManifest, error) {
 	if m.Local || m.Market != nil || m.Source != nil || m.Runtime.Builtin != "" {
 		return nil, fmt.Errorf("市场里的扩展不能写 local、market、source 或 runtime.builtin")
 	}
+	if err := m.loadIcon(os.DirFS(filepath.Dir(f))); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 

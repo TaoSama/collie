@@ -4,6 +4,7 @@
   "label": "工作台",
   "name": "工作台",
   "version": "1.0.0",
+  "icon": "icon.svg",
   "description": "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。",
   "runtime": {"feature": "workbench"}
 }

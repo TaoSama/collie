@@ -4,9 +4,10 @@ package extensions
 
 import "embed"
 
-// Manifests is every extension's collie-extension.json.
+// Manifests is every extension's collie-extension.json, with the icon it
+// names.
 //
-//go:embed */collie-extension.json
+//go:embed */collie-extension.json */icon.svg
 var Manifests embed.FS
 
 // Bundled is the files a packaged extension carries in Collie itself, its
