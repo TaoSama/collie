@@ -4123,7 +4123,7 @@
   const SIDE_KINDS = [...AGENT_KINDS, ["term", "终端"]];
   let extAll = store.get("extAll", false);
   let sideView = store.get("sideView", "all"), sideKind = store.get("sideKind", "");
-  if (!(sideView === "all" || sideView === "status" || sideView.startsWith("m:"))) sideView = "all";
+  if (!(sideView === "all" || sideView === "status" || sideView === "archive" || sideView.startsWith("m:"))) sideView = "all";
   if (!SIDE_KINDS.some(([k]) => k === sideKind)) sideKind = "";
   // Folds of groupings that are gone are dropped.
   const sideFold = Object.fromEntries(Object.entries(store.get("sideFold", {})).filter(([k]) => /^(status|p):/.test(k)));
@@ -4153,18 +4153,8 @@
     try { marks = (await api("/api/marks")).marks || {}; } catch { return; }
     renderSessions();
   }
-  // Codex and Antigravity archive a session themselves (archived.go); the
-  // hub's mark hides only Claude Code's. archiving: the ones archived from
-  // this page, hidden until their lists have caught up (key → until when).
-  const ownArchive = (kind) => kind === "codex" || kind === "agy";
-  const ARCHIVE_SETTLE_MS = 60e3;
-  const archiving = new Map();
-  const archivingNow = (key) => {
-    const until = archiving.get(key);
-    if (until > Date.now()) return true;
-    archiving.delete(key);
-    return false;
-  };
+  // Only Claude used the old hub archive field.
+  const isCollieArchived = ({ kind, mark }) => !!(mark?.collie_archived || (kind === "claude" && mark?.archived));
   async function setMark(key, change) {
     marks = (await api("/api/marks", { body: { key, ...change } })).marks || {};
     renderSessions();
@@ -4196,7 +4186,7 @@
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
       return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, human: +new Date(a.human_at || 0), machine: a.machine || "", cwd: a.cwd,
-        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true, archived: !!a.archived };
+        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, live: true, archived: !!a.archived };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -4214,11 +4204,12 @@
       if (r.mark?.unread && r.rank >= ENDED_RANK) r.bucket = "done";
       return r;
     };
-    const extRows = ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
+    const extRows = ext.filter((e) => !workerSessions.has(e.session)).map((e) => {
       const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
+      if (readOnlyHidden(e) && !isCollieArchived({ kind: e.kind, mark: m })) return null;
       return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
         t: new Date(e.updated || e.started), human: +new Date(e.human_at || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
-    });
+    }).filter(Boolean);
     const histRows = hist.filter((h) => !collieRan(h)).map((h) => {
       const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
       return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), human: +new Date(h.human_at || h.ended), machine, cwd: h.cwd,
@@ -4233,12 +4224,7 @@
       ...state.shells.map((a) => pane(a, true)),
       ...extRows.filter((r) => r.live || !histKeys.has(r.key)),
       ...histRows.filter((r) => !liveKeys.has(r.key)),
-    // Archived where its agent has no archive of its own (Claude Code), or
-    // archived from here and not yet listed so: hidden while it rests. For
-    // Codex and Antigravity only their own archive counts, so a mark left by
-    // an older Collie hides nothing. One its own agent archived while it
-    // stays open in herdr hides once it has finished (archived.go).
-    ].filter((r) => !((ownArchive(r.kind) ? archivingNow(r.key) : r.mark?.archived) && r.rank >= ENDED_RANK) && !(r.archived && r.rank >= RANK.done));
+    ].filter((r) => !(r.archived && r.rank >= RANK.done));
   }
   // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {
@@ -4278,7 +4264,10 @@
   // Narrowed to a kind, the status groups show open.
   const sideFoldable = () => !(sideView === "status" && sideKind);
   function renderSessions() {
-    const all = sideRows();
+    const archiveView = sideView === "archive";
+    const allRows = sideRows();
+    const hasArchived = allRows.some(isCollieArchived);
+    const all = allRows.filter((r) => isCollieArchived(r) === archiveView);
     readOnOpen(all);
     sideByRow = new Map(all.filter((r) => r.kind || r.term).map((r) => [r.id, r]));
     const kindOf = (r) => r.bucket === "term" ? "term" : r.kind;
@@ -4297,7 +4286,7 @@
     const rows = sideKind ? viewRows.filter((r) => kindOf(r) === sideKind || r.bucket === "attn") : viewRows;
     const nKind = {};
     for (const r of all) if (inView(r)) nKind[kindOf(r)] = (nKind[kindOf(r)] || 0) + 1;
-    const viewList = [["all", "全部"], ["status", "状态"], ...(ids.length > 1 || on !== null ? ids.map((id) => ["m:" + id, machineName(id), online(id)]) : [])];
+    const viewList = [["all", "全部"], ["status", "状态"], ...(hasArchived || archiveView ? [["archive", "已归档"]] : []), ...(ids.length > 1 || on !== null ? ids.map((id) => ["m:" + id, machineName(id), online(id)]) : [])];
     const viewHTML = viewList.map(([v, label, up]) =>
       `<button type="button" data-view="${esc(v)}" class="${v === sideView ? "on" : ""}">${up === undefined ? "" : `<span class="dot ${up ? "online" : "offline"}"></span>`}${esc(label)}</button>`).join("");
     const kinds = SIDE_KINDS.filter(([v]) => nKind[v] || v === sideKind);
@@ -4324,7 +4313,7 @@
     // 进行中 is always there when nothing runs, to say how to start one.
     const groups = sideGroups(rows).filter((g) => g.rows.length || (g.key === "going" && !sideKind
       && !rows.some((r) => ["done", "going", "idle"].includes(r.bucket))));
-    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${sideKind === "term" ? "没有开着的终端。"
+    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${archiveView ? "暂无已归档的会话。" : sideKind === "term" ? "没有开着的终端。"
       : sideKind ? "没有这个 agent 的会话。" : on !== null ? "这台电脑上没有会话。" : "没有会话。点右上角 + 新建，或让 Collie 派一个。"}</p>`;
     const box = $("#side-groups"), views = $("#side-view"), bar = $("#side-only");
     if (box._html !== html) box.innerHTML = box._html = html;
@@ -4433,7 +4422,10 @@
   $(".side-scroll").addEventListener("click", (ev) => {
     const v = ev.target.closest("[data-view]"), k = ev.target.closest("[data-kind]");
     const det = ev.target.closest("summary")?.parentElement, fold = det?.dataset.fold;
-    if (v) { sideView = v.dataset.view; store.set("sideView", sideView); }
+    if (v) {
+      sideView = v.dataset.view; store.set("sideView", sideView);
+      if (sideView === "archive") { sideKind = ""; store.set("sideKind", sideKind); }
+    }
     // A kind is on or off: tapping it again shows every kind.
     else if (k) { sideKind = k.dataset.kind === sideKind ? "" : k.dataset.kind; store.set("sideKind", sideKind); }
     else if (fold) {
@@ -4486,8 +4478,7 @@
 
   // ───────────────────────────── a session's menu
   // Right-click a session (or hold it on a touch screen): rename it, mark it
-  // unread, copy its id, archive it. Renaming and archiving go to its own
-  // agent (session_menu.go); Claude Code has no archive, so Collie hides it.
+  // unread, copy its id, or archive it in Collie.
   // A terminal's menu only closes it.
   const ctxPop = document.createElement("div");
   ctxPop.className = "pick-pop ctx-menu"; ctxPop.hidden = true; ctxPop.setAttribute("role", "menu");
@@ -4503,7 +4494,6 @@
     archive: '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="4.5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></svg>',
     close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   };
-  const CTX_DANGER = new Set(["archive", "close"]);
   // A running Claude Code renames itself by its /rename; the others by their own API.
   const typesRename = (r) => r.src === "pane" && r.kind === "claude";
   function openCtx(row, x, y) {
@@ -4515,10 +4505,10 @@
       ["rename", "重命名", !typesRename(row) && !row.session],
       [unread ? "read" : "unread", unread ? "标记为已读" : "标记为未读", !row.key],
       ["copy", "复制对话 ID", !row.session],
-      ["archive", "归档", !row.session],
+      ["archive", isCollieArchived(row) ? "取消归档" : "归档", !row.key],
     ];
     ctxPop.innerHTML = `<div class="ph">${esc(row.term || row.name)}</div>` + items.map(([act, label, off]) =>
-      `<button type="button" class="po${CTX_DANGER.has(act) ? " danger" : ""}" role="menuitem" data-ctx="${act}" ${off ? "disabled" : ""}><span class="pi">${CTX_ICONS[act]}</span><span class="pl"><span>${label}</span></span></button>`).join("");
+      `<button type="button" class="po${act === "close" ? " danger" : ""}" role="menuitem" data-ctx="${act}" ${off ? "disabled" : ""}><span class="pi">${CTX_ICONS[act]}</span><span class="pl"><span>${label}</span></span></button>`).join("");
     // A phone or a touch screen (an unfolded phone is wider than narrow())
     // gets it in the middle, as the app's confirm; a mouse, at the pointer.
     const center = narrow() || touchMQ.matches;
@@ -4593,7 +4583,7 @@
     if (act === "copy") { await copy(r.session); toast("已复制 " + r.session); }
     else if (act === "unread" || act === "read") await setMark(r.key, { unread: act === "unread" });
     else if (act === "rename") await renameRow(r);
-    else if (act === "archive") await archiveRow(r);
+    else if (act === "archive") await archiveRow(r, !isCollieArchived(r));
     else if (act === "close") await closeTerm(r);
   }
   async function renameRow(r) {
@@ -4610,35 +4600,14 @@
     }
     toast("已改名为「" + name + "」");
   }
-  async function archiveRow(r) {
-    const own = ownArchive(r.kind), running = r.src === "pane";
-    const text = [running ? "会先结束这个 agent（关闭它的工作区）。" : "",
-      own ? `用 ${AGENT_LABEL[r.kind] || r.kind} 自己的归档，在它那边也会归档。` : "Claude Code 没有自己的归档：Collie 只把它从列表里藏起来，会话文件不动。"].filter(Boolean).join("\n");
-    if (!await ask({ title: `归档「${r.name}」？`, text, ok: "归档", warn: true })) return;
-    // Hidden first, so a closed agent doesn't come back as an ended session
-    // before its archive lands. An agent with its own archive is hidden only
-    // here, and until the lists have caught up: its archive is the one that
-    // counts, and unarchived there it comes back.
-    if (own) { archiving.set(r.key, Infinity); renderSessions(); }
-    else await setMark(r.key, { archived: true });
-    try {
-      await archiveIt(r, own, running);
-    } catch (err) {
-      archiving.delete(r.key);
-      renderSessions();
-      throw err;
-    }
-    if (own) archiving.set(r.key, Date.now() + ARCHIVE_SETTLE_MS);
-    if (r.src === "ext") loadExternal();
-    toast("已归档");
-  }
-  async function archiveIt(r, own, running) {
-    if (running) {
-      await api(`/api/workspaces/${encodeURIComponent(r.ws)}/close`, { body: {} });
-      state = { ...state, agents: state.agents.filter((a) => a.workspace_id !== r.ws), shells: state.shells.filter((a) => a.workspace_id !== r.ws) };
-      if (view === "pane" && current === r.id) goBack(true);
-    }
-    if (own) await api(`/api/sessions/${sessionPath(r)}/archive`, { body: { kind: r.kind, just_closed: running } });
+  async function archiveRow(r, archived) {
+    if (archived && !await ask({
+      title: `归档「${r.name}」？`,
+      text: "会话会移到侧栏的「已归档」，在那里可以恢复。",
+      ok: "归档",
+    })) return;
+    await setMark(r.key, { collie_archived: archived });
+    toast(archived ? "已归档" : "已取消归档");
   }
   async function closeTerm(r) {
     if (!await ask({ title: `关闭终端「${r.term}」？`, text: "里面在跑的进程会被结束。", ok: "关闭", warn: true })) return;

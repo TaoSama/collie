@@ -13,12 +13,8 @@ import (
 	"time"
 )
 
-// A session's menu renames or archives it the way its own agent does:
-// Codex through its app-server (thread/name/set, thread/archive), Antigravity
-// through its local server (UpdateConversation), Claude Code by the line its
-// /rename writes. Claude Code has no archive of its own: the hub hides those
-// (see marks.go). A running agent in herdr is renamed by typing /rename into
-// it, and is closed before it is archived; the page does both.
+// The session menu renames a session through its agent. Collie's archive
+// lives on the hub (marks.go).
 
 // renameSession: POST /api/sessions/{id}/rename {kind, name}.
 func (s *Server) renameSession(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +48,8 @@ func (s *Server) renameSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// archiveSession: POST /api/sessions/{id}/archive {kind}.
+// archiveSession is retained for older Codex clients.
+// POST /api/sessions/{id}/archive {kind}.
 func (s *Server) archiveSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Kind string `json:"kind"`
@@ -67,10 +64,9 @@ func (s *Server) archiveSession(w http.ResponseWriter, r *http.Request) {
 	switch externalKinds[body.Kind] {
 	case "codex":
 		err = s.codexArchive(r.Context(), id, body.JustClosed)
-	case "agy":
-		err = s.agyAnnotate(r.Context(), id, map[string]any{"archived": true})
 	default:
-		err = fmt.Errorf("%s 没有自己的归档", body.Kind)
+		writeJSON(w, 400, map[string]any{"error": "请刷新页面后再归档"})
+		return
 	}
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
@@ -171,8 +167,7 @@ func codexOnce(ctx context.Context, bin, method string, params any) (json.RawMes
 	return wait(2)
 }
 
-// agyAnnotate changes what you can edit on an Antigravity conversation
-// (title, archived) through the app's local server.
+// agyAnnotate renames a conversation through the Antigravity app.
 func (s *Server) agyAnnotate(ctx context.Context, conversation string, annotations map[string]any) error {
 	ls := agyDesktopServer()
 	if ls == nil {
@@ -184,7 +179,7 @@ func (s *Server) agyAnnotate(ctx context.Context, conversation string, annotatio
 		if !errors.As(err, &api) || api.authFailed() {
 			forgetAgyServer()
 		} else if api.Code == "not_found" || strings.HasSuffix(api.Message, "not found") {
-			return errors.New("Antigravity 加载不到这个会话（可能是没建成的空会话），改不了它")
+			return errors.New("Antigravity 无法打开这个会话，没能改名")
 		}
 		return fmt.Errorf("Antigravity 没有改成：%w", err)
 	}

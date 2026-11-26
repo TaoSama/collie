@@ -42,7 +42,7 @@ App 的 `~/.gemini/antigravity/conversation_summaries.db` 也列出 CLI 起的�
 
 ## Antigravity 没建成的会话留在索引里
 
-新建失败的会话会在 `conversation_summaries` 里留一行：标题空、`step_count = 0`、`last_modified_time` 是零值 `0001-01-01`、`killed = 0`。App 自己加载不到它（日志报 `conversation … not found`），所以从 Collie 归档、改名时 `UpdateConversation` 也会失败。`agyDesktopRows` 只列 `step_count > 0`（旧索引没有这一列就不看）且有修改时间的会话；`agyAnnotate` 遇到 `not_found` 时说明 App 加载不到这个会话。Codex 的线程表里没见到这种空行（App 的线程都带第一条消息），没有加同样的过滤。
+新建失败的会话会在 `conversation_summaries` 里留一行：标题空、`step_count = 0`、`last_modified_time` 是零值 `0001-01-01`、`killed = 0`。App 自己加载不到它（日志报 `conversation … not found`），所以从 Collie 改名时 `UpdateConversation` 也会失败。`agyDesktopRows` 只列 `step_count > 0`（旧索引没有这一列就不看）且有修改时间的会话；`UpdateConversation` 的 `not_found` 也可能出现在有对话记录的会话上。Collie 可以从 CLI 或 App 目录直接读记录，App 能否打开会话由它自己的服务决定。Codex 的线程表里没见到这种空行（App 的线程都带第一条消息），没有加同样的过滤。
 
 ## 一轮做完折成「已工作 Xm Ys」
 
@@ -60,4 +60,4 @@ Codex 把修改时间满 7 天的 rollout 压成 `<名字>.jsonl.zst`，原文�
 
 只滤 App 的线程表不够：人在 Codex 里归档的会话，常常还开在 herdr 窗格里（接管过来的），或已经结束、留在 hub 的历史里。所以节点在 `/api/titles` 里给窗格会话标上 `archived`，并回答 hub 带来的历史会话里哪些已归档；侧栏把已归档、已经停下的窗格和历史行藏起来，正在跑或等确认的照常显示。取消归档后几秒内回来。Antigravity 的 App 行在 Go 里滤掉归档再数满上限，SQL 不加 `LIMIT`。
 
-Codex 和 Antigravity 的归档只认它们自己的标记，hub 的 `archived` 标记（`marks.go`）只藏 Claude Code 的会话。从 Collie 菜单归档这两家时，调用它们自己的归档，页面只在本地临时藏起，等列表跟上（成功后 60 秒）；归档失败就马上显示并报错。旧版本给这两家打过的 hub 标记不再起作用，否则在它们那边取消归档后，Collie 里还会一直藏着。
+Collie 菜单里的归档统一写到 hub 的 `session_marks`（`marks.go`），键包含电脑、Agent 和会话 ID，外部会话、herdr 窗格和历史共用。归档移到侧栏的「已归档」，在那里的会话菜单可取消归档。此操作会保留正在运行的会话。旧版 hub 的 `archived` 标记只对 Claude Code 生效，新操作写 `collie_archived`。在 Codex 或 Antigravity 自己归档的会话仍由相应应用管理。

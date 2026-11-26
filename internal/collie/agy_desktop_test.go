@@ -63,7 +63,7 @@ func TestAgyDesktopWritesRediscoverAfterAuthFailure(t *testing.T) {
 		{
 			"annotate", http.StatusUnauthorized, `{"message":"stale token"}`,
 			func(s *Server, ctx context.Context) error {
-				return s.agyAnnotate(ctx, "test-session", map[string]any{"archived": true})
+				return s.agyAnnotate(ctx, "test-session", map[string]any{"title": "new title"})
 			},
 		},
 	} {

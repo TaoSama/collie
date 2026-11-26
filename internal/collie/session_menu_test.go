@@ -110,8 +110,83 @@ func TestAgyAnnotateSaysWhenTheAppCannotLoadIt(t *testing.T) {
 	agyServerCache.at, agyServerCache.ls = time.Now(), &agyServer{addr: strings.TrimPrefix(app.URL, "http://")}
 	agyServerCache.Unlock()
 	defer forgetAgyServer()
-	err := (&Server{home: t.TempDir()}).agyAnnotate(t.Context(), "b600", map[string]any{"archived": true})
-	if err == nil || !strings.Contains(err.Error(), "加载不到这个会话") {
+	err := (&Server{home: t.TempDir()}).agyAnnotate(t.Context(), "b600", map[string]any{"title": "new title"})
+	if err == nil || !strings.Contains(err.Error(), "无法打开这个会话，没能改名") {
 		t.Fatalf("err = %v, want it to say the app can't load the conversation", err)
+	}
+}
+
+func TestCollieArchivePersistsAndCanBeCleared(t *testing.T) {
+	resetMarks := func() {
+		marks.Lock()
+		defer marks.Unlock()
+		marks.m, marks.loaded = nil, false
+	}
+	resetMarks()
+	t.Cleanup(resetMarks)
+	db, err := openDB(filepath.Join(t.TempDir(), "herd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	s := &Server{sup: &Super{db: db}}
+	const key = "macpro|agy|one"
+	post := func(archived bool) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"key": key, "collie_archived": archived})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		s.setMark(w, httptest.NewRequest("POST", "/api/marks", bytes.NewReader(body)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("archive %t: %d %s", archived, w.Code, w.Body)
+		}
+	}
+	reload := func() map[string]*sessionMark {
+		t.Helper()
+		resetMarks()
+		w := httptest.NewRecorder()
+		s.listMarks(w, httptest.NewRequest("GET", "/api/marks", nil))
+		var response struct{ Marks map[string]*sessionMark }
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response.Marks
+	}
+
+	post(true)
+	if m := reload()[key]; m == nil || !m.CollieArchived {
+		t.Fatalf("archive missing after reload: %+v", m)
+	}
+	post(false)
+	if m := reload()[key]; m != nil {
+		t.Fatalf("archive still present after reload: %+v", m)
+	}
+}
+
+func TestCollieArchiveReportsStorageFailure(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "herd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{sup: &Super{db: db}}
+	const key = "macpro|agy|failed"
+	w := httptest.NewRecorder()
+	s.setMark(w, httptest.NewRequest("POST", "/api/marks", strings.NewReader(`{"key":"`+key+`","collie_archived":true}`)))
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "没能保存这次更改") {
+		t.Fatalf("archive: %d %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	s.listMarks(w, httptest.NewRequest("GET", "/api/marks", nil))
+	if strings.Contains(w.Body.String(), key) {
+		t.Fatalf("failed write leaked to the list: %s", w.Body)
 	}
 }
