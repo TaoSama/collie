@@ -174,7 +174,7 @@ func (h *extHost) configure(id string, change func(*ExtSetting)) (ExtSetting, er
 	x = h.pinLocked(x)
 	if x.Enabled && !before.Enabled && m.Defaults.Machine == machineAsk && !x.Chosen {
 		h.mu.Unlock()
-		return before, fmt.Errorf("先选它运行在哪台电脑：它的后端只在某一台电脑上")
+		return before, fmt.Errorf("先选它运行在哪台电脑：它只能在一台电脑上运行")
 	}
 	x.Config = m.configWithDefaults(x.Config)
 	h.sets[id] = x

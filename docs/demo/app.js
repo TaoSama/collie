@@ -3401,7 +3401,7 @@
     if (b.hasAttribute("data-ext-enable")) {
       if (await turnOn()) toast("已开启");
     } else if (b.hasAttribute("data-ext-disable")) {
-      if (!(await ask({ title: "关闭" + (v?.manifest.name || "") + "？", text: "关闭后不再收发，数据和登录状态保留，随时可以再开启。", ok: "关闭" }))) return;
+      if (!(await ask({ title: "关闭" + (v?.manifest.name || "") + "？", text: "关闭只是暂停收发，数据和登录都还在，随时可以再开启。", ok: "关闭" }))) return;
       extLogin = null;
       extConfigure(id, { enabled: false }, "已关闭");
     } else if (b.hasAttribute("data-ext-login-cancel")) {

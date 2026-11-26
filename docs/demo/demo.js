@@ -497,8 +497,8 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
 
   // ───────────────────────────── extensions (接入, 收件箱)
   const larkx = { manifest_version: 1, id: "larkx", name: "飞书（以你本人身份）", version: "0.3.6", engines: { collie_protocol: 1 }, runtime: { command: "bin/larkx" },
-    description: "用 LarkAgentX 扫码登录飞书网页版，以你本人的身份收发消息。收件箱列出你的飞书会话，打开某个会话后，发触发词即可交给 agent，回复以你的身份发出并带上尾标。",
-    warning: "走飞书网页版协议，不是官方接口：飞书升级后可能失效。",
+    description: "用你自己的飞书账号和 agent 对话：扫码登录后，飞书会话出现在收件箱。你在任意会话里发一条以触发词开头的消息，Collie 先给它点个「在做了」，做完以你的名义回复，格式照常显示，末尾带一段尾标。",
+    warning: "不是飞书官方接口，飞书升级后可能失效；登录状态只存在运行它的那台电脑上；用公司账号前先确认公司规定。",
     contributes: { connector: { id: "larkx", capabilities: ["status", "login", "archive", "actions"] }, channel: { format: "markdown" } },
     configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] } } } };
   const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}",
@@ -506,7 +506,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu" } },
       proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } },
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", runtime: { feature: "workbench" },
-      description: "钉网页和 Collie 自己的页面，按模块决定给不给 Agent 读。打开后侧栏底部出现田字格入口。" }, setting: { id: "workbench", enabled: true } }] };
+      description: "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。" }, setting: { id: "workbench", enabled: true } }] };
   const inboxConvs = [
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },

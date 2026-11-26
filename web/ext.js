@@ -109,7 +109,7 @@
     };
     const nav = (href, title, sub) => `<a class="row ext-row" href="${href}"><span class="ext-icon ghost" aria-hidden="true"></span><div><div class="meta"><b>${title}</b></div><div class="text">${esc(sub)}</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a>`;
     const updates = (markets?.markets || []).reduce((n, mk) => n + (mk.index || []).filter((e) => mk.installed?.[e.id] && mk.installed[e.id] !== e.version).length, 0);
-    return `<p class="panel-intro">扩展让 Collie 收发飞书、微信消息，也给 agent 提供动作。都默认关闭：点进去开启并登录后才生效。</p>
+    return `<p class="panel-intro">接上飞书、微信，就能在那边和 Collie 对话；有的扩展还能让 agent 多做些事。扩展默认都关着，点进去开启、登录后才生效。</p>
       <div class="card"><div class="card-h">扩展</div><div class="rows">${list.map(row).join("") || `<div class="empty-row">没有可用的扩展</div>`}</div></div>
       <div class="card"><div class="rows">
         ${nav("#/auto/hooks/reply", "唤起与回复", `触发词 ${r?.trigger || r?.default_trigger || "/ai"} · 回复尾标`)}
@@ -128,9 +128,9 @@
       : st.login && !(qr && qr.id === m.id) ? `<button class="btn primary" data-ext-login>${esc(loginWord(m))}</button>` : "";
     const convs = (inbox?.convs || []).filter((c) => c.ext === m.id);
     const machine = declarative(m) ? "" : m.local
-      ? `<div class="ext-field"><span class="tm-lab">运行在</span><span>${esc(machineName(ms, m.local_on))}<small class="muted">本地扩展，在找到它的那台电脑上运行</small></span></div>`
+      ? `<div class="ext-field"><span class="tm-lab">运行在</span><span>${esc(machineName(ms, m.local_on))}<small class="muted">本地扩展，只在装了它的那台电脑上运行</small></span></div>`
       : `<label class="ext-field"><span class="tm-lab">运行在</span><select data-ext-machine data-pick="compact" data-title="在哪台电脑上运行">${machineOptions(ms, v.setting.machine || "", ask)}</select></label>
-         <small class="muted ext-field-note">${ask ? "它的后端只在某一台电脑上：先选好再开启。" : ""}换电脑会先停掉原来那台上的，登录状态留在原来那台。</small>`;
+         <small class="muted ext-field-note">${ask ? "它只能在一台电脑上运行，先选好再开启。" : ""}换电脑会停掉原来那台上的；登录状态留在原来那台，新电脑上可能要重新登录。</small>`;
     return `${pageHead(esc(m.name), `<span class="muted">${esc(m.version)} · ${m.market ? "市场" : m.local ? "本地" : "内置"}</span>`)}
       <div class="card ext-card" data-ext="${esc(m.id)}"><div class="form">
         <div class="ext-status"><span class="dot ${esc(st.dot)}"></span><div><b>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${primary}</div>
@@ -143,16 +143,16 @@
       <div class="card"><div class="card-h">说明</div><div class="form">
         <p class="ext-desc">${esc(m.description)}</p>
         ${m.warning ? `<p class="ext-warn">${esc(m.warning)}</p>` : ""}
-        ${m.market ? `<p class="ext-desc">来自市场 ${esc(m.market.repo)}（${m.market.package ? esc(m.market.package.replace(/^release:/, "Release ")) : esc((m.market.commit || "").slice(0, 7))}）</p>` : ""}
-        ${m.local ? `<p class="ext-warn">来自本地目录（${esc(m.id)}/pkg/${esc(m.version)}），Collie 不校验其内容。</p>` : ""}
-        ${(m.permissions?.network || []).length ? `<p class="ext-desc">会访问：${esc(m.permissions.network.join("、"))}</p>` : ""}
+        ${m.market ? `<p class="ext-desc">从市场 ${esc(m.market.repo)}（${m.market.package ? esc(m.market.package.replace(/^release:/, "Release ")) : esc((m.market.commit || "").slice(0, 7))}）安装</p>` : ""}
+        ${m.local ? `<p class="ext-warn">从本地目录（${esc(m.id)}/pkg/${esc(m.version)}）加载，Collie 不检查它的内容，请确认来源可信。</p>` : ""}
+        ${(m.permissions?.network || []).length ? `<p class="ext-desc">会连接这些网站：${esc(m.permissions.network.join("、"))}</p>` : ""}
       </div></div>
       ${v.proc?.logs?.length ? `<div class="card"><details class="ext-logs"><summary class="card-h">最近日志</summary><pre>${esc(v.proc.logs.join("\n"))}</pre></details></div>` : ""}
       <div class="card" data-ext="${esc(m.id)}"><div class="form ext-danger">
         ${on && st.ok && needsLogin(m) ? `<button type="button" class="link-danger" data-ext-logout>退出登录</button>` : ""}
         ${on ? `<button type="button" class="link-danger" data-ext-disable>关闭扩展</button>` : `<button type="button" class="btn small" data-ext-enable>开启</button>`}
         ${m.market ? `<button type="button" class="link-danger" data-ext-uninstall>卸载</button>` : ""}
-        <small class="muted">关闭后不再收发，数据和登录状态保留；退出登录会删掉登录状态。</small>
+        <small class="muted">关闭只是暂停收发，数据和登录都还在；退出登录会清掉登录状态。</small>
       </div></div>`;
   }
 
@@ -178,7 +178,7 @@
       return `<li class="row"><span></span><div><div class="meta"><b>${esc(e.name || e.id)}</b><span class="mono">${esc(e.id)} ${esc(e.version)}</span>${have && have !== e.version ? `<span>已装 ${esc(have)}</span>` : ""}</div><div class="text">${esc(e.description || "")}</div></div><span class="right">${act}</span></li>`;
     };
     return `${pageHead("扩展市场")}<div class="card"><div class="card-h">市场<button class="btn small" data-market-refresh>刷新</button></div>
-      <div class="form"><p class="ext-desc">自带的只有飞书和微信，其他扩展从市场安装。市场是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。私有仓库要填一个能读它的 token，只保存在 hub 上，之后不再显示。</p></div>
+      <div class="form"><p class="ext-desc">飞书、微信和工作台是自带的，其他扩展从市场安装。市场就是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。私有仓库要填一个能读取它的 token，只存在 hub 上，填完不再显示。</p></div>
       ${ms.map((m) => `<div class="market" data-market="${esc(m.repo)}"><div class="market-h"><b>${esc(m.name || m.repo)}</b><span class="muted mono">${esc(m.repo)}${m.ref ? "@" + esc(m.ref) : ""}${m.commit ? " · " + esc(m.commit.slice(0, 7)) : ""}${m.has_token ? " · 有 token" : ""}</span><button class="btn small ghost" data-market-remove>移除</button></div>
         ${m.error ? `<p class="ext-warn">${esc(m.error)}</p>` : ""}
         <ul class="rows">${(m.index || []).map((e) => entry(m, e)).join("") || `<li class="empty-row">这个市场里还没有扩展</li>`}</ul></div>`).join("")}
