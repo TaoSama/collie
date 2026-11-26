@@ -643,10 +643,7 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cwd, err := resolveDir(s.home, body.Cwd)
-	if err != nil {
-		writeJSON(w, 400, map[string]any{"error": err.Error()})
-		return
-	}
+	cwd, fallback := orHome(s.home, cwd, err)
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	label := body.Label
@@ -670,7 +667,7 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var he *HerdrError
 		if errors.As(err, &he) && he.Code == "agent_not_ready" {
-			writeJSON(w, 202, map[string]any{"pane_id": paneID, "workspace_id": wsID, "warning": "agent 启动时停在了一个对话框上，请在页面里处理"})
+			writeJSON(w, 202, withCwd(map[string]any{"pane_id": paneID, "workspace_id": wsID, "warning": "agent 启动时停在了一个对话框上，请在页面里处理"}, cwd, fallback))
 			return
 		}
 		writeJSON(w, 502, map[string]any{"error": err.Error(), "pane_id": paneID, "workspace_id": wsID})
@@ -688,20 +685,17 @@ func (s *Server) launchAgent(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(1500 * time.Millisecond)
 		}
 		if err != nil {
-			writeJSON(w, 202, map[string]any{"pane_id": paneID, "workspace_id": wsID, "warning": "已启动，但第一个任务发送失败：" + err.Error()})
+			writeJSON(w, 202, withCwd(map[string]any{"pane_id": paneID, "workspace_id": wsID, "warning": "已启动，但第一个任务发送失败：" + err.Error()}, cwd, fallback))
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]any{"pane_id": paneID, "workspace_id": wsID})
+	writeJSON(w, 200, withCwd(map[string]any{"pane_id": paneID, "workspace_id": wsID}, cwd, fallback))
 }
 
 // openShell opens a plain terminal: a herdr workspace in cwd, no agent.
 func (s *Server) openShell(w http.ResponseWriter, r *http.Request, dir, label string) {
 	cwd, err := resolveDir(s.home, dir)
-	if err != nil {
-		writeJSON(w, 400, map[string]any{"error": err.Error()})
-		return
-	}
+	cwd, fallback := orHome(s.home, cwd, err)
 	if label == "" {
 		label = filepath.Base(cwd)
 		if cwd == s.home {
@@ -715,7 +709,7 @@ func (s *Server) openShell(w http.ResponseWriter, r *http.Request, dir, label st
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"pane_id": paneID, "workspace_id": wsID})
+	writeJSON(w, 200, withCwd(map[string]any{"pane_id": paneID, "workspace_id": wsID}, cwd, fallback))
 }
 
 // startAgent creates a workspace in cwd and starts a herdr agent in its pane.

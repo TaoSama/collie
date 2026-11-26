@@ -46,6 +46,28 @@ func resolveDir(home, p string) (string, error) {
 	return "", fmt.Errorf("directory not found: %s", dir)
 }
 
+// orHome keeps a directory resolveDir couldn't find from stopping anything:
+// it falls back to home, and fallback says so for whoever asked.
+func orHome(home, dir string, err error) (string, string) {
+	if err != nil {
+		return home, fmt.Sprintf("%v; using the home directory %s instead", err, home)
+	}
+	return dir, ""
+}
+
+// withCwd puts the directory a pane was opened in, and why if it fell back,
+// into a launch's answer (the page toasts "warning").
+func withCwd(v map[string]any, cwd, fallback string) map[string]any {
+	v["cwd"] = cwd
+	if fallback != "" {
+		if w, ok := v["warning"].(string); ok {
+			fallback += "; " + w
+		}
+		v["warning"] = fallback
+	}
+	return v
+}
+
 // resolveDirOn is resolveDir on computer m: another computer's node checks it.
 // A path under a home the hub knows for another computer gets a second try
 // as the same path under m's home, for homes resolveDir can't tell.

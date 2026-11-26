@@ -74,6 +74,9 @@ type Worker struct {
 	// Conv is the extension conversation it answers ("" for other workers):
 	// each turn's last message goes back there instead of to the Router.
 	Conv string `json:"conv,omitempty"`
+	// cwdFallback says the asked-for directory wasn't there, so it started in
+	// home; spawn's answer passes it on. Not kept.
+	cwdFallback string
 }
 
 // Entry is one line of the human-facing super-agent conversation.

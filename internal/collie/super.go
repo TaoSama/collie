@@ -1310,9 +1310,7 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 	// Checked where the worker runs: herdr would start a missing directory's
 	// shell in that computer's home without a word.
 	dir, err := sp.s.resolveDirOn(m, cwd)
-	if err != nil {
-		return nil, nil, err
-	}
+	dir, fallback := orHome(m.Home, dir, err)
 	sp.mu.Lock()
 	// takenLocked: herdr wants each agent's name its own, so one another
 	// agent has (a session of the human's, an old worker's pane) goes to a
@@ -1367,7 +1365,7 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		name = n
 	}
 	w := &Worker{Name: name, Kind: kind, Model: model, Effort: effort, Machine: m.ID, Cwd: dir, Task: task, Thread: thread, CreatedBy: by, CreatedAt: time.Now(), Status: "starting", Session: resume}
-	w.Conv = spec.Conv
+	w.Conv, w.cwdFallback = spec.Conv, fallback
 	sp.st.Workers[name] = w
 	if subscribe {
 		th := sp.threadLocked(thread)
@@ -1382,6 +1380,9 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 	verb := "派出"
 	if resume != "" {
 		verb = "续上"
+	}
+	if fallback != "" {
+		where += "，目录不存在，在主目录"
 	}
 	sp.addEntryLocked("event", thread, fmt.Sprintf("%s %s（%s%s）：%s", verb, name, kind, where, clip(firstLine(task), 120)), name, "spawn")
 	sp.mu.Unlock()

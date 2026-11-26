@@ -538,6 +538,9 @@ func (s *Server) superSpawn(w http.ResponseWriter, r *http.Request) {
 	}
 	res := map[string]any{"worker": wk.Name, "kind": wk.Kind, "status": status, "thread": wk.Thread, "cwd": wk.Cwd,
 		"note": "its agent is starting; you will get a [collie] event when it reports, finishes, gets blocked or fails. Tell the human it is on its way, not that it is done"}
+	if wk.cwdFallback != "" {
+		res["cwd_fallback"] = wk.cwdFallback
+	}
 	if body.Model != "" && wk.Alias != nil && *wk.Alias != "" {
 		res["model_ignored"] = fmt.Sprintf("alias %s starts it with the alias's own model, so --model %s was ignored; spawn with --no-alias to pick a model", *wk.Alias, body.Model)
 	}

@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -90,5 +91,41 @@ func TestResolveDirOnNode(t *testing.T) {
 	_, err := s.resolveDirOn(box, "/Users/collie-nobody/nope")
 	if err == nil || !strings.Contains(err.Error(), "directory not found") || !strings.Contains(err.Error(), "devbox") {
 		t.Errorf("missing dir on devbox: %v", err)
+	}
+}
+
+func TestOrHome(t *testing.T) {
+	if dir, fb := orHome("/h", "/h/x", nil); dir != "/h/x" || fb != "" {
+		t.Errorf("found: %q %q", dir, fb)
+	}
+	dir, fb := orHome("/h", "", errors.New("directory not found: /h/nope"))
+	if dir != "/h" || !strings.Contains(fb, "/h/nope") || !strings.Contains(fb, "home directory /h") {
+		t.Errorf("missing: %q %q", dir, fb)
+	}
+	v := withCwd(map[string]any{"warning": "agent 停在对话框上"}, "/h", fb)
+	if v["cwd"] != "/h" || !strings.HasPrefix(v["warning"].(string), fb) || !strings.HasSuffix(v["warning"].(string), "agent 停在对话框上") {
+		t.Errorf("withCwd = %v", v)
+	}
+	if v := withCwd(map[string]any{}, "/h/x", ""); v["cwd"] != "/h/x" || v["warning"] != nil {
+		t.Errorf("withCwd, no fallback = %v", v)
+	}
+}
+
+// A directory that isn't there starts the worker in home, and says so.
+func TestSpawnMissingDirFallsBackToHome(t *testing.T) {
+	f := newFakeHerdr(t)
+	sp := newRouterTestSuper(t, f)
+	w, started, err := sp.Spawn(SpawnSpec{Kind: "claude", Cwd: "/Users/collie-nobody/nope", Task: "x", Name: "lost", Alias: new(string)})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if err := <-started; err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if w.Cwd != sp.s.home || !strings.Contains(w.cwdFallback, "/Users/collie-nobody/nope") {
+		t.Errorf("cwd = %q, fallback = %q; want home %s and a reason", w.Cwd, w.cwdFallback, sp.s.home)
+	}
+	if ev := chatEvents(sp); !strings.Contains(ev, "目录不存在") {
+		t.Errorf("chat = %q, want the fallback said", ev)
 	}
 }

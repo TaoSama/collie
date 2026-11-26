@@ -26,6 +26,6 @@ alias 往往自带网关，网关只认它自己的模型（`ccx` 配 Fable 会�
 Router 在 macpro 上跑 `collie spawn --machine devbox --cwd ~/x`，`~` 先被本机 shell 展开成 `/Users/<u>/x`。devbox 上没有这个目录，herdr 不报错，直接在家目录起 shell，worker 就在错的地方干活。
 
 - CLI 把本机 `$HOME` 开头的 `--cwd` 换回 `~/…` 再发（`cliSpawn`，`internal/collie/cli.go`）。
-- hub 派到别的电脑前，经 node 的 `/api/dirs` 确认目录在不在；node 上不存在、又在别人家目录下（`/Users/<u>`、`/home/<u>`、`/data00/home/<u>`、`/root`）的路径，换到本机家目录下同一位置；hub 记得的其他电脑家目录再试一次（`resolveDir`、`resolveDirOn`，`internal/collie/cwd.go`）。仍找不到就报错，不起 worker。spawn 的返回带 `cwd`，是实际用的目录。
+- hub 派到别的电脑前，经 node 的 `/api/dirs` 确认目录在不在；node 上不存在、又在别人家目录下（`/Users/<u>`、`/home/<u>`、`/data00/home/<u>`、`/root`）的路径，换到本机家目录下同一位置；hub 记得的其他电脑家目录再试一次（`resolveDir`、`resolveDirOn`，`internal/collie/cwd.go`）。仍找不到就在那台电脑的家目录起 worker，但要说出来：spawn 的返回带 `cwd`（实际用的目录）和 `cwd_fallback`（为什么回退），「派出」事件里注明「目录不存在，在主目录」（`orHome`）。
 - 存在的路径原样用：devbox 上真有 `/Users/luwentao/Workspaces`，它不会被改。
-- 新建会话页面（`launchAgent`）、终端（`openShell`）和目录选择器走同一个 `resolveDir`。
+- 新建会话页面（`launchAgent`）和终端（`openShell`）同样回退，返回带 `cwd`，回退原因放进页面会弹出的 `warning`（`withCwd`）；目录选择器（`/api/dirs`）不回退，找不到就报错，hub 也靠它判断目录在不在。
