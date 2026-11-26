@@ -20,10 +20,10 @@
 
 - **前提**：hub 启动时带 `-wb-domain`（或 `COLLIE_WB_DOMAIN`），例如 `wb.example.com`，并配好 `*.wb.example.com` 的 DNS、通配证书和反代（Host 原样转给 hub）。这个域名要和 Collie 同属一个站点（Collie 在 `c.example.com`），因为会话 cookie 是 `SameSite=Lax`，不同站点的 iframe 收不到它。没有设置时，设置里不显示这个开关。
 - **地址**：每个模块用自己的子域 `<随机前缀>-<id>.wb.example.com`，不挂在 Collie 的路径下。这样它和 Collie、和其他模块都不同源：网站的脚本拿不到 Collie 的 token，也用不了别的模块的登录。以 `/` 开头的绝对路径也不用改写。
-- **进入**：页面先 `POST /api/wb/enter` 拿一张 60 秒、只能用一次的票据，iframe 或新标签打开 `/__collie/enter?t=…`，hub 种下该子域的会话 cookie `collie_wb`（HttpOnly，12 小时），再跳到模块的网址。会话只存在内存里，hub 重启后重新打开就行。只有已登录的浏览器能拿票据；设备在「设备」页删掉后，它的代理会话和正在使用的连接立即失效。
+- **进入**：页面先 `POST /api/wb/enter` 拿一张 60 秒、只能用一次的票据，iframe 或新标签打开 `/__collie/enter?t=…`，hub 种下该子域的会话 cookie `collie_wb`（HttpOnly，12 小时），再跳到模块的网址。会话和随机子域前缀只存在内存里。Hub 重启后从工作台重新打开即可，保存在 hub 的网站登录继续有效。只有已登录的浏览器能拿票据；设备在「设备」页删掉后，它的代理会话和正在使用的连接立即失效。
 - **转发**：网站发来的 `Set-Cookie` 全部存进 `COLLIE_HOME/wb/jar/<id>.json`（0600），转发请求时带上。不是 HttpOnly 的 cookie 同时发给浏览器，因为网站的脚本可能要读它（比如 CSRF token）。Collie 自己的 cookie 和 `collie_wb` 不转给网站。`Origin`、`Referer` 改成网站自己的；指向网站自己的跳转改回代理地址。去掉 `X-Frame-Options` 和 CSP 的 `frame-ancestors`，换成只允许打开它的 Collie 页面。WebSocket 和 SSE 照常转发。
 - **只认模块自己的页面**：会话 cookie 是同站的，别的模块的脚本也会带上它。所以写请求要满足 `cookieAllowed`；子请求的 `Sec-Fetch-Site` 必须是 `same-origin`，跨源的只放行页面跳转；WebSocket 的 `Origin` 必须是模块自己。
-- **登录态的去留**：设置里有「清除 hub 保管的登录态」（`POST /api/wb/logout`）。清除登录、关闭开关、删除模块或更改网址的来源时，hub 删除 jar 并停用原子域。只改同源网址的路径会保留登录。旧格式的 jar 升级后需要重新登录一次。Agent 读数据仍然只用数据地址和只读 token，用不到 jar。
+- **登录态的去留**：设置里有「清除 hub 保管的登录态」（`POST /api/wb/logout`）。清除登录、关闭开关、删除模块或更改网址的来源时，hub 删除 jar 并停用原子域。只改同源网址的路径会保留登录。Agent 读数据仍然只用数据地址和只读 token，用不到 jar。
 - **做不了的网站**：
   - 登录态存在 `localStorage` 或 `sessionStorage`、由脚本加 `Authorization` 头的网站：hub 收不到 cookie，各设备仍要各登一次。例如把管理密钥存在 `sessionStorage` 里的网关控制台。
   - 跳到第三方账号（Google、GitHub、Cloudflare Access 等）登录的网站：回调地址是网站自己的域名，不经过代理。

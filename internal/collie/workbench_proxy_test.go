@@ -103,6 +103,10 @@ func TestWorkbenchProxyKeepsTheLogin(t *testing.T) {
 		t.Fatalf("ticket used twice = %d", w.Code)
 	}
 	cookie := wbSessCookie + "=" + sess
+	if w := do("GET", enter("gw").RequestURI(), proxy, map[string]string{"Cookie": cookie}); w.Code != 303 ||
+		len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].Value != sess {
+		t.Fatalf("opening another tab must keep the browser session: %d", w.Code)
+	}
 
 	// Logging in: the login stays on the hub, frames are allowed for Collie only,
 	// redirects to the site come back through the proxy.
@@ -126,6 +130,15 @@ func TestWorkbenchProxyKeepsTheLogin(t *testing.T) {
 		t.Fatalf("jar file: %v %v", fi, err)
 	}
 
+	b, err := os.ReadFile(sp.wb.jarPath("gw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved []wbCookie
+	if err := json.Unmarshal(b, &saved); err != nil || len(saved) != 2 {
+		t.Fatalf("jar must remain a list of cookies: %v (%v)", saved, err)
+	}
+
 	// Another device, its own session: the site sees the login, and the
 	// page's own cookies, but not ours; Origin and Referer are the site's.
 	reopened := newWorkbench(sp.db, dir, sp.routerDir())
@@ -133,8 +146,11 @@ func TestWorkbenchProxyKeepsTheLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Host+"."+srv.wbDomain != proxy || reopened.jarCount("gw") != 2 {
-		t.Fatal("proxy host or cookies were not restored from disk")
+	if restored.Host+"."+srv.wbDomain == proxy || reopened.jarCount("gw") != 2 {
+		t.Fatal("restart must keep the cookies and issue a new proxy host")
+	}
+	if w := do("GET", "/", "gw.wb.example.com", nil); w.Code != 401 || !strings.Contains(w.Body.String(), "重新打开") {
+		t.Fatalf("previous proxy address must tell the user to reopen the module: %d %s", w.Code, w.Body)
 	}
 	w = do("GET", enter("gw").RequestURI(), proxy, nil)
 	cookie2 := w.Result().Cookies()[0].Name + "=" + w.Result().Cookies()[0].Value
@@ -190,8 +206,8 @@ func TestWorkbenchProxyKeepsTheLogin(t *testing.T) {
 	if newTicket.Host == proxy {
 		t.Fatal("clearing the login must give the module a fresh proxy host")
 	}
-	if w := do("GET", "/", proxy, nil); w.Code != 404 {
-		t.Fatalf("retired proxy host = %d, want 404", w.Code)
+	if w := do("GET", "/", proxy, nil); w.Code != 401 {
+		t.Fatalf("retired proxy host = %d, want 401", w.Code)
 	}
 	proxy = newTicket.Host
 	w = do("GET", newTicket.RequestURI(), proxy, nil)
@@ -244,6 +260,9 @@ func TestWorkbenchLoginOrigin(t *testing.T) {
 	wb := newWorkbench(sp.db, dir, sp.routerDir())
 	cfg := wb.config()
 	cfg.Modules = []WBModule{{ID: "site", Title: "Site", Group: "fav", Kind: wbKindWeb, URL: "https://example.com/start", HubLogin: true}}
+	if err := writePrivate(wb.jarPath("site"), []wbCookie{{Name: "orphan", Path: "/"}}); err != nil {
+		t.Fatal(err)
+	}
 	save := func(rawURL string) {
 		t.Helper()
 		cfg := cfg
@@ -263,6 +282,9 @@ func TestWorkbenchLoginOrigin(t *testing.T) {
 	}
 	save("https://example.com/start")
 	first := jar()
+	if wb.jarCount("site") != 0 {
+		t.Fatal("adding a module must discard an orphan jar with the same ID")
+	}
 	cookies := []*http.Cookie{{Name: "test", Value: "1", Path: "/"}}
 	if err := wb.storeCookies("site", first, "/", cookies); err != nil {
 		t.Fatal(err)
@@ -277,6 +299,22 @@ func TestWorkbenchLoginOrigin(t *testing.T) {
 		if jar().Host == old.Host || wb.jarCount("site") != 0 {
 			t.Fatalf("origin change to %s must start with a fresh host and empty jar", rawURL)
 		}
+	}
+	current := jar()
+	if err := wb.storeCookies("site", current, "/", cookies); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wb.db.Exec(`CREATE TRIGGER fail_layout BEFORE UPDATE ON kv WHEN OLD.k = 'workbench'
+		BEGIN SELECT RAISE(ABORT, 'layout write rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	next := wb.config()
+	next.Modules[0].URL = "https://example.org"
+	if err := wb.save(next, nil); err == nil {
+		t.Fatal("the test database must reject the layout write")
+	}
+	if jar() != current || current.ctx.Err() != nil || wb.jarCount("site") != 1 {
+		t.Fatal("a rejected layout write must keep the current login and proxy")
 	}
 }
 

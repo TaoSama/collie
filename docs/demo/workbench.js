@@ -161,10 +161,10 @@
       main.innerHTML = ""; main._key = ""; // let an embedded page go
     }
 
-    async function save(next, purge = []) {
+    async function save(next, purge = [], redraw = true) {
       cfg = await api("/api/wb", { body: { groups: next.groups, modules: next.modules, purge } });
       $("#wb-main")._key = "";
-      render();
+      if (redraw) render();
     }
     const clone = () => JSON.parse(JSON.stringify({ groups: cfg.groups, modules: cfg.modules.map(({ has_token, cookies, snap_at, snap_err, ...m }) => m) }));
 
@@ -246,14 +246,13 @@
         next.modules.push({ id, ...v });
       }
       const added = !editing;
-      await save(next, purge);
+      const logout = field("logout").checked;
+      await save(next, purge, !logout);
       editing = mod(id); // saved: trying again after a failed token edits it, not a copy
-      if (field("logout").checked) {
+      if (logout) {
         await api("/api/wb/logout", { body: { id } });
-        if (cur === id && editing.hub_login && editing.embed === "iframe") {
-          $("#wb-main")._key = "";
-          render();
-        }
+        await load();
+        render();
       }
       const token = field("token").value.trim(), clear = field("clear-token").checked;
       if (token || clear) {

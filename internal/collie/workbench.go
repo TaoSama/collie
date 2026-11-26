@@ -192,12 +192,25 @@ func (wb *workbench) save(c wbConfig, purge []string) error {
 }
 
 func (wb *workbench) saveLayout(c wbConfig, b []byte) error {
+	tx, err := wb.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			log.Printf("workbench: rollback layout: %v", err)
+		}
+	}()
+	if _, err := tx.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, wbKV, string(b)); err != nil {
+		return err
+	}
 	wb.mu.Lock()
 	defer wb.mu.Unlock()
+	// Retire the old jars before the new origins become visible, including after restart.
 	if err := wb.dropJarsLocked(c); err != nil {
 		return err
 	}
-	if _, err := wb.db.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, wbKV, string(b)); err != nil {
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 	wb.cfg = c
