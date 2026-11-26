@@ -1,0 +1,30 @@
+icon.svg
+
+来源：https://github.com/tabler/tabler-icons/blob/a1422751964ae9c7d9acb5c8d9a7a9c1ff0f8192/icons/filled/layout-dashboard.svg
+Tabler Icons 的 layout-dashboard（实心）。只做了两处修改：fill="currentColor" 改成 #27272A，让它在浅色底块上原样显示；viewBox 从 "0 0 24 24" 收紧到 "1.5 1.5 21 21"，让它和其他扩展的图标一样大。
+原文件 sha256：82ebf8a7cba6bee7b9f3f89ce7640dd0946f229379aa59ef071edae204182bfa
+许可：MIT（全文附在下面）。
+
+----- LICENSE -----
+
+MIT License
+
+Copyright (c) 2020-2026 Paweł Kuna
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

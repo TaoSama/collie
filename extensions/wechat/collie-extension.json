@@ -5,7 +5,6 @@
   "name": "微信",
   "version": "1.0.0",
   "icon": "icon.svg",
-  "color": "#07C160",
   "description": "在微信里和 Collie 聊天：扫码绑定一个微信机器人，你私聊它的消息交给 Collie，回复发回微信。用的是腾讯官方接口（iLink），只处理你本人发的消息。",
   "warning": "微信限制：你每发一条消息，Collie 在 23 小时内最多能回 10 条（分段、图片、进度都算），过期后的回复和定时结果要等你再发一条才送达。",
   "engines": {"collie_protocol": 1},

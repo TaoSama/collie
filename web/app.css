@@ -19,6 +19,7 @@
   --danger: #c2410c;
   --pin: #475569;
   --ok: #15803d;
+  --logo-bg: #ffffff;
   --c-cpu: #1a7cf2;
   --c-mem: #1f8a4c;
   --c-rx: #b45309;
@@ -144,6 +145,7 @@
   --danger: #c2410c;
   --pin: #94a3b8;
   --ok: #4ade80;
+  --logo-bg: #ececee;
   --c-cpu: #4ea1ff;
   --c-mem: #4ade80;
   --c-rx: #f0a24a;
@@ -2478,18 +2480,17 @@ select.picked { display: none; }
 .ext-st-l { display: inline-flex; align-items: center; gap: 6px; color: var(--t-secondary); }
 .ext-st-on { max-width: 12em; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-tiny); color: var(--t-meta); }
 .ext-row .chev { margin-left: 6px; color: var(--t-icon); font-size: var(--fs-title); line-height: 1; }
-/* Its color (--ext-c, from the manifest; ink when it has none) tints the
-   tile, and its icon (--ext-i) is a mask painted in that color. */
+/* A logo is shown as it is, on a light tile in every theme so its brand
+   colors stay clear; the tile says how the extension is. */
 .ext-icon {
-  --ext-c: var(--fg); width: 36px; height: 36px; border-radius: calc(10px * var(--round)); display: inline-flex; align-items: center; justify-content: center; flex: none;
-  background: color-mix(in srgb, var(--ext-c) 12%, var(--bg)); box-shadow: inset 0 0 0 var(--bw) color-mix(in srgb, var(--ext-c) 20%, transparent);
-  color: var(--ext-c); font-weight: var(--fw-strong); font-size: var(--fs-body);
+  width: 36px; height: 36px; border-radius: calc(10px * var(--round)); display: inline-flex; align-items: center; justify-content: center; flex: none;
+  background: var(--bg-3); box-shadow: inset 0 0 0 var(--bw) var(--line); color: var(--fg); font-weight: var(--fw-strong); font-size: var(--fs-body);
 }
-.ext-icon > i { width: 62%; height: 62%; background: currentColor; -webkit-mask: var(--ext-i) center / contain no-repeat; mask: var(--ext-i) center / contain no-repeat; }
-.ext-icon.off { background: var(--bg-2); box-shadow: inset 0 0 0 var(--bw) var(--line-2); color: color-mix(in srgb, var(--ext-c) 45%, var(--t-icon)); }
-.ext-icon.ink:not(.off) { background: color-mix(in srgb, var(--fg) 7%, var(--bg)); }
-.ext-icon.wait { background: color-mix(in srgb, var(--ext-c) 6%, var(--bg)); }
-.ext-icon.bad { background: var(--attn-soft); box-shadow: inset 0 0 0 var(--bw) color-mix(in srgb, var(--attn) 45%, transparent); }
+.ext-icon.logo { background: var(--logo-bg); }
+.ext-icon > img { width: 62%; height: 62%; object-fit: contain; }
+.ext-icon.off { box-shadow: inset 0 0 0 var(--bw) var(--line-2); }
+.ext-icon.off > img, .ext-icon.off:not(.logo) { opacity: .5; }
+.ext-icon.bad { box-shadow: 0 0 0 2px color-mix(in srgb, var(--attn) 55%, transparent); }
 .ext-icon.big { width: 48px; height: 48px; border-radius: calc(13px * var(--round)); font-size: var(--fs-lead); }
 .ext-icon.ghost { background: transparent; box-shadow: none; }
 .ext-head { display: flex; align-items: center; gap: 14px; min-width: 0; }

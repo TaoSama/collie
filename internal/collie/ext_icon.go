@@ -5,25 +5,19 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"regexp"
 	"strings"
 )
 
 // An extension's icon (extensions/README.md §2): an SVG in its package,
-// drawn by the page as a mask in one color, so it follows the theme and
-// none of its markup reaches the page.
+// its brand's own logo, which the page shows as an image as it is (an
+// <img> runs none of its markup).
 const extIconMax = 16 << 10
-
-var extColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 // loadIcon reads the manifest's icon from its package and keeps it as a
 // data: URL for the page; a manifest without one keeps its letter.
 func (m *ExtManifest) loadIcon(fsys fs.FS) error {
 	if m.IconURL != "" {
 		return fmt.Errorf("icon_url is set by Collie, not the manifest")
-	}
-	if m.Color != "" && !extColorRe.MatchString(m.Color) {
-		return fmt.Errorf("color %q: want #rrggbb", m.Color)
 	}
 	if m.Icon == "" {
 		return nil

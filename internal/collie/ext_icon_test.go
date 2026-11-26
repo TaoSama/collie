@@ -27,9 +27,8 @@ func TestExtLoadIcon(t *testing.T) {
 		ok   bool
 	}{
 		{"none", ExtManifest{}, true},
-		{"svg", ExtManifest{Icon: "icon.svg", Color: "#07C160"}, true},
+		{"svg", ExtManifest{Icon: "icon.svg"}, true},
 		{"set by manifest", ExtManifest{IconURL: "https://example.com/x.svg"}, false},
-		{"bad color", ExtManifest{Icon: "icon.svg", Color: "red"}, false},
 		{"escapes", ExtManifest{Icon: "../icon.svg"}, false},
 		{"not svg", ExtManifest{Icon: "logo.png"}, false},
 		{"missing", ExtManifest{Icon: "gone.svg"}, false},

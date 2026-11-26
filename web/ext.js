@@ -39,13 +39,10 @@
     if (p.since && Date.now() - Date.parse(p.since) < 5 * 60e3) return { key: needsLogin(m) ? "login" : "starting", dot: "starting", label: needsLogin(m) ? "未登录" : "启动中", text: s.error || "正在启动…", busy: true };
     return { key: "error", dot: "blocked", label: "出错", text: s.error || "出错" };
   }
-  // Its icon (or first letter) on a tile tinted by how it is: its own
-  // color when on, quiet when off, attention when it needs you.
-  const TONE = { online: "on", asleep: "off", blocked: "bad", starting: "wait" };
-  const extIcon = (m, st, big) => {
-    const look = [m.color && `--ext-c:${m.color}`, m.icon_url && `--ext-i:url(${m.icon_url})`].filter(Boolean).join(";");
-    return `<span class="ext-icon ${TONE[st?.dot] || ""}${m.color ? "" : " ink"}${big ? " big" : ""}"${look ? ` style="${esc(look)}"` : ""} aria-hidden="true">${m.icon_url ? "<i></i>" : esc((m.label || m.name || m.id).slice(0, 1))}</span>`;
-  };
+  // Its logo (or first letter) on a tile that says how it is: faded when
+  // off, ringed when it needs you.
+  const TONE = { asleep: "off", blocked: "bad" };
+  const extIcon = (m, st, big) => `<span class="ext-icon ${TONE[st?.dot] || ""}${m.icon_url ? " logo" : ""}${big ? " big" : ""}" aria-hidden="true">${m.icon_url ? `<img src="${esc(m.icon_url)}" alt="">` : esc((m.label || m.name || m.id).slice(0, 1))}</span>`;
   const loginWord = (m) => m.contributes?.connector?.login === "secret" ? "填写密钥" : "登录" + (m.label || "");
 
   // Until one is chosen, none is picked; drawn as every computer picker (machines.js).

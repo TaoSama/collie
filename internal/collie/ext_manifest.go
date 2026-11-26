@@ -27,8 +27,7 @@ type ExtManifest struct {
 	Description     string `json:"description"`
 	Warning         string `json:"warning,omitempty"`
 	Homepage        string `json:"homepage,omitempty"`
-	Icon            string `json:"icon,omitempty"`  // an SVG in the package (ext_icon.go)
-	Color           string `json:"color,omitempty"` // #rrggbb its icon is drawn in
+	Icon            string `json:"icon,omitempty"` // an SVG in the package (ext_icon.go)
 	Engines         struct {
 		CollieProtocol int `json:"collie_protocol"`
 	} `json:"engines"`

@@ -496,7 +496,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
 `;
 
   // ───────────────────────────── extensions (接入, 收件箱)
-  const larkx = { manifest_version: 1, id: "larkx", name: "飞书（以你本人身份）", version: "0.3.6", icon_url: "ext-icons/larkx.svg", color: "#3370FF", engines: { collie_protocol: 1 }, runtime: { command: "bin/larkx" },
+  const larkx = { manifest_version: 1, id: "larkx", name: "飞书（以你本人身份）", version: "0.3.6", icon_url: "ext-icons/larkx.svg", engines: { collie_protocol: 1 }, runtime: { command: "bin/larkx" },
     description: "用你自己的飞书账号和 agent 对话：扫码登录后，飞书会话出现在收件箱。你在任意会话里发一条以触发词开头的消息，Collie 先给它点个「在做了」，做完以你的名义回复，格式照常显示，末尾带一段尾标。",
     warning: "用的是飞书网页版接口，飞书升级后可能失效；登录状态只存在运行它的那台电脑上；用公司账号前先确认公司规定。",
     contributes: { connector: { id: "larkx", capabilities: ["status", "login", "archive", "actions"] }, channel: { format: "markdown" } },
@@ -508,7 +508,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     machines: [{ id: "", name: "hub", os: "linux/amd64", agents: [], local: true, online: true }, { id: "mini", name: "mac-mini", os: "darwin/arm64", agents: ["claude"], online: true }],
     extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu", hide_muted: false, hide_meego_story: true, hide_meego_bug: true } },
       proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } },
-    { manifest: { manifest_version: 1, id: "wechat", label: "微信", name: "微信", version: "1.0.0", icon_url: "ext-icons/wechat.svg", color: "#07C160", engines: { collie_protocol: 1 }, runtime: { builtin: "wechat" },
+    { manifest: { manifest_version: 1, id: "wechat", label: "微信", name: "微信", version: "1.0.0", icon_url: "ext-icons/wechat.svg", engines: { collie_protocol: 1 }, runtime: { builtin: "wechat" },
       description: "在微信里和 Collie 聊天：扫码绑定一个微信机器人，你私聊它的消息交给 Collie，回复发回微信。用的是腾讯官方接口（iLink），只处理你本人发的消息。",
       contributes: { connector: { id: "wechat", login: "qr", capabilities: ["status", "login", "receive", "send"] }, channel: { format: "markdown" } }, permissions: { network: ["*.weixin.qq.com"] } },
       setting: { id: "wechat", enabled: false } },
