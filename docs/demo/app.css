@@ -2389,6 +2389,8 @@ select.picked { display: none; }
 .inbox-row .dot { margin-top: 5px; }
 .inbox-row .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-unread { min-width: 18px; padding: 1px 6px; border-radius: 999px; background: var(--attn); color: var(--on-attn); font-size: var(--fs-tiny); text-align: center; }
+/* Muted in the chat app: the count stays, without the alert colour. */
+.inbox-unread.muted { background: var(--bg-3); color: var(--t-meta); }
 .conv-card .form { gap: 12px; }
 .conv-rule { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--fs-meta); }
 .conv-rule small { display: block; margin-top: 2px; font-weight: var(--fw-normal); }

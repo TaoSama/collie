@@ -758,3 +758,24 @@ func TestWorkbenchSwitch(t *testing.T) {
 		t.Fatalf("on: %d", c)
 	}
 }
+
+// A chat muted in the chat app stays muted in the inbox: its unread count
+// still counts, shown without the alert colour; a message that doesn't say
+// leaves it as it was.
+func TestInboxMuted(t *testing.T) {
+	m := fakeManifest("fake", "receive")
+	yes, no := true, false
+	in := incomingMsg{Chat: "c1", ChatName: "大群", ID: "1", Sender: "u2", Text: "hi", At: time.Now(), Live: true, Muted: &yes}
+	c := inboxConversation(m, in, nil)
+	if !c.Muted || c.Unread != 1 {
+		t.Fatalf("muted, still counted: %+v", c)
+	}
+	in.Muted = nil
+	if c = inboxConversation(m, in, &c); !c.Muted || c.Unread != 2 {
+		t.Fatalf("not said: kept: %+v", c)
+	}
+	in.Muted = &no
+	if c = inboxConversation(m, in, &c); c.Muted {
+		t.Fatalf("unmuted: %+v", c)
+	}
+}

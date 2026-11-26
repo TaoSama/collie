@@ -35,8 +35,9 @@ const (
 type incomingMsg struct {
 	Chat, ChatName, ChatKind string
 	ID, Sender, SenderName   string
-	Mine                     bool // sent by the signed-in account
-	Owner                    bool // sent by the person the bot is bound to
+	Mine                     bool  // sent by the signed-in account
+	Muted                    *bool // the chat is muted in the chat app (nil: not known)
+	Owner                    bool  // sent by the person the bot is bound to
 	Text, Quote              string
 	At                       time.Time
 	Live                     bool // not history being caught up
@@ -73,7 +74,7 @@ func (h *extHost) archived(r *extRun, b extproto.ArchiveBatch, baseline bool) er
 	sort.SliceStable(msgs, func(i, j int) bool { return parseAt(msgs[i].At).Before(parseAt(msgs[j].At)) })
 	for _, m := range msgs {
 		if err := h.incoming(r.man, incomingMsg{
-			Chat: b.Chat.ID, ChatName: b.Chat.Name, ChatKind: b.Chat.Kind,
+			Chat: b.Chat.ID, ChatName: b.Chat.Name, ChatKind: b.Chat.Kind, Muted: b.Chat.Muted,
 			ID: m.ID, Sender: m.SenderID, SenderName: m.SenderName, Mine: m.Mine, Owner: m.Mine,
 			Text: m.Text, At: parseAt(m.At), Live: !baseline,
 		}); err != nil {
@@ -91,7 +92,7 @@ func (h *extHost) received(r *extRun, m extproto.Message) error {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, ID: m.ID, Sender: m.Sender,
+	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, ID: m.ID, Sender: m.Sender,
 		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Text: m.Text, Quote: m.Quote, At: at, Live: true,
 		Unsupported: m.Unsupported}
 	for _, b := range append(append([]extproto.Blob(nil), m.Images...), m.Files...) {
@@ -147,6 +148,9 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 	}
 	if in.ChatKind != "" {
 		c.Kind = in.ChatKind
+	}
+	if in.Muted != nil {
+		c.Muted = *in.Muted
 	}
 	if !in.At.Before(c.LastAt) {
 		c.LastAt = in.At

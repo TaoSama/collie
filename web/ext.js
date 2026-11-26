@@ -204,7 +204,7 @@
       .map(([k, l]) => `<button type="button" data-inbox-filter="${esc(k)}" class="${(filter || "all") === k ? "on" : ""}">${esc(l)}</button>`).join("");
     const row = (c) => `<li class="row inbox-row ${c.id === cur ? "sel" : ""}" data-conv="${esc(c.id)}">
         <span class="dot ${c.on ? "idle" : "asleep"}" title="${c.on ? "处理中" : "不处理"}"></span>
-        <div><div class="meta"><b>${esc(c.name || c.chat)}</b><span>${esc(c.label)} · ${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread">${c.unread}</span>` : ""}</div>
+        <div><div class="meta"><b>${esc(c.name || c.chat)}</b><span>${esc(c.label)} · ${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread${c.muted ? " muted" : ""}"${c.muted ? ' title="在原应用里设了免打扰"' : ""}>${c.unread}</span>` : ""}</div>
           <div class="text">${esc(c.preview || "")}</div>${c.on ? outLine(c.out) : ""}</div>
         <span class="right">${when(c.last_at)}</span></li>`;
     const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;

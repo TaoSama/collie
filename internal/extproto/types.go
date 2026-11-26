@@ -185,6 +185,7 @@ type Message struct {
 	Sender      string   `json:"sender,omitempty"`
 	SenderName  string   `json:"sender_name,omitempty"`
 	Owner       *bool    `json:"owner,omitempty"` // sent by the signed-in person
+	Muted       *bool    `json:"muted,omitempty"` // the chat is muted in the chat app (nil: not known)
 	At          string   `json:"at,omitempty"`
 	Quote       string   `json:"quote,omitempty"`
 	Forward     string   `json:"forward,omitempty"`
