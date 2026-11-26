@@ -496,10 +496,11 @@ func TestStreamPaneScreenRecentANSI(t *testing.T) {
 		Truncated bool   `json:"truncated"`
 		Cursor    bool   `json:"cursor"`
 		Wheel     bool   `json:"wheel"`
+		Kind      string `json:"kind"` // the page picks the terminal's colours by it
 	}
 	json.Unmarshal([]byte(events[0].data), &f1)
 	json.Unmarshal([]byte(events[1].data), &f2)
-	if f1.Text != "\x1b[32mfirst\x1b[0m\r\nsecond\x1b7" || f1.Cols != 132 || f1.Rows != 42 || !f1.Truncated || !f1.Cursor || !f1.Wheel {
+	if f1.Text != "\x1b[32mfirst\x1b[0m\r\nsecond\x1b7" || f1.Cols != 132 || f1.Rows != 42 || !f1.Truncated || !f1.Cursor || !f1.Wheel || f1.Kind != "claude" {
 		t.Fatalf("frame 1 = %+v", f1)
 	}
 	if f2.Text != "\x1b[32mfirst\x1b[0m\r\nsecond\r\nthird\x1b7" || f2.Truncated || !f2.Cursor {

@@ -94,7 +94,7 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				}
 				b, _ := json.Marshal(map[string]any{
 					"text": text, "revision": res.Revision, "truncated": res.Truncated,
-					"cols": lastSize.Width, "rows": lastSize.Height, "cursor": cursor, "wheel": wheel,
+					"cols": lastSize.Width, "rows": lastSize.Height, "cursor": cursor, "wheel": wheel, "kind": kind,
 				})
 				if sse.send("frame", b) != nil {
 					return

@@ -5113,7 +5113,6 @@
   let size = { cols: 0, rows: 0 };
   let prevScreenLines = null;
   let pendingScreen = null;
-  let lastScreen = null; // the frame drawn last, to draw again in a new skin
   let screenFresh = true;
   let screenWheel = false; // the frame says: hand the wheel to the program (paneWheel)
   const wheelUp = window.collieWheel.tracker(); // how far that turned the program's view up
@@ -5157,7 +5156,7 @@
   function resetScreen() {
     prevScreenLines = null;
     pendingScreen = null;
-    lastScreen = null;
+    setTermLook(null);
     screenFresh = true;
     screenWheel = false;
     size = { cols: 0, rows: 0 };
@@ -5169,7 +5168,6 @@
     }
   }
 
-  const SCREEN_CONTRAST = 4.5; // WCAG AA for body text
   function ensureTerm() {
     if (term || !window.Terminal) return;
     const css = getComputedStyle(document.documentElement);
@@ -5179,11 +5177,6 @@
       // into it, an outline otherwise.
       cursorBlink: true, cursorStyle: "block", cursorInactiveStyle: "outline",
       scrollback: 0, allowTransparency: true, theme: termTheme(),
-      // An agent picks its colours for the terminal it thinks it's in:
-      // Codex paints dark bars under text in the default colour, which on
-      // a light skin is dark on dark. Only the text colour moves, as far as
-      // it takes to read; what's drawn and where stays the agent's own.
-      minimumContrastRatio: SCREEN_CONTRAST,
     });
     // Native #screen handles 2D scrolling: never translate wheel into Up/Down
     // arrow keys (\x1b[A/\x1b[B) or let xterm cancel horizontal touch pans.
@@ -5208,7 +5201,6 @@
     addEventListener("collie:theme", () => {
       term.options.theme = termTheme();
       term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
-      if (lastScreen && curMode() === "screen") { prevScreenLines = null; drawScreen(lastScreen); }
     });
   }
   // An agent drawing fullscreen keeps its history to itself, so once the
@@ -5259,12 +5251,18 @@
       scrollPane(dy);
     }, { capture: true, passive: false });
   }
+  // The viewer's terminal colours: the skin's, or the terminal an agent
+  // drew for (data-term, app.css).
   function termTheme() {
-    const css = getComputedStyle(document.documentElement);
+    const css = getComputedStyle($("#viewer"));
     const fg = css.getPropertyValue("--term-fg").trim(), bg = css.getPropertyValue("--term-bg").trim();
-    // The real background (the viewer's own) so minimumContrastRatio
-    // measures against what you see.
-    return { background: bg, foreground: fg, cursor: fg, cursorAccent: bg, selectionBackground: "rgba(127,127,127,.3)" };
+    return { background: "rgba(0,0,0,0)", foreground: fg, cursor: fg, cursorAccent: bg, selectionBackground: "rgba(127,127,127,.3)" };
+  }
+  function setTermLook(kind) {
+    const v = $("#viewer"), want = kind === "codex" ? kind : "";
+    if ((v.dataset.term || "") === want) return;
+    if (want) v.dataset.term = want; else delete v.dataset.term;
+    if (term) term.options.theme = termTheme();
   }
   // The pane keeps its own width (herdr can't resize it for us), so a phone
   // can't fit 120 columns legibly: there it shows the screen at a readable
@@ -5377,9 +5375,8 @@
     screenWheel = !!f.wheel;
     const el = $("#screen");
     const stick = restore ? !!restore.atBottom : (screenFresh || screenNearBottom());
-    lastScreen = f;
-    const { background, foreground } = term.options.theme;
-    const raw = window.collieTermColor.adapt(f.text || "", background, foreground).replace(/\r\n/g, "\n").replace(/\r/g, "");
+    setTermLook(f.kind);
+    const raw = (f.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "");
     const lines = raw ? raw.split("\n") : [""];
     if (!screenFresh && term.hasSelection()) {
       pendingScreen = f;

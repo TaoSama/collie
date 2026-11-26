@@ -541,6 +541,10 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 
 /* ─── viewer ─── */
 .viewer { position: relative; flex: 1; min-height: 0; background: var(--term-bg); }
+/* Codex picks its colours for the dark terminal herdr reports (its bars are
+   this background lightened, its text the default colour): screen mode gives
+   it that terminal, whatever the skin, so it looks as it does in one. */
+.viewer[data-mode="screen"][data-term="codex"] { --term-bg: #292c34; --term-fg: #ffffff; }
 .viewer.chatbg { background: var(--bg); overflow: auto; outline: none; }
 .viewer > .screen, .viewer > .log, .viewer > .chat { display: none; }
 .viewer[data-mode="screen"] > .screen, .viewer[data-mode="log"] > .log { display: block; }
