@@ -22,8 +22,17 @@ type Trigger struct {
 	Action  string    `json:"action"` // respond | candidate | ignore (fast-path decision)
 	Status  string    `json:"status"` // queued | delivered | ignored | failed
 	Targets []string  `json:"targets,omitempty"`
-	Key     string    `json:"key,omitempty"` // idempotency key
-	Ref     string    `json:"ref,omitempty"` // related object id (worker, timer…)
+	// Deliveries records each target whose prompt may already be in its terminal.
+	Deliveries map[string]deliveryAttempt `json:"deliveries,omitempty"`
+	// WaitForConvWorker keeps a dedicated extension request queued until its worker is live.
+	WaitForConvWorker bool   `json:"wait_for_conv_worker,omitempty"`
+	Key               string `json:"key,omitempty"` // idempotency key
+	Ref               string `json:"ref,omitempty"` // related object id (worker, timer…)
+}
+
+type deliveryAttempt struct {
+	Pane string    `json:"pane"`
+	At   time.Time `json:"at"`
 }
 
 type Thread struct {
@@ -214,11 +223,19 @@ func (st *State) nextID(prefix string) string {
 }
 
 const maxPinned = 200
+const keepTriggers = 600
 
 func (st *State) trim() {
-	const keepTriggers, keepEntries = 600, 600
+	const keepEntries = 600
 	if n := len(st.Triggers); n > keepTriggers {
-		st.Triggers = append([]*Trigger(nil), st.Triggers[n-keepTriggers:]...)
+		cutoff := n - keepTriggers
+		kept := make([]*Trigger, 0, keepTriggers)
+		for _, t := range st.Triggers[:cutoff] {
+			if t.Status == "queued" {
+				kept = append(kept, t)
+			}
+		}
+		st.Triggers = append(kept, st.Triggers[cutoff:]...)
 	}
 	if n := len(st.Entries); n > keepEntries {
 		st.Entries = append([]*Entry(nil), st.Entries[n-keepEntries:]...)

@@ -181,7 +181,7 @@ func (s *Server) agyAnnotate(ctx context.Context, conversation string, annotatio
 	_, err := ls.post(ctx, agyConversations+"UpdateConversation", map[string]any{"conversationId": conversation, "annotations": annotations})
 	if err != nil {
 		var api *agyError
-		if !errors.As(err, &api) {
+		if !errors.As(err, &api) || api.authFailed() {
 			forgetAgyServer()
 		} else if api.Code == "not_found" || strings.HasSuffix(api.Message, "not found") {
 			return errors.New("Antigravity 加载不到这个会话（可能是没建成的空会话），改不了它")

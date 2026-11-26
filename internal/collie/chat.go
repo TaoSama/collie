@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -670,17 +669,28 @@ type agentDetail struct {
 	TerminalTitle string `json:"terminal_title"`
 }
 
-var claimed = struct {
-	sync.Mutex
-	m map[string]string // transcript path → pane
-}{m: map[string]string{}}
-
 // transcriptFor resolves (and caches) the transcript for the agent in a pane.
 func (s *Server) transcriptFor(key, pane string, a agentDetail, cache map[string]*transcript) *transcript {
 	kind := deref(a.Agent)
 	sessKind, value := "", ""
 	if a.Session != nil {
 		sessKind, value = a.Session.Kind, a.Session.Value
+	}
+	if kind == "agy" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		path, _ := s.agyPaneSession(ctx, pane, deref(a.Cwd), sessKind, value)
+		ck := key + "|agy"
+		if path == "" {
+			delete(cache, ck)
+			return nil
+		}
+		if tr := cache[ck]; tr != nil && tr.path == path {
+			return tr
+		}
+		tr := newTranscript(path, kind)
+		cache[ck] = tr
+		return tr
 	}
 	if kind == "codex" && value == "" {
 		// herdr doesn't always know a codex session: its thread is named
@@ -739,15 +749,15 @@ func (s *Server) findTranscript(kind, sessKind, value, pane, cwd string) (path, 
 			}
 		}
 	case "agy":
-		brain := filepath.Join(s.agyCLIHome(), "brain")
 		if value != "" {
-			for _, b := range []string{brain, filepath.Join(s.home, ".gemini", "antigravity", "brain")} {
-				if p := filepath.Join(b, value, ".system_generated", "logs", "transcript.jsonl"); isFile(p) {
-					return p, "agy"
-				}
-			}
+			return s.agyLog(value), "agy"
 		}
-		return s.guessAgy(brain, pane, cwd), "agy"
+		if pane != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			path, _ := s.agyPaneSession(ctx, pane, cwd, "", "")
+			return path, "agy"
+		}
 	}
 	return "", ""
 }
@@ -1164,13 +1174,15 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		var nextTr *transcript
 		if err == nil && kind != "" {
-			if next := s.transcriptFor(id, id, info.Agent, cache); next != tr && next != nil {
-				tr, lastLog = next, ""
-				if !send("reset", map[string]any{}) {
-					cancel()
-					return
-				}
+			nextTr = s.transcriptFor(id, id, info.Agent, cache)
+		}
+		if nextTr != tr && (nextTr != nil || tr != nil && tr.format == "agy") {
+			tr, lastLog = nextTr, ""
+			if !send("reset", map[string]any{}) {
+				cancel()
+				return
 			}
 		}
 		meta := kind + "|" + status + "|" + boolStr(tr != nil)

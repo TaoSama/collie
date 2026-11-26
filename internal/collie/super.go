@@ -123,6 +123,7 @@ func newSuper(s *Server, dir string) (*Super, error) {
 
 // ---------------------------------------------------------------- state plumbing
 
+// changed requires sp.mu to be held.
 func (sp *Super) changed() {
 	sp.dirty = true
 	for ch := range sp.subs {
@@ -144,15 +145,21 @@ func (sp *Super) subscribe() (chan struct{}, func()) {
 func (sp *Super) flush() {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
+	if err := sp.flushLocked(); err != nil {
+		log.Printf("save state: %v", err)
+	}
+}
+
+func (sp *Super) flushLocked() error {
 	if !sp.dirty {
-		return
+		return nil
 	}
 	if err := saveState(sp.db, sp.st, sp.deletedTimers); err != nil {
-		log.Printf("save state: %v", err)
-		return
+		return err
 	}
 	sp.st.trim() // history beyond the working set stays in SQLite
 	sp.dirty, sp.deletedTimers = false, nil
+	return nil
 }
 
 func (sp *Super) addEntryLocked(role, thread, text, ref, tone string) *Entry {
@@ -242,10 +249,18 @@ func (sp *Super) Ingest(source, thread, from, text, key, target, ref string) *Tr
 }
 
 func (sp *Super) ingestLocked(source, thread, from, text, key, target, ref string) *Trigger {
+	t, th := sp.prepareTriggerLocked(source, thread, from, text, key, target, ref)
+	sp.publishTriggerLocked(t, th)
+	return t
+}
+
+// prepareTriggerLocked reserves an ID and builds the records before publishing
+// them. Callers that acknowledge an external event commit them first.
+func (sp *Super) prepareTriggerLocked(source, thread, from, text, key, target, ref string) (*Trigger, *Thread) {
 	if key != "" {
 		for i := len(sp.st.Triggers) - 1; i >= 0 && i > len(sp.st.Triggers)-400; i-- {
 			if sp.st.Triggers[i].Key == key {
-				return nil
+				return nil, nil
 			}
 		}
 	}
@@ -266,12 +281,23 @@ func (sp *Super) ingestLocked(source, thread, from, text, key, target, ref strin
 	} else if target != "" {
 		t.Targets = []string{target}
 	}
-	sp.st.Triggers = append(sp.st.Triggers, t)
-	th := sp.threadLocked(thread)
+	th := &Thread{ID: thread, Subscribers: []string{}, Triggers: []string{}}
+	if current := sp.st.Threads[thread]; current != nil {
+		*th = *current
+		th.Triggers = slices.Clone(th.Triggers)
+	}
 	th.LastAt = t.At
 	th.Triggers = append(th.Triggers, t.ID)
+	return t, th
+}
+
+func (sp *Super) publishTriggerLocked(t *Trigger, th *Thread) {
+	if t == nil {
+		return
+	}
+	sp.st.Triggers = append(sp.st.Triggers, t)
+	*sp.threadLocked(th.ID) = *th
 	sp.changed()
-	return t
 }
 
 func contains(list []string, v string) bool {
@@ -410,6 +436,7 @@ func (sp *Super) tick(parent context.Context) {
 	live := sp.byName(list)
 	now := time.Now()
 	away := sp.awayMachines(answered, now)
+	sp.recoverDeliveries(ctx, away, live)
 
 	type finished struct {
 		w       *Worker
@@ -465,7 +492,7 @@ func (sp *Super) tick(parent context.Context) {
 				delete(sp.noAgent, w.Name)
 				w.Ended, w.Status, w.PaneID = true, "failed", a.Pane
 				for _, t := range sp.st.Triggers {
-					if t.Status == "queued" && len(t.Targets) == 1 && t.Targets[0] == w.Name {
+					if t.Status == "queued" && len(t.Deliveries) == 0 && len(t.Targets) == 1 && t.Targets[0] == w.Name {
 						t.Status = "ignored"
 					}
 				}
@@ -502,7 +529,7 @@ func (sp *Super) tick(parent context.Context) {
 	}
 	// 3. Route queued triggers to sessions: subscribed workers first (fast path), router otherwise.
 	for _, t := range sp.st.Triggers {
-		if t.Status != "queued" {
+		if t.Status != "queued" || !sp.routeExtensionLocked(t, live, away, paused) {
 			continue
 		}
 		if len(t.Targets) == 0 {
@@ -520,7 +547,15 @@ func (sp *Super) tick(parent context.Context) {
 			}
 		}
 		for _, target := range t.Targets {
-			deliveries[target] = append(deliveries[target], t)
+			if _, pending := t.Deliveries[target]; !pending {
+				deliveries[target] = append(deliveries[target], t)
+			}
+		}
+	}
+	if !paused && len(deliveries) > 0 {
+		if err := sp.flushLocked(); err != nil {
+			log.Printf("save delivery queue: %v", err)
+			clear(deliveries)
 		}
 	}
 	routerAlive := false
@@ -737,51 +772,38 @@ func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 		fmt.Fprintf(&b, "\nReply with `collie reply`, usually ≤%d characters.", words)
 	}
 
-	err := sp.s.herdr.Prompt(ctx, sp.herdrTarget(target), b.String())
-	var he *HerdrError
-	if err != nil && errors.As(err, &he) && (he.Code == "agent_blocked" || he.Code == "agent_not_ready") {
+	h := sp.s.herdr
+	pane := h.paneOfName(ctx, sp.herdrTarget(target))
+	if pane == "" || !sp.beginDelivery(target, pane, list) {
 		return
 	}
+	err := h.Prompt(ctx, pane, b.String())
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if err != nil {
-		log.Printf("deliver to %s: %v", target, err)
-	}
-	if err != nil && (he == nil || he.Code != "prompt_unconfirmed") {
-		return
-	}
-	if err != nil {
-		// Sent and read back, retried, still not in: sending it yet again
-		// could submit it twice, so it stops here, where the human sees it.
-		ids := make([]string, len(list))
-		for i, t := range list {
-			ids[i] = "#" + t.ID
-			t.Targets = remove(t.Targets, target)
-			if len(t.Targets) == 0 {
-				t.Status = "failed"
+		var he *HerdrError
+		switch {
+		case errors.As(err, &he) && he.Code == "prompt_unconfirmed":
+			sp.finishDeliveryLocked(target, list, false, he.Message)
+		case ctx.Err() != nil && he == nil:
+			// Shutdown or a deadline can interrupt the read-back after submission.
+			// Keep the journal intact so the next tick can check the terminal.
+			log.Printf("deliver to %s: %v", target, err)
+		default:
+			if he == nil || (he.Code != "agent_blocked" && he.Code != "agent_not_ready") {
+				log.Printf("deliver to %s: %v", target, err)
 			}
+			sp.finishDeliveryLocked(target, list, true, "")
 		}
-		who := target
-		if target == routerName {
-			who = "Collie"
-		}
-		sp.addEntryLocked("event", list[0].Thread, fmt.Sprintf("没能把消息送进 %s 的终端（%s）：%s", who, strings.Join(ids, " "), he.Message), target, "error")
-		sp.changed()
 		return
 	}
+	sp.finishDeliveryLocked(target, list, false, "")
 	if fresh {
 		sp.routerFresh = false
 	}
 	if target == routerName && sp.routerAskedAt.IsZero() {
 		sp.routerAskedAt = time.Now() // a message mid-turn keeps the turn's start
 	}
-	for _, t := range list {
-		t.Targets = remove(t.Targets, target)
-		if len(t.Targets) == 0 {
-			t.Status = "delivered"
-		}
-	}
-	sp.changed()
 }
 
 func remove(list []string, v string) []string {
@@ -1265,6 +1287,7 @@ type SpawnSpec struct {
 	Alias     *string
 	Subscribe bool
 	Resume    string
+	Conv      string // extension conversation whose first request is already queued
 }
 
 func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
@@ -1272,6 +1295,9 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 	subscribe, resume := spec.Subscribe, spec.Resume
 	m, err := sp.s.herdr.machine(machine)
 	if err != nil {
+		if spec.Conv != "" {
+			return nil, nil, err
+		}
 		return nil, nil, fmt.Errorf("machine %q is not connected", machine)
 	}
 	sp.mu.Lock()
@@ -1336,6 +1362,7 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		return nil, nil, fmt.Errorf("directory not found: %s", dir)
 	}
 	w := &Worker{Name: name, Kind: kind, Model: model, Effort: effort, Machine: m.ID, Cwd: dir, Task: task, Thread: thread, CreatedBy: by, CreatedAt: time.Now(), Status: "starting", Session: resume}
+	w.Conv = spec.Conv
 	sp.st.Workers[name] = w
 	if subscribe {
 		th := sp.threadLocked(thread)
@@ -1386,6 +1413,9 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 	// a few seconds): a failure it hears it can say at once, as the spawn's
 	// own error, instead of as an event after it already said "started".
 	started := make(chan error)
+	if spec.Conv != "" {
+		started = make(chan error, 1)
+	}
 	tell := func(err error) bool {
 		select {
 		case started <- err:
@@ -1454,7 +1484,9 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		tell(nil)
 		// The task brief is delivered like any other trigger, so it waits
 		// politely if the worker is stuck on a startup dialog.
-		sp.Ingest("system", thread, routerName, workerBrief(bin, w), "", name, name)
+		if spec.Conv == "" {
+			sp.Ingest("system", thread, routerName, workerBrief(bin, w), "", name, name)
+		}
 	}()
 	return w, started, nil
 }
@@ -1498,11 +1530,16 @@ func (sp *Super) Report(name, text string) error {
 	defer sp.mu.Unlock()
 	w := sp.st.Workers[name]
 	if w == nil {
-		return fmt.Errorf("unknown worker %s", name)
+		return fmt.Errorf("%w %s", errUnknownWorker, name)
 	}
-	w.LastReport, w.ReportAt = text, time.Now()
-	sp.ingestLocked("worker", w.Thread, name, fmt.Sprintf("report from %s:\n%s", name, text), "", "", name)
-	sp.addEntryLocked("event", w.Thread, name+" 回报："+clip(text, 160), name, "done")
+	updated := *w
+	updated.LastReport, updated.ReportAt = text, time.Now()
+	t, th := sp.prepareTriggerLocked("worker", w.Thread, name, fmt.Sprintf("report from %s:\n%s", name, text), "", "", name)
+	e := &Entry{ID: sp.st.nextID("e"), Role: "event", Thread: w.Thread, Text: name + " 回报：" + clip(text, 160), At: updated.ReportAt, Ref: name, Tone: "done"}
+	if err := sp.commitTriggerLocked(t, th, e, &updated); err != nil {
+		return err
+	}
+	w.LastReport, w.ReportAt = updated.LastReport, updated.ReportAt
 	return nil
 }
 

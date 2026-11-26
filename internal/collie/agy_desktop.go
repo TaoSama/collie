@@ -147,14 +147,26 @@ func listenPorts(pid int) []string {
 func (ls *agyServer) probe() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := ls.call(ctx, "GetCascadeTrajectorySteps", map[string]any{"cascadeId": "00000000-0000-0000-0000-000000000000"})
+	out, err := ls.call(ctx, "GetCascadeTrajectorySteps", map[string]any{"cascadeId": "00000000-0000-0000-0000-000000000000"})
+	if err == nil {
+		return json.Valid(out)
+	}
+	// The synthetic conversation can be missing even when the token is valid.
 	var api *agyError
-	return err == nil || errors.As(err, &api)
+	return errors.As(err, &api) && api.status == http.StatusNotFound && api.Code == "not_found"
 }
 
-type agyError struct{ Code, Message string }
+type agyError struct {
+	Code, Message string
+	status        int
+}
 
 func (e *agyError) Error() string { return e.Message }
+
+func (e *agyError) authFailed() bool {
+	return e.status == http.StatusUnauthorized || e.status == http.StatusForbidden ||
+		e.Code == "unauthenticated" || e.Code == "permission_denied"
+}
 
 func (ls *agyServer) call(ctx context.Context, method string, body any) (json.RawMessage, error) {
 	return ls.post(ctx, agyService+method, body)
@@ -177,13 +189,19 @@ func (ls *agyServer) post(ctx context.Context, path string, body any) (json.RawM
 		return nil, err
 	}
 	defer res.Body.Close()
-	out, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	out, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
 	if !strings.HasPrefix(res.Header.Get("Content-Type"), "application/json") {
 		return nil, fmt.Errorf("Antigravity: HTTP %d", res.StatusCode)
 	}
 	if res.StatusCode != 200 {
 		var e agyError
-		json.Unmarshal(out, &e)
+		if json.Unmarshal(out, &e) != nil {
+			e = agyError{}
+		}
+		e.status = res.StatusCode
 		if e.Message == "" {
 			e.Message = fmt.Sprintf("HTTP %d", res.StatusCode)
 		}
@@ -205,8 +223,8 @@ func (s *Server) agyAppSend(ctx context.Context, conversation, text string) erro
 	})
 	if err != nil {
 		var api *agyError
-		if !errors.As(err, &api) {
-			forgetAgyServer() // the app restarted: look again next time
+		if !errors.As(err, &api) || api.authFailed() {
+			forgetAgyServer() // discover the current endpoint and token next time
 		}
 		return fmt.Errorf("Antigravity 没收下这条消息：%w", err)
 	}

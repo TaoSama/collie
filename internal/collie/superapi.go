@@ -291,16 +291,20 @@ func (s *Server) superSay(w http.ResponseWriter, r *http.Request) {
 	if len(hint) > 0 {
 		note = "\n\n[The human picked where this runs: spawn with " + strings.Join(hint, " ") + "]"
 	}
-	e, t := sp.sayLocked(body.Text, body.Re, note)
+	e, t, err := sp.sayLocked(body.Text, body.Re, note)
 	sp.mu.Unlock()
+	if err != nil {
+		queuedWriteError(w, err)
+		return
+	}
 	writeJSON(w, 200, map[string]any{"entry": e.ID, "trigger": t.ID})
 }
 
 // sayLocked is your message to Collie, answering its message reID if set;
 // note goes to Collie only.
-func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger) {
+func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger, error) {
 	re := sp.sayQuoteLocked(reID)
-	e := sp.addEntryReLocked("user", mainThread, text, "", "", re)
+	e := &Entry{ID: sp.st.nextID("e"), Role: "user", Thread: mainThread, Text: text, At: time.Now(), Re: re}
 	prompt := text
 	if re != nil { // which message they mean: Collie need not guess
 		said := "you said"
@@ -309,7 +313,11 @@ func (sp *Super) sayLocked(text, reID, note string) (*Entry, *Trigger) {
 		}
 		prompt = "[In reply to what " + said + " earlier: \"" + clip(re.Text, 300) + "\"]\n" + prompt
 	}
-	return e, sp.ingestLocked("chat", mainThread, "you", prompt+note, "", "", e.ID)
+	t, th := sp.prepareTriggerLocked("chat", mainThread, "you", prompt+note, "", "", e.ID)
+	if err := sp.commitTriggerLocked(t, th, e, nil); err != nil {
+		return nil, nil, err
+	}
+	return e, t, nil
 }
 
 func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
@@ -559,8 +567,12 @@ func (s *Server) superSend(w http.ResponseWriter, r *http.Request) {
 	if body.Thread == "" {
 		body.Thread = wk.Thread
 	}
-	t := sp.ingestLocked("router", body.Thread, routerName, body.Text, "", body.To, "")
+	t, err := sp.ingestDurableLocked("router", body.Thread, routerName, body.Text, "", body.To, "")
 	sp.mu.Unlock()
+	if err != nil {
+		queuedWriteError(w, err)
+		return
+	}
 	writeJSON(w, 202, map[string]any{"trigger": t.ID, "note": "queued; delivered when the worker is free"})
 }
 
@@ -586,7 +598,11 @@ func (s *Server) superReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.sup.Report(name, strings.TrimSpace(body.Text)); err != nil {
-		writeJSON(w, 404, map[string]any{"error": err.Error()})
+		if errors.Is(err, errUnknownWorker) {
+			writeJSON(w, 404, map[string]any{"error": err.Error()})
+		} else {
+			queuedWriteError(w, err)
+		}
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -1002,8 +1018,7 @@ func (s *Server) superRestartRouter(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- webhooks
 
 // webhook ingests external events (GitHub, Feishu/Lark, anything that can
-// POST JSON). It acknowledges immediately; filtering and routing happen in
-// the inbox, never in the request path.
+// POST JSON). It acknowledges the stored event; delivery happens in the inbox.
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 	want := s.hookKey()
@@ -1038,7 +1053,11 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 202, map[string]any{"ok": true, "ignored": "empty event"})
 		return
 	}
-	t := s.sup.Ingest("webhook:"+src, thread, from, text, idem, "", "")
+	t, err := s.sup.ingestDurable("webhook:"+src, thread, from, text, idem, "", "")
+	if err != nil {
+		queuedWriteError(w, err)
+		return
+	}
 	res := map[string]any{"ok": true}
 	if t != nil {
 		res["trigger"], res["action"] = t.ID, t.Action
@@ -1046,6 +1065,11 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		res["duplicate"] = true
 	}
 	writeJSON(w, 202, res)
+}
+
+func queuedWriteError(w http.ResponseWriter, err error) {
+	log.Printf("save queued event: %v", err)
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "could not save queued event"})
 }
 
 func str(v any) string {

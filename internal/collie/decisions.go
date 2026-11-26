@@ -387,7 +387,11 @@ func (s *Server) superDecide(w http.ResponseWriter, r *http.Request) {
 		case d.Kind == kindOptions && !slices.ContainsFunc(d.Options, func(o string) bool { return strings.EqualFold(o, choice) }):
 			code, out = 400, map[string]any{"error": "没有这个选项"}
 		case d.Kind == kindOptions:
-			sp.sayLocked(choice, d.ID, "")
+			if _, _, err := sp.sayLocked(choice, d.ID, ""); err != nil {
+				sp.mu.Unlock()
+				queuedWriteError(w, err)
+				return
+			}
 			code, out = 200, map[string]any{"ok": true, "picked": choice}
 		default:
 			pane, sig = d.Pane, d.Sig
