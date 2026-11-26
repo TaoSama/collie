@@ -1,0 +1,17 @@
+{
+  "manifest_version": 1,
+  "id": "wechat",
+  "label": "微信",
+  "name": "微信",
+  "version": "1.0.0",
+  "description": "用腾讯官方 iLink 接口扫码绑定一个微信 bot：你私聊它的消息交给 Collie，回复发回微信。只转发绑定人的消息。",
+  "warning": "微信每收到你一条消息，开放 23 小时的回复窗口，窗口内最多发 10 条（分段、图片、进度都算）。窗口过期后，回复和定时结果要等你再发一条消息才能送达。",
+  "engines": {"collie_protocol": 1},
+  "runtime": {"builtin": "wechat"},
+  "contributes": {
+    "connector": {"id": "wechat", "login": "qr", "capabilities": ["status", "login", "receive", "send", "interest"]},
+    "channel": {"format": "markdown", "max_text": 3800, "kinds": ["answer", "progress", "result", "push"]}
+  },
+  "permissions": {"network": ["*.weixin.qq.com"]},
+  "defaults": {"machine": "hub", "handler": "collie", "conversations": "owner"}
+}
