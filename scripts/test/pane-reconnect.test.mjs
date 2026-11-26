@@ -111,6 +111,7 @@ test("an unrelated replacement transcript still discards the prior history", asy
   const f = fixture();
   f.sources[0].emit("patch", { base: 10, from: 10, earlier: 100, msgs: [msg("before")] });
   await f.runtime.load();
+  assert.deepEqual(f.shown.at(-1), ["older", "before"]);
   f.sources[0].emit("error");
   f.runTimer();
   f.sources[1].emit("reset");

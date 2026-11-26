@@ -4459,9 +4459,9 @@
     }
     $("#x-takeover").hidden = !e.can_take_over;
     $("#x-note").textContent = gone ? "这个进程已经退出了。"
-      : !e.session ? `它跑在 ${app} 里，还没有会话记录，所以没法接管。`
+      : !e.can_take_over ? `它跑在 ${app} 里，无法确认这个进程对应的会话，只能查看。`
       : `它跑在 ${app} 里，Collie 只能看，不能往里面打字。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里${e.alias ? `用 alias ${e.alias} ` : ""}接着同一个会话继续，之后就能在这里和它对话。`;
-    $("#x-takeover").disabled = !!gone || !e.session;
+    $("#x-takeover").disabled = !!gone || !e.can_take_over;
     if (e.status && !gone) {
       $("#x-status").textContent = `${{ working: "正在跑", waiting: "在等后台任务", idle: "空闲，等你发话", blocked: "等电脑那边确认" }[e.status] || "正在运行"} · ${app}`;
       $("#x-status").className = "status " + e.status;
@@ -4475,7 +4475,7 @@
       $("#x-hint").textContent = e.kind === "agy" ? "经 Antigravity 送达" : e.app === "Codex 桌面版" ? "经 Codex App 送达" : e.kind === "codex" ? "经 Codex 后台送达" : "经会话收件箱送达";
       $("#x-note").textContent = "";
     } else if (!gone && e.read_only && e.session) {
-      $("#x-note").textContent = e.read_only + "。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里接着同一个会话继续。";
+      $("#x-note").textContent = e.read_only + (e.can_take_over ? "。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里接着同一个会话继续。" : "");
     }
   }
   bindComposer($("#x-composer"), $("#x-input"), (draft, ready) => {
@@ -6407,9 +6407,7 @@
       listen("replay-progress", (e) => setThreadProgress(th, JSON.parse(e.data)));
       listen("load-error", (e) => { closeStream(); threadLoadError(th, e); });
       listen("patch", (e) => {
-        const patch = JSON.parse(e.data);
-        if (!patch.generation) patch.earlier = 0; // older nodes cannot validate a pane cursor
-        showPane(applyPatch(th, patch, retrying && !received));
+        showPane(applyPatch(th, JSON.parse(e.data), retrying && !received));
         drawn();
       });
       listen("messages", (e) => { // an older computer

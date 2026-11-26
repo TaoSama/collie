@@ -601,12 +601,12 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"error": "找不到这个会话的记录，没法在 herdr 里续上"})
 		return
 	}
-	if e.agyCandidate {
-		writeJSON(w, 409, map[string]any{"error": "无法确认这个 Antigravity 进程对应的会话，不能接管"})
-		return
-	}
 	if !e.CanTakeOver {
-		writeJSON(w, 409, map[string]any{"error": "这个会话要在 " + e.App + " 里继续"})
+		message := "无法确认这个进程对应的会话，不能接管"
+		if e.desktop {
+			message = "这个会话要在 " + e.App + " 里继续"
+		}
+		writeJSON(w, 409, map[string]any{"error": message})
 		return
 	}
 	var body struct {
@@ -639,16 +639,16 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 	args := resumeArgs(e.Kind, e.Session)
 	// Two processes writing one conversation would garble it: stop the
 	// original first, the way Ctrl-C would, and give it a moment to save.
-	if e.PID > 0 && alive(e.PID) {
+	sameAlive := func() bool {
+		return alive(e.PID) && (e.Kind != "agy" || agyProcessStart(ctx, e.PID).Equal(e.agyStarted))
+	}
+	if e.PID > 0 && sameAlive() {
 		if err := syscall.Kill(e.PID, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
 			fail(w, err)
 			return
 		}
-		for i := 0; i < 30 && alive(e.PID); i++ {
+		for i := 0; i < 30 && sameAlive(); i++ {
 			if i == 10 {
-				if e.Kind == "agy" && !agyProcessStart(ctx, e.PID).Equal(e.agyStarted) {
-					break
-				}
 				if err := syscall.Kill(e.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 					fail(w, err)
 					return
@@ -656,7 +656,7 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
-		if alive(e.PID) {
+		if sameAlive() {
 			writeJSON(w, 409, map[string]any{"error": "原来的进程没有退出（PID " + strconv.Itoa(e.PID) + "），请先在那个终端里退出它"})
 			return
 		}

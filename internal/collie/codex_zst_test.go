@@ -3,9 +3,11 @@ package collie
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -306,5 +308,21 @@ func TestTranscriptCodexByTitle(t *testing.T) {
 				t.Fatalf("transcript = %+v, want match %t", tr, tc.want)
 			}
 		})
+	}
+}
+
+func TestEarlierPageUsesCompressedSourceGeneration(t *testing.T) {
+	codexCacheFixture(t)
+	path := filepath.Join(t.TempDir(), "rollout-id.jsonl")
+	compressRollout(t, path, zstRollout)
+	tr := newTranscript(path, "codex")
+	must(t, tr.load(t.Context(), nil, true))
+	req := httptest.NewRequest("GET", "/?generation="+tr.generation, nil)
+	w := httptest.NewRecorder()
+	writeEarlier(w, req, path, "codex", int64(strings.LastIndex(zstRollout, "\n")))
+	var page transcriptPage
+	must(t, json.Unmarshal(w.Body.Bytes(), &page))
+	if w.Code != 200 || page.Generation == "" || page.Generation != tr.generation || len(page.Messages) == 0 {
+		t.Fatalf("page = %d %s", w.Code, w.Body)
 	}
 }

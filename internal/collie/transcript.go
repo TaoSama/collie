@@ -2,6 +2,7 @@ package collie
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -49,24 +50,52 @@ func transcriptPath(path, format string) string {
 	return path
 }
 
-// A byte cursor belongs to one source file. Appending to it keeps the same
-// generation. Replacing it or switching between short and full logs does not.
-func transcriptGeneration(path string, fi os.FileInfo) string {
+func resolveTranscriptPath(path, format string) string {
+	path = transcriptPath(path, format)
+	if format == "codex" {
+		if current := codexRollout(strings.TrimSuffix(path, codexZstSuffix)); current != "" {
+			return current
+		}
+	}
+	return path
+}
+
+// Include the start of the source so rewriting the file in place changes its
+// generation. For a live log, stop at the first newline to keep it stable on append.
+func transcriptGeneration(path string, f *os.File, fi os.FileInfo) string {
+	var prefix [256]byte
+	n, err := f.ReadAt(prefix[:], 0)
+	if err != nil && err != io.EOF {
+		return ""
+	}
+	head := prefix[:n]
+	if !compressedCodex(path, "codex") {
+		if end := bytes.IndexByte(head, '\n'); end >= 0 {
+			head = head[:end+1]
+		} else if n < len(prefix) {
+			return "" // the first record is still being written
+		}
+	}
 	st := fi.Sys().(*syscall.Stat_t)
-	key := fmt.Sprintf("%s:%d:%d", path, st.Dev, st.Ino)
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+	key := fmt.Appendf(nil, "%s:%d:%d\x00", path, st.Dev, st.Ino)
+	return fmt.Sprintf("%x", sha256.Sum256(append(key, head...)))
 }
 
 func sourceGeneration(path, format string) string {
-	path = transcriptPath(path, format)
-	if format == "codex" {
-		path = codexRollout(strings.TrimSuffix(path, codexZstSuffix))
-	}
-	fi, err := os.Stat(path)
+	return fileGeneration(resolveTranscriptPath(path, format))
+}
+
+func fileGeneration(path string) string {
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
-	return transcriptGeneration(path, fi)
+	defer closeCodexFile(f)
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	return transcriptGeneration(path, f, fi)
 }
 
 func newTranscript(path, format string) *transcript {
@@ -110,7 +139,7 @@ func (t *transcript) update() bool {
 	if err != nil {
 		return false
 	}
-	generation := transcriptGeneration(t.path, fi)
+	generation := transcriptGeneration(t.path, f, fi)
 	replaced := t.generation != "" && t.generation != generation || fi.Size() < t.offset
 	if replaced {
 		*t = *newTranscript(t.path, t.format)
@@ -269,14 +298,8 @@ func earlierFile(f *os.File, format string, size, before int64, want int) ([]*Me
 	}
 }
 
-// openTranscript holds an open descriptor for the entire random-access read.
+// openTranscript holds an open descriptor to the resolved log during the read.
 func openTranscript(ctx context.Context, path, format string, progress func(transcriptProgress)) (*os.File, func(), error) {
-	path = transcriptPath(path, format)
-	if format == "codex" {
-		if current := codexRollout(strings.TrimSuffix(path, codexZstSuffix)); current != "" {
-			path = current
-		}
-	}
 	if compressedCodex(path, format) {
 		return openCodexReplay(ctx, path, progress, codexCacheBudget)
 	}
@@ -288,7 +311,12 @@ func openTranscript(ctx context.Context, path, format string, progress func(tran
 }
 
 func (t *transcript) load(ctx context.Context, progress func(transcriptProgress), tail bool) error {
-	generation := sourceGeneration(t.path, t.format)
+	t.path = resolveTranscriptPath(t.path, t.format)
+	compressed := compressedCodex(t.path, t.format)
+	var generation string
+	if compressed {
+		generation = fileGeneration(t.path)
+	}
 	f, release, err := openTranscript(ctx, t.path, t.format, progress)
 	if err != nil {
 		return err
@@ -298,8 +326,8 @@ func (t *transcript) load(ctx context.Context, progress func(transcriptProgress)
 	if err != nil {
 		return err
 	}
-	if !compressedCodex(t.path, t.format) {
-		generation = transcriptGeneration(t.path, fi)
+	if !compressed {
+		generation = transcriptGeneration(t.path, f, fi)
 	}
 	if tail {
 		t.openTailFile(f, fi.Size())
@@ -314,7 +342,7 @@ func readEarlier(ctx context.Context, path, format string, before int64, want in
 	if before <= 0 {
 		return nil, 0, nil
 	}
-	f, release, err := openTranscript(ctx, path, format, nil)
+	f, release, err := openTranscript(ctx, resolveTranscriptPath(path, format), format, nil)
 	if err != nil {
 		return nil, 0, err
 	}
