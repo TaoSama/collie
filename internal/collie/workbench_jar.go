@@ -1,7 +1,6 @@
 package collie
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,40 +38,35 @@ func (c wbCookie) expired(now time.Time) bool { return !c.Expires.IsZero() && !c
 func (wb *workbench) jarPath(id string) string { return filepath.Join(wb.dir, "jar", id+".json") }
 
 type wbJar struct {
-	Host    string              `json:"host"`
-	Cookies map[string]wbCookie `json:"cookies"`
+	Host    string
+	Cookies map[string]wbCookie
 	ctx     context.Context
 	cancel  context.CancelFunc
 }
 
-func (wb *workbench) jarLocked(id string, create bool) (*wbJar, error) {
+func (wb *workbench) jarLocked(id string) (*wbJar, error) {
 	if j := wb.jars[id]; j != nil {
 		return j, nil
 	}
-	j := &wbJar{Cookies: map[string]wbCookie{}}
+	var list []wbCookie
 	b, err := os.ReadFile(wb.jarPath(id))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return nil, err
-	case bytes.HasPrefix(bytes.TrimSpace(b), []byte("[")):
-		// Legacy jars predate the origin check on edits.
 	default:
-		if err := json.Unmarshal(b, j); err != nil {
+		if err := json.Unmarshal(b, &list); err != nil {
 			return nil, fmt.Errorf("%s: %w", wb.jarPath(id), err)
 		}
 	}
-	if j.Host == "" {
-		if !create {
-			return nil, nil
-		}
-		// Keep the proxy label within DNS's 63-character limit.
-		j.Host = randomToken()[:24] + "-" + id
-		if err := writePrivate(wb.jarPath(id), j); err != nil {
-			return nil, err
-		}
+	ctx, cancel := context.WithCancel(context.Background())
+	j := &wbJar{
+		Host:    randomToken()[:wbProxyPrefixLen] + "-" + id,
+		Cookies: make(map[string]wbCookie, len(list)), ctx: ctx, cancel: cancel,
 	}
-	j.ctx, j.cancel = context.WithCancel(context.Background())
+	for _, c := range list {
+		j.Cookies[c.key()] = c
+	}
 	wb.jars[id] = j
 	return j, nil
 }
@@ -85,12 +79,12 @@ func (wb *workbench) proxyModule(id, host string) (WBModule, *wbJar, error) {
 		return WBModule{}, nil, nil
 	}
 	if host == "" {
-		j, err := wb.jarLocked(id, true)
+		j, err := wb.jarLocked(id)
 		return m, j, err
 	}
 	j := wb.jars[id]
 	if j == nil || j.Host != host {
-		return WBModule{}, nil, nil
+		return m, nil, nil
 	}
 	return m, j, nil
 }
@@ -152,12 +146,15 @@ func (wb *workbench) storeCookies(id string, j *wbJar, reqPath string, set []*ht
 	if !changed {
 		return nil
 	}
+	list := make([]wbCookie, 0, len(j.Cookies))
 	for k, c := range j.Cookies {
 		if c.expired(now) {
 			delete(j.Cookies, k)
+			continue
 		}
+		list = append(list, c)
 	}
-	return writePrivate(wb.jarPath(id), j)
+	return writePrivate(wb.jarPath(id), list)
 }
 
 // sameCookie: nothing worth writing changed. A site that renews a Max-Age
@@ -172,8 +169,11 @@ func sameCookie(a, b wbCookie) bool {
 func (wb *workbench) jarCount(id string) int {
 	wb.mu.Lock()
 	defer wb.mu.Unlock()
-	j, err := wb.jarLocked(id, false)
-	if err != nil || j == nil {
+	if m, ok := wb.moduleLocked(id); !ok || !m.HubLogin {
+		return 0
+	}
+	j, err := wb.jarLocked(id)
+	if err != nil {
 		return 0
 	}
 	n, now := 0, time.Now()
@@ -209,9 +209,29 @@ func (wb *workbench) dropJarsLocked(c wbConfig) error {
 			origins[m.ID] = wbOrigin(m.URL)
 		}
 	}
+	keep := map[string]bool{}
 	for _, m := range wb.cfg.Modules {
-		if m.HubLogin && origins[m.ID] != wbOrigin(m.URL) {
-			if err := wb.clearJarLocked(m.ID); err != nil {
+		if !m.HubLogin {
+			continue
+		}
+		if origin, ok := origins[m.ID]; ok && origin == wbOrigin(m.URL) {
+			keep[m.ID] = true
+			continue
+		}
+		if err := wb.clearJarLocked(m.ID); err != nil {
+			return err
+		}
+	}
+	files, err := os.ReadDir(filepath.Join(wb.dir, "jar"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if id, ok := strings.CutSuffix(f.Name(), ".json"); ok && !f.IsDir() && !keep[id] {
+			if err := wb.clearJarLocked(id); err != nil {
 				return err
 			}
 		}

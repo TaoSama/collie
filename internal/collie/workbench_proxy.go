@@ -28,11 +28,12 @@ import (
 // does not get.
 
 const (
-	wbEnterPath    = "/__collie/enter"
-	wbSessCookie   = "collie_wb"
-	wbTicketTTL    = time.Minute
-	wbSessionTTL   = 12 * time.Hour
-	wbUpstreamWait = 30 * time.Second
+	wbProxyPrefixLen = 24 // Leave room for the module ID within a DNS label.
+	wbEnterPath      = "/__collie/enter"
+	wbSessCookie     = "collie_wb"
+	wbTicketTTL      = time.Minute
+	wbSessionTTL     = 12 * time.Hour
+	wbUpstreamWait   = 30 * time.Second
 )
 
 type wbTicket struct {
@@ -78,18 +79,23 @@ func (g *wbGate) newTicket(t wbTicket) string {
 	return k
 }
 
-// redeem swaps a ticket for a proxy host for a session, once. The session the
-// browser already had there (old) ends: each open would otherwise leave one.
-func (g *wbGate) redeem(ticket, host, old string) (string, wbTicket, bool) {
+// redeem consumes a ticket. Tabs on the same browser share a session.
+func (g *wbGate) redeem(ticket, host, old string, stillIn func(string) bool) (string, wbTicket, time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	t, ok := g.tickets[ticket]
 	delete(g.tickets, ticket)
 	now := time.Now()
-	if !ok || now.After(t.expires) || t.host != host {
-		return "", wbTicket{}, false
+	if !ok || now.After(t.expires) || t.host != host || !stillIn(t.device) {
+		return "", wbTicket{}, time.Time{}
 	}
-	if o, ok := g.sessions[old]; ok && o.host == host {
+	if o, ok := g.sessions[old]; ok && o.host == host && o.ctx.Err() == nil {
+		if o.device == t.device {
+			o.parent = t.parent
+			g.sessions[old] = o
+			expires, _ := o.ctx.Deadline()
+			return old, t, expires
+		}
 		o.cancel()
 		delete(g.sessions, old)
 	}
@@ -100,9 +106,10 @@ func (g *wbGate) redeem(ticket, host, old string) (string, wbTicket, bool) {
 		}
 	}
 	k := randomToken()
-	ctx, cancel := context.WithDeadline(context.Background(), now.Add(wbSessionTTL))
+	expires := now.Add(wbSessionTTL)
+	ctx, cancel := context.WithDeadline(context.Background(), expires)
 	g.sessions[k] = wbSession{host: t.host, device: t.device, parent: t.parent, ctx: ctx, cancel: cancel}
-	return k, t, true
+	return k, t, expires
 }
 
 func (g *wbGate) session(k, host string) (wbSession, bool) {
@@ -225,14 +232,21 @@ func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, host strin
 		wbRefuse(w, 409, wbOffText)
 		return
 	}
-	_, id, _ := strings.Cut(host, "-")
+	id := host
+	if prefix, suffix, ok := strings.Cut(host, "-"); ok && len(prefix) == wbProxyPrefixLen {
+		id = suffix
+	}
 	m, jar, err := s.sup.wb.proxyModule(id, host)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if jar == nil {
+	if m.ID == "" {
 		wbRefuse(w, 404, "没有这个模块，或它没有打开「由 hub 保管登录」。")
+		return
+	}
+	if jar == nil {
+		wbRefuse(w, 401, "登录已过期：回到 Collie 的工作台重新打开这个模块。")
 		return
 	}
 	secure := requestScheme(r) == "https"
@@ -241,13 +255,13 @@ func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, host strin
 		if c, err := r.Cookie(wbSessCookie); err == nil {
 			old = c.Value
 		}
-		k, t, ok := s.wbGate.redeem(r.URL.Query().Get("t"), host, old)
-		if !ok || !s.wbStillIn(t.device) {
+		k, t, expires := s.wbGate.redeem(r.URL.Query().Get("t"), host, old, s.wbStillIn)
+		if k == "" {
 			wbRefuse(w, 403, "链接已失效：回到 Collie 的工作台重新打开这个模块。")
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: wbSessCookie, Value: k, Path: "/", HttpOnly: true, Secure: secure,
-			SameSite: http.SameSiteLaxMode, MaxAge: int(wbSessionTTL / time.Second)})
+			SameSite: http.SameSiteLaxMode, Expires: expires})
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, t.to, http.StatusSeeOther)
 		return
@@ -329,9 +343,6 @@ func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, host strin
 	defer stopSession()
 	stopJar := context.AfterFunc(jar.ctx, cancel)
 	defer stopJar()
-	if sess.ctx.Err() != nil || jar.ctx.Err() != nil {
-		cancel()
-	}
 	rp.ServeHTTP(w, r.WithContext(ctx))
 }
 
