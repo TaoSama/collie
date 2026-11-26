@@ -785,7 +785,11 @@
 
   // ───────────────────────────── sidebar
   let lastSideRow = "";
-  const schedIco = (on) => on ? `<span class="sched-ico" title="有定时任务">${collieIcons.svg("clock")}</span>` : "";
+  const schedIco = (on) => on ? `<span class="row-slot sched-ico" title="有定时任务">${collieIcons.svg("clock")}</span>` : "";
+  const itemEnd = (dot, scheduled) => {
+    const slots = (dot ? `<span class="row-slot">${dot}</span>` : "") + schedIco(scheduled);
+    return slots ? `<span class="item-end">${slots}</span>` : "";
+  };
   const rowActsHTML = (id, key, pinned, archived) => {
     if (!key) return "";
     const pinBtn = archived ? "" : `<button type="button" class="row-act pin-act${pinned ? " on" : ""}" data-row-act="pin" data-row="${esc(id)}" title="${pinned ? "取消置顶" : "置顶"}" aria-label="${pinned ? "取消置顶" : "置顶"}" aria-pressed="${pinned ? "true" : "false"}">${ICON_PIN}</button>`;
@@ -799,15 +803,14 @@
       : v.is_agent ? `${named}${KIND_LABEL[v.kind] || v.kind} · ${where}${base(tilde(v.cwd))}` : where + tilde(v.cwd);
     const name = v.is_agent ? title(v) : termName(v);
     const owned = isCollieOwned(v) && !isLocalRouter(v);
-    const nameHTML = owned || v.scheduled
-      ? `<span class="nm">${esc(name)}</span>${schedIco(v.scheduled)}${owned ? `<span class="by-collie">Collie 派出</span>` : ""}`
-      : esc(name);
+    const nameHTML = owned ? `<span class="nm">${esc(name)}</span><span class="by-collie">Collie 派出</span>` : esc(name);
     const active = (view === "pane" && v.pane_id === current) || (!view && lastSideRow === v.pane_id);
     const acts = rowActsHTML(v.pane_id, opts.key, opts.pinned, opts.archived);
+    const dot = `<span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span>`;
     return `<li class="${acts ? "srow" : ""}${opts.pinned ? " is-pinned" : ""}"><a class="item ${active ? "active" : ""}"${attrs} href="#/p/${encodeURIComponent(v.pane_id)}" title="${esc(name)}">
       <span class="glyph">${glyph(v)}</span>
       <span class="body"><div class="name">${nameHTML}</div><div class="sub">${esc(sub)}</div></span>
-      <span class="dot ${esc(v.status)}" title="${esc(STATUS_LABEL[v.status] || v.status)}"></span></a>${acts}</li>`;
+      ${itemEnd(dot, v.scheduled)}</a>${acts}</li>`;
   }
 
   const machineName = (id) => (state.machines || []).find((m) => m.id === (id || ""))?.name || id || "本机";
@@ -4401,23 +4404,21 @@
       const where = [e.app || KIND_LABEL[e.kind] || e.kind, many && e.machine ? machineName(e.machine) : "", e.live && !open ? "" : ago(e.updated || e.started)].filter(Boolean).join(" · ");
       const dot = e.live ? `<span class="dot ${esc(e.status || "unknown")}" title="${esc(EXT_STATE[e.status] || "正在运行")}"></span>` : m?.unread ? unreadDot : "";
       const name = m?.title || extName(e);
-      const nameHTML = e.scheduled ? `<span class="nm">${esc(name)}</span>${schedIco(true)}` : esc(name);
       const active = (view === "ext" && extCur === e.id) || (!view && lastSideRow === e.id);
       const acts = rowActsHTML(e.id, key, pinned, archived);
       return `<li class="${acts ? "srow" : ""}${pinned ? " is-pinned" : ""}"><a class="item ${e.live ? "" : "ended"} ${active ? "active" : ""}"${rowAttrs(e.id, m)} href="#/x/${encodeURIComponent(e.id)}" title="${esc(name)}">
         <span class="glyph">${sessionGlyph(e.kind, e.surface)}</span>
-        <span class="body"><div class="name">${nameHTML}</div><div class="sub">${esc(where)}</div></span>${dot}</a>${acts}</li>`;
+        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(where)}</div></span>${itemEnd(dot, e.scheduled)}</a>${acts}</li>`;
     };
     const histRow = (h, key, m, pinned, archived) => {
       const sub = [KIND_LABEL[h.kind] || h.kind, many ? machineName(h.machine) : "", ago(h.ended)].filter(Boolean).join(" · ");
       const name = m?.title || histName(h);
-      const nameHTML = h.scheduled ? `<span class="nm">${esc(name)}</span>${schedIco(true)}` : esc(name);
       const rid = "h:" + h.id;
       const active = (view === "ext" && extCur === rid) || (!view && lastSideRow === rid);
       const acts = rowActsHTML(rid, key, pinned, archived);
       return `<li class="${acts ? "srow" : ""}${pinned ? " is-pinned" : ""}"><a class="item ended ${active ? "active" : ""}"${rowAttrs(rid, m)} href="#/h/${encodeURIComponent(h.id)}" title="${esc(name)}">
         <span class="glyph">${sessionGlyph(h.kind, "cli")}</span>
-        <span class="body"><div class="name">${nameHTML}</div><div class="sub">${esc(sub)}</div></span>${m?.unread ? unreadDot : ""}</a>${acts}</li>`;
+        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(sub)}</div></span>${itemEnd(m?.unread ? unreadDot : "", h.scheduled)}</a>${acts}</li>`;
     };
     const pane = (a, term) => {
       const kind = term ? "" : shortKind(a.kind);
