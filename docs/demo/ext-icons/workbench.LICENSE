@@ -1,15 +1,15 @@
 icon.svg
 
-来源：https://github.com/tabler/tabler-icons/blob/a1422751964ae9c7d9acb5c8d9a7a9c1ff0f8192/icons/filled/layout-dashboard.svg
-Tabler Icons 的 layout-dashboard（实心）。只做了两处修改：fill="currentColor" 改成 #27272A，让它在浅色底块上原样显示；viewBox 从 "0 0 24 24" 放宽到 "-3 -3 30 30"，四周留出边距，和其他扩展的 app 图标一样大。
-原文件 sha256：82ebf8a7cba6bee7b9f3f89ce7640dd0946f229379aa59ef071edae204182bfa
-许可：MIT（全文附在下面）。
+来源：https://github.com/microsoft/fluentui-system-icons/blob/a3de63245b4fa49c30e20d9838593a105affe774/assets/Chart%20Multiple/SVG/ic_fluent_chart_multiple_24_color.svg
+Fluent UI System Icons 的彩色图标 chart_multiple（24），原样使用，未做任何修改。
+sha256：9b7560bc1774ddbf587af71535e008f4517aa8dca3a95b4f5a0ecb96cfdd6ce8
+许可：MIT，Copyright (c) 2020 Microsoft Corporation（全文附在下面）。
 
 ----- LICENSE -----
 
 MIT License
 
-Copyright (c) 2020-2026 Paweł Kuna
+Copyright (c) 2020 Microsoft Corporation
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
