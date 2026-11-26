@@ -193,17 +193,42 @@ type ExtConfigProp struct {
 	Labels      []string `json:"x-labels,omitempty"`
 	// Secret: kept apart from the config, never shown again (§6).
 	Secret bool `json:"x-secret,omitempty"`
-	// Hide: a 收件箱 rule Collie applies while this switch (a boolean) is
-	// on: "muted" hides muted chats, "name:<text>" chats whose name has it.
-	// The program doesn't read it, so changing it restarts nothing.
-	Hide string `json:"x-hide,omitempty"`
+	// Hide: 收件箱 rules Collie applies while this switch (a boolean) is on,
+	// one or a list, any of them hiding: "muted" hides muted chats,
+	// "name:<text>" chats whose name has it, "tag:<tag>" chats the extension
+	// tagged so. The program doesn't read it, so changing it restarts nothing.
+	Hide hideRules `json:"x-hide,omitempty"`
+}
+
+// hideRules is x-hide: a rule, or a list of them.
+type hideRules []string
+
+func (h *hideRules) UnmarshalJSON(b []byte) error {
+	var one string
+	if json.Unmarshal(b, &one) == nil {
+		*h = hideRules{one}
+		return nil
+	}
+	return json.Unmarshal(b, (*[]string)(h))
+}
+
+func validHide(rule string) bool {
+	if rule == hideMuted {
+		return true
+	}
+	for _, prefix := range []string{hideNamePrefix, hideTagPrefix} {
+		if rest, ok := strings.CutPrefix(rule, prefix); ok && rest != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // programConfig is the config the program gets: without Collie's own switches.
 func (m *ExtManifest) programConfig(cfg map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range cfg {
-		if m.Configuration == nil || m.Configuration.Properties[k].Hide == "" {
+		if m.Configuration == nil || len(m.Configuration.Properties[k].Hide) == 0 {
 			out[k] = v
 		}
 	}
@@ -217,8 +242,8 @@ func (m *ExtManifest) hides(cfg map[string]any) []string {
 	var out []string
 	if m.Configuration != nil {
 		for k, p := range m.Configuration.Properties {
-			if on, _ := cfg[k].(bool); on && p.Hide != "" {
-				out = append(out, p.Hide)
+			if on, _ := cfg[k].(bool); on {
+				out = append(out, p.Hide...)
 			}
 		}
 	}
@@ -257,9 +282,8 @@ func (m *ExtManifest) has(capability string) bool {
 func (m *ExtManifest) validate() error {
 	if m.Configuration != nil {
 		for k, p := range m.Configuration.Properties {
-			name, isName := strings.CutPrefix(p.Hide, hideNamePrefix)
-			if p.Hide != "" && (p.Type != "boolean" || !(p.Hide == hideMuted || isName && name != "")) {
-				return fmt.Errorf("config %s: x-hide is a boolean's, %q or %q<text>", k, hideMuted, hideNamePrefix)
+			if len(p.Hide) > 0 && (p.Type != "boolean" || slices.ContainsFunc(p.Hide, func(r string) bool { return !validHide(r) })) {
+				return fmt.Errorf("config %s: x-hide is a boolean's, %q, %q<text> or %q<tag>", k, hideMuted, hideNamePrefix, hideTagPrefix)
 			}
 		}
 	}

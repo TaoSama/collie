@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -242,6 +243,9 @@ func hiddenInInbox(c InboxConv, rules []string) bool {
 		if text, ok := strings.CutPrefix(r, hideNamePrefix); ok && text != "" && strings.Contains(c.Name, text) {
 			return true
 		}
+		if tag, ok := strings.CutPrefix(r, hideTagPrefix); ok && tag != "" && slices.Contains(c.Tags, tag) {
+			return true
+		}
 	}
 	return false
 }
@@ -249,6 +253,7 @@ func hiddenInInbox(c InboxConv, rules []string) bool {
 const (
 	hideMuted      = "muted"
 	hideNamePrefix = "name:"
+	hideTagPrefix  = "tag:"
 )
 
 func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {

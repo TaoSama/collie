@@ -190,6 +190,9 @@ type Message struct {
 	Owner      *bool  `json:"owner,omitempty"`  // sent by the signed-in person
 	Muted      *bool  `json:"muted,omitempty"`  // the chat is muted in the chat app (nil: not known)
 	Folded     *bool  `json:"folded,omitempty"` // folded away in the chat app's list (nil: not known)
+	// ChatTags: what the chat is besides its kind, for the 收件箱 rules
+	// (x-hide "tag:<tag>"), e.g. a group a project tool opened for one issue.
+	ChatTags []string `json:"chat_tags,omitempty"`
 	// Mention: the signed-in person @-mentioned themselves (the @ already
 	// taken out of Text): a request like the trigger word.
 	Mention     bool     `json:"mention,omitempty"`

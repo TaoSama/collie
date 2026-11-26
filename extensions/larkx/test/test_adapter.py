@@ -277,6 +277,27 @@ class Normalize(unittest.TestCase):
         card = {"cardHeader": {"title": "分析中"}, "jsonCard": '{"body":{}}'}
         m = f.normalize({"msg_id": "4", "chat_id": "c_g", "from_id": "u_a", "msg_type": 14, "chat_type": 2, "content_data": card})
         self.assertEqual(m["text"], "[卡片] 分析中", "a card shows its title, not its JSON")
+        self.assertNotIn("chat_tags", m, "a plain group has no tags")
+        f.chat_info = lambda chat: {"name": "[N1][Main][PVT][低概率] Wi-Fi 条件任务端侧执行成功后任务卡片错误显示「当前任务服务超时」 - [缺...",
+                                    "description": "https://meego.larkoffice.com/new_ocean/issue/detail/7399029097?tabKey=detail"}
+        m = f.normalize({"msg_id": "5", "chat_id": "c_m", "from_id": "u_a", "msg_type": 14, "chat_type": 2, "content_data": card})
+        self.assertEqual(m["chat_tags"], ["meego-issue"], "a Meego group whose cut name lost its tag")
+
+
+class ChatTags(unittest.TestCase):
+    def test_meego(self):
+        story = "https://meego.larkoffice.com/new_ocean/story/detail/7398829062?tabKey=detail"
+        for info, want in [
+            ({"name": "Harness 2.5 交互体验优化 - [需求同步群]", "description": story}, ["meego-story"]),
+            ({"name": "Harness 2.5 交互体验优化", "description": story}, ["meego-story"]),
+            ({"name": "闪退 - [缺陷同步群]"}, ["meego-issue"]),
+            ({"name": "[Genesis-M][beta][2115872568] 让...", "description": " https://project.feishu.cn/space/issue/detail/42 "}, ["meego-issue"]),
+            # A link someone wrote into a description among other words is not Meego's.
+            ({"name": "Nerida 业务内部UT反馈-新", "description": "需求见 " + story}, []),
+            ({"name": "M项目独立端反馈群", "description": "https://meego.larkoffice.com/new_ocean/issue/homepage"}, []),
+            ({"name": "OMNI CR", "description": ""}, []),
+        ]:
+            self.assertEqual(lark.chat_tags(info), want, info["name"])
 
 
 def at_rich(uid, name, text):

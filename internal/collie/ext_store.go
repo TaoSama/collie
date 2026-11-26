@@ -35,6 +35,8 @@ type InboxConv struct {
 	Muted bool `json:"muted,omitempty"`
 	// Folded away in the chat app's list: left out of the inbox list.
 	Folded bool `json:"folded,omitempty"`
+	// Tags: what the chat is besides its kind, as the extension tells it.
+	Tags []string `json:"tags,omitempty"`
 	// Owner: the signed-in person's own chat with the bot (WeChat).
 	Owner bool `json:"owner,omitempty"`
 	// What you set: handled at all, by anyone in it or only you, by whom.

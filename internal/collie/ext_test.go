@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -826,8 +827,8 @@ func TestInboxHidden(t *testing.T) {
 		}
 	}
 	on := lark.hides(lark.configWithDefaults(nil))
-	if len(on) != 3 {
-		t.Fatalf("three switches, on by default: %v", on)
+	if len(on) != 5 {
+		t.Fatalf("three switches, on by default, the Meego ones two rules each: %v", on)
 	}
 	for _, c := range []struct {
 		conv  InboxConv
@@ -841,6 +842,11 @@ func TestInboxHidden(t *testing.T) {
 		{InboxConv{Name: "登录页改版 - [需求同步群]"}, on, true},
 		{InboxConv{Name: "[Main] 闪退 - [缺陷同步群]"}, on, true},
 		{InboxConv{Name: "[Main] 闪退 - [缺陷同步群]"}, nil, false},
+		// Feishu cuts a long name to 64 characters, the tag with it: the extension's tag still tells.
+		{InboxConv{Name: "[N1][Main][PVT][低概率] Wi-Fi 条件任务端侧执行成功后任务卡片错误显示「当前任务服务超时」 - [缺...", Tags: []string{"meego-issue"}}, on, true},
+		{InboxConv{Name: "【GM】背屏-助手设置", Tags: []string{"meego-story"}}, on, true},
+		{InboxConv{Name: "【GM】背屏-助手设置", Tags: []string{"meego-story"}}, nil, false},
+		{InboxConv{Name: "Nerida 业务内部UT反馈-新", Tags: []string{"other"}}, on, false},
 	} {
 		if got := hiddenInInbox(c.conv, c.rules); got != c.want {
 			t.Errorf("%+v with %v: hidden %v, want %v", c.conv, c.rules, got, c.want)
@@ -852,9 +858,18 @@ func TestInboxHidden(t *testing.T) {
 		t.Fatal("a 收件箱 switch is not the program's config")
 	}
 	bad := *lark
-	bad.Configuration = &ExtConfig{Type: "object", Properties: map[string]ExtConfigProp{"x": {Type: "string", Hide: "muted"}}}
+	bad.Configuration = &ExtConfig{Type: "object", Properties: map[string]ExtConfigProp{"x": {Type: "string", Hide: hideRules{hideMuted}}}}
 	if bad.validate() == nil {
 		t.Fatal("x-hide belongs to a boolean")
+	}
+	bad.Configuration = &ExtConfig{Type: "object", Properties: map[string]ExtConfigProp{"x": {Type: "boolean", Hide: hideRules{"tag:a", "tag:"}}}}
+	if bad.validate() == nil {
+		t.Fatal("every rule of a list is checked")
+	}
+	var one, list ExtConfigProp
+	if json.Unmarshal([]byte(`{"x-hide":"muted"}`), &one) != nil || json.Unmarshal([]byte(`{"x-hide":["tag:a","name:b"]}`), &list) != nil ||
+		!slices.Equal(one.Hide, []string{"muted"}) || !slices.Equal(list.Hide, []string{"tag:a", "name:b"}) {
+		t.Fatalf("x-hide is a rule or a list: %v %v", one.Hide, list.Hide)
 	}
 }
 
@@ -960,6 +975,7 @@ func TestInboxHiddenEndToEnd(t *testing.T) {
 		{Chat: "g2", ChatName: "手机任务自建 harness 二期 - [需求同步群]", ChatKind: "group"},
 		{Chat: "g3", ChatName: "闪退 - [缺陷同步群]", ChatKind: "group"},
 		{Chat: "g4", ChatName: "产品群", ChatKind: "group"},
+		{Chat: "g5", ChatName: "[Genesis-M][beta][2115872568] 【应用使用问题/豆包/其他功能类/】 我在新闻界面调出豆包，让...", ChatKind: "group", Tags: []string{"meego-issue"}},
 	} {
 		in.ID, in.Sender, in.Text, in.At, in.Live = in.Chat+"-1", "u2", "hi", time.Now(), true
 		if err := h.incoming(m, in); err != nil {
@@ -980,7 +996,7 @@ func TestInboxHiddenEndToEnd(t *testing.T) {
 		return hidden
 	}
 	got := list()
-	if !got["严肃 Agent 交流群"] || !got["手机任务自建 harness 二期 - [需求同步群]"] || !got["闪退 - [缺陷同步群]"] || got["产品群"] {
+	if !got["严肃 Agent 交流群"] || !got["手机任务自建 harness 二期 - [需求同步群]"] || !got["闪退 - [缺陷同步群]"] || got["产品群"] || !got["[Genesis-M][beta][2115872568] 【应用使用问题/豆包/其他功能类/】 我在新闻界面调出豆包，让..."] {
 		t.Fatalf("switches never saved count as on: %v", got)
 	}
 	if _, err := h.configure("larkx", func(x *ExtSetting) {
@@ -989,7 +1005,7 @@ func TestInboxHiddenEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = list()
-	if got["严肃 Agent 交流群"] || !got["手机任务自建 harness 二期 - [需求同步群]"] || got["闪退 - [缺陷同步群]"] {
+	if got["严肃 Agent 交流群"] || !got["手机任务自建 harness 二期 - [需求同步群]"] || got["闪退 - [缺陷同步群]"] || got["[Genesis-M][beta][2115872568] 【应用使用问题/豆包/其他功能类/】 我在新闻界面调出豆包，让..."] {
 		t.Fatalf("switched off: shown again: %v", got)
 	}
 }

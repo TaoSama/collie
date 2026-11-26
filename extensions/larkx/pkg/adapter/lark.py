@@ -32,6 +32,10 @@ DOC_CHAT = "doc:"  # a document's comments are a chat of their own
 MEDIA_MOST = 20 << 20
 NAME_TTL = 3600
 RECENT_MOST = 2000
+# A group Meego (飞书项目) opened for one story or issue: its description is the
+# item's link, and its name ends in a tag Feishu cuts off when the name is long.
+MEEGO_LINK = re.compile(r"https?://(?:meego|project)\.[\w.-]+/[\w.-]+/(story|issue)/detail/\d+\S*")
+MEEGO_NAME = {"story": "[需求同步群]", "issue": "[缺陷同步群]"}
 CREDENTIAL_FIELDS = ("cookies", "saved_at", "device_id", "app_key", "user_id", "csrf_token", "web_app_id")
 
 
@@ -83,6 +87,13 @@ def load_upstream(root, data_dir, region):
         auth=mod("larkx.auth"), client=mod("larkx.client"), region=mod("larkx.region"), media=mod("larkx.media"),
         builders=mod("larkx.proto.builders"), decoders=mod("larkx.proto.decoders"), ids=mod("larkx.proto.ids"),
         P=mod("larkx.proto.proto_pb2"), L=mod("larkx.proto.lark_all_pb2"))
+
+
+def chat_tags(info):
+    """What a group is besides a group, for Collie's 收件箱 rules: meego-story, meego-issue."""
+    link = MEEGO_LINK.fullmatch((info.get("description") or "").strip())
+    name = info.get("name") or ""
+    return ["meego-" + kind for kind, tag in MEEGO_NAME.items() if link and link.group(1) == kind or tag in name]
 
 
 def make_auth(U, region, saved, on_save):
@@ -307,6 +318,9 @@ class Feishu:
         else:
             out["chat_kind"] = "group"
             out["chat"] = info.get("name") or ""
+            tags = chat_tags(info)
+            if tags:
+                out["chat_tags"] = tags
         if "isRemind" in info:
             out["muted"] = not info["isRemind"]  # 免打扰 is isRemind off
         folded = self.folded(chat)
