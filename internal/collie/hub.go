@@ -593,7 +593,7 @@ func (c *bufConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 // identity reports who made a request: the master token or a paired device.
 func (s *Server) identity(r *http.Request) (master bool, d *Device) {
 	var got string
-	if c, err := r.Cookie(cookieName); err == nil {
+	if c, err := r.Cookie(cookieName); err == nil && cookieAllowed(r) {
 		got = c.Value
 	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		got = strings.TrimPrefix(h, "Bearer ")
@@ -608,6 +608,30 @@ func (s *Server) identity(r *http.Request) (master bool, d *Device) {
 		return got != "" && subtle.ConstantTimeCompare(x[:], y[:]) == 1, nil
 	}
 	return s.auths.who(got)
+}
+
+// cookieAllowed reports whether the cookie may sign this request. A page on
+// any subdomain of our site (another app the person runs, or a pinned
+// workbench page) gets our SameSite=Lax cookie sent along; CORS hides the
+// answer from it, but a POST has already done its work. So a request that
+// changes something counts the cookie only when it comes from our own page.
+// Tokens in Authorization (the CLI, nodes, other hubs) are not affected.
+// Sec-Fetch-Site comes from the browser itself and still holds when a proxy
+// in front drops the port from Host.
+func cookieAllowed(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
+		return true
+	}
+	o := r.Header.Get("Origin")
+	if o == "" || o == "null" {
+		return false
+	}
+	u, err := url.Parse(o)
+	return err == nil && u.Host == r.Host
 }
 
 // pairURL is what a phone opens after scanning.

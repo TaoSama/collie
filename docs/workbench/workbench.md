@@ -37,4 +37,5 @@
 
 - iframe 设置了 `sandbox`，但不带 `allow-top-navigation`，被嵌的网页不能把 Collie 页面跳走。`allow-same-origin` 指的是被嵌网页自己的源，它读不到 Collie 的 token。
 - **不要把第三方站点反代到 Collie 自己的域名下**：同源之后，那个站点的 JS 能读走 Collie 的 token。确实需要反代时，给每个站点一个独立的子域。
+- Collie 的 cookie 是 `SameSite=Lax`，同站的其他子域（被钉的自己的网站也算）发来的请求也会带上它。所以凭 cookie 的写请求（非 GET/HEAD）必须来自 Collie 自己的页面：`Sec-Fetch-Site: same-origin`，或 `Origin` 的主机等于 `Host`，否则这个 cookie 不算数（`cookieAllowed`，`internal/collie/hub.go`）。CLI、node 和别的 hub 用 `Authorization` 里的 token，不受影响。
 - 和 Collie 同属一个站点的网页（例如 `a.example.com` 与 Collie 所在的 `c.example.com`）嵌入后，`SameSite=Strict` 的 cookie 照常发送，登录态能保持。前提是对方的 `frame-ancestors` 允许 Collie 的源。
