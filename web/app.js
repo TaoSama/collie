@@ -1947,8 +1947,23 @@
     clearTimeout(hdrStatus.openTimer); hdrStatus.openTimer = 0;
     clearTimeout(hdrStatus.closeTimer); hdrStatus.closeTimer = 0;
   }
+  let hsDrag = null;
+  function clearHeaderStatusDrag(panel, scrim) {
+    if (panel) {
+      panel.classList.remove("is-dragging", "is-snapping", "is-closing");
+      panel.style.transform = "";
+    }
+    if (scrim) {
+      scrim.classList.remove("is-dragging", "is-snapping", "is-closing");
+      scrim.style.opacity = "";
+    }
+  }
   function closeHeaderStatus({ restoreFocus = false } = {}) {
     clearHeaderStatusTimers();
+    if (hsDrag) {
+      clearHeaderStatusDrag(hsDrag.panel, hsDrag.scrim);
+      hsDrag = null;
+    }
     const prev = hdrStatus.openId;
     if (!prev && !hdrStatus.pinnedId) return;
     hdrStatus.openId = "";
@@ -2078,9 +2093,94 @@
       renderHeaderStatus();
     }, HDR_HOVER_CLOSE_MS);
   });
-  document.addEventListener("pointerdown", () => {
+  document.addEventListener("pointerdown", (e) => {
     hdrStatus.lastPointerDownAt = Date.now();
+    if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
+    const ph = e.target.closest?.(".hs-ph");
+    if (!ph || e.target.closest?.("button")) return;
+    const panel = ph.closest(".hs-panel");
+    if (!panel || panel.hidden || getComputedStyle(panel).position !== "fixed") return;
+    const scrim = panel.parentElement?.querySelector(":scope > .hs-scrim") || null;
+    clearHeaderStatusDrag(panel, scrim);
+    const now = performance.now();
+    hsDrag = {
+      pointerId: e.pointerId,
+      ph,
+      panel,
+      scrim,
+      startY: e.clientY,
+      lastY: e.clientY,
+      lastAt: now,
+      dy: 0,
+      vy: 0,
+      dragging: false,
+    };
+    try { ph.setPointerCapture(e.pointerId); } catch {}
   }, { capture: true, passive: true });
+  document.addEventListener("pointermove", (e) => {
+    if (!hsDrag || e.pointerId !== hsDrag.pointerId) return;
+    const now = performance.now();
+    const dt = now - hsDrag.lastAt;
+    if (dt > 0) hsDrag.vy = (e.clientY - hsDrag.lastY) / dt;
+    hsDrag.lastY = e.clientY;
+    hsDrag.lastAt = now;
+    const dy = Math.max(0, e.clientY - hsDrag.startY);
+    hsDrag.dy = dy;
+    if (!hsDrag.dragging && dy > 3) {
+      hsDrag.dragging = true;
+      hsDrag.panel.classList.remove("is-entering", "is-snapping", "is-closing");
+      hsDrag.panel.classList.add("is-dragging");
+      if (hsDrag.scrim) {
+        hsDrag.scrim.classList.remove("is-entering", "is-snapping", "is-closing");
+        hsDrag.scrim.classList.add("is-dragging");
+      }
+    }
+    if (!hsDrag.dragging) return;
+    hsDrag.panel.style.transform = `translate3d(0, ${dy}px, 0)`;
+    if (hsDrag.scrim) {
+      const h = Math.max(200, hsDrag.panel.offsetHeight || 400);
+      hsDrag.scrim.style.opacity = String(Math.max(0, 1 - dy / h));
+    }
+  });
+  function finishHeaderStatusDrag(e, cancelled) {
+    if (!hsDrag || e.pointerId !== hsDrag.pointerId) return;
+    const d = hsDrag;
+    hsDrag = null;
+    try { d.ph.releasePointerCapture(e.pointerId); } catch {}
+    if (!d.dragging) return;
+    d.panel.classList.remove("is-dragging");
+    d.scrim?.classList.remove("is-dragging");
+    const h = d.panel.offsetHeight || 400;
+    const dismiss = !cancelled && (d.dy >= Math.min(120, h * 0.28) || (d.dy >= 32 && d.vy >= 0.45));
+    if (dismiss) {
+      d.panel.classList.add("is-closing");
+      d.scrim?.classList.add("is-closing");
+      d.panel.style.transform = `translate3d(0, ${h}px, 0)`;
+      if (d.scrim) d.scrim.style.opacity = "0";
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearHeaderStatusDrag(d.panel, d.scrim);
+        closeHeaderStatus();
+      };
+      d.panel.addEventListener("transitionend", finish, { once: true });
+      setTimeout(finish, 180);
+    } else {
+      d.panel.classList.add("is-snapping");
+      d.scrim?.classList.add("is-snapping");
+      d.panel.style.transform = "";
+      if (d.scrim) d.scrim.style.opacity = "";
+      const clearSnap = () => {
+        d.panel.classList.remove("is-snapping");
+        d.scrim?.classList.remove("is-snapping");
+      };
+      d.panel.addEventListener("transitionend", clearSnap, { once: true });
+      setTimeout(clearSnap, 200);
+    }
+  }
+  document.addEventListener("pointerup", (e) => finishHeaderStatusDrag(e, false));
+  document.addEventListener("pointercancel", (e) => finishHeaderStatusDrag(e, true));
   document.addEventListener("focusin", (e) => {
     if (Date.now() - hdrStatus.lastPointerDownAt < 500) return;
     const tog = e.target.closest?.("[data-hs-toggle]");

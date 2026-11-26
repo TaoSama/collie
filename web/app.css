@@ -2660,6 +2660,8 @@ select.picked { display: none; }
   /* Mobile bottom drawer: scrollable, easy to dismiss, clear of the composer. */
   .hs-scrim:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 40; background: var(--scrim); }
   .hs-scrim.is-entering { animation: hs-scrim-in .14s ease-out both; }
+  .hs-scrim.is-dragging { animation: none; transition: none; }
+  .hs-scrim.is-snapping, .hs-scrim.is-closing { transition: opacity .16s ease-out; }
   .hs-panel::before { display: none; }
   .hs-panel {
     position: fixed; left: 0; right: 0; top: auto; bottom: 0; z-index: 41;
@@ -2669,7 +2671,11 @@ select.picked { display: none; }
     contain: layout style; backface-visibility: hidden; -webkit-backface-visibility: hidden;
   }
   .hs-panel.is-entering { animation: hs-drawer-in .14s cubic-bezier(.22, 1, .36, 1) both; will-change: transform; }
-  .hs-ph { position: relative; padding: 14px 12px 10px 16px; }
+  .hs-panel.is-dragging { animation: none; transition: none; will-change: transform; }
+  .hs-panel.is-snapping { transition: transform .18s cubic-bezier(.22, 1, .36, 1); will-change: transform; }
+  .hs-panel.is-closing { transition: transform .15s ease-out; will-change: transform; }
+  .hs-ph { position: relative; padding: 14px 12px 10px 16px; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+  .hs-panel.is-dragging .hs-ph { cursor: grabbing; }
   .hs-ph::before { content: ""; position: absolute; left: 50%; top: 6px; width: 34px; height: 3.5px; transform: translateX(-50%); border-radius: 999px; background: var(--line-2); }
   .hs-pin-tag { display: none; }
   .hs-panel .hs-close { display: inline-grid; }
