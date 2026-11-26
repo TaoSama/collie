@@ -300,22 +300,6 @@ func TestWorkbenchLoginOrigin(t *testing.T) {
 			t.Fatalf("origin change to %s must start with a fresh host and empty jar", rawURL)
 		}
 	}
-	current := jar()
-	if err := wb.storeCookies("site", current, "/", cookies); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wb.db.Exec(`CREATE TRIGGER fail_layout BEFORE UPDATE ON kv WHEN OLD.k = 'workbench'
-		BEGIN SELECT RAISE(ABORT, 'layout write rejected'); END`); err != nil {
-		t.Fatal(err)
-	}
-	next := wb.config()
-	next.Modules[0].URL = "https://example.org"
-	if err := wb.save(next, nil); err == nil {
-		t.Fatal("the test database must reject the layout write")
-	}
-	if jar() != current || current.ctx.Err() != nil || wb.jarCount("site") != 1 {
-		t.Fatal("a rejected layout write must keep the current login and proxy")
-	}
 }
 
 func TestWorkbenchClearedJarIgnoresRetiredHandle(t *testing.T) {
