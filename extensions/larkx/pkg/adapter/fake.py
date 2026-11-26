@@ -22,6 +22,8 @@ class Fake:
         self.signed_in = False
         self.posts = []
         self.wake = threading.Event()
+        self.trigger = ""
+        self.marked = set()
 
     def restore(self, saved):
         if not saved or saved.get("cookies", {}).get("session") != "example":
@@ -60,9 +62,16 @@ class Fake:
             {"id": "m3", "chat_id": "c_self", "chat": ACCOUNT, "chat_kind": "self", "sender": ME,
              "sender_name": ACCOUNT, "owner": True, "text": "/ai 今天有什么会", "at": now},
         ):
+            if m["owner"] and lark.is_request(m["text"], self.trigger):
+                self.mark_working(m["id"])
             on_message(m)
         while not stop.is_set() and self.signed_in:
             self.wake.wait(1)
+
+    def mark_working(self, message_id, got=None):
+        if message_id not in self.marked:
+            self.marked.add(message_id)
+            self.react(message_id)
 
     def react(self, message_id, key=lark.WORKING_REACTION):
         with open(os.path.join(os.environ.get("COLLIE_EXTENSION_DATA", "."), "fake-reactions.jsonl"), "a") as f:

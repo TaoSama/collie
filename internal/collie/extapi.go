@@ -96,6 +96,9 @@ func (s *Server) extSaveSettings(w http.ResponseWriter, r *http.Request) {
 	set := sp.st.Settings
 	sp.changed()
 	sp.mu.Unlock()
+	if body.Trigger != nil {
+		s.ext.pushSettings()
+	}
 	writeJSON(w, 200, map[string]any{"trigger": set.ExtTrigger, "footer": set.ExtFooter})
 }
 

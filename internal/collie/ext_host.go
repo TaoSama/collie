@@ -379,6 +379,30 @@ func (r *extRun) refreshStatus(ctx context.Context) {
 	r.mu.Unlock()
 }
 
+// sendSettings: the trigger word, to an extension that marks requests.
+func (r *extRun) sendSettings(ctx context.Context) {
+	if !r.man.has(capWorking) || !r.running() {
+		return
+	}
+	args := extproto.ChannelSettings{Contribution: r.man.Contributes.Connector.ID, Trigger: r.h.trigger()}
+	if err := r.call(ctx, extproto.MChannelSettings, args, nil); err != nil {
+		log.Printf("ext %s: settings: %v", r.man.ID, err)
+	}
+}
+
+// pushSettings sends every running extension the settings it follows.
+func (h *extHost) pushSettings() {
+	h.mu.Lock()
+	runs := make([]*extRun, 0, len(h.runs))
+	for _, r := range h.runs {
+		runs = append(runs, r)
+	}
+	h.mu.Unlock()
+	for _, r := range runs {
+		go r.sendSettings(context.Background())
+	}
+}
+
 func (r *extRun) sendInterest(ctx context.Context) {
 	if !r.man.has(capInterest) || !r.running() {
 		return
@@ -407,6 +431,7 @@ func (r *extRun) event(name string, params json.RawMessage) {
 				r.signalPull()
 				r.h.retrySends(r)
 				r.sendInterest(context.Background())
+				r.sendSettings(context.Background())
 			}()
 		}
 	case extproto.EChanged:
