@@ -2146,14 +2146,15 @@ select.picked { display: none; }
 .ext-st-l { display: inline-flex; align-items: center; gap: 6px; color: var(--t-secondary); }
 .ext-st-on { max-width: 12em; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-tiny); color: var(--t-meta); }
 .ext-row .chev { margin-left: 6px; color: var(--t-icon); font-size: var(--fs-title); line-height: 1; }
-/* A logo is shown as it is, on a light tile in every theme so its brand
-   colors stay clear; the tile says how the extension is. */
+/* A logo fills its tile as it is (an app icon brings its own margin), on
+   a light backing in every theme so its colors stay clear; the tile says
+   how the extension is. */
 .ext-icon {
   width: 36px; height: 36px; border-radius: calc(10px * var(--round)); display: inline-flex; align-items: center; justify-content: center; flex: none;
   background: var(--bg-3); box-shadow: inset 0 0 0 var(--bw) var(--line); color: var(--fg); font-weight: var(--fw-strong); font-size: var(--fs-body);
 }
-.ext-icon.logo { background: var(--logo-bg); }
-.ext-icon > img { width: 62%; height: 62%; object-fit: contain; }
+.ext-icon.logo { background: var(--logo-bg); overflow: hidden; }
+.ext-icon > img { width: 82%; height: 82%; object-fit: contain; border-radius: inherit; }
 .ext-icon.off { box-shadow: inset 0 0 0 var(--bw) var(--line-2); }
 .ext-icon.off > img, .ext-icon.off:not(.logo) { opacity: .5; }
 .ext-icon.bad { box-shadow: 0 0 0 2px color-mix(in srgb, var(--attn) 55%, transparent); }

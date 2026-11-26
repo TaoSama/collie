@@ -84,7 +84,7 @@ COLLIE_HOME/ext/<id>/
 | `runtime.args` | 否 | 追加的参数 |
 | `source` | 下载包必需 | 见第 9 节 |
 | `requires` | 否 | 运行前要在 PATH 里找到的命令，找不到就不启动，并在界面上说缺什么 |
-| `icon` | 否 | 包内的 SVG 文件（相对路径，不超过 16 KB），用这个服务的官方标志，不要自己画。界面把它当图片原样显示在浅色底块上，亮暗主题都一样，不改它的颜色。旁边放一份 `icon.LICENSE`，写明来源（钉到 commit 的地址）、sha256、许可证和对原文件做过的修改，许可证要求附全文的就附上。省略时显示 `name` 的第一个字 |
+| `icon` | 否 | 包内的 PNG（建议 512×512）或 SVG 文件，相对路径，不超过 256 KB。用这个服务的官方标志，不要自己画。hub 读出文件后在 `/api/ext/<id>/icon` 提供，地址里带内容哈希，可以长期缓存。界面用 `<img>` 原样显示在浅色底块上，不改颜色。旁边放一份 `icon.LICENSE`，写明上游原始出处（钉到 commit 的地址）、sha256、许可证和对原文件做过的修改，许可证要求附全文的就附上。省略时显示 `name` 的第一个字 |
 | `label` | 否 | 短名，显示在收件箱、事件这类窄的地方（如「飞书」），省略时用 `name` |
 | `contributes.connector` | 是 | `id`（调用时的 `contribution`），`login`：`qr`（扫码）、`secret`（粘贴密钥）或省略；`capabilities` 见下表；`actions` 见第 3.6 节 |
 | `contributes.channel` | 是 | 回复怎么发：`format`（`markdown` 原样发）、`max_text`（Collie 不切分，只用来提示）、`kinds`（接受的发送类型）、`no_footer`（`true` 时回复不带尾标；只给一看就是 bot 的渠道用，如微信） |

@@ -29,6 +29,7 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("POST /api/ext/{id}", s.extConfigure)
 	api("POST /api/ext/{id}/login", s.extLogin)
 	api("POST /api/ext/{id}/logout", s.extLogout)
+	api("GET /api/ext/{id}/icon", s.extIcon)
 	api("GET /api/ext-actions", s.extActions)
 	api("GET /api/ext-markets", s.extMarkets)
 	api("POST /api/ext-markets", s.extAddMarket)

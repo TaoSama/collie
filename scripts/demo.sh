@@ -10,9 +10,9 @@ rm -rf "$out" && mkdir -p "$out"
 cp -R web/vendor web/fonts web/imgedit.js web/threads.js web/tasks.js web/machines.js web/ext.js web/workbench.js web/markdown.js web/highlight.js web/app.css web/skins.css web/icon.svg web/icon-512.png "$out/"
 cp web/media.css web/workbench.css "$out/"
 cp scripts/demo/demo.js scripts/demo/demo-qr.png scripts/demo/bench-pagination.html "$out/"
-# Extension icons with their licenses, which the hub hands out from the manifests (extensions/*/icon.svg).
-mkdir "$out/ext-icons" && for f in extensions/*/icon.svg; do
-  id=$(basename "$(dirname "$f")"); cp "$f" "$out/ext-icons/$id.svg"; cp "extensions/$id/icon.LICENSE" "$out/ext-icons/$id.LICENSE"
+# Extension icons with their licenses, which the hub hands out from the manifests (extensions/*/icon.*).
+mkdir "$out/ext-icons" && for f in extensions/*/icon.png extensions/*/icon.svg; do
+  id=$(basename "$(dirname "$f")"); cp "$f" "$out/ext-icons/$id.${f##*.}"; cp "extensions/$id/icon.LICENSE" "$out/ext-icons/$id.LICENSE"
 done
 # Use paths relative to the demo directory when serving it on GitHub Pages.
 sed -e 's#src="/icon.svg"#src="icon.svg"#g' -e 's#"/api/qr?text=#"demo-qr.png?text=#g' web/app.js > "$out/app.js"

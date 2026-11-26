@@ -30,7 +30,7 @@ type ExtManifest struct {
 	Description     string `json:"description"`
 	Warning         string `json:"warning,omitempty"`
 	Homepage        string `json:"homepage,omitempty"`
-	Icon            string `json:"icon,omitempty"` // an SVG in the package (ext_icon.go)
+	Icon            string `json:"icon,omitempty"` // a PNG or SVG in the package (ext_icon.go)
 	Engines         struct {
 		CollieProtocol int `json:"collie_protocol"`
 	} `json:"engines"`
@@ -85,8 +85,10 @@ type ExtManifest struct {
 	LocalOn string `json:"local_on,omitempty"`
 	// Market: installed from a marketplace repository (ext_market.go).
 	Market *ExtMarketRef `json:"market,omitempty"`
-	// IconURL: its icon as a data: URL, read by Collie (ext_icon.go).
-	IconURL string `json:"icon_url,omitempty"`
+	// IconURL: where the hub serves its icon (ext_icon.go).
+	IconURL  string `json:"icon_url,omitempty"`
+	icon     []byte
+	iconType string
 }
 
 // declarative: nothing to run, only declarations (a 工作台 module): on is
