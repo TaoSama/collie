@@ -3,7 +3,7 @@ name: cleanup
 description: |
   清理本项目相关的残留数据，按“盘点 → 备份并列清单 → 按对象类型执行 → 核对无残留”的流程做，每种对象的具体做法在 references/ 里。目前支持的对象：Antigravity（agy）会话，包括 /resume 能删的正常会话和新建失败留下、F4 删不掉的空壳会话。
   用户说“清理”“clean up”“删掉残留”“删 agy 会话”“清理 Antigravity 会话”“agy 列表里有个删不掉的”“空壳会话”“Collie 里显示一个打不开的 agy 会话”，或要清掉测试时留下的数据时，都用这个技能，即使只提到其中一个文件或一个目录。
-  只归档、不删除的会话不需要它。
+  批量清理测试会话时也适用，包括同步归档和移除孤立索引。
 ---
 
 # 清理
@@ -15,6 +15,7 @@ description: |
 | 对象 | 做法 |
 | --- | --- |
 | Antigravity（agy）会话：正常会话和空壳会话 | `references/agy-sessions.md` |
+| 临时测试会话、herdr 窗格和测试目录 | `references/test-sessions.md` |
 
 要清的对象不在表里，就不要套用别的类型的做法，先报告要清什么、打算怎么清。以后新增一种对象，在 `references/` 下加一个文件，再在这张表里加一行。
 
