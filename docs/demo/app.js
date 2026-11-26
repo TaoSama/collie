@@ -3195,12 +3195,6 @@
       </section>
 
       <section class="card set-sec">
-        <header class="set-head"><div><h4>启动 alias</h4><p>每台电脑 shell 配置里启动 claude、codex、agy 的 alias。上面选了 alias，就在那台电脑的 shell 里用它启动，带上它设的地址、密钥和模型。</p></div>
-          <button type="button" class="btn small" data-act="alias-refresh">重新读取</button></header>
-        <div id="alias-list" class="alias-list"><p class="muted alias-empty">正在读取各台电脑的 alias…</p></div>
-      </section>
-
-      <section class="card set-sec">
         <header><h4>记忆与会话</h4><p>Collie 的对话变长后会换新会话，要记住的事通过 memory/ 交接；每晚回顾当天的对话，整理记忆。</p></header>
         <div class="set-grid">
           <label>上下文用到多少时换新会话<select name="rotate_pct" data-pick="compact" data-title="上下文用到多少时换新会话">${[50, 60, 70, 80, -1].map((p) => `<option value="${p}" ${(s.rotate_pct || 60) === p ? "selected" : ""}>${p < 0 ? "从不" : p + "%"}</option>`).join("")}</select><small>窗口大小按 agent 自己的设置算</small></label>
@@ -3226,6 +3220,12 @@
         </div>
         <label class="check"><input type="checkbox" name="bypass" ${s.ask_permissions ? "" : "checked"}> 跳过权限确认：Collie 和它派出的 agent 直接跑命令、改文件，不停下来问你（重启 Collie、新派的 agent 生效）</label>
         <label class="check"><input type="checkbox" name="paused" ${s.paused ? "checked" : ""}> 暂停投递：事件照收，先不交给 agent</label>
+      </section>
+
+      <section class="card set-sec">
+        <header class="set-head"><div><h4>启动 alias</h4><p>每台电脑 shell 配置里启动 claude、codex、agy 的 alias。上面选了 alias，就在那台电脑的 shell 里用它启动，带上它设的地址、密钥和模型。</p></div>
+          <button type="button" class="btn small" data-act="alias-refresh">重新读取</button></header>
+        <div id="alias-list" class="alias-list"><p class="muted alias-empty">正在读取各台电脑的 alias…</p></div>
       </section>
 
       <div class="set-actions"><button type="button" class="btn small" data-act="router-restart">重启 Collie</button><span class="grow"></span><button class="btn primary small">保存</button></div>
