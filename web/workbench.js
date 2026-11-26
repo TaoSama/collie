@@ -248,7 +248,13 @@
       const added = !editing;
       await save(next, purge);
       editing = mod(id); // saved: trying again after a failed token edits it, not a copy
-      if (field("logout").checked) await api("/api/wb/logout", { body: { id } });
+      if (field("logout").checked) {
+        await api("/api/wb/logout", { body: { id } });
+        if (cur === id && editing.hub_login && editing.embed === "iframe") {
+          $("#wb-main")._key = "";
+          render();
+        }
+      }
       const token = field("token").value.trim(), clear = field("clear-token").checked;
       if (token || clear) {
         await api("/api/wb/token", { body: { id, token: clear ? "" : token } });

@@ -96,8 +96,7 @@ type workbench struct {
 	cfg     wbConfig
 	checked map[string]wbCheck // module → its last snapshot attempt
 
-	jarMu sync.Mutex                     // the jars, in memory and on disk
-	jars  map[string]map[string]wbCookie // module → its site's cookies (workbench_jar.go)
+	jars map[string]*wbJar // module → its current proxy host and login, guarded by mu
 
 	snapping  atomic.Bool
 	lastCheck atomic.Int64 // unix seconds of the last due-check
@@ -108,7 +107,7 @@ func newWorkbench(db *sql.DB, home, routerDir string) *workbench {
 		db: db, dir: filepath.Join(home, "wb"), router: routerDir,
 		client:  &http.Client{Timeout: wbFetchTimeout},
 		checked: map[string]wbCheck{},
-		jars:    map[string]map[string]wbCookie{},
+		jars:    map[string]*wbJar{},
 	}
 	var raw string
 	err := db.QueryRow(`SELECT v FROM kv WHERE k=?`, wbKV).Scan(&raw)
@@ -154,6 +153,10 @@ func (wb *workbench) config() wbConfig {
 func (wb *workbench) module(id string) (WBModule, bool) {
 	wb.mu.Lock()
 	defer wb.mu.Unlock()
+	return wb.moduleLocked(id)
+}
+
+func (wb *workbench) moduleLocked(id string) (WBModule, bool) {
 	for _, m := range wb.cfg.Modules {
 		if m.ID == id {
 			return m, true
@@ -174,21 +177,10 @@ func (wb *workbench) save(c wbConfig, purge []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := wb.db.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, wbKV, string(b)); err != nil {
+	if err := wb.saveLayout(c, b); err != nil {
 		return err
 	}
-	wb.mu.Lock()
-	wb.cfg = c
-	for id := range wb.checked {
-		if !slices.ContainsFunc(c.Modules, func(m WBModule) bool { return m.ID == id && m.Share == wbShareKeep }) {
-			delete(wb.checked, id)
-		}
-	}
-	wb.mu.Unlock()
 	if err := wb.dropTokens(c); err != nil {
-		return err
-	}
-	if err := wb.dropJars(c); err != nil {
 		return err
 	}
 	for _, id := range purge {
@@ -197,6 +189,24 @@ func (wb *workbench) save(c wbConfig, purge []string) error {
 		}
 	}
 	return wb.writeIndex()
+}
+
+func (wb *workbench) saveLayout(c wbConfig, b []byte) error {
+	wb.mu.Lock()
+	defer wb.mu.Unlock()
+	if err := wb.dropJarsLocked(c); err != nil {
+		return err
+	}
+	if _, err := wb.db.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, wbKV, string(b)); err != nil {
+		return err
+	}
+	wb.cfg = c
+	for id := range wb.checked {
+		if !slices.ContainsFunc(c.Modules, func(m WBModule) bool { return m.ID == id && m.Share == wbShareKeep }) {
+			delete(wb.checked, id)
+		}
+	}
+	return nil
 }
 
 // normalize checks a layout from the page and fills in defaults.

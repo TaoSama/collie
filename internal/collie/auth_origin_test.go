@@ -47,3 +47,35 @@ func TestCookieNeedsOwnOriginToChangeThings(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserLogoutOrigin(t *testing.T) {
+	h := (&Server{}).Routes()
+	for _, c := range []struct {
+		name, origin, site string
+		status             int
+	}{
+		{"same-origin origin", "https://c.example.com", "", http.StatusOK},
+		{"same-origin metadata", "", "same-origin", http.StatusOK},
+		{"sibling origin", "https://wb.example.com", "same-site", http.StatusForbidden},
+		{"no origin", "", "", http.StatusForbidden},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "https://c.example.com/api/logout", nil)
+			r.Header.Set("Origin", c.origin)
+			r.Header.Set("Sec-Fetch-Site", c.site)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != c.status {
+				t.Fatalf("logout = %d, want %d", w.Code, c.status)
+			}
+			cookies := w.Result().Cookies()
+			if c.status == http.StatusForbidden {
+				if len(cookies) != 0 {
+					t.Fatal("refused logout changed a cookie")
+				}
+			} else if len(cookies) != 1 || cookies[0].Name != cookieName || cookies[0].MaxAge != -1 {
+				t.Fatal("logout must expire the session cookie, even without an active session")
+			}
+		})
+	}
+}

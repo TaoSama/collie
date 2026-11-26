@@ -1,10 +1,14 @@
 package collie
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -34,61 +38,89 @@ func (c wbCookie) expired(now time.Time) bool { return !c.Expires.IsZero() && !c
 
 func (wb *workbench) jarPath(id string) string { return filepath.Join(wb.dir, "jar", id+".json") }
 
-// jarLocked is module id's jar, read from disk the first time. wb.jarMu held.
-func (wb *workbench) jarLocked(id string) (map[string]wbCookie, error) {
-	if j, ok := wb.jars[id]; ok {
+type wbJar struct {
+	Host    string              `json:"host"`
+	Cookies map[string]wbCookie `json:"cookies"`
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+func (wb *workbench) jarLocked(id string, create bool) (*wbJar, error) {
+	if j := wb.jars[id]; j != nil {
 		return j, nil
 	}
-	j := map[string]wbCookie{}
+	j := &wbJar{Cookies: map[string]wbCookie{}}
 	b, err := os.ReadFile(wb.jarPath(id))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return nil, err
+	case bytes.HasPrefix(bytes.TrimSpace(b), []byte("[")):
+		// Legacy jars predate the origin check on edits.
 	default:
-		var list []wbCookie
-		if err := json.Unmarshal(b, &list); err != nil {
+		if err := json.Unmarshal(b, j); err != nil {
 			return nil, fmt.Errorf("%s: %w", wb.jarPath(id), err)
 		}
-		for _, c := range list {
-			j[c.key()] = c
+	}
+	if j.Host == "" {
+		if !create {
+			return nil, nil
+		}
+		// Keep the proxy label within DNS's 63-character limit.
+		j.Host = randomToken()[:24] + "-" + id
+		if err := writePrivate(wb.jarPath(id), j); err != nil {
+			return nil, err
 		}
 	}
+	j.ctx, j.cancel = context.WithCancel(context.Background())
 	wb.jars[id] = j
 	return j, nil
 }
 
-// cookiesFor are the cookies to send for a request to reqPath.
-func (wb *workbench) cookiesFor(id, reqPath string, secure bool) ([]wbCookie, error) {
-	wb.jarMu.Lock()
-	defer wb.jarMu.Unlock()
-	j, err := wb.jarLocked(id)
-	if err != nil {
-		return nil, err
+func (wb *workbench) proxyModule(id, host string) (WBModule, *wbJar, error) {
+	wb.mu.Lock()
+	defer wb.mu.Unlock()
+	m, ok := wb.moduleLocked(id)
+	if !ok || m.Kind != wbKindWeb || !m.HubLogin {
+		return WBModule{}, nil, nil
 	}
+	if host == "" {
+		j, err := wb.jarLocked(id, true)
+		return m, j, err
+	}
+	j := wb.jars[id]
+	if j == nil || j.Host != host {
+		return WBModule{}, nil, nil
+	}
+	return m, j, nil
+}
+
+// cookiesFor are the cookies to send for a request to reqPath.
+func (wb *workbench) cookiesFor(j *wbJar, reqPath string, secure bool) []wbCookie {
+	wb.mu.Lock()
+	defer wb.mu.Unlock()
 	now := time.Now()
 	var out []wbCookie
-	for _, c := range j {
+	for _, c := range j.Cookies {
 		if !c.expired(now) && (secure || !c.Secure) && cookiePathMatch(reqPath, c.Path) {
 			out = append(out, c)
 		}
 	}
 	// Longer paths first, as browsers send them.
 	slices.SortStableFunc(out, func(a, b wbCookie) int { return len(b.Path) - len(a.Path) })
-	return out, nil
+	return out
 }
 
 // storeCookies takes the Set-Cookie of a response to reqPath into the jar
 // and writes it out when something changed.
-func (wb *workbench) storeCookies(id, reqPath string, set []*http.Cookie) error {
+func (wb *workbench) storeCookies(id string, j *wbJar, reqPath string, set []*http.Cookie) error {
 	if len(set) == 0 {
 		return nil
 	}
-	wb.jarMu.Lock()
-	defer wb.jarMu.Unlock()
-	j, err := wb.jarLocked(id)
-	if err != nil {
-		return err
+	wb.mu.Lock()
+	defer wb.mu.Unlock()
+	if wb.jars[id] != j {
+		return nil
 	}
 	now, changed := time.Now(), false
 	for _, sc := range set {
@@ -104,23 +136,28 @@ func (wb *workbench) storeCookies(id, reqPath string, set []*http.Cookie) error 
 		case !sc.Expires.IsZero():
 			c.Expires = sc.Expires
 		}
-		old, had := j[c.key()]
+		old, had := j.Cookies[c.key()]
 		if c.expired(now) {
 			if had {
-				delete(j, c.key())
+				delete(j.Cookies, c.key())
 				changed = true
 			}
 			continue
 		}
 		if !had || !sameCookie(old, c) {
-			j[c.key()] = c
+			j.Cookies[c.key()] = c
 			changed = true
 		}
 	}
 	if !changed {
 		return nil
 	}
-	return wb.writeJarLocked(id, j)
+	for k, c := range j.Cookies {
+		if c.expired(now) {
+			delete(j.Cookies, k)
+		}
+	}
+	return writePrivate(wb.jarPath(id), j)
 }
 
 // sameCookie: nothing worth writing changed. A site that renews a Max-Age
@@ -131,29 +168,16 @@ func sameCookie(a, b wbCookie) bool {
 	return a == b && d > -time.Hour && d < time.Hour
 }
 
-func (wb *workbench) writeJarLocked(id string, j map[string]wbCookie) error {
-	list := make([]wbCookie, 0, len(j))
-	now := time.Now()
-	for k, c := range j {
-		if c.expired(now) {
-			delete(j, k)
-			continue
-		}
-		list = append(list, c)
-	}
-	return writePrivate(wb.jarPath(id), list)
-}
-
 // jarCount is how many live cookies module id's jar holds: all the page sees.
 func (wb *workbench) jarCount(id string) int {
-	wb.jarMu.Lock()
-	defer wb.jarMu.Unlock()
-	j, err := wb.jarLocked(id)
-	if err != nil {
+	wb.mu.Lock()
+	defer wb.mu.Unlock()
+	j, err := wb.jarLocked(id, false)
+	if err != nil || j == nil {
 		return 0
 	}
 	n, now := 0, time.Now()
-	for _, c := range j {
+	for _, c := range j.Cookies {
 		if !c.expired(now) {
 			n++
 		}
@@ -161,37 +185,54 @@ func (wb *workbench) jarCount(id string) int {
 	return n
 }
 
-// clearJar forgets module id's login.
 func (wb *workbench) clearJar(id string) error {
-	wb.jarMu.Lock()
-	defer wb.jarMu.Unlock()
-	delete(wb.jars, id)
+	wb.mu.Lock()
+	defer wb.mu.Unlock()
+	return wb.clearJarLocked(id)
+}
+
+func (wb *workbench) clearJarLocked(id string) error {
 	if err := os.Remove(wb.jarPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	if j := wb.jars[id]; j != nil {
+		j.cancel()
+		delete(wb.jars, id)
 	}
 	return nil
 }
 
-// dropJars forgets the logins of modules gone from c or no longer kept by the hub.
-func (wb *workbench) dropJars(c wbConfig) error {
-	keep := map[string]bool{}
+func (wb *workbench) dropJarsLocked(c wbConfig) error {
+	origins := map[string]string{}
 	for _, m := range c.Modules {
 		if m.HubLogin {
-			keep[m.ID] = true
+			origins[m.ID] = wbOrigin(m.URL)
 		}
 	}
-	files, err := filepath.Glob(filepath.Join(wb.dir, "jar", "*.json"))
-	if err != nil {
-		return err
-	}
-	for _, f := range files {
-		if id := strings.TrimSuffix(filepath.Base(f), ".json"); !keep[id] {
-			if err := wb.clearJar(id); err != nil {
+	for _, m := range wb.cfg.Modules {
+		if m.HubLogin && origins[m.ID] != wbOrigin(m.URL) {
+			if err := wb.clearJarLocked(m.ID); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func wbOrigin(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return u.Scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 // cookiePathMatch is RFC 6265 5.1.4.
