@@ -114,12 +114,16 @@ type fakeHost struct {
 	events          []extproto.Delivery
 	changed         []string
 	beforeLoad      func()
+	beforeDelivery  func(json.RawMessage)
 	deliveryOffline bool
 }
 
 func (h *fakeHost) handle(_ context.Context, method string, params json.RawMessage) (any, error) {
 	if method == extproto.MSecretsLoad && h.beforeLoad != nil {
 		h.beforeLoad()
+	}
+	if method == extproto.MChannelDelivery && h.beforeDelivery != nil {
+		h.beforeDelivery(params)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -350,6 +354,11 @@ func TestHostProtocolSendDuringRestore(t *testing.T) {
 		st := call[extproto.Status](t, h, extproto.MStatus, nil)
 		return st.State == extproto.StateOK && st.Detail["基线"] == nil
 	})
+	eventually(t, "outbox wake", func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return containsString(h.changed, "outbox")
+	})
 	if got := call[extproto.SendResult](t, h, extproto.MChannelSend, send); !got.Deferred {
 		t.Fatalf("after restore = %+v, want deferred until owner opens the reply window", got)
 	}
@@ -389,5 +398,68 @@ func TestHostProtocolDeliveryAfterReconnect(t *testing.T) {
 	})
 	if got := f.texts(); len(got) != 1 || got[0] != req.Text {
 		t.Fatalf("WeChat sends = %v", got)
+	}
+}
+
+func TestHostProtocolLogoutWithDeliveryOutstanding(t *testing.T) {
+	for _, kind := range []string{extproto.KindAnswer, extproto.KindResult} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFakeILink(t)
+			h, stop := startExtension(t, f)
+			defer stop()
+			entered, release := make(chan struct{}), make(chan struct{})
+			defer close(release)
+			var once sync.Once
+			h.beforeDelivery = func(raw json.RawMessage) {
+				var d extproto.Delivery
+				if err := json.Unmarshal(raw, &d); err == nil && d.Ref == "outstanding" {
+					once.Do(func() { close(entered) })
+					<-release
+				}
+			}
+			raw, err := json.Marshal(secrets{Credentials: Credentials{
+				Token: "token-1", BotID: "bot-1", UserID: "owner@im.wechat", BaseURL: f.server.URL,
+			}})
+			mustNoErr(t, err)
+			h.secret = base64.StdEncoding.EncodeToString(raw)
+			call[extproto.InitializeResult](t, h, extproto.MInitialize, extproto.InitializeParams{Protocol: 1,
+				Extension: extproto.ExtensionInfo{ID: "wechat", DataDir: t.TempDir()}})
+			eventually(t, "baseline", func() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.polls >= 2 })
+			f.push(map[string]any{"message_type": 1, "from_user_id": "owner@im.wechat", "client_id": "m-1",
+				"create_time_ms": nowMs(), "context_token": "ctx-1",
+				"item_list": []any{map[string]any{"type": 1, "text_item": map[string]any{"text": "hello"}}}})
+			eventually(t, "receive", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.received) == 1 })
+			if kind == extproto.KindResult {
+				call[extproto.SendResult](t, h, extproto.MChannelSend, extproto.Send{
+					Ref: "complete-request", Chat: "owner@im.wechat", Text: "answer", Kind: extproto.KindAnswer,
+				})
+			}
+
+			sent := make(chan error, 1)
+			go func() {
+				sent <- h.peer.Call(t.Context(), extproto.MChannelSend, extproto.Send{
+					Ref: "outstanding", Chat: "owner@im.wechat", Text: "answer", Kind: kind,
+				}, nil)
+			}()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("delivery RPC did not start")
+			}
+			for _, method := range []string{extproto.MStatus, extproto.MLogout} {
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				err := h.peer.Call(ctx, method, nil, nil)
+				cancel()
+				if err != nil {
+					t.Fatalf("%s while receipt is waiting: %v", method, err)
+				}
+			}
+			select {
+			case err := <-sent:
+				mustNoErr(t, err)
+			case <-time.After(time.Second):
+				t.Fatal("logout did not cancel the delivery wait")
+			}
+		})
 	}
 }

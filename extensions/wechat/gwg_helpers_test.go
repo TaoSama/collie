@@ -181,7 +181,7 @@ type gwgFlakyHost struct {
 	calls int
 }
 
-func (f *gwgFlakyHost) Delivery(d extproto.Delivery) error {
+func (f *gwgFlakyHost) Delivery(ctx context.Context, d extproto.Delivery) error {
 	f.mu.Lock()
 	f.calls++
 	hook := f.fail
@@ -191,7 +191,7 @@ func (f *gwgFlakyHost) Delivery(d extproto.Delivery) error {
 			return err
 		}
 	}
-	return f.testHost.Delivery(d)
+	return f.testHost.Delivery(ctx, d)
 }
 
 func (f *gwgFlakyHost) count() int {

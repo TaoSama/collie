@@ -161,7 +161,7 @@ func (h *testHost) Receive(_ context.Context, m extproto.Message) error {
 	return nil
 }
 
-func (h *testHost) Delivery(d extproto.Delivery) error {
+func (h *testHost) Delivery(_ context.Context, d extproto.Delivery) error {
 	h.mu.Lock()
 	h.deliveries = append(h.deliveries, d)
 	h.mu.Unlock()

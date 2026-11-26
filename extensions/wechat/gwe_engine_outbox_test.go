@@ -199,11 +199,11 @@ type gweFlakyHost struct {
 	fail func() bool
 }
 
-func (h *gweFlakyHost) Delivery(d extproto.Delivery) error {
+func (h *gweFlakyHost) Delivery(ctx context.Context, d extproto.Delivery) error {
 	if h.fail() {
 		return errors.New("synthetic ack persistence failure")
 	}
-	return h.testHost.Delivery(d)
+	return h.testHost.Delivery(ctx, d)
 }
 
 // from: gateway/tests/gateway/engine-outbox.test.ts: ${fault} failure after final receipt is recovered without repeating model or WeChat send

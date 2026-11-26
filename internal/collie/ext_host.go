@@ -467,7 +467,7 @@ func (r *extRun) event(name string, params json.RawMessage) {
 		if c.Scope == "outbox" {
 			go r.h.retrySends(r)
 		}
-		if c.Scope != "status" && c.Scope != "header_status" {
+		if c.Scope != "status" && c.Scope != "header_status" && c.Scope != "outbox" {
 			r.signalPull()
 		}
 	case extproto.EDelivery:

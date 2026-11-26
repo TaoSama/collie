@@ -1,7 +1,9 @@
 package collie
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -143,4 +145,53 @@ func TestDeliveryAcknowledgesPersistedState(t *testing.T) {
 	if again := h.store.out(ref); !again.DoneAt.Equal(got.DoneAt) {
 		t.Fatalf("duplicate changed the receipt: %+v", again)
 	}
+}
+
+func TestOutboxWakeRetriesNotReadySend(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	r := &extRun{h: h, man: h.manifest("fakew"), proc: extProcState{State: extRunning}, pull: make(chan struct{}, 1)}
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	ready := make(chan struct{})
+	r.peer = extproto.NewPeer(client, client, "h", nil, nil)
+	remote := extproto.NewPeer(server, server, "p", func(_ context.Context, method string, _ json.RawMessage) (any, error) {
+		if method != extproto.MChannelSend {
+			t.Errorf("unexpected request %s", method)
+		}
+		select {
+		case <-ready:
+			return extproto.SendResult{MessageID: "message"}, nil
+		default:
+			return nil, extproto.Errorf(extproto.ErrNotReady, "starting")
+		}
+	}, nil)
+	go r.peer.Serve(t.Context())
+	go remote.Serve(t.Context())
+
+	conv := "fakew:chat"
+	h.store.mu.Lock()
+	h.store.convs[conv] = &InboxConv{ID: conv, Ext: "fakew", Chat: "chat"}
+	h.store.mu.Unlock()
+	o := &OutboxItem{Ref: "warming-up", Conv: conv, At: time.Now(), State: outPending}
+	h.store.putOut(o)
+	if h.trySend(r, o) || h.store.out(o.Ref).State != outPending {
+		t.Fatal("starting extension must leave the send pending")
+	}
+
+	close(ready)
+	r.event(extproto.EChanged, json.RawMessage(`{"scope":"outbox"}`))
+	if len(r.pull) != 0 {
+		t.Error("outbox event also scheduled an archive pull")
+	}
+	waitFor(t, "pending send retried by the outbox event", func() bool {
+		got := h.store.out(o.Ref)
+		return got.State == extproto.DeliverySent && got.MessageID == "message"
+	})
 }
