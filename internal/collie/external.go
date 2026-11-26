@@ -63,6 +63,8 @@ type External struct {
 	desktop            bool        // listed from a desktop app's index (desktop.go)
 	via                string      // "app": a message goes through the Codex App's message bus
 	agySharedWorkspace bool        // more than one live AGY process uses this directory
+	agyCandidate       bool        // workspace match, useful for reading only
+	agyStarted         time.Time   // process start confirmed for takeover
 }
 
 type proc struct {
@@ -299,7 +301,13 @@ func (s *Server) externalSessions() []*External {
 	}
 	aliases, aliasesAt := s.localAliasesAt()
 	for _, e := range list {
-		e.CanTakeOver = e.Session != "" && e.path != "" && e.Cwd != ""
+		e.CanTakeOver = e.Session != "" && e.path != "" && e.Cwd != "" && !e.agyCandidate
+		if e.CanTakeOver && e.Kind == "agy" {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			e.agyStarted = agyProcessStart(ctx, e.PID)
+			cancel()
+			e.CanTakeOver = !e.agyStarted.IsZero()
+		}
 		if e.Session != "" {
 			listed[e.Session] = true
 		}
@@ -593,6 +601,10 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"error": "找不到这个会话的记录，没法在 herdr 里续上"})
 		return
 	}
+	if e.agyCandidate {
+		writeJSON(w, 409, map[string]any{"error": "无法确认这个 Antigravity 进程对应的会话，不能接管"})
+		return
+	}
 	if !e.CanTakeOver {
 		writeJSON(w, 409, map[string]any{"error": "这个会话要在 " + e.App + " 里继续"})
 		return
@@ -620,14 +632,27 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 		}
 		alias = a
 	}
+	if e.Kind == "agy" && e.PID > 0 && !s.sameExternalAgy(ctx, e) {
+		writeJSON(w, 409, map[string]any{"error": "原来的 Antigravity 进程或会话已经变化，请刷新后再接管"})
+		return
+	}
 	args := resumeArgs(e.Kind, e.Session)
 	// Two processes writing one conversation would garble it: stop the
 	// original first, the way Ctrl-C would, and give it a moment to save.
 	if e.PID > 0 && alive(e.PID) {
-		syscall.Kill(e.PID, syscall.SIGINT)
+		if err := syscall.Kill(e.PID, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
+			fail(w, err)
+			return
+		}
 		for i := 0; i < 30 && alive(e.PID); i++ {
 			if i == 10 {
-				syscall.Kill(e.PID, syscall.SIGTERM)
+				if e.Kind == "agy" && !agyProcessStart(ctx, e.PID).Equal(e.agyStarted) {
+					break
+				}
+				if err := syscall.Kill(e.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+					fail(w, err)
+					return
+				}
 			}
 			time.Sleep(200 * time.Millisecond)
 		}

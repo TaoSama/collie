@@ -4128,7 +4128,7 @@
     }
     if (!stillOpening()) return;
     resetEarlier(el, (c) => `/api/transcript?${q}&before=${c}`);
-    el._msgs = r.messages || []; el._liveEarlier = r.earlier || 0;
+    el._msgs = r.messages || []; el._generation = r.generation; el._liveEarlier = r.earlier || 0;
     keepThread("h:" + hid, el._msgs);
     el._redraw = () => { if (mine()) drawThread(threadMsgs(el), el, "这个会话没有消息。"); };
     el._redraw();
@@ -4686,25 +4686,31 @@
   const changingArchive = new Set();
   async function archiveRow(r, archived) {
     if (changingArchive.has(r.key)) return;
-    const closeWorkspace = archived && r.kind === "codex" && r.src === "pane" && r.ws;
+    const closePane = archived && r.kind === "codex" && r.src === "pane";
+    const busy = r.status === "working" || r.status === "blocked";
     if (archived && !await ask({
       title: `归档「${r.name}」？`,
-      text: closeWorkspace ? "会先关闭这个 Codex 工作区，再同步归档。你可以在侧栏「已归档」里恢复会话。"
+      text: closePane ? (busy ? "这个 Codex 窗格有正在运行的任务，关闭会中断任务。归档后可以在侧栏「已归档」里恢复会话。"
+        : "会先关闭这个 Codex 窗格，再同步归档。你可以在侧栏「已归档」里恢复会话。")
         : "Collie 会尝试同步归档。你可以在侧栏「已归档」里恢复。",
       ok: "归档",
     })) return;
+    if (closePane && find(r.id)?.session !== r.session) {
+      toast("窗格里的会话已变化，请重新选择要归档的会话", "attn");
+      return;
+    }
     changingArchive.add(r.key);
     try {
       if (archived) await setMark(r.key, { collie_archived: true, archive: { name: r.name, cwd: r.cwd, surface: r.surface } });
       const agent = AGENT_LABEL[r.kind] || r.kind;
       let result;
       try {
-        if (closeWorkspace) {
-          await api(`/api/workspaces/${encodeURIComponent(r.ws)}/close`, { body: {} });
-          state = { ...state, agents: state.agents.filter((a) => a.workspace_id !== r.ws), shells: state.shells.filter((a) => a.workspace_id !== r.ws) };
+        if (closePane) {
+          await api(paneURL(r.id, "close"), { body: {} });
+          state = { ...state, agents: state.agents.filter((a) => a.pane_id !== r.id) };
           if (view === "pane" && current === r.id) goBack(true);
         }
-        result = await api(`/api/sessions/${sessionPath(r)}/${archived ? "archive" : "unarchive"}`, { body: { kind: r.kind, surface: r.surface, just_closed: !!closeWorkspace } });
+        result = await api(`/api/sessions/${sessionPath(r)}/${archived ? "archive" : "unarchive"}`, { body: { kind: r.kind, surface: r.surface, just_closed: closePane } });
       } catch (err) {
         const action = archived ? "已在 Collie 归档，但" : "还在 Collie 的「已归档」中，";
         const detail = [404, 405].includes(err.status) ? "这台电脑的 Collie 版本可能较旧" : err.status ? err.message : "连接不到这台电脑，请重试";
@@ -5423,7 +5429,7 @@
     if (view === "pane") maybeRefreshHeaderStatus();
     // The pane may have shown up before the page knew what it is (a fresh
     // terminal): once it does, switch to the view that fits.
-    if (view === "pane" && $("#viewer").dataset.mode && $("#viewer").dataset.mode !== curMode()) { closeStream(); resetChat(); resetScreen(); openStream(); }
+    if (view === "pane" && stream && $("#viewer").dataset.mode !== curMode()) { closeStream(); resetChat(); resetScreen(); openStream(); }
     $("#input")._slashPrefetch?.();
     $("#input").placeholder = isLocalRouter(v) ? "直接在 Collie 的终端里输入…" : v.is_agent ? `给 ${KIND_LABEL[v.kind] || v.kind} 发消息…` : "输入命令…";
   }
@@ -5546,7 +5552,7 @@
   let pageUpBusy = false;
   let homeFollowups = 0;
   let homeFollowupBusy = false;
-  let lastSseSeq = 0;
+  let lastSseSeq = 0, lastScreenRevision = 0;
   let pendingScrollPerf = null;
   let lastWheelRtt = 80;
   let screenPrependGen = 0;
@@ -5561,15 +5567,12 @@
     const isUp = text.includes("\x1b[<64;");
     const genBefore = screenPrependGen;
     const tSent = performance.now();
-    const payload = isUp
-      ? { text, wait: true, diff: true, base_seq: lastSseSeq }
-      : { text };
-    return postPane(pane, "text", payload, { timeoutMs: 4000 })
-      .then((data) => {
+    return postScreenText(pane, text, isUp)
+      .then((frame) => {
         const rtt = performance.now() - tSent;
         lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
         if (pane !== current || curMode() !== "screen") return;
-        if (data?.frame) drawScreen(data.frame, null, true);
+        if (frame) paintScreenFrame(frame);
         if (isUp && screenPrependGen === genBefore) {
           armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));
         }
@@ -5634,7 +5637,7 @@
   function resetScreen() {
     prevScreenLines = null;
     sseScreenLines = null;
-    lastSseSeq = 0;
+    lastSseSeq = lastScreenRevision = 0;
     pendingScreen = null;
     setTermLook(null);
     screenFresh = true;
@@ -5675,7 +5678,7 @@
       if (!term.hasSelection() && pendingScreen && curMode() === "screen") {
         const p = pendingScreen;
         pendingScreen = null;
-        drawScreen(p);
+        paintScreenFrame(p);
       }
     });
     // The terminal is the input: tap or click it and type. (A drag that
@@ -5729,11 +5732,11 @@
     homeFollowups = 6;
     homeFollowupBusy = true;
     screenCache.returnToLive();
-    postPane(pane, "text", { text, wait: true, diff: true, base_seq: lastSseSeq }, { timeoutMs: 4000 })
-      .then((data) => {
+    postScreenText(pane, text)
+      .then((frame) => {
         homeFollowupBusy = false;
         if (pane !== current || curMode() !== "screen") return;
-        if (data?.frame) drawScreen(data.frame, null, true);
+        if (frame) paintScreenFrame(frame);
       })
       .catch((e) => { homeFollowupBusy = false; if (e?.name !== "TimeoutError" && e?.name !== "AbortError") toast(e.message); });
     updateScreenScrollbar();
@@ -5748,12 +5751,12 @@
     const genBefore = screenPrependGen;
     const tSent = performance.now();
     wheelUp.scrolled(pane, -n * Math.max(10, (size.rows || 40) - 8));
-    postPane(pane, "text", { text: window.collieWheel.PAGE_UP.repeat(n), wait: true, diff: true, base_seq: lastSseSeq }, { timeoutMs: 4000 })
-      .then((data) => {
+    postScreenText(pane, window.collieWheel.PAGE_UP.repeat(n))
+      .then((frame) => {
         const rtt = performance.now() - tSent;
         lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
         if (pane !== current || curMode() !== "screen") return;
-        if (data?.frame) drawScreen(data.frame, null, true);
+        if (frame) paintScreenFrame(frame);
         if (screenPrependGen === genBefore) {
           armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));
         }
@@ -6079,6 +6082,8 @@
     if (status.textContent !== label) status.textContent = label;
   }
   function openPaneStream(source, bind) {
+    stream?.close();
+    setPaneRetry(false);
     let timer = null, retries = 0;
     const pane = stream = { es: null, close, retryNow };
     function close() {
@@ -6097,7 +6102,7 @@
       const { es, fallback } = source();
       pane.es = es;
       const listen = (type, receive) => es.addEventListener(type, (e) => {
-        if (pane.es === es) receive(e);
+        if (stream === pane && pane.es === es) receive(e);
       });
       const ready = () => {
         if (retries) setPaneRetry(false);
@@ -6134,6 +6139,7 @@
       return d ? { es: new EventSource(directURL(d, id, part)), fallback: () => dropDirect(id) }
         : { es: openES(paneURL(id, "stream") + "?mode=" + m + (m === "screen" ? "&diff=1" : "")) };
     }, ({ listen, ready, reopen, direct }) => {
+      if (m === "screen") lastScreenRevision = 0;
       // Prefer the node when this browser can reach it directly.
       if (!direct) probeDirect(id).then((got) => { if (got) reopen(); });
       listen("frame", (e) => {
@@ -6162,8 +6168,24 @@
     if (home) sendChain = sendChain.then(() => postPane(home.pane, "text", { text: home.text })).catch((e) => toast(e.message));
   }
 
-  function drawScreen(f, restore = null, inline = false) {
-    if (!term) return;
+  async function postScreenText(pane, text, wait = true) {
+    const es = stream?.es, base = sseScreenLines, seq = lastSseSeq;
+    const body = wait ? { text, wait, diff: true, base_seq: seq } : { text };
+    const { frame } = await postPane(pane, "text", body, { timeoutMs: 4000 });
+    if (frame && es === stream?.es && base === sseScreenLines && (frame.base_seq ?? seq) === seq) {
+      return { ...frame, lines: window.collieScreenCache.applyFramePatch(base, frame) };
+    }
+  }
+
+  function drawScreen(f, restore = null) {
+    sseScreenLines = window.collieScreenCache.applyFramePatch(sseScreenLines, f);
+    lastSseSeq = f.seq || 0;
+    paintScreenFrame({ ...f, lines: sseScreenLines }, restore);
+  }
+
+  function paintScreenFrame(f, restore = null) {
+    if (!term || (f.revision && f.revision < lastScreenRevision)) return;
+    lastScreenRevision = f.revision || lastScreenRevision;
     const sseNow = performance.now();
     setScreenWheel(!!f.wheel);
     screenKind = f.kind || "";
@@ -6171,10 +6193,7 @@
     const el = $("#screen");
     const stick = restore ? !!restore.atBottom : (screenFresh || screenNearBottom());
     setTermLook(f.kind);
-    const decoded = inline
-      ? window.collieScreenCache.applyFramePatch(sseScreenLines, f)
-      : (sseScreenLines = window.collieScreenCache.applyFramePatch(sseScreenLines, f));
-    if (!inline && f.seq) lastSseSeq = f.seq;
+    const decoded = f.lines;
     if (!screenFresh && term.hasSelection()) {
       pendingScreen = f;
       return;
@@ -6223,13 +6242,11 @@
           homeFollowupBusy = true;
           const pane = current;
           const pages = Math.min(12, Math.max(2, Math.ceil((ing.belowLines || 80) / Math.max(10, paneRows - 8))));
-          postPane(pane, "text", {
-            text: window.collieWheel.PAGE_DOWN.repeat(pages), wait: true, diff: true, base_seq: lastSseSeq,
-          }, { timeoutMs: 4000 })
-            .then((data) => {
+          postScreenText(pane, window.collieWheel.PAGE_DOWN.repeat(pages))
+            .then((frame) => {
               homeFollowupBusy = false;
               if (pane !== current || curMode() !== "screen") return;
-              if (data?.frame) drawScreen(data.frame, null, true);
+              if (frame) paintScreenFrame(frame);
             })
             .catch(() => { homeFollowupBusy = false; });
         }
@@ -6264,7 +6281,7 @@
     if (screenWheel) { updateScreenScrollbar(); return; }
     if (screenNearBottom()) {
       hideJump();
-      if (pendingScreen) { const p = pendingScreen; pendingScreen = null; drawScreen(p); }
+      if (pendingScreen) { const p = pendingScreen; pendingScreen = null; paintScreenFrame(p); }
     } else {
       $("#jump").hidden = false;
     }
@@ -6285,7 +6302,7 @@
       const el = $("#screen");
       el.scrollTop = el.scrollHeight;
       hideJump();
-      if (pendingScreen) { const p = pendingScreen; pendingScreen = null; drawScreen(p); }
+      if (pendingScreen) { const p = pendingScreen; pendingScreen = null; paintScreenFrame(p); }
     } else {
       const el = $("#log");
       el.scrollTop = el.scrollHeight;
@@ -6381,11 +6398,15 @@
       listen("replay-progress", (e) => setThreadProgress(th, JSON.parse(e.data)));
       listen("load-error", (e) => { closeStream(); threadLoadError(th, e); });
       listen("patch", (e) => {
-        showPane(applyPatch(th, JSON.parse(e.data), retrying && !received));
+        const patch = JSON.parse(e.data);
+        if (!patch.generation) patch.earlier = 0; // older nodes cannot validate a pane cursor
+        showPane(applyPatch(th, patch, retrying && !received));
         drawn();
       });
       listen("messages", (e) => { // an older computer
-        drawThread(withSending(key, JSON.parse(e.data)));
+        resetEarlier(th, th._earlier?.url);
+        th._msgs = null;
+        showPane(JSON.parse(e.data));
         drawn();
       });
       const fallback = (text) => {
@@ -6421,9 +6442,10 @@
   // messages from position `from` on, and `base` moves when old ones fall off.
   function applyPatch(el, p, reconnecting = false) {
     let list = el._msgs, base = el._base;
-    if (!list || p.from === p.base || p.from < base || p.from > base + list.length) {
+    const sameGeneration = p.generation && p.generation === el._generation;
+    if (!list || el._generation !== p.generation || p.from === p.base || p.from < base || p.from > base + list.length) {
       const hasHistory = el._older || el._earlier?.loading;
-      const join = reconnecting && hasHistory && p.from === p.base ? reconnectOverlap(el, p) : -1;
+      const join = reconnecting && sameGeneration && hasHistory && p.from === p.base ? reconnectOverlap(el, p) : -1;
       if (join < 0) resetEarlier(el, el._earlier?.url);
       if (join > 0) {
         if (!el._older) el._olderEarlier = el._liveEarlier; // keep an in-flight page's cursor
@@ -6436,7 +6458,7 @@
       if (el._older) el._older = el._older.concat(list.slice(0, p.base - base));
       list = list.slice(p.base - base); base = p.base;
     }
-    el._msgs = list; el._base = base; el._liveEarlier = p.earlier || 0;
+    el._msgs = list; el._base = base; el._generation = p.generation; el._liveEarlier = p.earlier || 0;
     return threadMsgs(el);
   }
   // Absolute positions can change when the server reopens the log from its tail.
@@ -6521,7 +6543,7 @@
       clearTimeout(el._loading.timer);
       el._loading = null;
     }
-    el._older = null; el._olderEarlier = 0; el._liveEarlier = 0;
+    el._older = null; el._olderEarlier = 0; el._liveEarlier = 0; el._generation = undefined;
     // Each opening or replacement has its own state, even for the same URL.
     const earlier = el._earlier = { url, loading: false, failed: false };
     el._loadMore = url && (() => { earlier.failed = false; loadEarlier(el, earlier); });
@@ -6534,12 +6556,14 @@
     if (!earlier?.url || earlier !== el._earlier || earlier.loading || earlier.failed) return;
     const cursor = earlierCursor(el);
     if (!cursor) return;
+    const generation = el._generation;
     const matches = () => earlier === el._earlier && earlierCursor(el) === cursor;
     earlier.loading = true;
     el._redraw?.();
     try {
-      const r = await api(earlier.url(cursor));
-      if (matches()) {
+      const url = earlier.url(cursor) + (generation ? "&generation=" + encodeURIComponent(generation) : "");
+      const r = await api(url);
+      if (matches() && (!generation || r.generation === generation)) {
         el._older = (r.messages || []).concat(el._older || []);
         el._olderEarlier = r.earlier || 0;
       }

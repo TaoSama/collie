@@ -48,52 +48,89 @@ func cleanTitle(t string) string {
 
 var codexNames struct {
 	sync.Mutex
+	path   string
 	mod    time.Time
 	m      map[string]string
 	byName map[string]string
 }
 
 func (s *Server) codexThreadName(id string) string {
-	s.loadCodexNames()
+	if !s.loadCodexNames() {
+		return ""
+	}
 	codexNames.Lock()
 	defer codexNames.Unlock()
 	return codexNames.m[id]
 }
 
-func (s *Server) codexIDByName(name string) string {
-	s.loadCodexNames()
+func (s *Server) codexIDByTitle(title, cwd string) string {
+	if i := strings.LastIndex(title, " | "); i > 0 {
+		title = title[:i]
+	}
+	title = strings.TrimSpace(title)
+	if cwd == "" || genericTitles[strings.ToLower(title)] || !s.loadCodexNames() {
+		return ""
+	}
 	codexNames.Lock()
-	defer codexNames.Unlock()
-	return codexNames.byName[name]
+	id := codexNames.byName[title]
+	codexNames.Unlock()
+	if id == "" {
+		return ""
+	}
+	path, _ := s.findTranscript("codex", "id", id, "", "")
+	root := codexRolloutCwd(path)
+	if root == "" {
+		return ""
+	}
+	if filepath.Clean(root) == filepath.Clean(cwd) {
+		return id
+	}
+	if real := realDir(root); real != "" && real == realDir(cwd) {
+		return id
+	}
+	return ""
 }
 
-func (s *Server) loadCodexNames() {
-	path := filepath.Join(envOr("CODEX_HOME", filepath.Join(s.home, ".codex")), "session_index.jsonl")
+func (s *Server) loadCodexNames() bool {
+	path := filepath.Join(s.codexHome(), "session_index.jsonl")
 	fi, err := os.Stat(path)
 	if err != nil {
-		return
+		return false
 	}
 	codexNames.Lock()
 	defer codexNames.Unlock()
-	if !fi.ModTime().Equal(codexNames.mod) {
-		m, byName := map[string]string{}, map[string]string{}
-		if f, err := os.Open(path); err == nil {
-			sc := bufio.NewScanner(f)
-			sc.Buffer(make([]byte, 64<<10), 1<<20)
-			for sc.Scan() {
-				var e struct {
-					ID   string `json:"id"`
-					Name string `json:"thread_name"`
-				}
-				if json.Unmarshal(sc.Bytes(), &e) == nil && e.ID != "" {
-					m[e.ID] = e.Name // later lines are renames
-					byName[e.Name] = e.ID
-				}
-			}
-			f.Close()
-		}
-		codexNames.mod, codexNames.m, codexNames.byName = fi.ModTime(), m, byName
+	if path == codexNames.path && fi.ModTime().Equal(codexNames.mod) {
+		return true
 	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	m, byName := map[string]string{}, map[string]string{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		var e struct {
+			ID   string `json:"id"`
+			Name string `json:"thread_name"`
+		}
+		if json.Unmarshal(sc.Bytes(), &e) == nil && e.ID != "" {
+			m[e.ID] = e.Name // later lines are renames
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return false
+	}
+	for id, name := range m {
+		if _, exists := byName[name]; exists {
+			byName[name] = "" // duplicate title
+		} else {
+			byName[name] = id
+		}
+	}
+	codexNames.path, codexNames.mod, codexNames.m, codexNames.byName = path, fi.ModTime(), m, byName
+	return true
 }
 
 var agyTitles struct {
@@ -174,6 +211,9 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 		var t string
 		switch kind {
 		case "codex":
+			if a.Session != nil && a.Session.Kind == "path" {
+				sess = sessionID(a.Session.Kind, a.Session.Value)
+			}
 			t = s.codexThreadName(sess)
 		case "agy":
 			sessKind, value := "", ""
@@ -187,11 +227,11 @@ func (s *Server) localSessions(ctx context.Context) map[string]paneSession {
 			tt := a.TerminalTitle
 			if kind == "codex" {
 				// codex titles its terminal "<thread name> | <user>"
+				if a.Session == nil || a.Session.Value == "" {
+					sess = s.codexIDByTitle(tt, deref(a.Cwd))
+				}
 				if i := strings.LastIndex(tt, " | "); i > 0 {
 					tt = tt[:i]
-				}
-				if sess == "" {
-					sess = s.codexIDByName(strings.TrimSpace(tt))
 				}
 			}
 			t = cleanTitle(tt)

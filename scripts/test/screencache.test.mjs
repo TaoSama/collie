@@ -321,3 +321,64 @@ test("agy partial returnToLive still showing ↓ 27 lines stays not-at-bottom un
   assert.equal(c.scrollbar().atBottom, true);
   assert.equal(c.scrollbar().ratio, 1);
 });
+
+function screenPipeline() {
+  const app = readFileSync(new URL("../../web/app.js", import.meta.url), "utf8");
+  const section = (from, to) => app.slice(app.indexOf(from), app.indexOf(to, app.indexOf(from)));
+  const painted = [];
+  let finish, selectionChanged;
+  const runtime = vm.runInNewContext([
+    `let pendingScreen = null, sseScreenLines = null, lastSseSeq = 0, lastScreenRevision = 0;
+    let screenKind, screenCursor, screenFresh = false, screenWheel = false, prevScreenLines = null;
+    let screenPrependGen = 0, lastWheelRtt = 80, current = "pane", pendingScrollPerf;
+    let stream = { es: {} }, selected = false;
+    const size = {}, term = { hasSelection: () => selected, onSelectionChange: onSelection };
+    const curMode = () => "screen";`,
+    section("  const wheelOut =", "  function cancelScreenScrollTimers("),
+    section("    term.onSelectionChange(", "    // The terminal is the input"),
+    section("  async function postScreenText(", "  function cleanLog("),
+    `({ frame: drawScreen, wheel: () => wheelOut("pane", "\\x1b[<64;"), select(value) { selected = value; release(); } })`,
+  ].join("\n"), {
+    window: {
+      collieScreenCache: { applyFramePatch, polishClaudeRow0 },
+      collieWheel: { sender: (callback) => callback },
+    },
+    performance: ctx.performance,
+    $: () => ({ scrollTop: 0 }),
+    screenNearBottom: () => true,
+    setScreenWheel() {}, setTermLook() {}, armTopProbe() {},
+    paintScreenLines: (lines) => painted.push(Array.from(lines)),
+    onSelection: (callback) => { selectionChanged = callback; },
+    release: () => selectionChanged(),
+    postPane: () => new Promise((resolve) => { finish = (frame) => resolve({ frame }); }),
+  });
+  return { ...runtime, painted, finish: (frame) => finish(frame) };
+}
+
+test("releasing a selection paints a deferred shift once and leaves the SSE baseline intact", () => {
+  const f = screenPipeline();
+  f.frame({ text: "a\nb\nc", seq: 1 });
+  f.select(true);
+  f.frame({ shift: 1, patch: [[2, "d"]], n: 3, seq: 2 });
+  f.select(false);
+  f.frame({ shift: 1, patch: [[2, "e"]], n: 3, seq: 3 });
+  assert.deepEqual(f.painted, [["a", "b", "c"], ["b", "c", "d"], ["c", "d", "e"]]);
+});
+
+for (const sseFirst of [true, false]) {
+  test(`wheel and SSE frames stay on their own baseline (SSE first: ${sseFirst})`, async () => {
+    const f = screenPipeline();
+    f.frame({ text: "a\nb\nc", seq: 1, revision: 1 });
+    const wheel = f.wheel();
+    const sse = { shift: 1, patch: [[2, "d"]], n: 3, seq: 2, revision: 3 };
+    if (sseFirst) f.frame(sse);
+    f.finish({ shift: 1, patch: [[2, "d"]], n: 3, base_seq: 1, revision: 2 });
+    await wheel;
+    if (!sseFirst) f.frame(sse);
+    f.frame({ shift: 1, patch: [[2, "e"]], n: 3, seq: 3, revision: 4 });
+    const expected = [["a", "b", "c"], ["b", "c", "d"]];
+    if (!sseFirst) expected.push(["b", "c", "d"]);
+    expected.push(["c", "d", "e"]);
+    assert.deepEqual(f.painted, expected);
+  });
+}

@@ -117,7 +117,7 @@ func (s *Server) agyPaneSession(ctx context.Context, pane, cwd, sessKind, value 
 		return "", ""
 	}
 	checked := time.Now()
-	pid, args := s.agyForeground(ctx, pane)
+	pid, args, probeErr := s.agyForeground(ctx, pane)
 	var since time.Time
 	if pid != 0 {
 		since = agyProcessStart(ctx, pid)
@@ -133,8 +133,8 @@ func (s *Server) agyPaneSession(ctx context.Context, pane, cwd, sessKind, value 
 	s.agy.Lock()
 	defer s.agy.Unlock()
 	b := s.agy.byPane[pane]
-	if b.checked.After(checked) {
-		return b.session() // a later lookup has already observed this pane
+	if probeErr != nil || pid != 0 && since.IsZero() || b.checked.After(checked) {
+		return b.session() // no newer, confirmed observation
 	}
 	if s.agy.byPane == nil {
 		s.agy.byPane = map[string]agyBinding{}
@@ -182,7 +182,7 @@ func agyProcessStart(ctx context.Context, pid int) time.Time {
 	return started
 }
 
-func (s *Server) agyForeground(ctx context.Context, pane string) (pid int, args []string) {
+func (s *Server) agyForeground(ctx context.Context, pane string) (pid int, args []string, err error) {
 	var info struct {
 		ProcessInfo struct {
 			Foreground []struct {
@@ -193,7 +193,7 @@ func (s *Server) agyForeground(ctx context.Context, pane string) (pid int, args 
 		} `json:"process_info"`
 	}
 	if err := s.herdr.Call(ctx, "pane.process_info", map[string]any{"pane_id": pane}, &info); err != nil {
-		return 0, nil
+		return 0, nil, err
 	}
 	for _, p := range info.ProcessInfo.Foreground {
 		isAgy := externalKinds[strings.ToLower(p.Name)] == "agy"
@@ -206,14 +206,14 @@ func (s *Server) agyForeground(ctx context.Context, pane string) (pid int, args 
 			continue
 		}
 		if pid != 0 {
-			return 0, nil
+			return 0, nil, nil
 		}
 		pid = p.PID
 		if len(p.Argv) > cmd {
 			args = p.Argv[cmd+1:]
 		}
 	}
-	return pid, args
+	return pid, args, nil
 }
 
 // guessAgy runs with s.agy held. Multiple candidates leave the pane unbound.

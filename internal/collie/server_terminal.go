@@ -491,6 +491,7 @@ func (s *Server) waitForScreenFrame(parent context.Context, id string, meta pane
 				curLines := splitScreenLines(text)
 				shift, patch, patchBytes := computeScreenDiff(meta.lastLines, curLines)
 				if len(patch) < len(curLines) && patchBytes*10 < len(text)*7 {
+					frame["base_seq"] = baseSeq
 					frame["shift"] = shift
 					frame["patch"] = patch
 					frame["n"] = len(curLines)
