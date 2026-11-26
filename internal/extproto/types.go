@@ -267,6 +267,16 @@ type Working struct {
 	MessageID    string `json:"message_id"`
 }
 
+// MChannelSettings tells a working-capable extension the trigger word, so
+// it can mark your own request at once, before Collie's answer to it.
+const MChannelSettings = "channel.settings"
+
+// ChannelSettings is channel.settings's params.
+type ChannelSettings struct {
+	Contribution string `json:"contribution,omitempty"`
+	Trigger      string `json:"trigger"`
+}
+
 // MChannelInterest tells the extension which chats wait for results.
 const MChannelInterest = "channel.interest"
 

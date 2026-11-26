@@ -43,6 +43,15 @@ RECENT_MOST = 2000
 CREDENTIAL_FIELDS = ("cookies", "saved_at", "device_id", "app_key", "user_id", "csrf_token", "web_app_id")
 
 
+def is_request(text, word):
+    """text starts with the trigger word, as Collie reads it: then a space, a colon or nothing."""
+    s = (text or "").lstrip()
+    if not word or s[:len(word)].lower() != word.lower():
+        return False
+    rest = s[len(word):]
+    return rest == "" or rest[0].isspace() or rest[0] in ":："
+
+
 class Expired(Exception):
     """Feishu signed this session out: scan again."""
 
@@ -138,6 +147,9 @@ class Feishu:
         self._task = None
         self._bad_frames, self._bad_warned = 0, 0.0
         self._pool = ThreadPoolExecutor(max_workers=4)  # handles pushes; outlives each connection's loop
+        self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
+        self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
+        self.marked = collections.OrderedDict()  # message ids already marked as being worked on
 
     # Signing in.
 
@@ -237,7 +249,7 @@ class Feishu:
                         continue
                     if packet.sid:
                         await c.send_ack(ws, packet.sid)
-                    self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message)
+                    self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message, time.monotonic())
             finally:
                 beat.cancel()
 
@@ -263,18 +275,18 @@ class Feishu:
             log.warning("%d websocket frame(s) could not be read, last: %r", self._bad_frames, err)
             self._bad_frames, self._bad_warned = 0, time.time()
 
-    def _push(self, cmd, payload, packet, on_message):
+    def _push(self, cmd, payload, packet, on_message, got=None):
         """One pushed packet's messages to on_message, on a worker thread."""
         try:
             if cmd == CMD_PUSH_MESSAGES:
                 for msg in self._messages(payload):
-                    self._deliver(msg, on_message)
+                    self._deliver(msg, on_message, got)
             elif cmd == CMD_PUSH_SID:
                 sids = list(dict.fromkeys(x for x in [packet.sid] + [str(n) for n in packet.compactedSids] if x))
                 pulled = (self.client.api("improto.PullPacketsBySidsRequest", {"sids": sids}) or {}).get("packets") or {}
                 for p in pulled.values():
                     if int(p.get("cmd") or 0) in (CMD_PUSH_MESSAGES, CMD_PUSH_DOC_FEED):
-                        self._push(int(p["cmd"]), p.get("payload") or b"", None, on_message)
+                        self._push(int(p["cmd"]), p.get("payload") or b"", None, on_message, got)
             elif cmd == CMD_PUSH_DOC_FEED:
                 for m in self.doc_comments(payload):
                     on_message(m)
@@ -323,7 +335,11 @@ class Feishu:
             out.append(m)
         return out
 
-    def _deliver(self, msg, on_message):
+    def _deliver(self, msg, on_message, got=None):
+        try:
+            self._quick(msg, got)
+        except Exception as e:
+            log.warning("marking %s: %s", msg.get("msg_id"), e)
         try:
             m = self.normalize(msg)
         except Exception as e:
@@ -439,6 +455,40 @@ class Feishu:
             while len(self.own_cids) > RECENT_MOST:
                 self.own_cids.popitem(last=False)
         return self._put(U.builders.wrap_packet(CMD_PUT_MESSAGE, req, U.ids.generate_long_request_id()))
+
+    def _quick(self, msg, got):
+        """Your own request is marked before Collie hears of it: nothing to ask, the trigger word is enough."""
+        if not self.trigger or not self.me or str(msg.get("from_id") or "") != self.me:
+            return
+        if msg.get("msg_type") not in (richtext.MSG_POST, MSG_TEXT):
+            return
+        data = msg.get("content_data") or {}
+        text = richtext.to_text(self.U.L, data.get("richText") or {}) or data.get("text", "")
+        if is_request(text, self.trigger):
+            self.mark_working(str(msg["msg_id"]), got)
+
+    def mark_working(self, message_id, got=None):
+        """The 在做了 reaction, once a message, off the caller's thread; times logged."""
+        with self._mu:
+            if message_id in self.marked:
+                return
+            self.marked[message_id] = True
+            while len(self.marked) > RECENT_MOST:
+                self.marked.popitem(last=False)
+        queued = time.monotonic()
+
+        def put():
+            start = time.monotonic()
+            try:
+                self.react(message_id)
+            except Exception as e:
+                log.warning("reaction on %s: %s", message_id, e)
+                return
+            since = "" if got is None else " %.1fms after the push came," % ((start - got) * 1000)
+            log.info("working %s:%s request sent %.1fms after it was queued, Feishu answered in %.0fms",
+                     message_id, since, (start - queued) * 1000, (time.monotonic() - start) * 1000)
+
+        self._react_pool.submit(put)
 
     def react(self, message_id, key=WORKING_REACTION):
         """Puts a reaction on a message, as the signed-in person."""

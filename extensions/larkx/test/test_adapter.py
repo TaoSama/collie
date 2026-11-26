@@ -158,6 +158,41 @@ class Post(unittest.TestCase):
         f.react("doc:d1")
         self.assertEqual(asked, [("reactions.PutReactionRequest", {"messageId": "7001", "reactionType": "OnIt"})])
 
+    def test_is_request(self):
+        for text, ok in [("/ai 总结一下", True), ("  /AI：查查", True), ("/ai", True), ("/ai\n第二行", True),
+                         ("/aide 不算", False), ("说 /ai", False), ("/a", False)]:
+            self.assertEqual(lark.is_request(text, "/ai"), ok, text)
+        self.assertFalse(lark.is_request("/ai 你好", ""))
+
+    def test_own_request_marked_at_once(self):
+        import threading
+        import time
+
+        f = self.feishu(answer("1"))
+        f.me, f.trigger = "u_me", "/ai"
+        f.user_name = lambda uid, chat: ""
+        f.names.get = lambda key, look: ""
+        asked, done = [], threading.Event()
+
+        def api(name, data):
+            asked.append((time.monotonic(), name, data))
+            done.set()
+
+        f.client.api = api
+        rt = protobuf_to_dict(richtext.build(U.L, "/ai 今天有什么会"))
+        msg = {"msg_id": "9", "chat_id": "c", "from_id": "u_me", "msg_type": 4, "chat_type": 1, "content_data": {"richText": rt}}
+        got = time.monotonic()
+        f._deliver(dict(msg), lambda m: None, got)
+        self.assertTrue(done.wait(2))
+        self.assertLess((asked[0][0] - got) * 1000, 20, "the reaction request goes out within 20ms")
+        self.assertEqual(asked[0][1:], ("reactions.PutReactionRequest", {"messageId": "9", "reactionType": "OnIt"}))
+        f.mark_working("9")  # Collie's own channel.working afterwards
+        time.sleep(0.05)
+        self.assertEqual(len(asked), 1, "marked once")
+        f._deliver(dict(msg, msg_id="10", from_id="u_other"), lambda m: None, got)
+        time.sleep(0.05)
+        self.assertEqual(len(asked), 1, "someone else's /ai waits for Collie's decision")
+
     def test_reply_in_topic(self):
         f = self.feishu(answer("7002"))
         f.recent["m_child"] = ("m_root", "问")
@@ -382,6 +417,7 @@ class Protocol(unittest.TestCase):
         self.assertTrue(step["done"])
         self.assertIn("example", base64.b64decode(self.secret).decode())
         self.until("its messages", lambda: len(self.received) == 3)
+        self.assertEqual(self.call("channel.settings", {"trigger": "/ai"})["result"], {})
         self.assertEqual(self.call("channel.working", {"chat": "c_self", "message_id": "m3"})["result"], {})
         with open(os.path.join(self.data, "fake-reactions.jsonl")) as f:
             self.assertEqual(json.loads(f.readline()), {"message_id": "m3", "key": "OnIt"})

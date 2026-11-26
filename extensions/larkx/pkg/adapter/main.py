@@ -48,6 +48,7 @@ class Extension:
         self.stop = threading.Event()
         self.loaded = threading.Event()
         self.sent = {}
+        self.trigger = ""
 
     # Host -> extension.
 
@@ -68,6 +69,11 @@ class Extension:
             return {}
         if method == "channel.working":
             return self.working(params)
+        if method == "channel.settings":
+            self.trigger = params.get("trigger") or ""
+            if self.backend is not None:
+                self.backend.trigger = self.trigger
+            return {}
         raise peer.Error("unknown_method", method)
 
     def initialize(self, p):
@@ -176,10 +182,7 @@ class Extension:
     def working(self, p):
         if self.backend is None or not self.account:
             raise peer.Error("not_signed_in", "飞书没有登录")
-        try:
-            self.backend.react(p.get("message_id") or "")
-        except Exception as e:
-            raise peer.Error("internal", "加表情失败：%s" % e)
+        self.backend.mark_working(p.get("message_id") or "")  # once: your own request may be marked already
         return {}
 
     # Sends already made, by ref: a ref goes out once, across restarts.
@@ -226,6 +229,7 @@ class Extension:
             self.loaded.set()
             self.changed()
             return
+        backend.trigger = self.trigger
         with self.mu:
             self.backend = backend
         self.loaded.set()
