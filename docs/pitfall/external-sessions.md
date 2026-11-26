@@ -34,7 +34,7 @@ Antigravity 桌面 App 的 `conversation_summaries.db` 也列出 agy CLI 起的�
 
 ## Antigravity 只有 CLI 起的会话能在 herdr 里继续
 
-`agy --conversation <id>` 只认 CLI 自己的会话。桌面 App 起的会话，CLI 报 `not found in any store`（macpro 实测），CLI 也没有指定数据目录的参数或环境变量。所以 `desktopSessions`（`internal/collie/desktop.go`）只给 App 索引里 `source` 是 CLI 的行开放接管，App 自己的会话要在 App 里继续。这些行没有进程可以先结束，所以 App 说这个会话正在跑或在等后台任务时，也不给接管。herdr 外正在跑的 agy 进程、herdr 里跑过已结束的 agy 会话，各自走原来的接管和续接。
+`agy --conversation <id>` 只认 CLI 自己的会话。桌面 App 起的会话，CLI 报 `not found in any store`（macpro 实测），CLI 也没有指定数据目录的参数或环境变量。所以 `desktopSessions`（`internal/collie/desktop.go`）只给 App 索引里 `source` 是 CLI 的行开放接管，App 自己的会话要在 App 里继续。这些行没有进程可以先结束，所以 App 说这个会话正在跑或在等后台任务时，也不给接管。herdr 外正在跑的 agy 进程、herdr 里跑过已结束的 agy 会话，各自走原来的接管和续接。接管和其他启动一样走 `startAgentAs`：只有带 `--dangerously-skip-permissions` 启动时，才预先信任目录（`trustForStart`）。否则新目录会停在 agy 的目录信任提示，在 Collie 里显示成等你确认（`agy -p` 不问信任，所以它用过的目录可能还没被信任）。
 
 ## Antigravity 没建成的会话留在索引里
 
