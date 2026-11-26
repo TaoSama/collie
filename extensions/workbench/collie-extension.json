@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "workbench",
+  "label": "工作台",
+  "name": "工作台",
+  "version": "1.0.0",
+  "description": "钉网页和 Collie 自己的页面，按模块决定给不给 Agent 读：Agent 用 collie wb ls / read 读，keep 档每天存快照，做梦时提炼进记忆。打开后侧栏底部出现田字格入口。",
+  "runtime": {"feature": "workbench"}
+}

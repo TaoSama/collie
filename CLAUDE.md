@@ -38,7 +38,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 - **调度 CLI**。Router 用 `collie spawn`、`send`、`subscribe`、`stop`、`answer` 和 `reply` 分派及反馈。worker 用 `collie report` 回报，对应 pane 由 `HERDR_PANE_ID` 识别。用 `collie list` 查看 worker，用 `collie hook SOURCE TEXT` 模拟外部事件。参数和 Router 手册见 [cli.go](internal/collie/cli.go)。
 - **Web Push**。hub 用 VAPID 把需要你处理的通知推送到订阅过的浏览器，sw.js 负责显示，页面关掉也能收到（`docs/pitfall/notifications.md`）。
 - **通知直达决策**。需要人处理的通知（worker 的对话框、`--opt` / `--check`）链接到 `#/d/<entry id>`，任意会话的对话框链接到 `#/d/pane/<pane id>`，页面用 `GET /api/super/decision` 定位并高亮卡片。通知正文只写任务名和选项，不放屏幕内容（`docs/pitfall/notifications.md`）。
-- **工作台**。侧栏底部田字格进 `#/wb`：钉网页（能嵌就用 iframe，否则开新标签）和 Collie 自己的页面。每个模块按 off/read/keep 决定给不给 Agent：Agent 用 `collie wb ls/read` 读，keep 档每天存快照到 `router/wb/`，做梦时提炼进记忆（`docs/workbench/workbench.md`）。
+- **工作台**。内置扩展，在「接入」里打开才生效（默认关）。侧栏底部田字格进 `#/wb`：钉网页（能嵌就用 iframe，否则开新标签）和 Collie 自己的页面。每个模块按 off/read/keep 决定给不给 Agent：Agent 用 `collie wb ls/read` 读，keep 档每天存快照到 `router/wb/`，做梦时提炼进记忆（`docs/workbench/workbench.md`）。
 - **持久化**。默认数据目录是 `~/.collie`（`COLLIE_HOME` 可覆盖）。`herd.db` 保存事件、线程、worker、对话、定时器、设置和配对令牌哈希。hub 的 `token` 和 `addr` 供 CLI 发现本机服务，node 用 `node.json` 保存 hub 地址和设备令牌。Router 的 `router/` 目录保存生成的手册与 `memory/`。`go run` 启动时会写出稳定的 CLI 路径 `bin/collie`，供 Agent 调用。
 - **运行参数**。用 `collie --help` 和 `collie node --help` 查看参数。hub 支持 `COLLIE_ADDR`、`HERDR_SOCKET_PATH`、`COLLIE_TOKEN` 和 `COLLIE_URL`。node 的 `--ui` 控制本机界面监听地址，传 `off` 可关闭。
 

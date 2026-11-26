@@ -383,7 +383,9 @@ func (sp *Super) byName(list []Agent) map[string]liveAgent {
 func (sp *Super) tick(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
-	sp.wb.snapshotDue() // feeds are read over the web: herdr need not be up
+	if sp.s.workbenchOn() {
+		sp.wb.snapshotDue() // feeds are read over the web: herdr need not be up
+	}
 	// Listing every computer can take seconds. A worker spawned or done
 	// starting meanwhile is missing from a list taken before it was named:
 	// it isn't gone, and its brief must not go to the Router instead. Only
@@ -1198,7 +1200,11 @@ func (sp *Super) writeRouterFiles() error {
 		return nil
 	}
 	layout := "   " + strings.ReplaceAll(memoryLayout, "\n", "\n   ")
-	doc := strings.NewReplacer("{{LAYOUT}}", layout, "{{BIN}}", tbin, "{{WORDS}}", fmt.Sprint(words), "{{WKIND}}", wkind, "{{WCWD}}", wcwd, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10)).Replace(routerDoc)
+	wbDoc := ""
+	if sp.s.workbenchOn() {
+		wbDoc = routerWBDoc
+	}
+	doc := strings.NewReplacer("{{LAYOUT}}", layout, "{{BIN}}", tbin, "{{WORDS}}", fmt.Sprint(words), "{{WKIND}}", wkind, "{{WCWD}}", wcwd, "{{BUDGET}}", fmt.Sprint(upFrontBudget>>10)).Replace(strings.Replace(routerDoc, "{{WB}}", wbDoc, 1))
 	for _, name := range []string{"ROUTER.md", "CLAUDE.md", "AGENTS.md", "GEMINI.md"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(doc), 0o600); err != nil {
 			return err

@@ -136,6 +136,9 @@ func (s *Server) extConfigure(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": err.Error()})
 		return
 	}
+	if id == featureWorkbench && body.Enabled != nil {
+		s.workbenchToggled()
+	}
 	writeJSON(w, 200, map[string]any{"setting": set, "view": s.ext.view(id)})
 }
 

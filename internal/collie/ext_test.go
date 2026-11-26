@@ -684,8 +684,34 @@ func TestExtDeclarative(t *testing.T) {
 	if h.run("decl") != nil {
 		t.Fatal("no program for declarations")
 	}
+	if items := h.s.extWorkbench(); len(items) != 0 {
+		t.Fatalf("the workbench is off: its modules are not shown: %+v", items)
+	}
+	turnOnWorkbench(t, h)
 	if items := h.s.extWorkbench(); len(items) != 1 || items[0].Ext != "decl" {
 		t.Fatalf("workbench items: %+v", items)
+	}
+}
+
+// turnOnWorkbench turns the 工作台 on, as 接入 does.
+func turnOnWorkbench(t *testing.T, h *extHost) {
+	t.Helper()
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range cat {
+		if m.ID == featureWorkbench {
+			h.mu.Lock()
+			h.cat[m.ID] = m
+			h.mu.Unlock()
+		}
+	}
+	if _, err := h.configure(featureWorkbench, func(x *ExtSetting) { x.Enabled = true }); err != nil {
+		t.Fatal(err)
+	}
+	if h.run(featureWorkbench) != nil || !h.featureOn(featureWorkbench) {
+		t.Fatal("on, with nothing to run")
 	}
 }
 
@@ -705,5 +731,30 @@ func TestExtSendFiles(t *testing.T) {
 	waitFor(t, "sent", func() bool { x := h.store.out(o.Ref); return x != nil && x.State == extproto.DeliverySent })
 	if _, err := h.sendOutFiles("ext:fake:c1", "x", extproto.KindAnswer, runInfo{}, "", []sendFile{{Name: "a.png", Mime: "image/png", Data: png}}); err == nil {
 		t.Fatal("an actions-only extension can't take files")
+	}
+}
+
+// The 工作台 is off until turned on in 接入: its API refuses, ROUTER.md and
+// the dream leave it out; on, all of it is back as it was.
+func TestWorkbenchSwitch(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	ok := h.s.wbOnly(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
+	code := func() int {
+		rec := httptest.NewRecorder()
+		ok(rec, httptest.NewRequest("GET", "/api/wb", nil))
+		return rec.Code
+	}
+	if c := code(); c != 409 {
+		t.Fatalf("off: %d, want 409", c)
+	}
+	if strings.Contains(routerDoc, "wb ls") || !strings.Contains(routerWBDoc, "wb ls") || !strings.Contains(routerDoc, "{{WB}}") {
+		t.Fatal("ROUTER.md's workbench lines go in only while it is on")
+	}
+	if strings.Contains(dreamPrompt, "wb/index.md") || !strings.Contains(dreamPrompt, "{{WBDIR}}") || !strings.Contains(dreamPrompt, "{{WBSTEP}}") {
+		t.Fatal("the dream's workbench part goes in only while it is on")
+	}
+	turnOnWorkbench(t, h)
+	if c := code(); c != 200 {
+		t.Fatalf("on: %d", c)
 	}
 }
