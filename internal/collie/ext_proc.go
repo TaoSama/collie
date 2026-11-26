@@ -41,6 +41,7 @@ const (
 	// moved to another computer never runs twice (two pollers steal messages).
 	extLease    = 10 * time.Minute
 	extLogLines = 40
+	extLogPush  = time.Second // new log lines reach 接入 within this
 )
 
 // Process states, sent to the hub as "$proc.state" events.
@@ -107,6 +108,7 @@ type extProc struct {
 	own      map[string]chan extproto.Frame
 	next     int
 	logs     []string
+	logsSent bool // a push of new log lines is on its way
 	quit     chan struct{}
 	done     chan struct{}
 	stopOnce sync.Once
@@ -535,7 +537,25 @@ func (p *extProc) readStderr(r io.Reader) {
 		if n := len(p.logs); n > extLogLines {
 			p.logs = p.logs[n-extLogLines:]
 		}
+		push := p.hub != nil && !p.logsSent
+		p.logsSent = p.logsSent || push
 		p.mu.Unlock()
+		if push {
+			time.AfterFunc(extLogPush, p.pushLogs)
+		}
+	}
+}
+
+// pushLogs sends the hub the lines that came since: the state carries them,
+// and only a change of state used to go out, so 接入 showed the lines from
+// the last start or stop. At most once per extLogPush.
+func (p *extProc) pushLogs() {
+	p.mu.Lock()
+	p.logsSent = false
+	st, hub := p.stateLocked(), p.hub
+	p.mu.Unlock()
+	if hub != nil {
+		hub.frame(stateFrame(st))
 	}
 }
 

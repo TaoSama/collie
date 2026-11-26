@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -779,3 +780,30 @@ func TestInboxMuted(t *testing.T) {
 		t.Fatalf("unmuted: %+v", c)
 	}
 }
+
+// A line the extension writes to stderr reaches the hub's view (接入's log)
+// within a second, not only with the next start or stop.
+func TestExtLogsPushed(t *testing.T) {
+	var buf syncBuffer
+	p := &extProc{id: "x", hub: &lineWriter{w: &buf}}
+	p.readStderr(strings.NewReader("INFO working 1: 0.6ms\nWARNING b\n"))
+	waitFor(t, "the lines pushed", func() bool {
+		s := buf.String()
+		return strings.Contains(s, `"$proc.state"`) && strings.Contains(s, "INFO working 1") && strings.Contains(s, "WARNING b")
+	})
+	if n := strings.Count(buf.String(), `"$proc.state"`); n != 1 {
+		t.Fatalf("two lines together are one push: %d", n)
+	}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
