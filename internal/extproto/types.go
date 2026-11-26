@@ -180,8 +180,8 @@ type Message struct {
 	ID          string   `json:"id"` // the chat app's id: delivered again, it is taken once
 	Text        string   `json:"text"`
 	ChatID      string   `json:"chat_id,omitempty"`
-	Chat        string   `json:"chat,omitempty"` // display name
-	ChatKind    string   `json:"chat_kind,omitempty"`
+	Chat        string   `json:"chat,omitempty"`      // display name
+	ChatKind    string   `json:"chat_kind,omitempty"` // dm | group | self | doc (a document's comments)
 	Sender      string   `json:"sender,omitempty"`
 	SenderName  string   `json:"sender_name,omitempty"`
 	Owner       *bool    `json:"owner,omitempty"` // sent by the signed-in person

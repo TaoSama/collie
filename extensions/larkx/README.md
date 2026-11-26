@@ -15,7 +15,7 @@
 - `pkg/`：适配层，随 collie 二进制打包，安装时和下载的文件放在同一个包目录（`extensions/README.md` 第 9 节）。
   - `bin/larkx`：找一个 ≥3.9 的 `python3` 启动 `adapter/main.py`。
   - `adapter/main.py`：协议和状态。只用标准库，所以 Collie 立刻能握手；依赖在后台装进 `data/deps-<锁文件 hash>/`（`deps.py`，`pip --require-hashes`）。
-  - `adapter/lark.py`：调用上游的扫码登录（`QrLogin`）、websocket（`LarkClient.connect_websocket`）、网关（`_gateway_post`）和 proto（`wrap_packet`、`lark_all_pb2`）。凭据不写上游的文件，改由 `connector.secrets.*` 存取。
+  - `adapter/lark.py`：调用上游的扫码登录（`QrLogin`）、websocket 的地址、心跳和应答（`build_ws_url`、`heartbeat_loop`、`send_ack`）、消息解码（`decode_push_messages`）、网关（`_gateway_post`、`api`）和 proto（`wrap_packet`、`lark_all_pb2`）。收推送的循环是自己的，见下。凭据不写上游的文件，改由 `connector.secrets.*` 存取。
   - `adapter/richtext.py`：Markdown 和飞书富文本互转。
   - `adapter/fake.py`：不联网的假飞书，测试用（`COLLIE_LARKX_FAKE=1`）。
   - `requirements.txt`：上游用到的包，带 hash 锁定（`uv pip compile requirements.in --generate-hashes --universal --python-version 3.9`）。
@@ -24,6 +24,7 @@
 ## 和 Collie 怎么接
 
 - **握手、登录、状态**：`initialize`、`connector.login.step`（返回要编码成二维码的文字，每 2 秒轮询一次；过期自动换新码，最多 3 次）、`connector.status`、`connector.logout`。
+- **收推送**：适配层自己读 websocket 的帧（上游的循环只认未压缩的 cmd 6）：压缩过的帧（gzip、zlib）先解开；cmd 6000 只推 sid，按 sid 补拉（`improto.PullPacketsBySidsRequest`）；cmd 14004 是云文档的评论、回复和 @你（`docs.PushDocFeedRequest`），每篇文档算一个会话（`doc:<feed id>`，类型「文档评论」），正文前写明是谁做了什么和文档链接。文档评论暂时只收不回，往这类会话发送会直接失败。读不了的帧计数，每 10 分钟最多记一条日志。
 - **收消息**：websocket 推来的每条消息都用 `channel.receive` 交给 Collie，会话开关、谁能唤起和触发词在 Collie 侧判定。系统消息不交；图片和文件（20 MB 以内）下载后作为附件交过去；引用的消息在本次运行见过时带上原文。自己发出的帖子推回来时按 `cid` 认出来丢掉，不会再触发。
 - **发消息**：`channel.send`。正文和尾标分开（`footer`），排成一条 post（`PutMessageRequest` type 2）。按 ref 只发一次：发之前先记下 ref，答复里拿到消息 id 才算发出；连不上或被拒收是「失败」，其余（超时、断线、答复里没有 id）是「可能已发出」，不再重发。暂时只发文字，带图片或文件的发送直接失败。
 - **回复位置**：回复挂在原消息的话题下（原消息本身在话题里时挂到话题根）。话题群不带 `isReplyInThread`，其他会话带上，否则会落回主会话。

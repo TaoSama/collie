@@ -190,6 +190,109 @@ class Normalize(unittest.TestCase):
                          "content_data": content, "parent_id": "1"})
         self.assertEqual((m["chat_kind"], m["owner"], m["quote"]), ("self", True, "你好 `x`"))
         self.assertIsNone(f.normalize({"msg_id": "3", "chat_id": "c", "from_id": "u", "msg_type": 6}))
+        card = {"cardHeader": {"title": "分析中"}, "jsonCard": '{"body":{}}'}
+        m = f.normalize({"msg_id": "4", "chat_id": "c_g", "from_id": "u_a", "msg_type": 14, "chat_type": 2, "content_data": card})
+        self.assertEqual(m["text"], "[卡片] 分析中", "a card shows its title, not its JSON")
+
+
+class Pushes(unittest.TestCase):
+    def feishu(self):
+        f = lark.Feishu(U, "feishu", lambda d: None)
+        f.me = "u_me"
+        f.user_name = lambda uid, chat: {"u_a": "甲"}.get(uid, "")
+        return f
+
+    @staticmethod
+    def feed(status=1):
+        req = U.L.docs.PushDocFeedRequest(status=status)
+        req.docFeed.id, req.docFeed.title, req.docFeed.url = "f1", "周报", "https://example.feishu.cn/docx/abc"
+        dm = req.docMessages["d1"]
+        dm.id, dm.type, dm.fromId, dm.createTime = "d1", 2, "u_a", 1764000000
+        dm.richText.CopyFrom(richtext.build(U.L, "这里数字不对 `42`"))
+        req.docMessages["d0"].CopyFrom(U.L.entities.DocMessage(id="d0", type=4, fromId="u_a"))  # solved: not news
+        return req.SerializeToString()
+
+    def test_doc_comment(self):
+        f = self.feishu()
+        out = f.doc_comments(self.feed())
+        self.assertEqual(len(out), 1)
+        m = out[0]
+        self.assertEqual((m["id"], m["chat_id"], m["chat"], m["chat_kind"], m["sender_name"], m["owner"]),
+                         ("doc:d1", "doc:f1", "周报", "doc", "甲", False))
+        self.assertEqual(m["text"], "（评论了文档：https://example.feishu.cn/docx/abc）\n这里数字不对 `42`")
+        self.assertEqual(f.doc_comments(self.feed(status=2)), [], "an update repeating it is not news")
+        self.assertEqual(self.feishu().doc_comments(self.feed(status=3)), [])
+        with self.assertRaises(lark.NotSent):
+            f.client = FakeClient(answer("1"))
+            f.post("doc:f1", "收到")
+
+    def test_frames(self):
+        import gzip
+
+        f = self.feishu()
+        pkt = U.P.Packet(sid="s1", cmd=14004, payload=self.feed()).SerializeToString()
+        for frame in (U.P.Frame(payload=pkt), U.P.Frame(payloadEncoding="gzip", payload=gzip.compress(pkt))):
+            p = f._packet(frame.SerializeToString())
+            self.assertEqual((p.sid, p.cmd), ("s1", 14004))
+        self.assertIsNone(f._packet(U.P.Frame(payloadEncoding="json", payload=b"{}").SerializeToString()))
+
+    def test_sid_pull(self):
+        f = self.feishu()
+
+        class Pull:
+            asked = None
+
+            def api(self, name, data):
+                Pull.asked = (name, data)
+                return {"packets": {"s1": {"cmd": 14004, "payload": Pushes.feed()}}}
+
+        f.client = Pull()
+        got = []
+        f._push(6000, b"", U.L.improto.Packet(sid="s1", compactedSids=[7, 8]), got.append)
+        self.assertEqual(Pull.asked, ("improto.PullPacketsBySidsRequest", {"sids": ["s1", "7", "8"]}))
+        self.assertEqual([m["id"] for m in got], ["doc:d1"])
+
+
+class Session(unittest.TestCase):
+    """The receive loop against a local websocket server: compressed frames, acks, document comments."""
+
+    def test_session(self):
+        import asyncio
+        import gzip
+
+        import websockets
+
+        pkt = U.P.Packet(sid="s9", cmd=14004, payload=Pushes.feed()).SerializeToString()
+        frame = U.P.Frame(payloadEncoding="gzip", payload=gzip.compress(pkt)).SerializeToString()
+        acks, got = [], []
+
+        async def serve(ws):
+            await ws.send(frame)
+            await ws.send(b"not a frame")
+            await asyncio.sleep(0.3)
+
+        class Client:
+            async def heartbeat_loop(self, ws):
+                await asyncio.sleep(3600)
+
+            async def send_ack(self, ws, sid):
+                acks.append(sid)
+
+        async def main():
+            async with websockets.serve(serve, "127.0.0.1", 0) as srv:
+                port = srv.sockets[0].getsockname()[1]
+                c = Client()
+                c.build_ws_url = lambda: "ws://127.0.0.1:%d" % port
+                f = Pushes().feishu()
+                f.client = c
+                await f._session(got.append)
+                await asyncio.sleep(0.2)
+                return f
+
+        f = asyncio.run(main())
+        self.assertEqual(acks, ["s9"])
+        self.assertEqual([m["id"] for m in got], ["doc:d1"])
+        self.assertEqual(f._bad_frames, 0, "a bad frame is counted, then said and reset")
 
 
 class Protocol(unittest.TestCase):

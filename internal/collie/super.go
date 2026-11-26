@@ -885,11 +885,15 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 	if w.Conv != "" && !blocked && sp.s.ext != nil {
 		// An extension conversation's agent: its turn's last message is the
 		// answer, sent back to that chat, not a report for the Router.
-		text := sp.lastAssistantText(ctx, w, 0)
+		// Only its own words go out: never the screen, which may be the
+		// task it was given.
+		text, kind := sp.lastReply(ctx, w, 0, false), extproto.KindAnswer
 		if msg := sp.workerAgentError(ctx, w, text); msg != "" {
 			text = "（agent 出错，没能完成：" + msg + "）"
+		} else if text == "" {
+			text, kind = "（没取到 agent 的回答：找不到它的会话记录。请在 Collie 里看 "+w.Name+"。）", extproto.KindProgress
 		}
-		if _, err := sp.s.ext.sendOut(w.Thread, text, extproto.KindAnswer, sp.workerRunInfo(w), ""); err != nil {
+		if _, err := sp.s.ext.sendOut(w.Thread, text, kind, sp.workerRunInfo(w), ""); err != nil {
 			log.Printf("worker %s: send the answer back: %v", w.Name, err)
 		}
 		return
@@ -953,11 +957,13 @@ func agentStopLine(screen, summary string) string {
 }
 
 func (sp *Super) lastAssistant(ctx context.Context, w *Worker) string {
-	return sp.lastAssistantText(ctx, w, 1200)
+	return sp.lastReply(ctx, w, 1200, true)
 }
 
-// lastAssistantText is w's last message, clipped to most runes (0: all of it).
-func (sp *Super) lastAssistantText(ctx context.Context, w *Worker, most int) string {
+// lastReply is w's last message, clipped to most runes (0: all of it). With
+// screen, the bottom of its screen stands in when its transcript can't be
+// found; without, that is "".
+func (sp *Super) lastReply(ctx context.Context, w *Worker, most int, screen bool) string {
 	cut := func(s string) string {
 		if most > 0 {
 			return clip(s, most)
@@ -967,7 +973,11 @@ func (sp *Super) lastAssistantText(ctx context.Context, w *Worker, most int) str
 	if pane, machine := split(w.PaneID); machine != "" {
 		// Its transcript lives on that computer: ask its node.
 		if c, err := sp.s.herdr.Client(machine); err == nil {
-			req, _ := http.NewRequestWithContext(ctx, "GET", "http://node/api/panes/"+url.PathEscape(pane)+"/last", nil)
+			u := "http://node/api/panes/" + url.PathEscape(pane) + "/last"
+			if !screen {
+				u += "?screen=0"
+			}
+			req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
 			if resp, err := c.Do(req); err == nil {
 				var out struct {
 					Text string `json:"text"`
@@ -994,9 +1004,15 @@ func (sp *Super) lastAssistantText(ctx context.Context, w *Worker, most int) str
 				}
 			}
 		}
+		if !screen {
+			return ""
+		}
 		if res, err := sp.s.herdr.Read(ctx, w.PaneID, "detection", "text", 0); err == nil {
 			return tailLines(res.Text, 14)
 		}
+	}
+	if !screen {
+		return ""
 	}
 	return "(no output captured)"
 }

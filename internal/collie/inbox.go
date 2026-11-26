@@ -342,7 +342,7 @@ func (h *extHost) startConvWorker(conv InboxConv, old *Worker, t *Trigger, text 
 		spec.Machine = h.convMachine(conv.Ext)
 	}
 	if spec.Machine == "" {
-		h.sendOut(conv.thread(), "没能启动 agent：设置里没有默认电脑（hub 不跑 agent），请在设置里选一台", extproto.KindProgress, runInfo{}, t.ID)
+		h.sendOut(conv.thread(), "没能启动 agent：这个扩展运行在 hub 上，hub 不跑 agent。请在「接入」里把扩展改到一台电脑上", extproto.KindProgress, runInfo{}, t.ID)
 		return
 	}
 	if conv.Anyone {
@@ -365,19 +365,12 @@ func (h *extHost) startConvWorker(conv InboxConv, old *Worker, t *Trigger, text 
 	h.store.update(conv.ID, func(c *InboxConv) { c.Worker = w.Name })
 }
 
-// convMachine is where a conversation's agent runs: the default computer
-// for workers, else the one Collie runs on, else the extension's own; never
-// the hub, which runs no agents.
+// convMachine is where a conversation's agent runs: the computer the
+// extension is set to run on (an extension's own setting beats 设置's
+// worker_machine). "" is the hub, which runs no agents: an error the human
+// fixes by moving the extension.
 func (h *extHost) convMachine(ext string) string {
-	h.sp.mu.Lock()
-	set := h.sp.st.Settings
-	h.sp.mu.Unlock()
-	for _, m := range []string{set.WorkerMachine, set.RouterMachine, h.setting(ext).Machine} {
-		if m != "" {
-			return m
-		}
-	}
-	return ""
+	return h.setting(ext).Machine
 }
 
 // convWorkerName: <ext>-<chat name>, in the letters worker names allow; a

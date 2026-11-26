@@ -12,7 +12,7 @@
     pending: ["发送中", ""], sent: ["已发出", "ok"], deferred: ["暂缓，稍后送达", "attn"],
     uncertain: ["可能已发出，为避免重复没有重发，去原应用确认", "bad"], failed: ["没发出", "bad"], expired: ["已过期，没发出", "bad"],
   };
-  const KIND = { dm: "私聊", group: "群", self: "和自己" };
+  const KIND = { dm: "私聊", group: "群", self: "和自己", doc: "文档评论" };
 
   function init(h) { esc = h.esc; when = h.when; md = h.md; workerHref = h.workerHref; }
 

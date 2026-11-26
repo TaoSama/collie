@@ -243,28 +243,23 @@ func TestExtOwnTriggerSwitchOff(t *testing.T) {
 	}
 }
 
-// A conversation's agent runs on the default computer for workers, else
-// Collie's, else the extension's; never on the hub.
+// A conversation's agent runs where its extension is set to run, whatever
+// 设置 says for workers; an extension on the hub gives none (the hub runs no
+// agents).
 func TestConvMachine(t *testing.T) {
 	sp, h, _ := newExtTestHub(t)
-	set := func(worker, router string) {
-		sp.mu.Lock()
-		sp.st.Settings.WorkerMachine, sp.st.Settings.RouterMachine = worker, router
-		sp.mu.Unlock()
-	}
+	sp.mu.Lock()
+	sp.st.Settings.WorkerMachine, sp.st.Settings.RouterMachine = "macmini", "macpro"
+	sp.mu.Unlock()
 	h.mu.Lock()
 	h.sets["fake"] = ExtSetting{ID: "fake", Machine: "devbox"}
+	h.sets["fakew"] = ExtSetting{ID: "fakew"}
 	h.mu.Unlock()
-	for _, c := range []struct{ worker, router, want string }{
-		{"macmini", "macpro", "macmini"}, {"", "macpro", "macpro"}, {"", "", "devbox"},
-	} {
-		set(c.worker, c.router)
-		if got := h.convMachine("fake"); got != c.want {
-			t.Errorf("worker %q router %q: %q, want %q", c.worker, c.router, got, c.want)
-		}
+	if got := h.convMachine("fake"); got != "devbox" {
+		t.Errorf("the extension's computer: %q", got)
 	}
 	if got := h.convMachine("fakew"); got != "" {
-		t.Errorf("nothing set and the extension on the hub: %q, want none", got)
+		t.Errorf("an extension on the hub: %q, want none", got)
 	}
 }
 

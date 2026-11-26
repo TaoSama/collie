@@ -8,6 +8,7 @@ LarkAgentX 锁 commit、一行不改，适配层（`extensions/larkx/pkg/`）只
 - `LarkAuth` 读写 `~/.larkx/credentials.json`。适配层继承它，只覆盖 `load`/`save`，凭据走 `connector.secrets.*`；`LARKX_HOME` 指到扩展的 `data/`，上游别处想写文件也落在那里。
 - 上游的 `send_msg` 只发纯文本（`PutMessageRequest` type 4）。富文本是适配层自己拼的 type 2 post，元素结构见 `richtext.build`。
 - 自己发出的帖子会被 websocket 推回来。发之前先记下请求的 `cid`，推回来的消息 `cid` 对上就丢掉，不必等发送返回消息 id（推送可能比返回先到）。
+- 上游的 websocket 循环只处理未压缩的 cmd 6 帧：连接时声明了 gzip，压缩的推送会被当坏帧丢掉；cmd 6000（只推 sid，机器人卡片常这样）和 cmd 14004（文档评论）也不处理。所以收推送的循环是适配层自己的（`Feishu._session`），只借用上游的地址、心跳和应答。
 - 第一次启动要装依赖（约 20 秒到 1 分钟）。协议部分只用标准库，先握手，依赖在后台装；这期间来的扫码请求最多等 40 秒（Collie 那边等 50 秒）。
 
 ## 下载包不要拉整个仓库
@@ -20,7 +21,7 @@ codeload 的 tar 包是整个仓库（几十 MB），devbox 走 Corplink 代理�
 
 ## 会话的专属 agent 不能落到 hub
 
-`Spawn` 的 `Machine` 留空就是 hub 本机（`fleet.go` 的 `machine("")`），而 hub 不装 agent，于是回「has no codex installed」。Router 的 `collie spawn` 走 API，会填设置里的默认电脑；扩展会话自己起 agent 时要自己填：`convMachine` 依次取默认电脑、Collie 所在的电脑、扩展所在的电脑，都没有就报错，不落 hub。启动失败的说明用 progress 发，不带尾标，免得出现「默认 · 默认 · 0秒」。
+`Spawn` 的 `Machine` 留空就是 hub 本机（`fleet.go` 的 `machine("")`），而 hub 不装 agent，于是回「has no codex installed」。Router 的 `collie spawn` 走 API，会填设置里的默认电脑；扩展会话自己起 agent 时要自己填：`convMachine` 读扩展自己的「运行在」设置（扩展的专属设置优先于 `worker_machine`），不推断、不兜底；扩展在 hub 上就回一句说明，不落 hub。启动失败的说明用 progress 发，不带尾标，免得出现「默认 · 默认 · 0秒」。
 
 ## 同一个扩展只能跑一份
 

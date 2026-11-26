@@ -667,6 +667,7 @@ type agentDetail struct {
 		Kind  string `json:"kind"`
 		Value string `json:"value"`
 	} `json:"agent_session"`
+	TerminalTitle string `json:"terminal_title"`
 }
 
 var claimed = struct {
@@ -680,6 +681,15 @@ func (s *Server) transcriptFor(key, pane string, a agentDetail, cache map[string
 	sessKind, value := "", ""
 	if a.Session != nil {
 		sessKind, value = a.Session.Kind, a.Session.Value
+	}
+	if kind == "codex" && value == "" {
+		// herdr doesn't always know a codex session: its thread is named
+		// after the terminal title, "<thread name> | <user>".
+		t := a.TerminalTitle
+		if i := strings.LastIndex(t, " | "); i > 0 {
+			t = t[:i]
+		}
+		value = s.codexIDByName(strings.TrimSpace(t))
 	}
 	ck := key + "|" + kind + "|" + sessKind + ":" + value
 	if tr := cache[ck]; tr != nil {
@@ -1252,6 +1262,10 @@ func (s *Server) lastMessage(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+	if r.URL.Query().Get("screen") == "0" {
+		writeJSON(w, 404, map[string]any{"error": "no transcript"})
+		return
 	}
 	if res, err := s.herdr.Read(r.Context(), id, "detection", "text", 0); err == nil {
 		writeJSON(w, 200, map[string]any{"text": tailLines(res.Text, 14)})

@@ -5,6 +5,7 @@ not in a file) and how a post is put together are this adapter's own.
 import asyncio
 import base64
 import collections
+import gzip
 import importlib
 import logging
 import os
@@ -13,6 +14,8 @@ import sys
 import threading
 import time
 import types
+from concurrent.futures import ThreadPoolExecutor
+import zlib
 from pathlib import Path
 
 import richtext
@@ -22,9 +25,16 @@ log = logging.getLogger("larkx")
 QR_WAITING, QR_SCANNED, QR_DONE, QR_EXPIRED, QR_FAILED = "waiting", "scanned", "done", "expired", "failed"
 QR_STATUS = {1: QR_WAITING, 2: QR_SCANNED, 3: QR_FAILED, 4: QR_FAILED, 5: QR_EXPIRED}
 
-MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM = 3, 4, 5, 6
+MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM, MSG_CARD = 3, 4, 5, 6, 14
 CHAT_P2P = 1
 CMD_PUT_MESSAGE = 5
+CMD_PUSH_MESSAGES = 6
+CMD_PUSH_SID = 6000  # only sids: the packets are pulled by them
+CMD_PUSH_DOC_FEED = 14004  # comments, replies and mentions in cloud documents
+DOC_FEED_NEWS = (1, 2, 5)  # PushDocFeedRequest.Status NEW, UPDATE, CREATE
+DOC_KINDS = {1: "在文档里@了你", 2: "评论了文档", 3: "回复了评论"}  # DocMessage.Type MENTION, COMMENT, REPLY
+DOC_CHAT = "doc:"  # a document's comments are a chat of their own
+BAD_FRAME_EVERY = 600
 MEDIA_MOST = 20 << 20
 UP_AFTER = 5  # seconds a websocket stays open before it counts as up
 NAME_TTL = 3600
@@ -54,7 +64,7 @@ def load_upstream(root, data_dir, region):
     mod = importlib.import_module
     return types.SimpleNamespace(
         auth=mod("larkx.auth"), client=mod("larkx.client"), region=mod("larkx.region"), media=mod("larkx.media"),
-        builders=mod("larkx.proto.builders"), ids=mod("larkx.proto.ids"),
+        builders=mod("larkx.proto.builders"), decoders=mod("larkx.proto.decoders"), ids=mod("larkx.proto.ids"),
         P=mod("larkx.proto.proto_pb2"), L=mod("larkx.proto.lark_all_pb2"))
 
 
@@ -125,6 +135,8 @@ class Feishu:
         self._mu = threading.Lock()
         self._loop = None
         self._task = None
+        self._bad_frames, self._bad_warned = 0, 0.0
+        self._pool = ThreadPoolExecutor(max_workers=4)  # handles pushes; outlives each connection's loop
 
     # Signing in.
 
@@ -171,15 +183,12 @@ class Feishu:
 
     def listen(self, on_message, on_link, stop):
         """Keeps the websocket open until stop is set or Feishu signs the session out."""
-        async def handle(msg):  # on upstream's own loop
-            await asyncio.get_running_loop().run_in_executor(None, self._deliver, msg, on_message)
-
         wait = 2
         while not stop.is_set() and self.client is not None:
             loop = asyncio.new_event_loop()
             started = time.time()
             try:
-                task = loop.create_task(self.client.connect_websocket(handle))
+                task = loop.create_task(self._session(on_message))
                 with self._mu:
                     self._loop, self._task = loop, task
                 loop.call_later(UP_AFTER, lambda: task.done() or on_link("up"))
@@ -207,6 +216,111 @@ class Feishu:
             loop, task = self._loop, self._task
         if loop and task:
             loop.call_soon_threadsafe(task.cancel)
+
+    async def _session(self, on_message):
+        """One websocket connection: upstream's address, heartbeat and acks; the pushes are read here, so
+        compressed frames, sid-only pushes and document comments are not lost."""
+        import websockets
+
+        c = self.client
+        async with websockets.connect(c.build_ws_url()) as ws:
+            beat = asyncio.create_task(c.heartbeat_loop(ws))
+            try:
+                async for raw in ws:
+                    try:
+                        packet = self._packet(raw)
+                    except Exception as e:
+                        self._bad_frame(e)
+                        continue
+                    if packet is None:
+                        continue
+                    if packet.sid:
+                        await c.send_ack(ws, packet.sid)
+                    self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message)
+            finally:
+                beat.cancel()
+
+    def _packet(self, raw):
+        """The frame's packet (lark improto.Packet), or None for a frame that carries none (JSON)."""
+        frame = self.U.P.Frame.FromString(raw)
+        enc = (frame.payloadEncoding or "").lower()
+        body = frame.payload
+        if enc == "json":
+            return None
+        if enc == "gzip" or (not enc and body[:2] == b"\x1f\x8b"):
+            body = gzip.decompress(body)
+        elif enc in ("deflate", "zlib"):
+            body = zlib.decompress(body)
+        elif enc and enc not in ("identity", "pb"):
+            raise ValueError("unknown payloadEncoding %r" % enc)
+        return self.U.L.improto.Packet.FromString(body)
+
+    def _bad_frame(self, err):
+        """Frames that can't be read: counted, said at most every ten minutes."""
+        self._bad_frames += 1
+        if time.time() - self._bad_warned >= BAD_FRAME_EVERY:
+            log.warning("%d websocket frame(s) could not be read, last: %r", self._bad_frames, err)
+            self._bad_frames, self._bad_warned = 0, time.time()
+
+    def _push(self, cmd, payload, packet, on_message):
+        """One pushed packet's messages to on_message, on a worker thread."""
+        try:
+            if cmd == CMD_PUSH_MESSAGES:
+                for msg in self._messages(payload):
+                    self._deliver(msg, on_message)
+            elif cmd == CMD_PUSH_SID:
+                sids = list(dict.fromkeys(x for x in [packet.sid] + [str(n) for n in packet.compactedSids] if x))
+                pulled = (self.client.api("improto.PullPacketsBySidsRequest", {"sids": sids}) or {}).get("packets") or {}
+                for p in pulled.values():
+                    if int(p.get("cmd") or 0) in (CMD_PUSH_MESSAGES, CMD_PUSH_DOC_FEED):
+                        self._push(int(p["cmd"]), p.get("payload") or b"", None, on_message)
+            elif cmd == CMD_PUSH_DOC_FEED:
+                for m in self.doc_comments(payload):
+                    on_message(m)
+        except Exception as e:
+            log.warning("push %s: %s", cmd, e)
+
+    def _messages(self, payload):
+        """A PushMessagesRequest's messages, decoded by upstream; a topic group's root opens its topic."""
+        U = self.U
+        frame = U.P.Frame(payload=U.P.Packet(cmd=CMD_PUSH_MESSAGES, payload=payload).SerializeToString())
+        out = []
+        for msg in U.decoders.decode_push_messages(frame.SerializeToString()):
+            if not msg.get("from_id"):
+                continue
+            if msg["scope"] == "chat" and msg.get("chat_type") == 2 and self.client.is_thread_chat(msg["chat_id"]):
+                msg["scope"], msg["anchor"] = U.decoders.resolve_scope(msg["msg_id"], msg["msg_type"], 2, "", "", thread_chat=True)
+            out.append(msg)
+        return out
+
+    def doc_comments(self, payload):
+        """A document feed push's new comments, replies and mentions as channel.receive messages."""
+        from protobuf_to_dict import protobuf_to_dict
+
+        L = self.U.L
+        req = L.docs.PushDocFeedRequest.FromString(payload)
+        if req.status not in DOC_FEED_NEWS:
+            return []
+        feed, out = req.docFeed, []
+        for dm in sorted(req.docMessages.values(), key=lambda d: d.createTime):
+            what = DOC_KINDS.get(dm.type)
+            mid = DOC_CHAT + dm.id
+            # A feed update repeats what came before, and a sid pull may bring a push again.
+            if not what or not dm.id or not self._remember(mid, "", ""):
+                continue
+            body = (richtext.to_text(L, protobuf_to_dict(dm.richText)) if dm.HasField("richText") else "") or dm.content
+            sender = str(dm.fromId)
+            # The text opens with who did what, so a comment never starts with the trigger word:
+            # nothing here asks for an answer that could not be sent.
+            m = {"id": mid, "chat_id": DOC_CHAT + (feed.id or dm.docFeedId), "chat": feed.title or "云文档",
+                 "chat_kind": "doc", "sender": sender, "owner": bool(self.me) and sender == self.me,
+                 "sender_name": self.user_name(sender, ""), "thread": feed.id or dm.docFeedId,
+                 "text": "（%s%s）\n%s" % (what, "：" + feed.url if feed.url else "", body.strip())}
+            if dm.createTime:
+                at = dm.createTime / (1000 if dm.createTime > 10 ** 12 else 1)
+                m["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+            out.append(m)
+        return out
 
     def _deliver(self, msg, on_message):
         try:
@@ -241,6 +355,9 @@ class Feishu:
                 out["images" if mtype == MSG_IMAGE else "files"] = [blob]
             else:
                 out["unsupported"] = ["图片（没能下载）" if mtype == MSG_IMAGE else "文件 %s（没能下载）" % data.get("name", "")]
+        elif mtype == MSG_CARD:
+            head = data.get("cardHeader") or {}
+            text = " ".join(x for x in ("[卡片]", head.get("title") or head.get("mainTitle") or "", data.get("cardDesc") or "") if x)
         else:
             text = re.sub(r",?\s*(key|imageKey|stickerId)=\S+", "", msg.get("content") or "").strip()
         out["text"] = text
@@ -250,10 +367,7 @@ class Feishu:
             out["quote"] = quoted[1]
         if msg.get("anchor"):
             out["thread"] = str(msg["anchor"])
-        with self._mu:
-            self.recent[mid] = (root, text)
-            while len(self.recent) > RECENT_MOST:
-                self.recent.popitem(last=False)
+        self._remember(mid, root, text, again=True)
         p2p = msg.get("chat_type") == CHAT_P2P
         out["chat_kind"] = "self" if p2p and chat == self.self_chat else "dm" if p2p else "group"
         out["sender_name"] = self.user_name(sender, chat)
@@ -266,6 +380,16 @@ class Feishu:
             at = int(at) / (1000 if int(at) > 10 ** 12 else 1)
             out["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
         return out
+
+    def _remember(self, mid, root, text, again=False):
+        """Keeps a message's topic root and text; False when it was kept already (unless again)."""
+        with self._mu:
+            if mid in self.recent and not again:
+                return False
+            self.recent[mid] = (root, text)
+            while len(self.recent) > RECENT_MOST:
+                self.recent.popitem(last=False)
+            return True
 
     def user_name(self, uid, chat):
         if not uid or self.client is None:
@@ -292,6 +416,8 @@ class Feishu:
         """Sends a post; its message id. Raises NotSent or Unsure."""
         if self.client is None:
             raise NotSent("没有登录")
+        if str(chat).startswith(DOC_CHAT):
+            raise NotSent("文档评论暂时只收不回")
         U = self.U
         req = U.L.messages.PutMessageRequest()
         req.type = richtext.MSG_POST
