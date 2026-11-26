@@ -8339,7 +8339,8 @@
     nameTouched = false;
     $("#launch-error").textContent = "";
     $("#l-prompt").value = "";
-    pickMachine = store.get("machine", "");
+    // The computer picked here last; never picked: the one work goes to by default.
+    pickMachine = store.get("machine", null) ?? targetDefault?.machine ?? "";
     renderMachinePick();
     const recent = store.get(recentKey(), []);
     cwdInput.value = recent[0] || "~";

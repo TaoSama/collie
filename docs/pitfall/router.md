@@ -19,3 +19,13 @@ hub 的 `agent.list` 跨机器合并：没连上（或这次没答）的电脑�
 - spawn 的名字被 herdr 里别的 agent 占了：自动换 `名字-2`…，返回里的 `worker` 是实际名字；被正在跑的 worker 占了就报错并给出可用名字。
 
 代码：`internal/collie/self_heal.go`。
+
+## 做梦的清理要找对电脑
+
+Collie 和做梦都跑在 `router_machine` 上，workspace ID 带 `@电脑` 后缀。清理只看 hub 本机的 herdr，就关不掉那台电脑上上一次做梦的会话：它一直占着名字 `collie-dream`，之后每次新起的做梦 agent 都改名失败，失败的 workspace 也会一个个留下（11-26）。
+
+- 按标签关 workspace 时带上电脑：开始做梦前关旧 Router 所在和这次要跑的那台，结束时关这次做梦跑的那台（记在 `dreamRun.machine`）。
+- 开始前再按名字清一遍：那台电脑上还叫 `collie-dream` 的 agent，不管 workspace 标签是什么都关掉。
+- agent 起来但没能启动或改名时，关掉刚建的 workspace。
+
+代码：`closeWorkspaces`、`closeOldDreams`、`StartDream`（`internal/collie/dream.go`）。
