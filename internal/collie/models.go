@@ -100,7 +100,7 @@ func withBypass(args []string, kind string, ask bool) []string {
 		return args
 	}
 	for _, f := range bypassArgs(kind) {
-		if !contains(args, f) {
+		if !slices.Contains(args, f) {
 			args = append(args, f)
 		}
 	}

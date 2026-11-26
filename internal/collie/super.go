@@ -276,7 +276,7 @@ func (sp *Super) prepareTriggerLocked(source, thread, from, text, key, target, r
 	}
 	pol := sp.st.policyFor(source)
 	action := pol.Action
-	if len(pol.Allow) > 0 && !contains(pol.Allow, from) {
+	if len(pol.Allow) > 0 && !slices.Contains(pol.Allow, from) {
 		action = "ignore"
 	}
 	t := &Trigger{
@@ -305,15 +305,6 @@ func (sp *Super) publishTriggerLocked(t *Trigger, th *Thread) {
 	sp.st.Triggers = append(sp.st.Triggers, t)
 	*sp.threadLocked(th.ID) = *th
 	sp.changed()
-}
-
-func contains(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 // ---------------------------------------------------------------- run loop
@@ -747,7 +738,7 @@ func replace(list []string, from, to string) []string {
 		if x == from {
 			x = to
 		}
-		if !contains(out, x) {
+		if !slices.Contains(out, x) {
 			out = append(out, x)
 		}
 	}
@@ -1390,7 +1381,7 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 	sp.st.Workers[name] = w
 	if subscribe {
 		th := sp.threadLocked(thread)
-		if !contains(th.Subscribers, name) {
+		if !slices.Contains(th.Subscribers, name) {
 			th.Subscribers = append(th.Subscribers, name)
 		}
 	}
@@ -1736,7 +1727,7 @@ func (n notice) needsYou() bool {
 
 // quoteLine is a Quote as one line: "你：首页加一个暗色模式…".
 func (q *Quote) line() string {
-	t := strings.Join(strings.Fields(q.Text), " ")
+	t := oneLine(q.Text)
 	return q.Who + "：" + clip(t, 60)
 }
 
@@ -2126,7 +2117,7 @@ func cleanSearchText(e *Entry, includeURLs bool) string {
 		}
 		if i := strings.LastIndex(t, "附件：\n"); i >= 0 {
 			head := strings.TrimSpace(t[:i])
-			att := strings.Join(strings.Fields(t[i+len("附件：\n"):]), " ")
+			att := oneLine(t[i+len("附件：\n"):])
 			if att != "" {
 				t = strings.TrimSpace(head + " 📎 " + att)
 			} else {

@@ -633,7 +633,7 @@ func (s *Server) superSubscribe(w http.ResponseWriter, r *http.Request) {
 	th := sp.threadLocked(body.Thread)
 	if body.Off {
 		th.Subscribers = remove(th.Subscribers, body.Worker)
-	} else if !contains(th.Subscribers, body.Worker) {
+	} else if !slices.Contains(th.Subscribers, body.Worker) {
 		th.Subscribers = append(th.Subscribers, body.Worker)
 	}
 	sp.changed()

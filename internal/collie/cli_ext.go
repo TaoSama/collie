@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -79,7 +80,7 @@ func cliExtList() error {
 			fmt.Printf("  %s%s — %s\n", a.Name, tag, a.Description)
 			for k, p := range a.Params {
 				req := ""
-				if contains(a.Required, k) {
+				if slices.Contains(a.Required, k) {
 					req = ", required"
 				}
 				fmt.Printf("      --arg %s=<%s%s%s>  %s\n", k, p.Type, choices(p), req, p.Title)

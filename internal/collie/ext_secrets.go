@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // Config fields marked x-secret (extensions/README.md §6): kept on the hub in
@@ -44,7 +45,7 @@ func (h *extHost) setConfigSecrets(m *ExtManifest, set map[string]any, clear []s
 		if v, ok := set[k].(string); ok && v != "" {
 			cur[k], changed = v, true
 		}
-		if contains(clear, k) {
+		if slices.Contains(clear, k) {
 			delete(cur, k)
 			changed = true
 		}

@@ -125,7 +125,7 @@ func (sp *Super) resumeDueLocked(w *Worker, status string, now time.Time) bool {
 		return false
 	}
 	for _, t := range sp.st.Triggers {
-		if t.Status == "queued" && contains(t.Targets, w.Name) {
+		if t.Status == "queued" && slices.Contains(t.Targets, w.Name) {
 			return false // a new message for it: that carries it on
 		}
 	}

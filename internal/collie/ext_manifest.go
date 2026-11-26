@@ -9,6 +9,7 @@ import (
 	"path"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -246,7 +247,7 @@ var extIDRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 var builtinExts = map[string]func(args []string) int{"wechat": wechat.Main}
 
 func (m *ExtManifest) has(capability string) bool {
-	return contains(m.Contributes.Connector.Capabilities, capability)
+	return slices.Contains(m.Contributes.Connector.Capabilities, capability)
 }
 
 func (m *ExtManifest) validate() error {
@@ -367,7 +368,7 @@ func validConfigValue(p ExtConfigProp, v any) bool {
 	switch p.Type {
 	case "string":
 		s, ok := v.(string)
-		return ok && (len(p.Enum) == 0 || contains(p.Enum, s))
+		return ok && (len(p.Enum) == 0 || slices.Contains(p.Enum, s))
 	case "boolean":
 		_, ok := v.(bool)
 		return ok

@@ -376,7 +376,7 @@ func (s *Server) wbCaller(r *http.Request, pane string) (who string, external bo
 		return name, true, nil
 	}
 	for id, th := range sp.st.Threads {
-		if strings.HasPrefix(id, extThreadPrefix) && contains(th.Subscribers, name) {
+		if strings.HasPrefix(id, extThreadPrefix) && slices.Contains(th.Subscribers, name) {
 			return name, true, nil
 		}
 	}

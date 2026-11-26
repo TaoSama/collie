@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -148,7 +149,7 @@ func (h *extHost) requestsIgnored(ext string) bool {
 	h.sp.mu.Lock()
 	defer h.sp.mu.Unlock()
 	pol := h.sp.st.policyFor("ext:" + ext)
-	return pol.Action == "ignore" || len(pol.Allow) > 0 && !contains(pol.Allow, "you")
+	return pol.Action == "ignore" || len(pol.Allow) > 0 && !slices.Contains(pol.Allow, "you")
 }
 
 func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) InboxConv {
@@ -180,7 +181,7 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 	}
 	if !in.At.Before(c.LastAt) {
 		c.LastAt = in.At
-		preview := clip(strings.Join(strings.Fields(in.Text), " "), inboxPreviewMost)
+		preview := clip(oneLine(in.Text), inboxPreviewMost)
 		if preview == "" && len(in.Files) > 0 {
 			preview = "[附件]"
 		}
@@ -216,13 +217,13 @@ func (in incomingMsg) triggerRequest(m *ExtManifest, conv InboxConv, request str
 // ours: a message Collie itself sent there, by its id, its text (the last
 // day), or the footer's fixed start as its last line.
 func (h *extHost) ours(conv, id, text, footer string) (bool, error) {
-	norm := strings.Join(strings.Fields(text), " ")
+	norm := oneLine(text)
 	outs, err := h.store.recentOuts(conv, time.Now().Add(-24*time.Hour))
 	if err != nil {
 		return false, err
 	}
 	for _, o := range outs {
-		if o.MessageID == id || strings.Join(strings.Fields(o.Text), " ") == norm {
+		if o.MessageID == id || oneLine(o.Text) == norm {
 			return true, nil
 		}
 	}
@@ -322,7 +323,7 @@ func (h *extHost) requestText(m *ExtManifest, conv InboxConv, in incomingMsg, re
 		if x.Mine {
 			name = "你"
 		}
-		line := fmt.Sprintf("- %s %s: %s", name, x.At.Local().Format("15:04"), clip(strings.Join(strings.Fields(x.Text), " "), 500))
+		line := fmt.Sprintf("- %s %s: %s", name, x.At.Local().Format("15:04"), clip(oneLine(x.Text), 500))
 		if n += len(line); n > extContextChars {
 			break
 		}
