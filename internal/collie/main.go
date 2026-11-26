@@ -76,6 +76,7 @@ func serve() {
 	host, _ := os.Hostname()
 	host = strings.TrimSuffix(host, ".local")
 	srv := &Server{herdr: newHerdr(*sock, host, home), token: *token, home: home, web: web.FS}
+	srv.herdr.logged = srv.promptLogged
 	if *publicURL != "" {
 		srv.publicURLs = strings.Split(*publicURL, ",")
 	}

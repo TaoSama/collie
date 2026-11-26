@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -44,6 +45,11 @@ type fakePane struct {
 	// hangUp: the next agent.prompt types its text, then the connection
 	// drops before herdr answers (a node going away mid-call).
 	hangUp bool
+	// log is the agent's Claude session log, which gets what it takes;
+	// staleBox keeps drawing a taken message in the input box.
+	log      string
+	staleBox bool
+	drawn    string
 }
 
 func (p *fakePane) enter() {
@@ -53,6 +59,22 @@ func (p *fakePane) enter() {
 	}
 	if p.box == "" {
 		return
+	}
+	if p.log != "" {
+		line := map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": p.box}}
+		if p.status == "working" { // queued until the turn ends
+			line = map[string]any{"type": "queue-operation", "operation": "enqueue", "content": p.box}
+		}
+		b, _ := json.Marshal(line)
+		f, err := os.OpenFile(p.log, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			panic(err)
+		}
+		f.Write(append(b, '\n'))
+		f.Close()
+	}
+	if p.staleBox {
+		p.drawn = p.box
 	}
 	p.said, p.box = append(p.said, p.box), ""
 	if !p.quiet {
@@ -67,10 +89,14 @@ func (p *fakePane) simScreen() string {
 		b.WriteString("❯ " + m + "\n")
 	}
 	box := p.box
+	if box == "" {
+		box = p.drawn
+	}
 	if strings.Contains(box, "\n") {
 		box = fmt.Sprintf("[Pasted text #1 +%d lines]", strings.Count(box, "\n"))
 	}
-	b.WriteString("────\n❯ " + box + "\n────\n")
+	// herdr reads lines without their trailing spaces: an empty box is "❯".
+	b.WriteString(strings.TrimRight("────\n❯ "+box, " ") + "\n────\n")
 	return b.String()
 }
 
@@ -118,6 +144,9 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		}
 		if p.name != "" {
 			v["name"] = p.name
+		}
+		if p.log != "" {
+			v["agent_session"] = map[string]any{"kind": "id", "value": strings.TrimSuffix(filepath.Base(p.log), ".jsonl")}
 		}
 		return v
 	}
@@ -291,6 +320,7 @@ func newRouterTestSuper(t *testing.T, f *fakeHerdr) *Super {
 	st.Settings.RouterKind, st.Settings.RouterMachine, st.Settings.RouterAlias = "claude", "", ""
 	binCache.Store("claude", "/usr/bin/true") // the agent is "installed"
 	srv := &Server{herdr: h, home: dir}
+	h.logged = srv.promptLogged
 	sp := &Super{s: srv, db: db, dir: dir, bin: "collie", st: st, subs: map[chan struct{}]bool{},
 		lastScreen: map[string]screenMark{}, transcripts: map[string]*transcript{}, noAgent: map[string]time.Time{},
 		unanswered: map[string]time.Time{}}

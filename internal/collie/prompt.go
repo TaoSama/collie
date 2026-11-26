@@ -3,6 +3,7 @@ package collie
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -10,11 +11,12 @@ import (
 // Prompt submits text to an agent, then reads the agent back until it shows
 // the message was taken: herdr accepting a prompt only means the keys went
 // out, and an agent can drop them (Enter landing before the paste is read,
-// a screen that was not taking input yet). Text still in the input box gets
-// another Enter; text that never arrived is sent again, but only when the
-// agent was idle and nothing on its screen or in its state moved, so a
-// message that did go in is never sent twice. What stays unconfirmed comes
-// back as a "prompt_unconfirmed" error.
+// a screen that was not taking input yet). The agent's own log says so first
+// (see prompt_log.go); its screen settles what the log can't. Text still in
+// the input box gets another Enter; text that never arrived is sent again,
+// but only when the agent was idle and nothing on its screen or in its state
+// moved, so a message that did go in is never sent twice. What stays
+// unconfirmed comes back as a "prompt_unconfirmed" error.
 func (h *Herdr) Prompt(ctx context.Context, target, text string) error {
 	pane := target
 	if !strings.Contains(pane, ":") {
@@ -23,6 +25,7 @@ func (h *Herdr) Prompt(ctx context.Context, target, text string) error {
 	before, screen, seen := h.lookPrompt(ctx, pane, "")
 	probe := promptProbe(text, screen)
 	before = before.with(screen, probe)
+	mark := h.logMark(ctx, pane)
 	err := h.submit(ctx, target, pane, text)
 	var he *HerdrError
 	if errors.As(err, &he) || !seen {
@@ -32,7 +35,7 @@ func (h *Herdr) Prompt(ctx context.Context, target, text string) error {
 	// it is only handed back for a retry when nothing of it shows.
 	resent := false
 	for tries := 1; ; tries++ {
-		v, now := h.awaitPrompt(ctx, pane, probe, before)
+		v, now := h.awaitPrompt(ctx, pane, probe, before, mark)
 		more := tries < promptTries && ctx.Err() == nil
 		switch {
 		case v == promptIn:
@@ -55,6 +58,10 @@ func (h *Herdr) Prompt(ctx context.Context, target, text string) error {
 
 // promptConfirmWait: how long one read-back waits for the agent to show it.
 var promptConfirmWait = 4 * time.Second
+
+// promptLogWait bounds one look at the agent's log, so a slow node still
+// leaves time for its screen.
+const promptLogWait = time.Second
 
 const (
 	promptTries      = 3 // reads back; between them another Enter, or one resend
@@ -118,13 +125,43 @@ func (l promptLook) with(screen, probe string) promptLook {
 	return l
 }
 
-// awaitPrompt polls the pane for promptConfirmWait, returning as soon as it
-// shows the message taken.
-func (h *Herdr) awaitPrompt(ctx context.Context, pane, probe string, before promptLook) (promptVerdict, promptLook) {
+// promptMark is where the agent's log ends, read before a send; ok is false
+// for an agent without one.
+type promptMark struct {
+	size int64
+	ok   bool
+}
+
+func (h *Herdr) logMark(ctx context.Context, pane string) promptMark {
+	if h.logged == nil || pane == "" {
+		return promptMark{}
+	}
+	size, _, ok := h.logged(ctx, pane, "", 0)
+	return promptMark{size, ok}
+}
+
+// inLog looks for probe past mark, then moves mark up to what it read, less
+// enough to still find a probe the log was midway through writing.
+func (h *Herdr) inLog(ctx context.Context, pane, probe string, mark *promptMark) bool {
+	ctx, cancel := context.WithTimeout(ctx, promptLogWait)
+	defer cancel()
+	size, found, ok := h.logged(ctx, pane, probe, mark.size)
+	if ok && !found {
+		mark.size = max(mark.size, size-int64(len(jsonInner(probe))))
+	}
+	return found
+}
+
+// awaitPrompt polls the pane for promptConfirmWait, returning as soon as its
+// log or its screen shows the message taken.
+func (h *Herdr) awaitPrompt(ctx context.Context, pane, probe string, before promptLook, mark promptMark) (promptVerdict, promptLook) {
 	v, last := promptUnknown, promptLook{}
 	for until := time.Now().Add(promptConfirmWait); ; {
 		if sleepCtx(ctx, promptPoll) != nil {
 			return v, last
+		}
+		if mark.ok && h.inLog(ctx, pane, probe, &mark) {
+			return promptIn, last
 		}
 		if now, _, ok := h.lookPrompt(ctx, pane, probe); ok {
 			v, last = judgePrompt(before, now), now
@@ -158,13 +195,18 @@ func judgePrompt(before, now promptLook) promptVerdict {
 	return promptMissing
 }
 
+// emptyBoxRe is an empty input box: herdr reads it back without its trailing
+// space, as a bare "❯". Missing it took the message's own echo above for the
+// box, and a message taken for one left in it.
+var emptyBoxRe = regexp.MustCompile(`^\s*(?:[│┃|]\s*)?[❯›>]\s*$`)
+
 // screenPrompt finds the input box (the last prompt line) on a screen and
 // whether it, or the lines above it, show probe.
 func screenPrompt(screen, probe string) promptLook {
 	lines := strings.Split(screen, "\n")
 	box := -1
 	for i := len(lines) - 1; i >= 0; i-- {
-		if promptLineRe.MatchString(lines[i]) && !menuLineRe.MatchString(lines[i]) {
+		if (promptLineRe.MatchString(lines[i]) || emptyBoxRe.MatchString(lines[i])) && !menuLineRe.MatchString(lines[i]) {
 			box = i
 			break
 		}

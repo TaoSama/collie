@@ -53,6 +53,9 @@ type Herdr struct {
 	remote   map[string]*Machine
 	names    map[string]string // agent name → its pane id, suffixed on remote machines
 	onChange func()
+	// logged finds a prompt in the agent's own log (Server.promptLogged);
+	// nil leaves Prompt with the screen alone.
+	logged func(ctx context.Context, pane, probe string, since int64) (size int64, found, ok bool)
 
 	// named remembers the names Collie gave the agents it started. herdr 0.8
 	// drops an agent's name once the launch is confirmed; newer versions keep

@@ -102,6 +102,15 @@ func (sp *Super) saveDeliveryLocked(list []Trigger, notice *Entry) error {
 	return tx.Commit()
 }
 
+// inLog: the tail of pane's agent log holds probe. A trigger's id is never
+// sent twice, so no mark from before the send is needed.
+func (sp *Super) inLog(ctx context.Context, pane, probe string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, found, _ := sp.s.promptLogged(ctx, pane, probe, -promptLogTail)
+	return found
+}
+
 func (sp *Super) recoverDeliveries(ctx context.Context, away map[string]bool, live map[string]liveAgent) {
 	type destination struct{ target, pane string }
 	pending := map[destination][]*Trigger{}
@@ -131,7 +140,8 @@ func (sp *Super) recoverDeliveries(ctx context.Context, away map[string]bool, li
 			if err != nil && live[dest.target].Pane == dest.pane && time.Since(t.Deliveries[dest.target].At) < awayGrace {
 				continue // the pane is still present, so try reading it again next tick
 			}
-			if err == nil && screenPrompt(res.Text, "#"+t.ID+" · ").seen > 0 {
+			probe := "#" + t.ID + " · "
+			if (err == nil && screenPrompt(res.Text, probe).seen > 0) || sp.inLog(ctx, dest.pane, probe) {
 				confirmed = append(confirmed, t)
 			} else {
 				uncertain = append(uncertain, t)

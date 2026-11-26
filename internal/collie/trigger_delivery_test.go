@@ -57,13 +57,16 @@ func TestDeliveryCommitsBeforeNextFlush(t *testing.T) {
 }
 
 func TestDeliveryRecoversWithoutResending(t *testing.T) {
-	for _, visible := range []bool{true, false} {
-		name := "visible in terminal"
-		if !visible {
-			name = "receipt uncertain"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		visible, logs bool
+	}{{"visible in terminal", true, false}, {"in the agent's log", false, true}, {"receipt uncertain", false, false}} {
+		visible := c.visible || c.logs
+		t.Run(c.name, func(t *testing.T) {
 			f, sp, p := simAgent(t)
+			if c.logs {
+				withLog(t, sp, p)
+			}
 			sp.st.Workers["worker-1"] = &Worker{Name: "worker-1", Kind: "claude", Thread: mainThread, Status: "idle", PaneID: "wA:p1"}
 			tr := sp.Ingest("router", mainThread, routerName, "keep track of this", "", "worker-1", "")
 			sp.flush()
@@ -79,7 +82,7 @@ func TestDeliveryRecoversWithoutResending(t *testing.T) {
 			if len(p.said) != 1 {
 				t.Fatalf("agent got %d prompts before restart", len(p.said))
 			}
-			if !visible {
+			if !c.visible {
 				p.said = nil // the earlier prompt has scrolled off the terminal
 			}
 			var err error

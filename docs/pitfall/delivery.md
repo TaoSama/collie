@@ -6,11 +6,14 @@ Router 的事件、`collie send`、spawn / resume 的首条任务、页面上给
 
 `agent.prompt` 成功只说明按键发出去了。`Prompt` 发完后回读 agent：
 
+- 先看 agent 自己的记录（`prompt_log.go`）：发送前记下会话记录（Claude 的会话 JSONL、Codex rollout）的长度，发送后新写的部分里出现了探针就算送到。Claude 忙时收到的消息会立刻记一条 `queue-operation`（`enqueue`），不用等它处理。远端 pane 的记录经 node 的 `GET /api/panes/{id}/logged` 查。找不到记录（会话还没建、agent 不认识，或者是 agy，它的记录格式不同）才只靠读屏。每次看记录限时 1 秒，看过的部分不再重读。
 - `state_change_seq` 或状态变了，或者消息开头的几个字（`promptProbe`）在输入框上方多出现了一次，就算送到。
 - 「开头几个字」取消息里第一行发送前屏幕上还没有的：每批事件都以 `[collie] 1 new event` 开头，拿它当探针，旧消息会被当成新的。
 - 发送时连接断了（node 掉线）也先回读：看到送进去了就算成功，什么都没看到才交回调用方下一轮重投。
 - 文字还停在输入框里（输入框里有它，或者 `[Pasted text` / `[Pasted Content`），只补按 Enter，不重发文字。
+- 空输入框读回来是光秃秃的 `❯`（herdr 去掉行尾空格），`screenPrompt` 要认它（`emptyBoxRe`；不改共用的 `promptLineRe`，免得 shell 提示符的光标位置跟着变）。2026-11-26 #t4109：Router 忙时收下消息、刚处理完，输入框空了，旧正则认不出空框，把历史里这条消息的回显 `❯ [collie] 1 new event` 当成输入框，判成「停在输入框里」，补按了两次 Enter，还报了未送达。
 - 什么迹象都没有，而且 agent 一直空闲、屏幕上没有对话框，才重发一次。agent 在忙时排队的消息画在哪里不确定，看不到也不重发，按 herdr 的结果算。
+- Hub 重启后核对中断的投递（`recoverDeliveries`）：屏幕上没有 `#ID · `，就去会话记录的末尾找。trigger ID 不会重复，不需要发送前的长度。
 - 几轮后仍没确认，返回 `prompt_unconfirmed`。`deliver` 收到它就停下（再投可能重复提交）：事件标成 `failed`（收件箱显示「未送达」），Collie 对话里出一条错误事件。页面直接发的消息照常把原文放回输入框并提示。
 
 ## tick 拿到的列表可能比 worker 旧

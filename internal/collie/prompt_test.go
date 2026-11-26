@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +133,109 @@ func TestPromptGivesUpWhenNothingTakes(t *testing.T) {
 	}
 	if len(p.said) != 0 || f.count("pane.send_text") != 1 {
 		t.Errorf("said %d times with %d pastes, want one resend", len(p.said), f.count("pane.send_text"))
+	}
+}
+
+// withLog gives p's agent a Claude session log for Prompt to read.
+func withLog(t *testing.T, sp *Super, p *fakePane) {
+	t.Helper()
+	root := filepath.Join(sp.s.home, ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", root)
+	dir := filepath.Join(root, "projects", "-work")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p.log = filepath.Join(dir, "5e55-1d.jsonl")
+	if err := os.WriteFile(p.log, []byte(`{"type":"user","message":{"role":"user","content":"[collie] 1 new event"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Mid-turn the agent queues the message and takes it without a change of
+// state; once it's taken the input box is empty again, which herdr reads as
+// a bare "❯". That box must not be mistaken for the echo of the message
+// above it, which read as "still in the input box" (2026-11-26, #t4109).
+func TestPromptTakenMidTurnIsNotLeftInTheBox(t *testing.T) {
+	f, sp, p := simAgent(t)
+	p.status, p.quiet = "working", true
+	if err := promptOnce(t, sp, brief); err != nil {
+		t.Fatalf("err = %v, want it taken", err)
+	}
+	if len(p.said) != 1 || f.count("pane.send_keys") != 0 {
+		t.Errorf("said %d times, %d extra keys", len(p.said), f.count("pane.send_keys"))
+	}
+	if l := screenPrompt("❯ [collie] 1 new event\n  #t7 · chat:main\n────\n❯\n────\n", "[collie] 1 new e"); l.typed || l.seen != 1 {
+		t.Errorf("empty box read as %+v", l)
+	}
+}
+
+// The agent's log has it: taken, whatever the screen still draws.
+func TestPromptConfirmedFromAgentLog(t *testing.T) {
+	for _, status := range []string{"idle", "working"} {
+		t.Run(status, func(t *testing.T) {
+			f, sp, p := simAgent(t)
+			withLog(t, sp, p)
+			p.status, p.quiet, p.staleBox = status, true, true
+			if err := promptOnce(t, sp, brief); err != nil {
+				t.Fatalf("err = %v, want it confirmed from the log", err)
+			}
+			if len(p.said) != 1 || f.count("pane.send_keys") != 0 || f.count("pane.send_text") != 0 {
+				t.Errorf("said %d times, %d keys, %d pastes", len(p.said), f.count("pane.send_keys"), f.count("pane.send_text"))
+			}
+		})
+	}
+}
+
+// Without the log, the same screen gets Enter and, still showing it, an
+// error: the screen is all there is to go by.
+func TestPromptStaleBoxWithoutLogIsUnconfirmed(t *testing.T) {
+	f, sp, p := simAgent(t)
+	p.status, p.quiet, p.staleBox = "working", true, true
+	err := promptOnce(t, sp, brief)
+	var he *HerdrError
+	if !errors.As(err, &he) || he.Code != "prompt_unconfirmed" || he.Message != promptTyped.why() {
+		t.Fatalf("err = %v, want it left in the box", err)
+	}
+	if f.count("pane.send_keys") != promptTries-1 {
+		t.Errorf("%d Enters, want %d", f.count("pane.send_keys"), promptTries-1)
+	}
+}
+
+// Not in the log and still in the box: one more Enter takes it, and only
+// once it's in the log is it done.
+func TestPromptEnterWhenNotInLog(t *testing.T) {
+	f, sp, p := simAgent(t)
+	withLog(t, sp, p)
+	p.dropEnters = 1
+	if err := promptOnce(t, sp, brief); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.said) != 1 || f.count("pane.send_keys") != 1 || f.count("pane.send_text") != 0 {
+		t.Errorf("said %d times, %d Enters, %d pastes", len(p.said), f.count("pane.send_keys"), f.count("pane.send_text"))
+	}
+	if _, found, ok := logHas(p.log, "#t7 · chat:main", 0); !ok || !found {
+		t.Errorf("log lacks the brief: found %v ok %v", found, ok)
+	}
+}
+
+func TestLogHasReadsOnlyPastTheMark(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	old := `{"type":"user","message":{"content":"say \"hi\" · 你好"}}` + "\n"
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	size, found, ok := logHas(path, `say "hi" · 你好`, 0)
+	if !ok || !found || size != int64(len(old)) {
+		t.Fatalf("logHas = %d %v %v", size, found, ok)
+	}
+	if _, found, _ := logHas(path, `say "hi"`, size); found {
+		t.Error("found a line from before the mark")
+	}
+	if _, found, _ := logHas(path, `say "hi"`, -5); found {
+		t.Error("a tail of 5 bytes holds the line")
+	}
+	if _, _, ok := logHas(path+".gone", "x", 0); ok {
+		t.Error("a missing log reads as ok")
 	}
 }
 
