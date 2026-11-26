@@ -39,6 +39,10 @@ codeload 的 tar 包是整个仓库（几十 MB），devbox 走 Corplink 代理�
 
 API 的 `decode` 把请求体限在 1 MiB，base64 的文件放在 `/api/super/reply` 里，超过约 750 KB 就成了「invalid JSON body」。`collie reply --file` 改为先把每个文件流式传到 `/api/super/reply-files`，回复里只带 id；hub 仍接受旧 CLI 的内联 `data`。超过 40 MiB 的文件改发签名下载链接（`extensions/README.md` 第 3.7 节）：channel.send 一帧最多 64 MiB，base64 后的大文件装不下。
 
+## 扩展来的请求不是 candidate
+
+没有给来源设规则时，`policyFor` 对未知来源默认 `candidate`（Router 只在规则或记忆要求时才处理），微信绑定人发的「你好」就被标成了 candidate。扩展消息在 Collie 侧已经过了触发规则才成为 Trigger，所以 `prepareConvDeliveryLocked` 把没有规则的 `ext:*` 改成 `respond`；「来源策略」里设了规则的仍按规则。
+
 ## 验证码之后接着轮询
 
 微信扫码后可能要求输入手机上显示的数字。提交数字后扩展通常回 `kind:"qr"`（继续等确认），不是 `done`：界面要接着按 `step` 轮询，不能停在「没通过」。

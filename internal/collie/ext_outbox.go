@@ -150,7 +150,7 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 		}
 	}
 	full, footer := text, ""
-	if kind != extproto.KindProgress {
+	if m := h.manifest(conv.Ext); kind != extproto.KindProgress && (m == nil || !m.Contributes.Channel.NoFooter) {
 		footer = renderFooter(h.footer(), vars)
 		full += "\n\n" + footer
 	}

@@ -623,7 +623,7 @@ Flags may go before or after the text; text that has to spell a flag (say "--opt
   you'd pick; they can answer in chat or on the card.
 - Events in a thread ` + "`ext:<extension>:<chat>`" + ` (source ` + "`ext:wechat`" + `, ` + "`ext:larkx`" + `) are messages from a
   chat app (WeChat, Feishu) the human handed to you. Answer them in that thread:
-  ` + "`{{BIN}} reply --thread ext:… \"…\"`" + ` goes back to that chat with a footer (Markdown is fine),
+  ` + "`{{BIN}} reply --thread ext:… \"…\"`" + ` goes back to that chat (with a footer, none on WeChat; Markdown is fine),
   not to chat:main. Reply once per request with the result; ` + "`--progress \"…\"`" + ` sends a short
   note while a long job runs (WeChat allows few messages, so use it rarely). A timer whose
   thread is ` + "`ext:…`" + ` wants its result sent there the same way. ` + "`--file PATH`" + ` (repeatable)

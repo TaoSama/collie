@@ -10,7 +10,7 @@
   "runtime": {"builtin": "wechat"},
   "contributes": {
     "connector": {"id": "wechat", "login": "qr", "capabilities": ["status", "login", "receive", "send", "interest"]},
-    "channel": {"format": "markdown", "max_text": 3800, "kinds": ["answer", "progress", "result", "push"]}
+    "channel": {"format": "markdown", "max_text": 3800, "kinds": ["answer", "progress", "result", "push"], "no_footer": true}
   },
   "permissions": {"network": ["*.weixin.qq.com"]},
   "defaults": {"machine": "hub", "handler": "collie", "conversations": "owner"}

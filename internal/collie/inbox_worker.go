@@ -12,6 +12,12 @@ import (
 )
 
 func (h *extHost) prepareConvDeliveryLocked(c InboxConv, t *Trigger) {
+	// A chat message only becomes a trigger once it passed the extension's
+	// rules (your trigger word, or the bot's own chat): it is a request, not
+	// a maybe. A rule you set for the source in 来源策略 still wins.
+	if t.Action == "candidate" && !h.sp.st.hasPolicy(t.Source) {
+		t.Action = "respond"
+	}
 	if c.Handler != handlerAgent {
 		return
 	}

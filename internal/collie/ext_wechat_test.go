@@ -41,8 +41,18 @@ func TestCatalogHasWeChat(t *testing.T) {
 // startWeChat runs the fake extension under the id wechat, signed in.
 func startWeChat(t *testing.T, h *extHost) {
 	t.Helper()
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := fakeManifest(wechatExt, "receive")
+	for _, real := range cat {
+		if real.ID == wechatExt {
+			m.Contributes.Channel = real.Contributes.Channel // how it sends: no footer
+		}
+	}
 	h.mu.Lock()
-	h.cat[wechatExt] = fakeManifest(wechatExt, "receive")
+	h.cat[wechatExt] = m
 	h.mu.Unlock()
 	t.Cleanup(func() { h.configure(wechatExt, func(x *ExtSetting) { x.Enabled = false }) })
 	login(t, startExt(t, h, wechatExt))
@@ -63,7 +73,7 @@ func TestWeChatDirectoryQuickPath(t *testing.T) {
 	var sent []map[string]any
 	waitFor(t, "the list sent", func() bool { sent = sentLines(dir, wechatExt); return len(sent) == 1 })
 	text := fmt.Sprint(sent[0]["text"])
-	for _, want := range []string{"collie（", "1. [忙] fix-login：修登录", "2. [闲] docs：写文档", "Collie · 会话列表"} {
+	for _, want := range []string{"collie（", "1. [忙] fix-login：修登录", "2. [闲] docs：写文档"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the list lacks %q:\n%s", want, text)
 		}
@@ -131,8 +141,8 @@ func TestExtBigFileLink(t *testing.T) {
 	if !strings.HasPrefix(link, "https://hub.example/dl/"+o.Ref+"/0?exp=") || o.Files[1].Link != "" {
 		t.Fatalf("links: %+v", o.Files)
 	}
-	if i, j := strings.Index(o.Text, link), strings.Index(o.Text, o.Footer); i < 0 || j < i {
-		t.Fatalf("the link goes before the footer:\n%s", o.Text)
+	if !strings.Contains(o.Text, link) {
+		t.Fatalf("the link is in the text:\n%s", o.Text)
 	}
 	var sent []map[string]any
 	waitFor(t, "sent", func() bool { sent = sentLines(dir, wechatExt); return len(sent) == 1 })
@@ -252,5 +262,44 @@ func TestReplyFileUploadsAhead(t *testing.T) {
 	}
 	if err := cliReply([]string{"--thread", "ext:wechat:u1", "--file", filepath.Join(dir, "nope"), "x"}); err == nil {
 		t.Fatal("a missing file was sent")
+	}
+}
+
+// WeChat answers go without the footer (Feishu keeps it), and the bound
+// person's message is a request for the Router, not a candidate.
+func TestWeChatNoFooterAndRequest(t *testing.T) {
+	sp, h, dir := newExtTestHub(t)
+	startWeChat(t, h)
+	feed(t, dir, wechatExt, fakeMsg{Chat: "u1", ChatName: "我", ID: "w1", Sender: "u1", SenderName: "我", Mine: true, Text: "你好"})
+	var ts []*Trigger
+	waitFor(t, "a trigger", func() bool { ts = extTriggers(sp, "ext:"+wechatExt); return len(ts) == 1 })
+	sp.mu.Lock()
+	action := ts[0].Action
+	sp.mu.Unlock()
+	if action != "respond" {
+		t.Fatalf("your own message is a %s", action)
+	}
+	o, err := h.sendOut("ext:wechat:u1", "你好呀", extproto.KindAnswer, runInfo{Agent: "Claude"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Text != "你好呀" || o.Footer != "" {
+		t.Fatalf("a WeChat answer carries no footer: %q %q", o.Text, o.Footer)
+	}
+	if f, err := h.sendOut("ext:wechat:u1", "结果", extproto.KindResult, runInfo{}, ""); err != nil || f.Text != "结果" {
+		t.Fatalf("nor a result: %+v %v", f, err)
+	}
+
+	// A rule set for the source still decides.
+	sp.mu.Lock()
+	sp.st.Policies = []Policy{{Source: "ext:" + wechatExt, Action: "candidate"}}
+	sp.mu.Unlock()
+	feed(t, dir, wechatExt, fakeMsg{Chat: "u1", ChatName: "我", ID: "w2", Sender: "u1", SenderName: "我", Mine: true, Text: "再说一句"})
+	waitFor(t, "a second trigger", func() bool { ts = extTriggers(sp, "ext:"+wechatExt); return len(ts) == 2 })
+	sp.mu.Lock()
+	action = ts[1].Action
+	sp.mu.Unlock()
+	if action != "candidate" {
+		t.Fatalf("the rule says candidate, got %s", action)
 	}
 }

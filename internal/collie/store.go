@@ -298,6 +298,16 @@ func (st *State) policyFor(source string) Policy {
 	return Policy{Source: source, Action: "candidate"}
 }
 
+// hasPolicy: a rule in 来源策略 covers source (by name or a trailing *).
+func (st *State) hasPolicy(source string) bool {
+	for _, p := range st.Policies {
+		if p.Source == source || strings.HasSuffix(p.Source, "*") && strings.HasPrefix(source, strings.TrimSuffix(p.Source, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
 // ---------------------------------------------------------------- timers
 
 // parseSpec returns the first run time for a timer spec.

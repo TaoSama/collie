@@ -85,7 +85,7 @@ COLLIE_HOME/ext/<id>/
 | `requires` | 否 | 运行前要在 PATH 里找到的命令，找不到就不启动，并在界面上说缺什么 |
 | `label` | 否 | 短名，显示在收件箱、事件这类窄的地方（如「飞书」），省略时用 `name` |
 | `contributes.connector` | 是 | `id`（调用时的 `contribution`），`login`：`qr`（扫码）、`secret`（粘贴密钥）或省略；`capabilities` 见下表；`actions` 见第 3.6 节 |
-| `contributes.channel` | 是 | 回复怎么发：`format`（`markdown` 原样发）、`max_text`（Collie 不切分，只用来提示）、`kinds`（接受的发送类型） |
+| `contributes.channel` | 是 | 回复怎么发：`format`（`markdown` 原样发）、`max_text`（Collie 不切分，只用来提示）、`kinds`（接受的发送类型）、`no_footer`（`true` 时回复不带尾标；只给一看就是 bot 的渠道用，如微信） |
 | `configuration` | 否 | 配置表单，见第 6 节 |
 | `permissions.network` | 否 | 它会访问的域名，**只展示不强制**（第 7 节） |
 | `defaults` | 否 | `machine`：`hub` / `router`（Router 所在电脑）/ `ask`（没有默认，打开前必须由人选电脑，用于后端只在某一台电脑上的扩展）；`handler`：新会话默认交给 `collie` 还是专属 `agent`；`conversations`：新会话默认 `off`（不处理）还是 `owner`（只处理绑定人的会话） |
@@ -238,11 +238,12 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 ```
 
 - **会话**：一个外部聊天对应一个线程 `ext:<id>:<chat_id>`。收件箱列出所有会话，**默认不处理**。你本人发的触发词在任何会话都生效；会话开关只管别人的消息：打开后（再加「任何人可唤起」）别人的触发词才算，也只有打开的会话保留消息记录。
+- **请求**：消息过了下面这些规则才成为 Trigger，所以默认是 `respond`（交给 Router 处理），不是 `candidate`；「来源策略」里给 `ext:<id>` 设了规则时按规则。
 - **触发**：有一个全局触发词（默认 `/ai`，在「接入」里改）。只有以触发词开头的消息才算请求；没打开「任何人可唤起」的会话只认你本人。清单里 `defaults.conversations` 为 `owner` 的扩展（微信），绑定人的会话不需要触发词。
 - **快捷指令**：微信里你单独发一句「查看会话列表」「有哪些空闲任务」这类话（判定见 `wechat.DirectoryQuery`，带别的意图就不算），Collie 不经过 Router，直接回会话列表（按目录和电脑分组，忙的排前面），作为这条消息的回复（`internal/collie/ext_directory.go`）。
 - **交给谁**：每个会话选 Collie（Router）或专属 agent（订阅该线程的 worker）。专属 agent 跑在扩展所在的电脑（接入里扩展的「运行在」）：扩展的专属设置优先于「设置」里的派活电脑。扩展在 hub 上时不起 agent（hub 不跑 agent），回一句说明请你把扩展改到一台电脑上。启动失败的说明不带尾标。
 - **回复**：默认原路返回。专属 agent 一轮的最后一条消息、Router 的 `collie reply --thread ext:…`，都会带上尾标，发回原会话。只有定时任务把发到设成某个会话，或者 `collie reply --to <id>`，才会发到别的渠道。
-- **尾标**：全局模板，可用 `{agent} {model} {effort} {elapsed} {machine} {worker} {ctx} {time} {by}`，留空时用默认模板。尾标也用来识别自己发出的消息，避免回环。
+- **尾标**：清单 `contributes.channel.no_footer` 为 `true` 的扩展（微信）不带尾标，其余用全局模板，可用 `{agent} {model} {effort} {elapsed} {machine} {worker} {ctx} {time} {by}`，留空时用默认模板。尾标也用来识别自己发出的消息，避免回环。
 
 扩展不需要知道这些规则，只要如实报告「谁、在哪个会话、什么时候、说了什么、是不是本人」。
 
@@ -278,7 +279,7 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 - **凭证**：登录态只能通过 `connector.secrets.*` 存取，落在扩展所在电脑的 `secrets.json`（0600），不上传 hub。
 - **日志**：不写 token、cookie、消息正文、手机号；错误只写类别。
 - **消息正文**：hub 只保存已打开处理的会话的最近 50 条，其余会话只留名字和一行预览。
-- **代人发言**：扩展以你的身份发消息时，必须让接收方能分辨这是 AI 发的。Collie 的尾标做到了这一点，扩展不要再去掉或改写正文。
+- **代人发言**：扩展以你的身份发消息时，必须让接收方能分辨这是 AI 发的。Collie 的尾标做到了这一点，扩展不要再去掉或改写正文。只有回复由一个单独的 bot 账号发出的渠道（微信）才可以用 `no_footer` 去掉尾标。
 - **别人唤起**：会话打开「任何人可唤起」后，专属 agent 的工作目录是 `COLLIE_HOME/ext-sandbox/<会话>`。这只是默认工作目录，不是沙箱。
 
 ## 8. 运行在哪台电脑

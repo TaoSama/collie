@@ -56,6 +56,9 @@ type ExtManifest struct {
 			Format  string   `json:"format"`
 			MaxText int      `json:"max_text,omitempty"`
 			Kinds   []string `json:"kinds,omitempty"`
+			// NoFooter: answers go without Collie's footer (WeChat: the bot
+			// is plainly not you, and the footer only takes room).
+			NoFooter bool `json:"no_footer,omitempty"`
 		} `json:"channel"`
 		// UI is reserved for views an extension draws in Collie (not used yet).
 		UI []json.RawMessage `json:"ui,omitempty"`

@@ -152,7 +152,7 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 3. 如果微信要求输入手机上显示的数字：界面出现输入框，填入后继续轮询直到「已登录」；填错时提示重填。
 4. 状态变为已登录，`detail` 里有绑定人；收件箱出现「你和 bot 的私聊」，开关默认打开。
 5. 登录前发给 bot 的旧消息不处理（基线）。
-6. 给 bot 发一句普通请求：Collie 收到（事件里来源 `ext:wechat`），回复带尾标、Markdown 原样发回微信。
+6. 给 bot 发一句普通请求：Collie 收到（事件里来源 `ext:wechat`），回复不带尾标、Markdown 原样发回微信。
 7. 发「查看会话列表」：不经过 Router，直接回会话列表。
 8. 让 agent `collie reply --thread ext:wechat:… --file` 发一张图、一个小文件、一个超过 40 MiB 的文件：前两个是微信里的图片和文件，最后一个是下载链接，手机能打开下载，24 小时后链接失效。
 9. 进度：`--progress` 最多 3 条。
