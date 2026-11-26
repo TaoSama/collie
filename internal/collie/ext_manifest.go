@@ -1,8 +1,10 @@
 package collie
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"regexp"
@@ -376,6 +378,16 @@ func validConfigValue(p ExtConfigProp, v any) bool {
 	return false
 }
 
+func decodeExtManifest(r io.Reader) (*ExtManifest, error) {
+	m := &ExtManifest{}
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields() // a misspelled field must not pass unnoticed
+	if err := dec.Decode(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // extCatalog reads the manifests compiled in (extensions/*/collie-extension.json).
 func extCatalog() ([]*ExtManifest, error) {
 	return readExtCatalog(extensions.Manifests)
@@ -392,10 +404,8 @@ func readExtCatalog(fsys fs.FS) ([]*ExtManifest, error) {
 		if err != nil {
 			return nil, err
 		}
-		m := &ExtManifest{}
-		dec := json.NewDecoder(strings.NewReader(string(b)))
-		dec.DisallowUnknownFields() // a misspelled field must not pass unnoticed
-		if err := dec.Decode(m); err != nil {
+		m, err := decodeExtManifest(bytes.NewReader(b))
+		if err != nil {
 			return nil, fmt.Errorf("%s: %v", f, err)
 		}
 		if err := m.validate(); err != nil {

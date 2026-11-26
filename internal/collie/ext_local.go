@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -53,10 +54,8 @@ func readLocalManifest(f string) (*ExtManifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &ExtManifest{}
-	dec := json.NewDecoder(strings.NewReader(string(b)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(m); err != nil {
+	m, err := decodeExtManifest(bytes.NewReader(b))
+	if err != nil {
 		return nil, err
 	}
 	verDir := filepath.Dir(f)

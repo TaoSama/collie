@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -420,10 +421,8 @@ func readStrictManifest(f string) (*ExtManifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("包里没有 collie-extension.json")
 	}
-	m := &ExtManifest{}
-	dec := json.NewDecoder(strings.NewReader(string(b)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(m); err != nil {
+	m, err := decodeExtManifest(bytes.NewReader(b))
+	if err != nil {
 		return nil, err
 	}
 	if m.Local || m.Market != nil || m.Source != nil || m.Runtime.Builtin != "" {
