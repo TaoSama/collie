@@ -5481,6 +5481,9 @@
   let scrollSyncTimer = null;
   let topProbeTimer = null;
   let pageUpBusy = false;
+  let homeFollowups = 0;
+  let homeFollowupBusy = false;
+  let lastSseSeq = 0;
   let pendingScrollPerf = null;
   let lastWheelRtt = 80;
   let screenPrependGen = 0;
@@ -5488,13 +5491,17 @@
   const wheelUp = window.collieWheel.tracker(); // how far that turned the program's view up
   // Wheel reports go out BURST at a time, strictly one request in flight
   // (wheel.js sender), without waiting behind unrelated sendChain work. Upward
-  // wheel sends ask the server to return the updated frame inline (wait: true)
-  // so cold misses over remote hubs finish in one round trip.
+  // wheel sends ask the server to return the updated frame inline as a compact
+  // diff (wait: true, diff: true, base_seq) so cold misses over remote hubs
+  // finish in 1 RTT and fit in a single TCP segment.
   const wheelOut = window.collieWheel.sender((pane, text) => {
     const isUp = text.includes("\x1b[<64;");
     const genBefore = screenPrependGen;
     const tSent = performance.now();
-    return postPane(pane, "text", isUp ? { text, wait: true } : { text })
+    const payload = isUp
+      ? { text, wait: true, diff: true, base_seq: lastSseSeq }
+      : { text };
+    return postPane(pane, "text", payload, { timeoutMs: 4000 })
       .then((data) => {
         const rtt = performance.now() - tSent;
         lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
@@ -5504,13 +5511,15 @@
           armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));
         }
       })
-      .catch((e) => toast(e.message));
+      .catch((e) => { if (e?.name !== "TimeoutError" && e?.name !== "AbortError") toast(e.message); });
   });
   function cancelScreenScrollTimers() {
     clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
     clearTimeout(topProbeTimer); topProbeTimer = null;
     pendingScrollPerf = null;
     pageUpBusy = false;
+    homeFollowups = 0;
+    homeFollowupBusy = false;
   }
   function setScreenWheel(on) {
     const want = !!on;
@@ -5562,6 +5571,7 @@
   function resetScreen() {
     prevScreenLines = null;
     sseScreenLines = null;
+    lastSseSeq = 0;
     pendingScreen = null;
     setTermLook(null);
     screenFresh = true;
@@ -5653,20 +5663,29 @@
     const home = wheelUp.home();
     const pane = home?.pane || current;
     const text = home?.text || window.collieWheel.HOME_SEQ;
+    homeFollowups = 6;
+    homeFollowupBusy = true;
     screenCache.returnToLive();
-    sendChain = sendChain.then(() => postPane(pane, "text", { text })).catch((e) => toast(e.message));
+    postPane(pane, "text", { text, wait: true, diff: true, base_seq: lastSseSeq }, { timeoutMs: 4000 })
+      .then((data) => {
+        homeFollowupBusy = false;
+        if (pane !== current || curMode() !== "screen") return;
+        if (data?.frame) drawScreen(data.frame, null, true);
+      })
+      .catch((e) => { homeFollowupBusy = false; if (e?.name !== "TimeoutError" && e?.name !== "AbortError") toast(e.message); });
     updateScreenScrollbar();
   }
 
   function sendScreenPageUp(count = 1) {
     if (!current || pageUpBusy) return;
+    homeFollowups = 0;
     pageUpBusy = true;
     const n = Math.min(6, Math.max(1, count | 0));
     const pane = current;
     const genBefore = screenPrependGen;
     const tSent = performance.now();
     wheelUp.scrolled(pane, -n * Math.max(10, (size.rows || 40) - 8));
-    postPane(pane, "text", { text: window.collieWheel.PAGE_UP.repeat(n), wait: true })
+    postPane(pane, "text", { text: window.collieWheel.PAGE_UP.repeat(n), wait: true, diff: true, base_seq: lastSseSeq }, { timeoutMs: 4000 })
       .then((data) => {
         const rtt = performance.now() - tSent;
         lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
@@ -5676,7 +5695,7 @@
           armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));
         }
       })
-      .catch((e) => toast(e.message))
+      .catch((e) => { if (e?.name !== "TimeoutError" && e?.name !== "AbortError") toast(e.message); })
       .finally(() => { pageUpBusy = false; });
   }
 
@@ -5792,6 +5811,7 @@
       const n = Math.trunc(rest / lineH());
       if (!n) return;
       rest -= n * lineH();
+      if (n < 0) homeFollowups = 0;
       const t0 = performance.now();
       const res = screenCache.scroll(n, t0);
       if (res.renderLines) {
@@ -6089,8 +6109,9 @@
     const stick = restore ? !!restore.atBottom : (screenFresh || screenNearBottom());
     setTermLook(f.kind);
     const decoded = inline
-      ? window.collieScreenCache.applyFramePatch(null, f)
+      ? window.collieScreenCache.applyFramePatch(sseScreenLines, f)
       : (sseScreenLines = window.collieScreenCache.applyFramePatch(sseScreenLines, f));
+    if (!inline && f.seq) lastSseSeq = f.seq;
     if (!screenFresh && term.hasSelection()) {
       pendingScreen = f;
       return;
@@ -6127,6 +6148,28 @@
       cursor = ing.atBottom ? !!f.cursor : false;
       if (pendingScrollPerf && ing.changed) {
         perf = { t0: pendingScrollPerf.t0, hit: false, sseMs: sseNow - pendingScrollPerf.t0 };
+      }
+      // If returning to bottom (e.g. agy from top of a very long history) and
+      // the agent still shows a scroll-down indicator ("↓ 27 lines"), send
+      // bounded follow-up PageDown bursts until the real bottom is reached.
+      if (homeFollowups > 0) {
+        if (!ing.scrolledIndicator) {
+          homeFollowups = 0;
+        } else if (!homeFollowupBusy && current) {
+          homeFollowups--;
+          homeFollowupBusy = true;
+          const pane = current;
+          const pages = Math.min(12, Math.max(2, Math.ceil((ing.belowLines || 80) / Math.max(10, paneRows - 8))));
+          postPane(pane, "text", {
+            text: window.collieWheel.PAGE_DOWN.repeat(pages), wait: true, diff: true, base_seq: lastSseSeq,
+          }, { timeoutMs: 4000 })
+            .then((data) => {
+              homeFollowupBusy = false;
+              if (pane !== current || curMode() !== "screen") return;
+              if (data?.frame) drawScreen(data.frame, null, true);
+            })
+            .catch(() => { homeFollowupBusy = false; });
+        }
       }
     } else if (lines.length > 0) {
       lines = lines.slice();
@@ -6227,11 +6270,14 @@
   function dropDirectMachine(m) {
     if (m && directs.get(m)?.base) directs.set(m, { until: Date.now() + 5000 });
   }
-  async function postPane(id, kind, body) {
+  async function postPane(id, kind, body, opts = {}) {
+    const signal = opts.timeoutMs && typeof AbortSignal !== "undefined" && AbortSignal.timeout
+      ? AbortSignal.timeout(opts.timeoutMs)
+      : opts.signal;
     const d = directOf(id);
     if (d) {
       try {
-        const res = await fetch(directURL(d, id, kind), { method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(DIRECT_TIMEOUT_MS) });
+        const res = await fetch(directURL(d, id, kind), { method: "POST", body: JSON.stringify(body), signal: signal || AbortSignal.timeout(DIRECT_TIMEOUT_MS) });
         const data = await res.json().catch(() => ({}));
         if (res.ok) return data;
         if (res.status !== 401) throw new Error(data.error || res.statusText);
@@ -6242,7 +6288,7 @@
       }
       dropDirect(id);
     }
-    return api(paneURL(id, kind), { body });
+    return api(paneURL(id, kind), { body, signal });
   }
 
   // ───────────────────────────── one agent: conversation

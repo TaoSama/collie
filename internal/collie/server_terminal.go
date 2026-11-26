@@ -14,16 +14,19 @@ import (
 )
 
 type paneScreenMeta struct {
-	size     Rect
-	wheel    bool
-	kind     string
-	lastText string
-	at       time.Time
+	size      Rect
+	wheel     bool
+	kind      string
+	lastText  string
+	lastLines []string
+	seq       uint64
+	at        time.Time
 }
 
 type screenMetaCache struct {
-	mu sync.RWMutex
-	m  map[string]paneScreenMeta
+	mu   sync.RWMutex
+	m    map[string]paneScreenMeta
+	next uint64
 }
 
 func (c *screenMetaCache) get(id string) (paneScreenMeta, bool) {
@@ -33,12 +36,37 @@ func (c *screenMetaCache) get(id string) (paneScreenMeta, bool) {
 	return v, ok
 }
 
-func (c *screenMetaCache) set(id string, v paneScreenMeta) {
+func (c *screenMetaCache) set(id string, v paneScreenMeta) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.m == nil {
 		c.m = map[string]paneScreenMeta{}
 	}
+	c.next++
+	v.seq = c.next
+	v.at = time.Now()
+	c.m[id] = v
+	return v.seq
+}
+
+// setLastText updates only the raw lastText (e.g. after an inline wait=true
+// response) without disturbing lastLines/seq, which stay aligned with the SSE
+// stream's diff baseline.
+func (c *screenMetaCache) setLastText(id, raw string, sz Rect, wheel bool, kind string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = map[string]paneScreenMeta{}
+	}
+	v := c.m[id]
+	if sz.Width > 0 {
+		v.size = sz
+	}
+	if kind != "" {
+		v.kind = kind
+	}
+	v.wheel = wheel
+	v.lastText = raw
 	v.at = time.Now()
 	c.m[id] = v
 }
@@ -158,8 +186,11 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 					lastSentHist = h
 				}
 				sentDiff := false
+				var curLines []string
+				if mode != "log" {
+					curLines = splitScreenLines(text)
+				}
 				if useDiff {
-					curLines := splitScreenLines(text)
 					if len(lastSentLines) > 0 {
 						shift, patch, patchBytes := computeScreenDiff(lastSentLines, curLines)
 						if len(patch) < len(curLines) && patchBytes*10 < len(text)*7 {
@@ -174,12 +205,16 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				if !sentDiff {
 					frame["text"] = text
 				}
+				if mode != "log" {
+					// Record metadata & SSE diff baseline BEFORE flushing the frame
+					// so an immediate scroll-up POST /text hits the cache with 0 race.
+					frame["seq"] = s.screens.set(id, paneScreenMeta{
+						size: lastSize, wheel: wheel, kind: kind, lastText: lastText, lastLines: curLines,
+					})
+				}
 				b, _ := json.Marshal(frame)
 				if sse.send("frame", b) != nil {
 					return
-				}
-				if mode != "log" {
-					s.screens.set(id, paneScreenMeta{size: lastSize, wheel: wheel, kind: kind, lastText: lastText})
 				}
 				beat = time.Now()
 			} else if wheel && mode != "log" {
@@ -380,9 +415,11 @@ func escChunks(text string, max int) []string {
 
 func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text  string `json:"text"`
-		Enter bool   `json:"enter"`
-		Wait  bool   `json:"wait"`
+		Text    string `json:"text"`
+		Enter   bool   `json:"enter"`
+		Wait    bool   `json:"wait"`
+		Diff    bool   `json:"diff"`
+		BaseSeq uint64 `json:"base_seq"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -405,7 +442,7 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	s.wakes.wake(id)
 	resp := map[string]any{"ok": true}
 	if body.Wait {
-		if frame := s.waitForScreenFrame(r.Context(), id, beforeMeta, hasMeta); frame != nil {
+		if frame := s.waitForScreenFrame(r.Context(), id, beforeMeta, hasMeta, body.Diff, body.BaseSeq); frame != nil {
 			resp["frame"] = frame
 		}
 	}
@@ -414,11 +451,15 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 
 // waitForScreenFrame briefly polls local herdr right after a wheel write so a
 // remote browser gets the updated frame in the same HTTP round trip instead of
-// waiting for a separate SSE delivery. Bounded to 32ms so it never stalls.
-func (s *Server) waitForScreenFrame(parent context.Context, id string, meta paneScreenMeta, hasMeta bool) map[string]any {
-	ctx, cancel := context.WithTimeout(parent, 55*time.Millisecond)
+// waiting for a separate SSE delivery. The 150ms ceiling absorbs herdr's 100ms
+// fresh-socket accept slot and agy's ~110ms redraw while returning in ~3-8ms
+// whenever the frame updates immediately. When baseSeq matches the last SSE
+// frame's baseline and diff is requested, returns a compact row-shift patch so
+// the response fits in a single TCP segment.
+func (s *Server) waitForScreenFrame(parent context.Context, id string, meta paneScreenMeta, hasMeta, wantDiff bool, baseSeq uint64) map[string]any {
+	ctx, cancel := context.WithTimeout(parent, 160*time.Millisecond)
 	defer cancel()
-	deadline := time.Now().Add(50 * time.Millisecond)
+	deadline := time.Now().Add(150 * time.Millisecond)
 	for {
 		time.Sleep(2 * time.Millisecond)
 		res, err := s.herdr.ReadFast(ctx, id, "recent", "ansi", screenLines, 6*time.Millisecond)
@@ -439,13 +480,27 @@ func (s *Server) waitForScreenFrame(parent context.Context, id string, meta pane
 			}
 			text, cursor := markScreenCursor(res.Text, meta.size.Height, meta.kind)
 			text = trimScreenBlankTail(text)
-			meta.lastText = res.Text
-			s.screens.set(id, meta)
-			return map[string]any{
-				"text": text, "revision": res.Revision, "truncated": res.Truncated,
+			s.screens.setLastText(id, res.Text, meta.size, meta.wheel, meta.kind)
+			frame := map[string]any{
+				"revision": res.Revision, "truncated": res.Truncated,
 				"cols": meta.size.Width, "rows": meta.size.Height, "cursor": cursor,
 				"wheel": meta.wheel, "kind": meta.kind,
 			}
+			sentDiff := false
+			if wantDiff && baseSeq > 0 && baseSeq == meta.seq && len(meta.lastLines) > 0 {
+				curLines := splitScreenLines(text)
+				shift, patch, patchBytes := computeScreenDiff(meta.lastLines, curLines)
+				if len(patch) < len(curLines) && patchBytes*10 < len(text)*7 {
+					frame["shift"] = shift
+					frame["patch"] = patch
+					frame["n"] = len(curLines)
+					sentDiff = true
+				}
+			}
+			if !sentDiff {
+				frame["text"] = text
+			}
+			return frame
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			return nil

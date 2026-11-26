@@ -65,6 +65,23 @@ test("scrolling back cancels lines not sent yet; leaving drops them", async () =
   assert.equal(sent.length, 2, "nothing after leaving");
 });
 
+test("drop detaches a stalled in-flight send so the next pane scrolls immediately", async () => {
+  const sent = [];
+  let releaseStuck;
+  const s = sender((pane, text) => {
+    sent.push(pane);
+    if (pane === "w1:p1") return new Promise((r) => { releaseStuck = r; });
+    return Promise.resolve();
+  });
+  s.scroll("w1:p1", -4, 120, 40);
+  assert.deepEqual(sent, ["w1:p1"]);
+  s.drop(); // leave w1:p1 while its request is still stalled
+  s.scroll("w2:p1", -4, 120, 40);
+  assert.deepEqual(sent, ["w1:p1", "w2:p1"], "new pane must not wait behind stalled old pane");
+  releaseStuck?.();
+  await new Promise((d) => setTimeout(d, 0));
+});
+
 test("nothing to send for a view that is back at the bottom, or never scrolled", () => {
   const w = tracker();
   assert.equal(w.home(), null);

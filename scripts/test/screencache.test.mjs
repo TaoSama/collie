@@ -265,3 +265,59 @@ test("disjoint PageUp drag to top stays scrolled up and dragging back to bottom 
     assert.equal(c.scrollbar().ratio, 1);
   }
 });
+
+test("Claude opened at verified top without pill still loads scrollbar at ratio 0, and mid-history PageUp never snaps to ratio 1", () => {
+  // Case 1: Claude opened already at top (banner at row 0, NO Jump-to-bottom pill)
+  const cTop = createScreenCache();
+  const topNoPill = makeClaudeFrame(1, { sticky: false, pill: false });
+  topNoPill[0] = "  Claude Code v2.1.302";
+  cTop.ingest(topNoPill, { pane: "w9:p1", kind: "claude", cols: 120, rows: 40, now: 100 });
+  const sb0 = cTop.scrollbar();
+  assert.equal(sb0.visible, true, "scrollbar must be visible immediately at verified Claude top");
+  assert.equal(sb0.ratio, 0, "ratio must be 0 at verified Claude top");
+  assert.equal(sb0.atBottom, false);
+
+  // Also test sparse top banner where hist arrives asynchronously via event: hist
+  const cSparse = createScreenCache();
+  const sparseTop = makeClaudeFrame(1, { sticky: false, pill: false });
+  sparseTop[0] = "  Claude Code v2.1.302";
+  for (let i = 10; i < 32; i++) sparseTop[i] = "";
+  cSparse.ingest(sparseTop, { pane: "w9:p2", kind: "claude", cols: 120, rows: 40, now: 100 });
+  assert.equal(cSparse.setHistHint(184), true);
+  assert.equal(cSparse.scrollbar().visible, true, "async hist hint must reveal scrollbar at top");
+  assert.equal(cSparse.scrollbar().ratio, 0);
+
+  // Case 2: Claude disjoint PageUp jump showing sticky prompt bar (row 0) WITHOUT pill
+  const cDrag = createScreenCache();
+  cDrag.ingest(makeClaudeFrame(148, { sticky: false, pill: false }), { pane: "w9:p3", kind: "claude", cols: 120, rows: 40, hist: 184, now: 100 });
+  const jump = cDrag.scrollToRatio(0, 200);
+  assert.ok(jump.pageUp > 0);
+  const midClaude = makeClaudeFrame(110, { sticky: true, pill: false });
+  cDrag.ingest(midClaude, { pane: "w9:p3", kind: "claude", cols: 120, rows: 40, now: 300 });
+  // Even after a second frame at the same scrolled-up position (no pill), ratio stays < 1
+  cDrag.ingest(midClaude, { pane: "w9:p3", kind: "claude", cols: 120, rows: 40, now: 400 });
+  assert.equal(cDrag.scrollbar().atBottom, false);
+  assert.ok(cDrag.scrollbar().ratio < 0.8, `Claude sticky-top disjoint frame must not snap to ratio 1 (got ${cDrag.scrollbar().ratio})`);
+});
+
+test("agy partial returnToLive still showing ↓ 27 lines stays not-at-bottom until real bottom arrives", () => {
+  const c = createScreenCache();
+  c.ingest(makeAgyFrame(1, { sticky: false }), { pane: "w8:p1", kind: "agy", cols: 120, rows: 40, hist: 184, now: 100 });
+  c.scrollToRatio(1, 200);
+  // agy responded to initial HOME_SEQ but still has 27 lines left below
+  const partial = makeAgyFrame(122, { sticky: true });
+  partial[35] = "                                                         ↓ 27 lines";
+  const r1 = c.ingest(partial, { pane: "w8:p1", kind: "agy", cols: 120, rows: 40, now: 300 });
+  assert.equal(r1.scrolledIndicator, true);
+  assert.equal(r1.belowLines, 27);
+  assert.equal(c.scrollbar().atBottom, false, "must not claim atBottom while ↓ 27 lines is still shown");
+  assert.ok(c.scrollbar().ratio < 1, `ratio must stay < 1 while 27 lines remain (got ${c.scrollbar().ratio})`);
+
+  // Follow-up PageDown reaches true live bottom (no ↓ indicator)
+  c.returnToLive();
+  const realBot = makeAgyFrame(148, { sticky: false });
+  const r2 = c.ingest(realBot, { pane: "w8:p1", kind: "agy", cols: 120, rows: 40, now: 400 });
+  assert.equal(r2.scrolledIndicator, false);
+  assert.equal(c.scrollbar().atBottom, true);
+  assert.equal(c.scrollbar().ratio, 1);
+});

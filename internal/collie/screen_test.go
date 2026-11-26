@@ -666,4 +666,89 @@ func TestSendTextWaitReturnsUpdatedFrame(t *testing.T) {
 	if !out.OK || out.Frame == nil || !strings.Contains(out.Frame.Text, "LINE-062") || out.Frame.Revision != 2 || !out.Frame.Wheel || out.Frame.Kind != "claude" {
 		t.Fatalf("unexpected response: %s", w.Body.String())
 	}
+
+	// Test compact diff response (wait=true, diff=true, base_seq matching) + >50ms redraw window.
+	prevLines := make([]string, 30)
+	curLines := make([]string, 30)
+	for i := 0; i < 30; i++ {
+		prevLines[i] = "VERIFY row " + strings.Repeat("a", 50) + string(rune('A'+(i%26)))
+		if i >= 4 {
+			curLines[i] = prevLines[i-4]
+		} else {
+			curLines[i] = "OLDER row " + strings.Repeat("b", 50) + string(rune('0'+i))
+		}
+	}
+	prevRaw := strings.Join(prevLines, "\n")
+	curRaw := strings.Join(curLines, "\n")
+	var slowSent atomic.Bool
+	h2 := &Herdr{
+		local: &Machine{
+			ID: "", Name: "test", Local: true, Online: true,
+			conn: &herdrConn{dial: func(ctx context.Context) (net.Conn, error) {
+				c1, c2 := net.Pipe()
+				go func() {
+					defer c2.Close()
+					sc := bufio.NewScanner(c2)
+					if !sc.Scan() {
+						return
+					}
+					var req struct {
+						ID     string `json:"id"`
+						Method string `json:"method"`
+					}
+					json.Unmarshal(sc.Bytes(), &req)
+					var resp map[string]any
+					switch req.Method {
+					case "pane.send_text":
+						slowSent.Store(true)
+						resp = map[string]any{"id": req.ID, "result": map[string]any{}}
+					case "pane.read":
+						// Simulate a 70ms herdr/agent redraw (> old 50ms window, < new 150ms window).
+						time.Sleep(70 * time.Millisecond)
+						txt := prevRaw
+						if slowSent.Load() {
+							txt = curRaw
+						}
+						resp = map[string]any{"id": req.ID, "result": map[string]any{"read": map[string]any{"text": txt, "revision": 11}}}
+					}
+					b, _ := json.Marshal(resp)
+					c2.Write(append(b, '\n'))
+				}()
+				return c1, nil
+			}},
+		},
+		remote: map[string]*Machine{},
+	}
+	srv2 := &Server{herdr: h2, token: "tok", web: fstest.MapFS{}}
+	seq := srv2.screens.set("w1:p1", paneScreenMeta{
+		size: Rect{Width: 120, Height: 30}, wheel: true, kind: "codex", lastText: prevRaw, lastLines: prevLines,
+	})
+	body := `{"text":"\u001b[<64;60;20M","wait":true,"diff":true,"base_seq":` + jsonInt(seq) + `}`
+	r2 := httptest.NewRequest("POST", "/api/panes/w1:p1/text", strings.NewReader(body))
+	r2.SetPathValue("id", "w1:p1")
+	w2 := httptest.NewRecorder()
+	srv2.sendText(w2, r2)
+	if w2.Code != 200 {
+		t.Fatalf("diff status=%d body=%s", w2.Code, w2.Body.String())
+	}
+	var out2 struct {
+		OK    bool `json:"ok"`
+		Frame *struct {
+			Text  string   `json:"text"`
+			Shift int      `json:"shift"`
+			Patch [][2]any `json:"patch"`
+			N     int      `json:"n"`
+		} `json:"frame"`
+	}
+	if err := json.Unmarshal(w2.Body.Bytes(), &out2); err != nil {
+		t.Fatal(err)
+	}
+	if !out2.OK || out2.Frame == nil || out2.Frame.Text != "" || out2.Frame.Shift != -4 || len(out2.Frame.Patch) < 4 || len(out2.Frame.Patch) > 6 || out2.Frame.N != 30 {
+		t.Fatalf("expected compact diff frame with shift=-4 len(patch) in [4..6], got: %s", w2.Body.String())
+	}
+}
+
+func jsonInt(v uint64) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

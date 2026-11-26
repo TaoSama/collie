@@ -14,8 +14,9 @@
   const BURST = 8;
   // Back to the bottom: ctrl+End is Claude Code's and Codex's jump there;
   // agy ignores it and goes down with PageDown, which the other two do
-  // nothing with at the bottom. A few, for a long way up.
-  const CTRL_END = "\x1b[1;5F", PAGE_UP = "\x1b[5~", PAGE_DOWN = "\x1b[6~", HOME_PAGES = 4;
+  // nothing with at the bottom. 12 PageDowns (54 bytes total, well under
+  // escChunkMax=256) cover ~400 lines in one shot.
+  const CTRL_END = "\x1b[1;5F", PAGE_UP = "\x1b[5~", PAGE_DOWN = "\x1b[6~", HOME_PAGES = 12;
   // dy lines, toward older output when negative, at the middle of the pane.
   const report = (dy, cols, rows) =>
     `\x1b[<${dy < 0 ? UP : DOWN};${Math.ceil((cols || 2) / 2)};${Math.ceil((rows || 2) / 2)}M`.repeat(Math.abs(dy));
@@ -41,13 +42,19 @@
   function sender(send) {
     let owed = null; // { pane, lines, cols, rows }
     let busy = false;
+    let gen = 0;
     function pump() {
       if (busy || !owed?.lines) return;
       const { pane, cols, rows } = owed;
       const n = Math.max(-BURST, Math.min(BURST, owed.lines));
       owed.lines -= n;
       busy = true;
-      Promise.resolve(send(pane, report(n, cols, rows))).finally(() => { busy = false; pump(); });
+      const g = gen;
+      Promise.resolve(send(pane, report(n, cols, rows))).finally(() => {
+        if (g !== gen) return;
+        busy = false;
+        pump();
+      });
     }
     return {
       scroll(pane, dy, cols, rows) {
@@ -55,9 +62,10 @@
         Object.assign(owed, { lines: owed.lines + dy, cols, rows });
         pump();
       },
-      // Leaving the pane: what hasn't gone out stays here.
-      drop() { owed = null; },
+      // Leaving the pane: drop queued lines and detach any stalled in-flight
+      // send so the next pane is never head-of-line blocked behind it.
+      drop() { gen++; owed = null; busy = false; },
     };
   }
-  window.collieWheel = { report, tracker, sender, BURST, PAGE_UP, HOME_SEQ: CTRL_END + PAGE_DOWN.repeat(HOME_PAGES) };
+  window.collieWheel = { report, tracker, sender, BURST, PAGE_UP, PAGE_DOWN, HOME_SEQ: CTRL_END + PAGE_DOWN.repeat(HOME_PAGES) };
 })();

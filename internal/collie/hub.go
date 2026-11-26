@@ -3,6 +3,7 @@ package collie
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -140,6 +141,15 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, machine, path s
 				return err
 			}
 			b = suffixIDs(b, machine)
+			if len(b) >= 1024 && resp.Header.Get("Content-Encoding") == "" && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				var gzBuf bytes.Buffer
+				gz, _ := gzip.NewWriterLevel(&gzBuf, gzip.BestSpeed)
+				if _, err := gz.Write(b); err == nil && gz.Close() == nil && gzBuf.Len() < len(b) {
+					b = gzBuf.Bytes()
+					resp.Header.Set("Content-Encoding", "gzip")
+					resp.Header.Add("Vary", "Accept-Encoding")
+				}
+			}
 			resp.Body = io.NopCloser(bytes.NewReader(b))
 			resp.ContentLength = int64(len(b))
 			resp.Header.Set("Content-Length", strconv.Itoa(len(b)))

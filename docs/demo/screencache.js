@@ -376,34 +376,62 @@
         keys = bodyKeys;
         clean = seg.body.map(() => true);
         topPin = seg.topPin.slice();
-        topPinAtBottom = seg.scrolledIndicator ? [] : seg.topPin.slice();
+        const fullToBottom = bodyKeys.length >= 16 && bodyKeys.slice(-2).some((k) => k !== "");
+        const topScrolled = hasBanner && (seg.scrolledIndicator || totalHint > seg.body.length + 2 || fullToBottom);
+        const claudeStickyScrolled = kind === "claude" && seg.topPin.length > 0;
+        const scrolled = seg.scrolledIndicator || topScrolled || claudeStickyScrolled;
+        topPinAtBottom = scrolled ? [] : seg.topPin.slice();
         botPin = seg.botPin.slice();
-        if (!seg.scrolledIndicator) botPinLive = seg.botPin.slice();
+        if (!scrolled) botPinLive = seg.botPin.slice();
         bodyRows = seg.body.length;
         baseBodyRows = seg.body.length;
         viewTop = 0;
         agentTop = 0;
-        atBottom = !seg.scrolledIndicator;
-        seenBottom = !seg.scrolledIndicator;
+        atBottom = !scrolled;
+        seenBottom = !scrolled;
+        if (seg.belowLines > 0) estBelow = seg.belowLines;
+        else if (!seenBottom) estBelow = Math.max(seg.body.length, totalHint > seg.body.length ? totalHint - seg.body.length : seg.body.length);
+        else estBelow = 0;
         if (hasBanner) hitTop = true;
         lastAgentBodySig = bodySig;
         prefetchInFlight = false;
         pendingUpDemand = 0;
-        return { renderLines: padded, usedCache: false, hitTop, atBottom, changed: true };
+        return {
+          renderLines: padded,
+          usedCache: false,
+          hitTop,
+          atBottom,
+          changed: true,
+          scrolledIndicator: seg.scrolledIndicator,
+          belowLines: seg.belowLines,
+        };
       }
 
       // Always keep bottom chrome fresh (status/composer/cursor live here).
+      const claudeStickyScrolled = kind === "claude" && seg.topPin.length > 0 && topPinAtBottom.length === 0;
+      const scrolledFromBottom = seg.scrolledIndicator || claudeStickyScrolled;
       botPin = seg.botPin.slice();
-      if (!seg.scrolledIndicator) {
+      if (!scrolledFromBottom && seenBottom) {
         botPinLive = seg.botPin.slice();
-        seenBottom = true;
       }
       if (seg.topPin.length > 0) topPin = seg.topPin.slice();
-      if (!seg.scrolledIndicator && atBottom && agentTop >= maxViewTopFor(true) - 1) {
+      if (!scrolledFromBottom && atBottom && seenBottom && agentTop >= maxViewTopFor(true) - 1) {
         topPinAtBottom = seg.topPin.slice();
         baseBodyRows = seg.body.length;
       }
       bodyRows = seg.body.length;
+
+      // If we thought we were at live bottom (e.g. right after returnToLive on
+      // agy) yet the authoritative frame still shows a scroll-down indicator
+      // ("↓ 27 lines"), revoke atBottom/seenBottom so the UI stays honest and
+      // triggers follow-up PageDowns. During normal stitched upward scrolling
+      // (atBottom is already false), keep seenBottom intact since `lines` still
+      // anchors to the real bottom.
+      if (seg.scrolledIndicator && atBottom) {
+        atBottom = false;
+        seenBottom = false;
+        estBelow = Math.max(seg.belowLines || 0, bodyRows || seg.body.length);
+      }
 
       // Unchanged body (e.g. cursor blink / status bar update while a remote
       // wheel POST is still in flight): never falsely trip hitTop here! Only
@@ -417,6 +445,8 @@
           atBottom,
           changed: false,
           prepended: 0,
+          scrolledIndicator: seg.scrolledIndicator,
+          belowLines: seg.belowLines,
         };
       }
       lastAgentBodySig = bodySig;
@@ -520,7 +550,7 @@
       const browsing = !atBottom && (Math.abs(viewTop - agentTop) > 0 || now - lastUserScrollAt < 180);
       if (!browsing) {
         viewTop = agentTop;
-        if (!disjointUp && !seg.scrolledIndicator && seenBottom && agentTop >= Math.max(0, lines.length - seg.body.length) && seg.topPin.length === topPinAtBottom.length) {
+        if (!disjointUp && !scrolledFromBottom && seenBottom && agentTop >= Math.max(0, lines.length - seg.body.length) && seg.topPin.length === topPinAtBottom.length) {
           atBottom = true;
         }
       }
@@ -531,6 +561,8 @@
         atBottom,
         changed: true,
         prepended,
+        scrolledIndicator: seg.scrolledIndicator,
+        belowLines: seg.belowLines,
       };
     }
 
@@ -674,6 +706,14 @@
     function setHistHint(n) {
       if (n > 0 && n > totalHint) {
         totalHint = n;
+        // If we opened on a confirmed top banner (hitTop) and server history
+        // proves the transcript extends past the visible viewport, expose the
+        // scrollbar immediately at ratio=0 instead of hiding it.
+        if (hitTop && viewTop === 0 && lines.length > 0 && lines.length < n - 2 && seenBottom && atBottom) {
+          seenBottom = false;
+          atBottom = false;
+          estBelow = Math.max(estBelow, n - lines.length);
+        }
         return true;
       }
       return false;
