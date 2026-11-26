@@ -283,11 +283,26 @@ func TestAgyDesktopSessionsTakeOverOnlyTheCLIs(t *testing.T) {
 
 func TestAgyDesktopRowsReadTheCLIsIndexWithoutTheApp(t *testing.T) {
 	home := t.TempDir()
-	agyIndexFixture(t, filepath.Join(home, ".gemini", "antigravity-cli"))("cli", time.Now(), false)
+	add := agyIndexFixture(t, filepath.Join(home, ".gemini", "antigravity-cli"))
+	add("cli", time.Now(), false)
+	add("gone", time.Now(), false) // its conversation was deleted, its row left
+	agyTranscriptFixture(t, home, "cli")
 	rows := (&Server{home: home}).agyDesktopRows()
 	// The CLI leaves source empty in its own index: all its rows are the CLI's.
 	if len(rows) != 1 || rows[0].session != "cli" || rows[0].surface != surfaceCLI || rows[0].app != appAgyCLI {
-		t.Fatalf("rows = %+v, want the CLI's conversation, as the CLI's", rows)
+		t.Fatalf("rows = %+v, want the CLI's conversation with a log, as the CLI's", rows)
+	}
+}
+
+// agyTranscriptFixture gives a conversation of the CLI's its log.
+func agyTranscriptFixture(t *testing.T, home, id string) {
+	t.Helper()
+	logs := filepath.Join(home, ".gemini", "antigravity-cli", "brain", id, ".system_generated", "logs")
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logs, "transcript.jsonl"), nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
