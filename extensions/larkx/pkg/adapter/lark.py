@@ -23,6 +23,7 @@ QR_STATUS = {1: QR_WAITING, 2: QR_SCANNED, 3: QR_FAILED, 4: QR_FAILED, 5: QR_EXP
 MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM, MSG_CARD = 3, 4, 5, 6, 14
 CHAT_P2P = 1
 CMD_PUT_MESSAGE = 5
+SIGNED_OUT_RECHECK = 2  # seconds before asking Feishu again whether a session is really gone
 REQUEST_FRESH = 600  # seconds: an older message is history to Collie, never a request
 WORKING_REACTION = "OnIt"  # the reaction a request gets when Collie takes it: 「在做了」
 DOC_FEED_NEWS = (1, 2, 5)  # PushDocFeedRequest.Status NEW, UPDATE, CREATE
@@ -45,6 +46,21 @@ def is_request(text, word):
 
 class Expired(Exception):
     """Feishu signed this session out: scan again."""
+
+
+class Unreachable(OSError):
+    """Feishu could not be reached (a timeout, no connection, a server error): try again, the sign-in stands."""
+
+
+def network_failure(msg):
+    """Upstream tells a network failure from a signed-out session only in its message."""
+    return "网络" in msg
+
+
+def short_reason(msg):
+    """Upstream's message without its advice to import cookies again, which a network failure doesn't need."""
+    first = (msg or "").strip().splitlines()[0] if (msg or "").strip() else ""
+    return first.replace("凭证已过期或无效: ", "").replace("(先检查网络,不一定是凭证问题)", "")
 
 
 class NotSent(Exception):
@@ -134,7 +150,7 @@ class Feishu:
         self.recent = collections.OrderedDict()  # message id -> (root id, text)
         self.own_cids = collections.OrderedDict()  # what this adapter sent: its echo is not news
         self._mu = threading.Lock()
-        self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self.doc_comments)
+        self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self.doc_comments, self.signed_out)
         self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
         self.self_mention = True  # @自己唤起: @-mentioning yourself is a request
@@ -150,14 +166,24 @@ class Feishu:
         try:
             self.client = self.U.client.LarkClient(auth)  # checks the session first
         except self.U.auth.AuthExpired as e:
-            # Upstream says a network failure and a signed-out session apart only in its message.
-            raise (OSError if "网络" in str(e) else Expired)(str(e))
+            if not network_failure(str(e)) and self.signed_out(auth):
+                raise Expired(str(e))
+            raise Unreachable(short_reason(str(e)))
         self.me = str(auth.user_id)
         try:
             self.self_chat = str(self.client.create_chat(self.me) or "")
         except Exception as e:
             log.warning("own chat: %s", e)
         return self.user_name(self.me, self.self_chat) or self.me
+
+    def signed_out(self, auth=None):
+        """Feishu says, asked a second time a moment later, that the session is gone. A failure to reach it is no."""
+        auth = auth or (self.client.auth if self.client else None)
+        if auth is None:
+            return False
+        time.sleep(SIGNED_OUT_RECHECK)
+        ok, msg = auth.validate()
+        return not ok and not network_failure(msg)
 
     def login_begin(self):
         self.qr = self.U.auth.QrLogin(self.U.region.get_region(self.region))

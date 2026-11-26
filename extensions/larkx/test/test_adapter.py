@@ -443,6 +443,55 @@ class Session(unittest.TestCase):
         self.assertEqual(f._pushes._bad_frames, 0, "a bad frame is counted, then said and reset")
 
 
+class Restore(unittest.TestCase):
+    """A network failure while signing in again is not an expired session."""
+
+    def feishu(self, err, recheck):
+        f = lark.Feishu(U, "feishu", lambda d: None)
+
+        def boom(auth):
+            raise U.auth.AuthExpired(err)
+
+        f.U = type("U", (), {"client": type("C", (), {"LarkClient": staticmethod(boom)}), "auth": U.auth, "region": U.region})
+        f.signed_out = lambda auth=None: recheck
+        return f
+
+    def test_restore(self):
+        saved = {"region": "feishu", "cookies": {"session": "s"}}
+        net = "凭证已过期或无效: ticket 探针网络异常(先检查网络,不一定是凭证问题): Read timed out.\n请从浏览器重新复制 cookie 后执行: lark auth import"
+        with self.assertRaises(lark.Unreachable) as e:
+            self.feishu(net, True).restore(saved)
+        self.assertNotIn("cookie", str(e.exception), "no advice to import cookies again for a timeout")
+        gone = "凭证已过期或无效: 会话已被服务端注销(凭证保存于 3.0h 前): 未登录"
+        with self.assertRaises(lark.Expired):
+            self.feishu(gone, True).restore(saved)
+        with self.assertRaises(lark.Unreachable):
+            self.feishu(gone, False).restore(saved)  # asked again, Feishu didn't say so: not expired
+
+    def test_websocket_expiry_confirmed(self):
+        from lark_ws import PushStream
+        import threading
+
+        links, stop = [], threading.Event()
+        calls = {"n": 0}
+
+        class Client:
+            def build_ws_url(self):
+                calls["n"] += 1
+                if calls["n"] > 1:
+                    stop.set()
+                raise U.auth.AuthExpired("获取 ticket 失败")
+
+        ps = PushStream(U, threading.Lock(), lambda: Client(), None, None, signed_out=lambda: False)
+        ps.listen(lambda m: None, lambda state, why="": links.append(state), stop)
+        self.assertNotIn("expired", links, "unconfirmed: tried again")
+        stop.clear()
+        calls["n"] = 0
+        ps = PushStream(U, threading.Lock(), lambda: Client(), None, None, signed_out=lambda: True)
+        ps.listen(lambda m: None, lambda state, why="": links.append(state), stop)
+        self.assertEqual(links[-1], "expired")
+
+
 class Protocol(unittest.TestCase):
     """main.py as the host runs it, with the fake Feishu."""
 
@@ -546,6 +595,24 @@ class Protocol(unittest.TestCase):
         self.assertIsNone(self.secret)
         self.assertEqual(self.status()["state"], "not_signed_in")
 
+
+    def test_restore_retries(self):
+        """Signed in before, Feishu slow at first: 正在连接, never 未登录, then signed in."""
+        import time
+
+        saved = {"region": "feishu", "cookies": {"session": "example"}, "user_id": "u_me", "unreachable_once": True}
+        self.secret = base64.b64encode(json.dumps(saved).encode()).decode()
+        self.call("initialize", {"protocol": 1, "extension": {"id": "larkx", "version": "0.4.8", "data_dir": self.data}, "config": {}})
+        seen = []
+        for _ in range(80):
+            st = self.status()
+            seen.append(st.get("detail", {}).get("phase") or st["state"])
+            if st.get("account"):
+                break
+            time.sleep(0.1)
+        self.assertEqual(self.status()["account"], "示例账号")
+        self.assertIn("正在连接飞书", seen)
+        self.assertNotIn("not_signed_in", seen)
 
 if __name__ == "__main__":
     unittest.main()

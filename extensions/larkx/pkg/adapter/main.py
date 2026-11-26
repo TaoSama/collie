@@ -20,6 +20,7 @@ import peer  # noqa: E402
 
 ID = "larkx"
 PROTOCOL = 1
+RESTORE_WAITS = (2, 5, 15)  # seconds between tries when Feishu can't be reached, then RESTORE_RETRY
 RESTORE_RETRY = 60
 QR_RENEWALS = 3
 LOAD_WAIT = 40  # a sign-in started while the packages install waits this long (the host's is 50)
@@ -50,6 +51,7 @@ class Extension:
         self.sent = {}
         self.trigger = ""
         self.ignored = False
+        self.restoring = False  # kept credentials, Feishu not reached yet: 正在连接, not 未登录
 
     # Host -> extension.
 
@@ -95,6 +97,9 @@ class Extension:
         with self.mu:
             if self.backend is None:
                 return {"state": "error", "error": self.loading}
+            if not self.account and self.restoring:
+                # Signed in before and not told otherwise: Feishu is only slow to answer.
+                return {"state": "ok", "detail": {"phase": "正在连接飞书"}}
             if not self.account:
                 st = {"state": "not_signed_in", "guide": ["在下面扫码，用你本人的飞书账号登录"]}
                 if self.expired:
@@ -239,19 +244,26 @@ class Extension:
             self.backend = backend
         self.loaded.set()
         saved = self._saved()
+        with self.mu:
+            self.restoring = bool(saved)
+        tries = 0
         while saved:
             try:
                 self._signed_in(backend.restore(saved))
                 break
             except self.lark.Expired as e:
-                log.warning("kept sign-in no longer valid: %s", e)
+                log.warning("kept sign-in no longer valid: %s", str(e).splitlines()[0])
                 with self.mu:
                     self.expired = "expired"
                 break
-            except Exception as e:  # the network: try again later
-                log.warning("signing in again: %s", e)
-                if self.stop.wait(RESTORE_RETRY):
+            except Exception as e:  # Feishu not reached: the sign-in stands, try again
+                wait = RESTORE_WAITS[tries] if tries < len(RESTORE_WAITS) else RESTORE_RETRY
+                tries += 1
+                log.warning("Feishu not reached, trying again in %ds: %s", wait, self.lark.short_reason(str(e)))
+                if self.stop.wait(wait):
                     break
+        with self.mu:
+            self.restoring = False
         self.changed()
 
     def _load(self):

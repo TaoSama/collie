@@ -27,6 +27,9 @@ class Fake:
         self.marked = set()
 
     def restore(self, saved):
+        if saved and saved.get("unreachable_once") and not getattr(self, "_tried", False):
+            self._tried = True  # Feishu slow to answer the first time, as after a restart
+            raise lark.Unreachable("Read timed out")
         if not saved or saved.get("cookies", {}).get("session") != "example":
             raise lark.Expired("会话已被服务端注销")
         self.signed_in = True

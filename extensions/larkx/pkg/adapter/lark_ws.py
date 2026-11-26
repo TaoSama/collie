@@ -16,12 +16,13 @@ UP_AFTER = 5  # seconds a websocket stays open before it counts as up
 
 
 class PushStream:
-    def __init__(self, U, mu, get_client, deliver, doc_comments):
+    def __init__(self, U, mu, get_client, deliver, doc_comments, signed_out=lambda: True):
         self.U = U
         self._mu = mu
         self._get_client = get_client
         self._deliver = deliver
         self._doc_comments = doc_comments
+        self._signed_out = signed_out  # Feishu confirms the session is gone (not just unreachable)
         self._loop = None
         self._task = None
         self._bad_frames, self._bad_warned = 0, 0.0
@@ -43,8 +44,10 @@ class PushStream:
             except asyncio.CancelledError:
                 return
             except self.U.auth.AuthExpired as e:
-                on_link("expired", str(e))
-                return
+                if self._signed_out():
+                    on_link("expired", str(e))
+                    return
+                log.warning("websocket: Feishu could not confirm the session, trying again: %s", str(e).splitlines()[0])
             except Exception as e:
                 log.warning("websocket: %s", e)
                 if time.time() - started < UP_AFTER:

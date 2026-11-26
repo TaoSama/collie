@@ -24,6 +24,7 @@
 
 ## 和 Collie 怎么接
 
+- **重启后重新登录**：用保存的凭据登录时，连不上飞书（超时、连接失败、5xx）不算凭据过期：状态显示「正在连接飞书」，按 2s、5s、15s 退避重试，之后每分钟一次，日志里不提示重新导入。只有飞书明确说会话已失效、且隔 2 秒再问一次仍这么说，才算过期、要重新扫码。websocket 取 ticket 失败时同样先再确认一次。
 - **握手、登录、状态**：`initialize`、`connector.login.step`（返回要编码成二维码的文字，每 2 秒轮询一次；过期自动换新码，最多 3 次）、`connector.status`、`connector.logout`。
 - **收推送**：适配层自己读 websocket 的帧（上游的循环只认未压缩的 cmd 6）：压缩过的帧（gzip、zlib）先解开；cmd 6000 只推 sid，按 sid 补拉（`improto.PullPacketsBySidsRequest`）；cmd 14004 是云文档的评论、回复和 @你（`docs.PushDocFeedRequest`），每篇文档算一个会话（`doc:<feed id>`，类型「文档评论」），正文前写明是谁做了什么和文档链接。文档评论暂时只收不回，往这类会话发送会直接失败。读不了的帧计数，每 10 分钟最多记一条日志。
 - **折叠的会话**：在飞书里被折叠的会话（会话的 feed 卡片挂在「折叠的会话」盒子下，`parentCardId` 不为 0，网关 `feed.PullFeedCardsByIdsRequest`），消息带上 `folded: true`，收件箱不列出它。和会话信息一样缓存一小时。
