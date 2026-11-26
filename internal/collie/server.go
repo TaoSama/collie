@@ -438,6 +438,15 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 // returns at most 1000 lines however many you ask for.
 const screenLines = 1000
 
+// paneWheel reports whether screen mode should hand the wheel to the program
+// in the pane instead of scrolling the page: Claude Code's fullscreen view
+// keeps its history to itself (herdr has no scrollback for it) and scrolls
+// on mouse wheel reports. Other programs keep the page's own scrolling: a
+// shell would print the reports, and Codex ignores them.
+func paneWheel(p Pane) bool {
+	return p.Agent != nil && *p.Agent == "claude" && p.Scroll != nil && p.Scroll.MaxOffset == 0
+}
+
 func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	mode := r.URL.Query().Get("mode")
@@ -454,6 +463,7 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 	var lastText string
 	var lastSize Rect
+	var wheel bool
 	var sizeAt time.Time
 	beat := time.Now()
 	for {
@@ -468,6 +478,9 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 			if time.Since(sizeAt) > 2*time.Second {
 				if sz, e := s.herdr.PaneSize(ctx, id); e == nil {
 					lastSize = sz
+				}
+				if p, e := s.herdr.Pane(ctx, id); e == nil {
+					wheel = paneWheel(p)
 				}
 				sizeAt = time.Now()
 			}
@@ -490,7 +503,7 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				}
 				b, _ := json.Marshal(map[string]any{
 					"text": text, "revision": res.Revision, "truncated": res.Truncated,
-					"cols": lastSize.Width, "rows": lastSize.Height, "cursor": cursor,
+					"cols": lastSize.Width, "rows": lastSize.Height, "cursor": cursor, "wheel": wheel,
 				})
 				if sse.send("frame", b) != nil {
 					return

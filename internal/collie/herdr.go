@@ -147,17 +147,24 @@ type Workspace struct {
 }
 
 type Pane struct {
-	ID            string  `json:"pane_id"`
-	WorkspaceID   string  `json:"workspace_id"`
-	TabID         string  `json:"tab_id"`
-	Agent         *string `json:"agent"`
-	DisplayAgent  *string `json:"display_agent"`
-	AgentStatus   string  `json:"agent_status"`
-	Cwd           *string `json:"cwd"`
-	ForegroundCwd *string `json:"foreground_cwd"`
-	Title         *string `json:"terminal_title_stripped"`
-	Revision      uint64  `json:"revision"`
-	Focused       bool    `json:"focused"`
+	ID            string      `json:"pane_id"`
+	WorkspaceID   string      `json:"workspace_id"`
+	TabID         string      `json:"tab_id"`
+	Agent         *string     `json:"agent"`
+	DisplayAgent  *string     `json:"display_agent"`
+	AgentStatus   string      `json:"agent_status"`
+	Cwd           *string     `json:"cwd"`
+	ForegroundCwd *string     `json:"foreground_cwd"`
+	Title         *string     `json:"terminal_title_stripped"`
+	Revision      uint64      `json:"revision"`
+	Focused       bool        `json:"focused"`
+	Scroll        *PaneScroll `json:"scroll"`
+}
+
+// PaneScroll is herdr's scrollback for a pane: none (0) while a program
+// draws on the alternate screen.
+type PaneScroll struct {
+	MaxOffset uint64 `json:"max_offset_from_bottom"`
 }
 
 type Agent struct {

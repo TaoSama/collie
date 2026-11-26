@@ -4949,6 +4949,7 @@
   let prevScreenLines = null;
   let pendingScreen = null;
   let screenFresh = true;
+  let screenWheel = false; // the frame says: hand the wheel to the program (paneWheel)
 
   // A plain shell has no conversation to show, so it opens on the screen.
   const isShell = () => { const v = find(current); return !!v && !v.is_agent; };
@@ -4987,6 +4988,7 @@
     prevScreenLines = null;
     pendingScreen = null;
     screenFresh = true;
+    screenWheel = false;
     size = { cols: 0, rows: 0 };
     hideJump();
     if (term) {
@@ -5010,6 +5012,7 @@
     // arrow keys (\x1b[A/\x1b[B) or let xterm cancel horizontal touch pans.
     term.attachCustomWheelEventHandler(() => false);
     $("#screen").addEventListener("touchmove", (e) => e.stopPropagation(), { capture: true, passive: true });
+    forwardScroll();
     term.open($("#screen"));
     term.onData(typeIntoPane);
     term.onSelectionChange(() => {
@@ -5029,6 +5032,54 @@
       term.options.theme = termTheme();
       term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
     });
+  }
+  // Claude Code's fullscreen view keeps its history to itself, so once the
+  // page can't scroll any further that way, the wheel or a finger's drag
+  // goes to it as mouse wheel reports (SGR, one per line) and it scrolls
+  // its own view; the next frames show where it went.
+  function forwardScroll() {
+    const el = $("#screen");
+    const lineH = () => term.options.fontSize * term.options.lineHeight;
+    const atEdge = (dy) => dy < 0 ? el.scrollTop <= 0 : el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
+    const on = () => screenWheel && curMode() === "screen";
+    let rest = 0;
+    // dy < 0 is toward older output.
+    const scrollPane = (dy) => {
+      rest += dy;
+      const n = Math.trunc(rest / lineH());
+      if (!n) return;
+      rest -= n * lineH();
+      const at = `;${Math.ceil((size.cols || 2) / 2)};${Math.ceil((size.rows || 2) / 2)}M`;
+      sendText(`\x1b[<${n < 0 ? 64 : 65}${at}`.repeat(Math.abs(n)));
+    };
+    el.addEventListener("wheel", (e) => {
+      if (!on() || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY) || !atEdge(e.deltaY)) return;
+      e.preventDefault();
+      scrollPane(e.deltaMode === 1 ? e.deltaY * lineH() : e.deltaMode === 2 ? e.deltaY * el.clientHeight : e.deltaY);
+    }, { passive: false });
+    // A drag goes one way: sideways stays the page's (a phone pans a wide
+    // screen); up and down scroll the page first, the program after.
+    let x0 = 0, y0 = 0, axis = null;
+    el.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) { axis = "x"; return; }
+      ({ clientX: x0, clientY: y0 } = e.touches[0]);
+      axis = null;
+      rest = 0;
+    }, { capture: true, passive: true });
+    el.addEventListener("touchmove", (e) => {
+      if (!on() || e.touches.length !== 1 || axis === "x") return;
+      const { clientX: x, clientY: y } = e.touches[0];
+      if (!axis) {
+        if (Math.hypot(x - x0, y - y0) < 8) return;
+        axis = Math.abs(y - y0) > Math.abs(x - x0) ? "y" : "x";
+        if (axis === "x") return;
+      }
+      const dy = y0 - y;
+      y0 = y;
+      if (!atEdge(dy)) return;
+      if (e.cancelable) e.preventDefault();
+      scrollPane(dy);
+    }, { capture: true, passive: false });
   }
   function termTheme() {
     const css = getComputedStyle(document.documentElement);
@@ -5084,6 +5135,7 @@
 
   function drawScreen(f, restore = null) {
     if (!term) return;
+    screenWheel = !!f.wheel;
     const el = $("#screen");
     const stick = restore ? !!restore.atBottom : (screenFresh || screenNearBottom());
     const raw = (f.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "");
@@ -5092,7 +5144,9 @@
       pendingScreen = f;
       return;
     }
-    if (!stick && prevScreenLines) {
+    // Holding a frame back while you read up the page only helps where the
+    // page has history; a fullscreen program's frame is all there is.
+    if (!stick && prevScreenLines && !screenWheel) {
       const check = Math.min(6, prevScreenLines.length);
       const sameHead = lines.length >= prevScreenLines.length &&
         prevScreenLines.slice(0, check).every((l, i) => lines[i] === l);

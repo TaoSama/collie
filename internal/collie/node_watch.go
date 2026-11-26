@@ -55,8 +55,8 @@ func (s *Server) watchLists(w http.ResponseWriter, r *http.Request) {
 }
 
 // listsLine reads the lists, keeping only what the hub shows: a pane's
-// output revision and focus change all the time and would make every look a
-// change to send.
+// output revision, scrollback and focus change all the time and would make
+// every look a change to send.
 func (h *Herdr) listsLine(ctx context.Context) []byte {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -80,7 +80,7 @@ func (h *Herdr) listsLine(ctx context.Context) []byte {
 		ws[i].Focused = false
 	}
 	for i := range panes {
-		panes[i].Revision, panes[i].Focused = 0, false
+		panes[i].Revision, panes[i].Focused, panes[i].Scroll = 0, false, nil
 	}
 	out := map[string]any{
 		"workspace.list": map[string]any{"workspaces": ws},

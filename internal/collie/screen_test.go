@@ -389,6 +389,16 @@ func TestStreamPaneScreenRecentANSI(t *testing.T) {
 									},
 								},
 							}
+						case "pane.get":
+							resp = map[string]any{
+								"id": req.ID,
+								"result": map[string]any{
+									"pane": map[string]any{
+										"pane_id": "w1:p1", "agent": "claude",
+										"scroll": map[string]any{"max_offset_from_bottom": 0, "offset_from_bottom": 0, "viewport_rows": 42},
+									},
+								},
+							}
 						case "pane.read":
 							n := reads.Add(1)
 							gotSource, _ = req.Params["source"].(string)
@@ -485,13 +495,34 @@ func TestStreamPaneScreenRecentANSI(t *testing.T) {
 		Rows      int    `json:"rows"`
 		Truncated bool   `json:"truncated"`
 		Cursor    bool   `json:"cursor"`
+		Wheel     bool   `json:"wheel"`
 	}
 	json.Unmarshal([]byte(events[0].data), &f1)
 	json.Unmarshal([]byte(events[1].data), &f2)
-	if f1.Text != "\x1b[32mfirst\x1b[0m\r\nsecond\x1b7" || f1.Cols != 132 || f1.Rows != 42 || !f1.Truncated || !f1.Cursor {
+	if f1.Text != "\x1b[32mfirst\x1b[0m\r\nsecond\x1b7" || f1.Cols != 132 || f1.Rows != 42 || !f1.Truncated || !f1.Cursor || !f1.Wheel {
 		t.Fatalf("frame 1 = %+v", f1)
 	}
 	if f2.Text != "\x1b[32mfirst\x1b[0m\r\nsecond\r\nthird\x1b7" || f2.Truncated || !f2.Cursor {
 		t.Fatalf("frame 2 = %+v", f2)
+	}
+}
+
+func TestPaneWheel(t *testing.T) {
+	str := func(s string) *string { return &s }
+	scroll := func(max uint64) *PaneScroll { return &PaneScroll{MaxOffset: max} }
+	for _, c := range []struct {
+		name string
+		pane Pane
+		want bool
+	}{
+		{"claude fullscreen", Pane{Agent: str("claude"), Scroll: scroll(0)}, true},
+		{"claude inline with history", Pane{Agent: str("claude"), Scroll: scroll(58)}, false},
+		{"codex", Pane{Agent: str("codex"), Scroll: scroll(0)}, false},
+		{"shell", Pane{Scroll: scroll(0)}, false},
+		{"herdr without scroll info", Pane{Agent: str("claude")}, false},
+	} {
+		if got := paneWheel(c.pane); got != c.want {
+			t.Errorf("%s: paneWheel = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
