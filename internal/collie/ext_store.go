@@ -42,6 +42,8 @@ type InboxConv struct {
 	Muted bool `json:"muted,omitempty"`
 	// Folded away in the chat app's list: left out of the inbox list.
 	Folded bool `json:"folded,omitempty"`
+	// Avatar: the chat's picture, an address the hub fetches (inbox_avatar.go).
+	Avatar string `json:"avatar,omitempty"`
 	// Tags: what the chat is besides its kind, as the extension tells it.
 	Tags []string `json:"tags,omitempty"`
 	// Owner: the signed-in person's own chat with the bot (WeChat).
@@ -70,14 +72,18 @@ func (c *InboxConv) markRead() {
 	c.Unread, c.AtMe, c.ReadBase = 0, false, c.AppUnread
 }
 
-// appRead takes the chat app's unread count; false when nothing changed.
+// appRead takes the chat app's unread count and, when it knows, whether an
+// unread message @-mentions you; false when nothing changed.
 // A count under what you read in Collie means you read on there: the base
 // follows it down.
-func (c *InboxConv) appRead(n int) bool {
+func (c *InboxConv) appRead(n int, atMe *bool) bool {
 	was := *c
 	n = max(n, 0)
 	c.AppUnread, c.ReadBase = n, min(c.ReadBase, n)
 	c.Unread = n - c.ReadBase
+	if atMe != nil {
+		c.AtMe = *atMe
+	}
 	if c.Unread == 0 {
 		c.AtMe = false
 	}

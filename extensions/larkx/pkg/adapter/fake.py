@@ -76,7 +76,7 @@ class Fake:
     UNREAD = {"c_dm": 3, "c_group": 2}
 
     def unread(self, chats):
-        return {c: {"unread": self.UNREAD[c]} for c in chats if c in self.UNREAD}
+        return {c: {"unread": self.UNREAD[c], "at_me": c == "c_group"} for c in chats if c in self.UNREAD}
 
     def mark_read(self, chats):
         self.UNREAD = dict(self.UNREAD)  # this Feishu's own, not the class's

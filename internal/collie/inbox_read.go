@@ -51,7 +51,15 @@ func (st *extStore) appRead(ext string, counts map[string]extproto.ChatRead) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	for chat, cr := range counts {
-		if c := st.convs[convID(ext, chat)]; c != nil && c.appRead(cr.Unread) {
+		c := st.convs[convID(ext, chat)]
+		if c == nil {
+			continue
+		}
+		changed := c.appRead(cr.Unread, cr.AtMe)
+		if cr.Avatar != "" && cr.Avatar != c.Avatar {
+			c.Avatar, changed = cr.Avatar, true
+		}
+		if changed {
 			st.putConvLocked(c)
 		}
 	}

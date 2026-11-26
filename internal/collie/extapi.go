@@ -45,6 +45,7 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("GET /api/inbox/conv", s.inboxConv)
 	api("POST /api/inbox/conv", s.inboxSetConv)
 	api("POST /api/inbox/read", s.inboxRead)
+	api("GET /api/inbox/avatar", s.inboxAvatar)
 }
 
 func (s *Server) extList(w http.ResponseWriter, r *http.Request) {
@@ -219,6 +220,8 @@ type convView struct {
 	Out *OutboxItem `json:"out,omitempty"`
 	// Hidden: left out of the list (folded in the chat app, or a rule of 接入).
 	Hidden bool `json:"hidden,omitempty"`
+	// Avatar: where the page gets the chat's picture, through the hub.
+	Avatar string `json:"avatar,omitempty"`
 }
 
 func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +230,7 @@ func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 	hides := map[string][]string{}
 	readBack := map[string]bool{} // extensions that mark what you read here read in the app too
 	for _, c := range convs {
-		v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext}
+		v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: avatarPath(c)}
 		if m := s.ext.manifest(c.Ext); m != nil {
 			v.Label = extLabel(m)
 			if _, ok := hides[c.Ext]; !ok {
@@ -284,7 +287,7 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 	for _, o := range s.ext.store.outs(`conv = ?`, id) {
 		outs[o.Ref] = o
 	}
-	writeJSON(w, 200, map[string]any{"conv": s.ext.displayConversation(c), "msgs": s.ext.store.msgs(id, time.Time{}), "outbox": outs})
+	writeJSON(w, 200, map[string]any{"conv": s.convView(c), "msgs": s.ext.store.msgs(id, time.Time{}), "outbox": outs})
 }
 
 func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +326,16 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 	if body.On != nil && !*body.On {
 		s.ext.store.dropMsgs(c.ID) // a closed chat keeps only its preview (§7)
 	}
-	writeJSON(w, 200, map[string]any{"conv": s.ext.displayConversation(c)})
+	writeJSON(w, 200, map[string]any{"conv": s.convView(c)})
+}
+
+// convView is one conversation as the page gets it: its label and its picture through the hub.
+func (s *Server) convView(c InboxConv) convView {
+	v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: avatarPath(c)}
+	if m := s.ext.manifest(c.Ext); m != nil {
+		v.Label = extLabel(m)
+	}
+	return v
 }
 
 // inboxRead marks conversations read (收件箱's 全部已读): in Collie, and in

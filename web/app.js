@@ -2917,6 +2917,10 @@
   let autoTimer;
   // 收件箱: the open conversation, its messages, the filter; 接入: a sign-in.
   let inboxCur = "", inboxDetail = null, inboxFilter = store.get("inboxFilter", "all"), extLogin = null;
+  // 收件箱's source list: the sources folded shut (kept), and on a phone whether the list is open.
+  let inboxFold = store.get("inboxFold", []), inboxNavOpen = false;
+  // A chat's picture that won't load leaves the icon under it.
+  document.addEventListener("error", (e) => { if (e.target.classList?.contains("inbox-pic")) e.target.remove(); }, true);
   collieExt.init({ esc, when, md: (t) => md(t), workerHref: (n) => { const p = paneOf(n); return p ? `#/p/${encodeURIComponent(p)}` : ""; } });
   bindTabs("#auto-tabs", "auto", "#auto-body", () => autoTab, (t) => {
     autoTab = t; store.set("autoTab", t);
@@ -3029,21 +3033,14 @@
     } else if (tab === "inbox") {
       // The list and the open chat redraw apart: a new message elsewhere
       // leaves the chat you are reading as it is.
-      const sig = JSON.stringify([r, inboxCur, inboxFilter]), dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger]);
+      const sig = JSON.stringify([r, inboxCur, inboxFilter, inboxFold, inboxNavOpen]), dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger]);
       // The chat lists newest first: at the top it stays there to show what
       // arrives; scrolled down, it keeps the message you are reading in place.
       const msgs = body.querySelector(".conv-msgs"), stick = msgs && msgs.scrollTop < 40;
       const below = msgs ? msgs.scrollHeight - msgs.scrollTop : 0;
       if (sig !== body._sig) {
         body._sig = sig; body._dsig = dsig;
-        const slid = body.querySelector(".inbox-chips")?.scrollLeft || 0;
-        body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxFilter);
-        // The filters slide sideways on a phone: where they were, the chosen one in view.
-        const chips = body.querySelector(".inbox-chips"), on = chips?.querySelector(".on");
-        if (chips) {
-          chips.scrollLeft = slid;
-          if (on && (on.offsetLeft < chips.scrollLeft || on.offsetLeft + on.offsetWidth > chips.scrollLeft + chips.clientWidth)) chips.scrollLeft = on.offsetLeft - 8;
-        }
+        body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxFilter, { fold: inboxFold, navOpen: inboxNavOpen });
       } else if (dsig !== body._dsig && $("#inbox-detail")) {
         body._dsig = dsig;
         $("#inbox-detail").innerHTML = collieExt.detailHTML(inboxCur, inboxDetail, r?.trigger);
@@ -3712,7 +3709,13 @@
     const b = e.target.closest("button");
     if (!b) return;
     if (b.dataset.eventsSub) { eventsSub = b.dataset.eventsSub; store.set("eventsSub", eventsSub); drawAuto(autoData.triggers); return; }
-    if (b.dataset.inboxFilter) { inboxFilter = b.dataset.inboxFilter; store.set("inboxFilter", inboxFilter); drawAuto(autoData.inbox); return; }
+    if (b.dataset.inboxFilter) { inboxFilter = b.dataset.inboxFilter; inboxNavOpen = false; store.set("inboxFilter", inboxFilter); drawAuto(autoData.inbox); return; }
+    if (b.dataset.inboxFold) {
+      const id = b.dataset.inboxFold;
+      inboxFold = inboxFold.includes(id) ? inboxFold.filter((x) => x !== id) : [...inboxFold, id];
+      store.set("inboxFold", inboxFold); drawAuto(autoData.inbox); return;
+    }
+    if (b.hasAttribute("data-inbox-nav-toggle")) { inboxNavOpen = !inboxNavOpen; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-inbox-read-all")) {
       const r = autoData.inbox, ids = collieExt.inboxShown(r, inboxFilter).filter((c) => c.unread > 0);
       const back = [...new Set(ids.filter((c) => r?.read_back?.[c.ext]).map((c) => c.label))];

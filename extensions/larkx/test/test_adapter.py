@@ -722,6 +722,13 @@ class Read(unittest.TestCase):
             calls.append((name, data))
             if name == "chats.PullChatsByIdsRequest":
                 return {"chats": {k: v for k, v in chats.items() if k in data["chatIds"]}}
+            if name == "chats.PullChatChattersRequest":
+                return {"chatters": {"u_me": {"avatar": {"thumbnail": {"urls": ["https://cdn/me.png"]}}},
+                                     "u_b": {"avatar": {"thumbnail": {"urls": ["http://plain/b.png", "https://cdn/b.png"]}}}}}
+            if name == "messages.PullUnreadAtMessageIdsRequest":
+                return {"messageIds": ["m1", "m2"]}
+            if name == "messages.PullMessagesByIdsRequest":
+                return {"messages": {m: {"chatId": {"m1": "2", "m2": "9"}[m]} for m in data["messageIds"]}}
             return {}
         f.client = types.SimpleNamespace(api=api)
         return f, calls
@@ -732,11 +739,31 @@ class Read(unittest.TestCase):
             "2": {"chatMode": 3, "lastThreadPositionBadgeCount": 2, "readThreadPositionBadgeCount": 0},
             "3": {"chatMode": 1, "lastMessagePositionBadgeCount": 1, "readPositionBadgeCount": 1},
         })
-        self.assertEqual(f.unread(["1", "2", "3", "4", "doc:x"]), {"1": {"unread": 5}, "2": {"unread": 2}, "3": {"unread": 0}})
-        self.assertEqual(calls[0][1]["chatIds"], ["1", "2", "3", "4"], "one call for them all, documents left out")
+        self.assertEqual(f.unread(["1", "2", "3", "4", "doc:x"]),
+                         {"1": {"unread": 5, "at_me": False}, "2": {"unread": 2, "at_me": True}, "3": {"unread": 0, "at_me": False}})
+        self.assertEqual([c[1]["chatIds"] for c in calls if c[0] == "chats.PullChatsByIdsRequest"], [["1", "2", "3", "4"]], "one call for them all, documents left out")
+        calls.clear()
+        f.unread(["1"])
+        self.assertNotIn("messages.PullMessagesByIdsRequest", [c[0] for c in calls], "a message's chat is looked up once")
         calls.clear()
         marked, failed = f.mark_read(["1", "2", "3", "4"])
         self.assertEqual(marked, ["1", "3"])
         self.assertEqual(set(failed), {"2", "4"}, "a topic group, and a chat Feishu doesn't have")
         self.assertEqual([c for c in calls if c[0] == "messages.PutReadMessagesRequest"],
                          [("messages.PutReadMessagesRequest", {"chatId": "1", "maxPosition": 30})], "only the unread one, up to its last message")
+
+    def test_pictures(self):
+        f, calls = self.feishu({
+            "10": {"type": 2, "chatMode": 1, "avatar": {"key": "v3_abc", "urls": ["http://p4.pstatp.com/origin/v3_abc"]}},
+            "11": {"type": 1, "chatMode": 1},
+        })
+        f.me = "u_me"
+        got = f.unread(["10", "11"])
+        self.assertTrue(got["10"]["avatar"].startswith("https://s1-imfile.feishucdn.com/static-resource/v1/v3_abc~"), "a group: its key on the CDN, never plain http")
+        self.assertEqual(got["11"]["avatar"], "https://cdn/b.png", "a direct chat: the other person, https only")
+        calls.clear()
+        f.unread(["11"])
+        self.assertNotIn("chats.PullChatChattersRequest", [c[0] for c in calls], "kept an hour")
+        f.region = "lark"
+        self.assertEqual(f.group_picture({"avatar": {"key": "v3_abc"}}), "", "Lark's CDN isn't known")
+        self.assertEqual(lark.picture_url({"origin": {"urls": ["https://o"]}}), "https://o")

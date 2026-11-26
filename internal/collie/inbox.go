@@ -41,6 +41,7 @@ type incomingMsg struct {
 	Folded                   *bool    // folded away in the chat app's list (nil: not known)
 	Tags                     []string // what the chat is besides its kind (nil: not known)
 	AtMe                     bool     // someone else @-mentioned you, or everyone
+	Avatar                   string   // the chat's picture ("" not known)
 	Owner                    bool     // sent by the person the bot is bound to
 	Mention                  bool     // you @-mentioned yourself: a request like the trigger word
 	Topic                    string   // a group topic that is a conversation of its own ("" none)
@@ -136,7 +137,7 @@ func (h *extHost) received(r *extRun, m extproto.Message) error {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, Folded: m.Folded, Tags: m.ChatTags, AtMe: m.AtMe, ID: m.ID, Sender: m.Sender,
+	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, Folded: m.Folded, Tags: m.ChatTags, AtMe: m.AtMe, Avatar: m.ChatAvatar, ID: m.ID, Sender: m.Sender,
 		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Mention: m.Mention, Topic: m.Thread, Text: m.Text, Quote: m.Quote, At: at, Live: true,
 		Unsupported: m.Unsupported}
 	for _, b := range append(append([]extproto.Blob(nil), m.Images...), m.Files...) {
@@ -207,6 +208,9 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 	}
 	if in.Tags != nil {
 		c.Tags = in.Tags
+	}
+	if in.Avatar != "" {
+		c.Avatar = in.Avatar
 	}
 	if !in.At.Before(c.LastAt) {
 		c.LastAt = in.At

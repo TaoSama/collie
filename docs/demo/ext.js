@@ -245,32 +245,78 @@
     return d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}月${d.getDate()}日` : `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
   }
   const unreadText = (n) => n > 99 ? "99+" : String(n);
+  // A chat's round tile: its picture (through the hub) over the icon of its
+  // kind, which stays when there is none or it fails to load; the app's logo
+  // in the corner.
+  const avatar = (c, title = "") => `<span class="inbox-ava"${title ? ` title="${esc(title)}"` : ""}>${ico(KIND_ICON[c.kind] || "message-circle")}${c.avatar ? `<img class="inbox-pic" src="${esc(c.avatar)}" alt="" loading="lazy" decoding="async">` : ""}${logo(c.ext)}</span>`;
 
-  // 收件箱: every chat of every extension; the open one beside it.
-  // The filters of 收件箱, in order; an extension's own when there are several.
+  // 收件箱: every chat of every extension, a list of sources beside them and
+  // the open chat beside that. A source whose chats are of more than one
+  // kind (飞书: direct chats and groups) opens into filters of its own.
   const atMe = (c) => c.at_me && c.unread > 0;
-  const FILTERS = [
-    ["all", "全部", () => true],
+  const TOP = [["all", "全部", () => true], ["on", "处理中", (c) => c.on]];
+  const SUBS = [
+    ["", "全部", () => true],
     ["unread", "未读", (c) => c.unread > 0],
     ["dm", "单聊", (c) => c.kind === "dm" || c.kind === "self"],
     ["at", "@我", atMe],
     ["group", "群聊", (c) => c.kind === "group"],
-    ["on", "处理中", (c) => c.on],
   ];
   const listed = (r) => (r?.convs || []).filter((c) => !c.hidden); // folded, or switched off in 接入
-  // What a filter lists: one of FILTERS, or an extension's id.
+  // The sources, in the order their chats came: id, label, chats, and whether it has filters of its own.
+  function sources(convs) {
+    const by = new Map();
+    for (const c of convs) {
+      if (!by.has(c.ext)) by.set(c.ext, { id: c.ext, label: c.label || c.ext, convs: [] });
+      by.get(c.ext).convs.push(c);
+    }
+    for (const s of by.values()) s.nested = new Set(s.convs.map((c) => c.kind === "group" ? "group" : "dm")).size > 1;
+    return [...by.values()];
+  }
+  // A filter: all | on | <source> | <source>:<sub>; one that names no source here is all.
+  function parseFilter(r, filter) {
+    const f = filter || "all";
+    if (TOP.some(([k]) => k === f)) return { key: f };
+    const [ext, sub = ""] = f.split(":");
+    const src = sources(listed(r)).find((x) => x.id === ext);
+    if (!src || sub && !(src.nested && SUBS.some(([k]) => k === sub))) return { key: "all" };
+    return { key: sub ? `${ext}:${sub}` : ext, src, sub };
+  }
   function inboxShown(r, filter) {
-    const f = FILTERS.find(([k]) => k === (filter || "all"));
-    return listed(r).filter(f ? f[2] : (c) => c.ext === filter);
+    const f = parseFilter(r, filter);
+    const top = TOP.find(([k]) => k === f.key);
+    if (top) return listed(r).filter(top[2]);
+    const pick = SUBS.find(([k]) => k === f.sub)[2];
+    return f.src.convs.filter(pick);
+  }
+  // What the list shows, in words: 飞书 · 未读.
+  function filterLabel(r, filter) {
+    const f = parseFilter(r, filter);
+    if (!f.src) return TOP.find(([k]) => k === f.key)[1];
+    return f.sub ? `${f.src.label} · ${SUBS.find(([k]) => k === f.sub)[1]}` : f.src.label;
   }
 
-  function inboxHTML(r, cur, detail, filter) {
+  // The source list: 全部, each source (one with filters opens and folds),
+  // 处理中. On a phone it folds into one line above the chats.
+  function navHTML(r, filter, ui) {
+    const convs = listed(r), f = parseFilter(r, filter);
+    const count = (n, tone = "") => `<span class="inbox-nav-n${tone && n ? " " + tone : ""}">${n}</span>`;
+    const item = (key, label, n, lead = "", cls = "", tone = "") => `<li><button type="button" class="inbox-nav-i${cls}${f.key === key ? " on" : ""}" data-inbox-filter="${esc(key)}"${f.key === key ? ' aria-current="true"' : ""}>${lead}<span class="inbox-nav-l">${esc(label)}</span>${count(n, tone)}</button></li>`;
+    const src = (s) => {
+      if (!s.nested) return item(s.id, s.label, s.convs.length, logo(s.id) || ico("inbox"));
+      const open = !(ui.fold || []).includes(s.id), inside = f.src?.id === s.id;
+      return `<li class="inbox-nav-src${open ? " open" : ""}"><button type="button" class="inbox-nav-i src${inside && !open ? " on" : ""}" data-inbox-fold="${esc(s.id)}" aria-expanded="${open}">${logo(s.id) || ico("inbox")}<span class="inbox-nav-l">${esc(s.label)}</span>${open ? "" : count(s.convs.filter((c) => c.unread > 0).length, "info")}<span class="inbox-nav-chev" aria-hidden="true">›</span></button>
+        ${open ? `<ul>${SUBS.map(([k, l, pick]) => item(k ? `${s.id}:${k}` : s.id, l, s.convs.filter(pick).length, "", " sub", k === "at" ? "attn" : k === "unread" ? "info" : "")).join("")}</ul>` : ""}</li>`;
+    };
+    return `<nav class="card inbox-nav${ui.navOpen ? " open" : ""}" aria-label="筛选会话">
+        <div class="inbox-nav-top"><button type="button" class="inbox-nav-toggle" data-inbox-nav-toggle aria-expanded="${!!ui.navOpen}">${(f.src && logo(f.src.id)) || ico(f.key === "on" ? "zap" : "inbox")}<span class="inbox-nav-l">${esc(filterLabel(r, filter))}</span>${count(inboxShown(r, filter).length)}<span class="inbox-nav-chev" aria-hidden="true">›</span></button>${ui.readAll || ""}</div>
+        <ul class="inbox-nav-list">${item("all", "全部", convs.length, ico("inbox"))}${sources(convs).map(src).join("")}${item("on", "处理中", convs.filter((c) => c.on).length, ico("zap"))}</ul>
+      </nav>`;
+  }
+
+  function inboxHTML(r, cur, detail, filter, ui = {}) {
     const convs = listed(r);
     const shown = inboxShown(r, filter);
-    const exts = [...new Set(convs.map((c) => c.ext))];
-    const chip = (k, label, n, lg = "") => `<button type="button" data-inbox-filter="${esc(k)}" class="inbox-chip${(filter || "all") === k ? " on" : ""}"${k === "at" && n ? ' data-tone="attn"' : ""}>${lg}${esc(label)}<span class="inbox-chip-n">${n}</span></button>`;
-    const chips = FILTERS.map(([k, l, f]) => chip(k, l, convs.filter(f).length)).join("")
-      + (exts.length > 1 ? exts.map((x) => chip(x, convs.find((c) => c.ext === x)?.label || x, convs.filter((c) => c.ext === x).length, logo(x))).join("") : "");
     const unreadHere = shown.some((c) => c.unread > 0);
     // Unread: the name in full ink and a count (grey when muted in the chat
     // app); read: no count, the preview quieter. The tile is the chat's kind
@@ -281,7 +327,7 @@
       // A direct chat's preview needn't repeat who it is with.
       const preview = c.kind === "dm" && c.preview?.startsWith(name + ": ") ? c.preview.slice(name.length + 2) : c.preview || "";
       return `<li class="row inbox-row${n ? " unread" : ""}${c.id === cur ? " sel" : ""}" data-conv="${esc(c.id)}">
-        <span class="inbox-ava" title="${esc(c.label)} · ${esc(kind)}">${ico(KIND_ICON[c.kind] || "message-circle")}${logo(c.ext)}</span>
+        ${avatar(c, `${c.label} · ${kind}`)}
         <div class="inbox-main">
           <div class="inbox-l1"><b class="inbox-name"${name !== c.chat ? ` title="${esc(name)}"` : ""}>${esc(name)}</b>${c.muted ? `<span class="inbox-mute" title="在原应用里设了免打扰">${ico("bell-off")}</span>` : ""}${c.on ? `<span class="pill plain info inbox-on">处理中</span>` : ""}<time class="inbox-time" datetime="${esc(c.last_at || "")}" title="${esc(when(c.last_at))}">${esc(shortTime(c.last_at))}</time></div>
           <div class="inbox-l2"><span class="inbox-prev">${atMe(c) ? `<span class="inbox-at">[有人@我]</span>` : ""}${esc(preview)}</span>${n ? `<span class="inbox-unread${c.muted ? " muted" : ""}" title="${n} 条未读${c.muted ? "（免打扰）" : ""}">${unreadText(n)}</span>` : ""}</div>
@@ -290,10 +336,13 @@
     };
     const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;
     if (!convs.length) return intro + `<div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
-    return intro + `<div class="inbox-bar"><div class="inbox-chips" role="tablist" aria-label="筛选会话">${chips}</div>
-        <button type="button" class="btn small ghost inbox-read-all" data-inbox-read-all aria-label="全部已读" ${unreadHere ? "" : "disabled"} title="把当前列表里的会话都标为已读">${ico("check-check")}<span>全部已读</span></button></div>
-      <div class="inbox-split ${cur ? "has-cur" : ""}">
-        <div class="card inbox-list"><ul class="rows">${shown.map(row).join("") || `<li class="empty-row">${filter === "unread" || filter === "at" ? "都读过了" : "没有"}</li>`}</ul></div>
+    const sub = parseFilter(r, filter).sub;
+    // 全部已读 heads the list; on a phone it sits beside the folded source list instead.
+    const readAll = `<button type="button" class="btn small ghost inbox-read-all" data-inbox-read-all aria-label="全部已读" ${unreadHere ? "" : "disabled"} title="把这个列表里的会话都标为已读">${ico("check-check")}<span>全部已读</span></button>`;
+    return intro + `<div class="inbox-split ${cur ? "has-cur" : ""}">
+        ${navHTML(r, filter, { ...ui, readAll })}
+        <div class="card inbox-list"><div class="card-h inbox-list-h"><span class="inbox-list-t">${esc(filterLabel(r, filter))}<span class="muted">${shown.length}</span></span>${readAll}</div>
+          <ul class="rows">${shown.map(row).join("") || `<li class="empty-row">${sub === "unread" || sub === "at" ? "都读过了" : "没有"}</li>`}</ul></div>
         <div class="inbox-detail" id="inbox-detail">${detailHTML(cur, detail, r?.trigger)}</div>
       </div>`;
   }
@@ -313,7 +362,7 @@
         <div class="msg ${m.ref ? "assistant" : ""}">${m.ref ? md(m.text) : esc(m.text)}</div></li>`;
     };
     return `<div class="card conv-card">
-      <div class="card-h"><span${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</span><button type="button" class="icon-btn conv-close" data-conv-close title="返回">×</button></div>
+      <div class="card-h"><span class="conv-title">${avatar(c)}<span${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</span></span><button type="button" class="icon-btn conv-close" data-conv-close title="返回">×</button></div>
       <div class="form">
         <div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button><span><b>处理这个会话</b>${c.on ? "" : `<small class="muted">打开后，以 ${esc(trigger || "/ai")} 开头的消息交给 agent，并开始保存这个会话的消息</small>`}</span></div>
         ${c.on ? `<div class="conv-rule"><span class="tm-lab">谁能唤起</span>${seg("anyone", !!c.anyone, [[false, "只有我"], [true, "任何人"]])}</div>

@@ -194,6 +194,9 @@ type Message struct {
 	// ChatTags: what the chat is besides its kind, for the 收件箱 rules
 	// (x-hide "tag:<tag>"), e.g. a group a project tool opened for one issue.
 	ChatTags []string `json:"chat_tags,omitempty"`
+	// ChatAvatar: the chat's picture, an https address on one of the
+	// manifest's permissions.network hosts; Collie fetches and keeps it.
+	ChatAvatar string `json:"chat_avatar,omitempty"`
 	// AtMe: someone else @-mentioned the signed-in person, or everyone.
 	AtMe bool `json:"at_me,omitempty"`
 	// Mention: the signed-in person @-mentioned themselves (the @ already
@@ -374,6 +377,11 @@ type ReadStates struct {
 
 type ChatRead struct {
 	Unread int `json:"unread"`
+	// AtMe: an unread message there @-mentions the signed-in person or
+	// everyone, as the app keeps it (nil: not known).
+	AtMe *bool `json:"at_me,omitempty"`
+	// Avatar: the chat's picture, as chat_avatar ("" not known).
+	Avatar string `json:"avatar,omitempty"`
 }
 
 // ReadMarked is connector.read.mark's result: the chats marked, and why the others weren't.

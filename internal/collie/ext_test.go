@@ -1123,7 +1123,7 @@ func TestExtHeaderStatus(t *testing.T) {
 // as more comes, until you read on in the app.
 func TestInboxAppRead(t *testing.T) {
 	var c InboxConv
-	if !c.appRead(5) || c.Unread != 5 {
+	if !c.appRead(5, nil) || c.Unread != 5 {
 		t.Fatalf("the app's count: %+v", c)
 	}
 	c.AtMe = true
@@ -1131,24 +1131,86 @@ func TestInboxAppRead(t *testing.T) {
 	if c.Unread != 0 || c.AtMe || c.ReadBase != 5 {
 		t.Fatalf("read in Collie: %+v", c)
 	}
-	if c.appRead(5) {
+	if c.appRead(5, nil) {
 		t.Fatal("nothing new")
 	}
-	c.appRead(7)
+	c.appRead(7, nil)
 	if c.Unread != 2 {
 		t.Fatalf("two came since: %+v", c)
 	}
 	c.AtMe = true
-	c.appRead(1)
+	c.appRead(1, nil)
 	if c.Unread != 0 || c.ReadBase != 1 || c.AtMe {
 		t.Fatalf("read on in the app: %+v", c)
 	}
-	c.appRead(0)
+	c.appRead(0, nil)
 	if c.ReadBase != 0 || c.Unread != 0 {
 		t.Fatalf("all read in the app: %+v", c)
 	}
-	c.appRead(-3)
+	c.appRead(-3, nil)
 	if c.AppUnread != 0 {
 		t.Fatalf("never below zero: %+v", c)
+	}
+	// @我 as the app keeps it: shown while unread here, gone once read here.
+	yes, no := true, false
+	c.appRead(4, &yes)
+	if !c.AtMe {
+		t.Fatalf("an unread @ in the app: %+v", c)
+	}
+	c.markRead()
+	if c.appRead(4, &yes); c.AtMe {
+		t.Fatalf("read here, the @ with it: %+v", c)
+	}
+	c.appRead(6, &no)
+	if c.AtMe || c.Unread != 2 {
+		t.Fatalf("new messages, none @-ing you: %+v", c)
+	}
+}
+
+// A chat's picture comes through the hub: only from the extension's hosts,
+// fetched once and kept, and the list gives the hub's address, not the CDN's.
+func TestInboxAvatar(t *testing.T) {
+	var hits int
+	cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("png"))
+	}))
+	defer cdn.Close()
+	was := avatarClient
+	avatarClient = cdn.Client()
+	defer func() { avatarClient = was }()
+	_, h, _ := newExtTestHub(t)
+	m := h.manifest("fake")
+	m.Permissions.Network = []string{"127.0.0.1"}
+	for _, in := range []incomingMsg{
+		{Chat: "g1", ChatName: "群", ChatKind: "group", Avatar: cdn.URL + "/g1.png"},
+		{Chat: "g2", ChatName: "别处", ChatKind: "group", Avatar: "https://elsewhere.example/g2.png"},
+	} {
+		in.ID, in.Sender, in.Text, in.At, in.Live = in.Chat+"-1", "u2", "hi", time.Now(), true
+		if err := h.incoming(m, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	get := func(id string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.s.inboxAvatar(rec, httptest.NewRequest("GET", "/api/inbox/avatar?id="+id, nil))
+		return rec
+	}
+	for range 2 {
+		if rec := get("fake:g1"); rec.Code != 200 || rec.Body.String() != "png" {
+			t.Fatalf("the picture: %d %q", rec.Code, rec.Body.String())
+		}
+	}
+	if hits != 1 {
+		t.Fatalf("fetched once and kept: %d fetches", hits)
+	}
+	if rec := get("fake:g2"); rec.Code != http.StatusForbidden {
+		t.Fatalf("a host the extension doesn't name: %d", rec.Code)
+	}
+	rec := httptest.NewRecorder()
+	h.s.inboxList(rec, httptest.NewRequest("GET", "/api/inbox", nil))
+	if body := rec.Body.String(); strings.Contains(body, cdn.URL) || !strings.Contains(body, `"/api/inbox/avatar?id=fake%3Ag1`) {
+		t.Fatalf("the list names the hub's address only: %s", body)
 	}
 }

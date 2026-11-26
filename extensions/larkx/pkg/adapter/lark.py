@@ -33,6 +33,9 @@ MEDIA_MOST = 20 << 20
 CHAT_TOPICS = 3  # Chat.ChatMode THREAD_V2: a topic group, whose unread count is new topics
 READ_BATCH = 100  # chats a PullChatsByIdsRequest
 AT_ALL = "all"  # the user id of an @所有人
+# A picture by its key on Feishu's CDN, 180 px: groups give only a key (and a plain-http origin).
+FEISHU_PICTURE = "https://s1-imfile.feishucdn.com/static-resource/v1/%s~?image_size=180x180&cut_type=&quality=&format=image&sticker_format=.webp"
+DM_PICTURES_A_SYNC = 10  # direct chats whose picture one read-state answer may look up
 NAME_TTL = 3600
 RECENT_MOST = 2000
 # A group Meego (飞书项目) opened for one story or issue: its description is the
@@ -99,6 +102,15 @@ def chat_tags(info):
     return ["meego-" + kind for kind, tag in MEEGO_NAME.items() if link and link.group(1) == kind or tag in name]
 
 
+def picture_url(image):
+    """An https address of an image entity (a person's avatar): the thumbnail, else the original."""
+    for part in ("thumbnail", "origin"):
+        for u in (image.get(part) or {}).get("urls") or []:
+            if str(u).startswith("https://"):
+                return u
+    return ""
+
+
 def unread_of(info):
     """A chat's unread count as Feishu's own list shows it: messages, or new topics in a topic group."""
     if info.get("chatMode") == CHAT_TOPICS:
@@ -158,6 +170,12 @@ class _Names:
                 self._m = {k: v for k, v in self._m.items() if v[1] > old}
         return name
 
+    def peek(self, key):
+        """What is kept for key, still fresh; None when nothing is."""
+        with self._mu:
+            hit = self._m.get(key)
+        return hit[0] if hit and time.time() - hit[1] < NAME_TTL else None
+
 
 class Feishu:
     def __init__(self, U, region, on_save):
@@ -180,6 +198,7 @@ class Feishu:
         self.ignored = False  # 来源策略 ignores this extension: nothing gets marked
         self.group_topics = True  # 群话题各开对话: each group topic is a conversation of its own
         self.marked = collections.OrderedDict()  # message ids already marked as being worked on
+        self.msg_chat = collections.OrderedDict()  # message id -> its chat, for the unread @ list
 
     # Signing in.
 
@@ -329,12 +348,16 @@ class Feishu:
             peer = self.peer(chat, "" if out["owner"] else sender)
             out["chat_kind"] = "self" if peer is None or chat == self.self_chat else "dm"
             out["chat"] = self.dm_name(chat, peer, out["sender_name"] if not out["owner"] else "")
+            pic = self.dm_picture(chat)
         else:
             out["chat_kind"] = "group"
             out["chat"] = info.get("name") or ""
             tags = chat_tags(info)
             if tags:
                 out["chat_tags"] = tags
+            pic = self.group_picture(info)
+        if pic:
+            out["chat_avatar"] = pic
         if "isRemind" in info:
             out["muted"] = not info["isRemind"]  # 免打扰 is isRemind off
         folded = self.folded(chat)
@@ -366,8 +389,62 @@ class Feishu:
         return out
 
     def unread(self, chats):
-        """Each chat's unread count in Feishu; chats it doesn't know are left out."""
-        return {k: {"unread": unread_of(v)} for k, v in self.chats_now(chats).items()}
+        """Each chat's unread count in Feishu, and whether an unread message there @-mentions you or
+        everyone; chats it doesn't know are left out. When the @ list can't be read, at_me isn't said."""
+        try:
+            at = self.at_chats()
+        except Exception as e:
+            log.warning("unread @ messages: %s", e)
+            at = None
+        out, looked = {}, 0
+        for k, v in self.chats_now(chats).items():
+            out[k] = {"unread": unread_of(v)}
+            if at is not None:
+                out[k]["at_me"] = k in at
+            if v.get("type") == CHAT_P2P:
+                # A direct chat's picture is the other person's: a call each, so a few an answer.
+                known = self.names.peek("dmpic:" + k)
+                if known is None and looked < DM_PICTURES_A_SYNC:
+                    looked += 1
+                    known = self.dm_picture(k)
+                pic = known or ""
+            else:
+                pic = self.group_picture(v)
+            if pic:
+                out[k]["avatar"] = pic
+        return out
+
+    def group_picture(self, info):
+        """A group's picture on Feishu's CDN (Lark's isn't known: none)."""
+        key = (info.get("avatar") or {}).get("key") or ""
+        return FEISHU_PICTURE % key if key and self.region == "feishu" else ""
+
+    def dm_picture(self, chat):
+        """A direct chat's picture: the other person's avatar, yours in your chat with yourself."""
+        if self.client is None:
+            return ""
+
+        def look():
+            r = self.client.api("chats.PullChatChattersRequest", {"chatId": chat, "needChatters": True, "limit": 10}) or {}
+            people = r.get("chatters") or {}
+            other = next((v for k, v in people.items() if k != self.me), None) or people.get(self.me) or {}
+            return picture_url(other.get("avatar") or {})
+
+        return self.names.get("dmpic:" + chat, look) or ""
+
+    def at_chats(self):
+        """The chats of the unread messages that @-mention you or everyone, as Feishu keeps them
+        (cards too), the newest hundred: their chats looked up once a message."""
+        ids = [str(i) for i in (self.client.api("messages.PullUnreadAtMessageIdsRequest", {}) or {}).get("messageIds") or []]
+        unknown = [i for i in ids if i not in self.msg_chat]
+        for i in range(0, len(unknown), READ_BATCH):
+            got = (self.client.api("messages.PullMessagesByIdsRequest", {"messageIds": unknown[i:i + READ_BATCH]}) or {}).get("messages") or {}
+            with self._mu:
+                for mid, m in got.items():
+                    self.msg_chat[str(mid)] = str(m.get("chatId") or "")
+                while len(self.msg_chat) > RECENT_MOST:
+                    self.msg_chat.popitem(last=False)
+        return {self.msg_chat.get(i) for i in ids} - {"", None}
 
     def mark_read(self, chats):
         """Marks chats read up to their last message, as opening them in Feishu does. Topic groups keep
