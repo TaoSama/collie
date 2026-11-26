@@ -188,4 +188,7 @@ test("renders interactive selectable rows, section chips, and brand accents", ()
   assert.match(html, /hs-hot/);
   assert.match(html, /hs-chip/);
   assert.match(html, /跟随模型/);
+  assert.match(html, /data-hs-sec-box="meter:Pools"/);
+  assert.match(html, /data-hs-key="meter:Pools:0"/);
+  assert.equal(typeof hs.patch, "function");
 });

@@ -1,6 +1,8 @@
-// Generic header status slot renderer for extensions with the header_status
-// capability. Pure string rendering (no DOM coupling) so it can be unit-tested
-// directly and shared across every session view header.
+// Generic header status slot renderer & surgical in-place DOM patcher for
+// extensions with the header_status capability. Pure string rendering stays
+// side-effect-free for unit tests, while patch() updates mounted DOM nodes in
+// place so polling refreshes and fold/section toggles never tear down the
+// popover/drawer, replay open animations, or reset scroll position.
 (() => {
   const TONES = new Set(["ok", "info", "warn", "hot", "danger", "muted"]);
   const ACCENTS = new Set(["claude", "codex", "agy", "gemini"]);
@@ -68,7 +70,7 @@
       const children = expanded
         ? `<div class="hs-fold-children">${folded.map((c, idx) => renderRow(c, slotId, `${foldKey}.${idx}`, opts)).join("")}</div>`
         : "";
-      return `<div class="hs-fold-group">${head}${children}</div>`;
+      return `<div class="hs-fold-group" data-hs-key="${esc(foldKey)}">${head}${children}</div>`;
     }
     const right = r.metric
       ? `<span class="hs-row-metric">${renderItem(r.metric, false, opts)}</span>`
@@ -90,9 +92,9 @@
     const clickable = !!(r.action && r.action.name);
     const cls = `hs-row${r.current ? " is-cur" : ""}${r.selected ? " is-selected" : ""}${clickable ? " is-action" : ""}${accentCls(r.accent)}`;
     if (clickable) {
-      return `<div class="${cls}" role="button" tabindex="0" aria-pressed="${!!r.selected}"${actionAttrs(slotId, r.action)}>${top}${meters}${det}</div>`;
+      return `<div class="${cls}" data-hs-key="${esc(foldKey)}" role="button" tabindex="0" aria-pressed="${!!r.selected}"${actionAttrs(slotId, r.action)}>${top}${meters}${det}</div>`;
     }
-    return `<div class="${cls}">${top}${meters}${det}</div>`;
+    return `<div class="${cls}" data-hs-key="${esc(foldKey)}">${top}${meters}${det}</div>`;
   }
 
   function renderChips(chips, slotId) {
@@ -126,7 +128,20 @@
     const rows = collapsed
       ? ""
       : `<div class="hs-rows">${(sec.rows || []).map((r, rIdx) => renderRow(r, slotId, `${secKey}:${rIdx}`, opts)).join("")}</div>`;
-    return `<div class="hs-sec${collapsed ? " is-collapsed" : ""}">${head}${rows}</div>`;
+    return `<div class="hs-sec${collapsed ? " is-collapsed" : ""}" data-hs-sec-box="${esc(secKey)}">${head}${rows}</div>`;
+  }
+
+  function renderPanelBodyInner(slot, opts) {
+    const st = slot.status;
+    const errText = st?.error || slot.error || "";
+    const secs = (st?.sections || []).map((sec, idx) => renderSection(sec, slot.id, idx, opts)).join("");
+    const fallbackItems = !secs && (st?.items || []).length
+      ? `<div class="hs-sec"><div class="hs-rows"><div class="hs-row"><div class="hs-meters">${st.items.map((m) => renderItem(m, true, opts)).join("")}</div></div></div></div>`
+      : "";
+    const empty = !secs && !fallbackItems && !errText
+      ? `<div class="hs-empty">${slot.state === "starting" ? "正在启动扩展…" : "暂无状态数据"}</div>`
+      : "";
+    return `${errText ? `<div class="hs-err">${esc(errText)}</div>` : ""}${secs}${fallbackItems}${empty}`;
   }
 
   function renderPanel(slot, opts) {
@@ -135,23 +150,29 @@
     const when = opts.when || ((t) => String(t || ""));
     const refreshIcon = opts.refreshIcon || '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>';
     const closeIcon = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>';
-    const errText = st?.error || slot.error || "";
     const updated = st?.updated_at ? when(st.updated_at) : "";
-    const secs = (st?.sections || []).map((sec, idx) => renderSection(sec, slot.id, idx, opts)).join("");
-    const fallbackItems = !secs && (st?.items || []).length
-      ? `<div class="hs-sec"><div class="hs-rows"><div class="hs-row"><div class="hs-meters">${st.items.map((m) => renderItem(m, true, opts)).join("")}</div></div></div></div>`
-      : "";
-    const empty = !secs && !fallbackItems && !errText
-      ? `<div class="hs-empty">${slot.state === "starting" ? "正在启动扩展…" : "暂无状态数据"}</div>`
-      : "";
     return `<div class="hs-scrim" data-hs-close${opts.open ? "" : " hidden"}></div>`
       + `<div class="hs-panel${opts.pinned ? " is-pinned" : ""}" role="dialog" aria-label="${esc(title)}"${opts.open ? "" : " hidden"}>`
       + `<div class="hs-ph">`
-      + `<span class="hs-ph-t">${slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : ""}<b>${esc(title)}</b>${opts.pinned ? `<span class="hs-pin-tag">已固定</span>` : ""}</span>`
-      + `<span class="hs-ph-r">${updated ? `<span class="hs-ph-at">${esc(updated)}</span>` : ""}<button type="button" class="icon-btn hs-ref${opts.loading ? " spinning" : ""}" data-hs-refresh="${esc(slot.id)}" aria-label="刷新" title="刷新">${refreshIcon}</button><button type="button" class="icon-btn hs-close" data-hs-close aria-label="关闭" title="关闭">${closeIcon}</button></span>`
+      + `<span class="hs-ph-t">${slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : ""}<b>${esc(title)}</b><span class="hs-pin-tag"${opts.pinned ? "" : " hidden"}>已固定</span></span>`
+      + `<span class="hs-ph-r"><span class="hs-ph-at"${updated ? "" : " hidden"}>${esc(updated)}</span><button type="button" class="icon-btn hs-ref${opts.loading ? " spinning" : ""}" data-hs-refresh="${esc(slot.id)}" aria-label="刷新" title="刷新">${refreshIcon}</button><button type="button" class="icon-btn hs-close" data-hs-close aria-label="关闭" title="关闭">${closeIcon}</button></span>`
       + `</div>`
-      + `<div class="hs-body">${errText ? `<div class="hs-err">${esc(errText)}</div>` : ""}${secs}${fallbackItems}${empty}</div>`
+      + `<div class="hs-body">${renderPanelBodyInner(slot, opts)}</div>`
       + `</div>`;
+  }
+
+  function renderDesktopMain(slot, opts) {
+    const st = slot.status;
+    const title = st?.title || slot.label || slot.name || slot.id;
+    const items = st?.items || [];
+    if (items.length) {
+      return `<span class="hs-line">${items.map((it) => renderItem(it, false, opts)).join(`<span class="hs-sep" aria-hidden="true">·</span>`)}</span>`
+        + (st.subline ? `<span class="hs-sub">${esc(st.subline)}</span>` : "");
+    }
+    if (slot.state === "starting" && !st) {
+      return `<span class="hs-line"><span class="dot starting"></span><span class="hs-lab">${esc(title)}</span><span class="hs-val hs-muted">启动中…</span></span>`;
+    }
+    return `<span class="hs-line"><span class="hs-lab">${esc(title)}</span><span class="hs-val hs-warn">${esc(st?.error || slot.error || "暂不可用")}</span></span>`;
   }
 
   function renderSlot(slot, opts = {}) {
@@ -163,21 +184,13 @@
     const compact = compactFallback(slot);
     const open = opts.openId === slot.id;
     const pinned = opts.pinnedId === slot.id;
-    let desktopMain = "";
-    if (items.length) {
-      desktopMain = `<span class="hs-line">${items.map((it) => renderItem(it, false, opts)).join(`<span class="hs-sep" aria-hidden="true">·</span>`)}</span>`
-        + (st.subline ? `<span class="hs-sub">${esc(st.subline)}</span>` : "");
-    } else if (slot.state === "starting" && !st) {
-      desktopMain = `<span class="hs-line"><span class="dot starting"></span><span class="hs-lab">${esc(title)}</span><span class="hs-val hs-muted">启动中…</span></span>`;
-    } else {
-      desktopMain = `<span class="hs-line"><span class="hs-lab">${esc(title)}</span><span class="hs-val hs-warn">${esc(st?.error || slot.error || "暂不可用")}</span></span>`;
-    }
+    const desktopMain = renderDesktopMain(slot, opts);
     const mobileIco = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
       || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
     return `<div class="hs-wrap${open ? " is-open" : ""}${pinned ? " is-pinned" : ""}" data-hs-id="${esc(slot.id)}">`
       + `<button type="button" class="hs-trigger${toneCls(tone)}" data-hs-toggle="${esc(slot.id)}" aria-expanded="${open}" aria-haspopup="dialog" title="${esc(title)}">`
       + `<span class="hs-desktop">${desktopMain}</span>`
-      + `<span class="hs-mobile">${mobileIco}<span class="hs-mobile-t">${esc(compact)}</span>${CHEV_SVG}</span>`
+      + `<span class="hs-mobile"><span class="hs-mobile-ico">${mobileIco}</span><span class="hs-mobile-t">${esc(compact)}</span>${CHEV_SVG}</span>`
       + `</button>`
       + renderPanel(slot, {
         open,
@@ -197,5 +210,225 @@
     return slots.map((s) => renderSlot(s, opts)).join("");
   }
 
-  window.collieHeaderStatus = { render, renderSlot, compactFallback };
+  // Lightweight in-place DOM morphing so updating changed numbers, progress bar
+  // widths, or toggling fold/section state preserves existing elements, focus,
+  // open animations, and scroll positions without flashing.
+  function syncAttrs(el, tpl) {
+    const nextNames = new Set();
+    for (const a of tpl.attributes) {
+      nextNames.add(a.name);
+      if (el.getAttribute(a.name) !== a.value) el.setAttribute(a.name, a.value);
+    }
+    for (let i = el.attributes.length - 1; i >= 0; i--) {
+      const name = el.attributes[i].name;
+      if (!nextNames.has(name)) el.removeAttribute(name);
+    }
+  }
+
+  function morphChildren(curParent, tplParent) {
+    const curNodes = Array.from(curParent.childNodes);
+    const tplNodes = Array.from(tplParent.childNodes);
+    const keyed = new Map();
+    for (const n of curNodes) {
+      if (n.nodeType === 1) {
+        const k = n.getAttribute("data-hs-sec-box") || n.getAttribute("data-hs-key");
+        if (k) keyed.set(k, n);
+      }
+    }
+    let idx = 0;
+    for (const tpl of tplNodes) {
+      const key = tpl.nodeType === 1 ? (tpl.getAttribute("data-hs-sec-box") || tpl.getAttribute("data-hs-key")) : null;
+      let cur = key ? keyed.get(key) : curParent.childNodes[idx];
+      if (cur && key && cur !== curParent.childNodes[idx]) {
+        curParent.insertBefore(cur, curParent.childNodes[idx] || null);
+      }
+      if (!cur) {
+        curParent.appendChild(tpl.cloneNode(true));
+      } else if (cur.nodeType !== tpl.nodeType || cur.nodeName !== tpl.nodeName) {
+        curParent.replaceChild(tpl.cloneNode(true), cur);
+      } else if (cur.nodeType === 3) {
+        if (cur.nodeValue !== tpl.nodeValue) cur.nodeValue = tpl.nodeValue;
+      } else if (cur.nodeType === 1) {
+        // Skip re-morphing identical SVG/icon subtrees to avoid image decode flashes.
+        if (cur.tagName === "svg" || cur.classList?.contains("hs-item-ico") || cur.classList?.contains("hs-sec-ico") || cur.classList?.contains("hs-row-ico")) {
+          if (cur.outerHTML !== tpl.outerHTML) {
+            curParent.replaceChild(tpl.cloneNode(true), cur);
+          }
+        } else {
+          syncAttrs(cur, tpl);
+          morphChildren(cur, tpl);
+        }
+      }
+      idx++;
+    }
+    while (curParent.childNodes.length > tplNodes.length) {
+      curParent.removeChild(curParent.lastChild);
+    }
+  }
+
+  // patch(container, slots, opts) mounts once and updates every slot in place.
+  // opts.anchorSelector optionally preserves the viewport Y offset of a clicked
+  // element (e.g. a fold/section toggle button) inside .hs-body across the update.
+  function patch(container, slots, opts = {}) {
+    if (!container) return;
+    if (!Array.isArray(slots) || !slots.length) {
+      if (container.childNodes.length) container.textContent = "";
+      container.hidden = true;
+      return;
+    }
+    container.hidden = false;
+
+    // Remove wraps for slots that no longer exist.
+    const wantIds = new Set(slots.map((s) => s.id));
+    for (const child of Array.from(container.children)) {
+      const id = child.getAttribute("data-hs-id");
+      if (!wantIds.has(id)) child.remove();
+    }
+
+    const doc = container.ownerDocument;
+    const when = opts.when || ((t) => String(t || ""));
+    const parseFrag = (html) => {
+      const t = doc.createElement("template");
+      t.innerHTML = html;
+      return t.content;
+    };
+
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      let wrap = container.querySelector(`:scope > .hs-wrap[data-hs-id="${slot.id.replace(/"/g, '\\"')}"]`);
+      const open = opts.openId === slot.id;
+      const pinned = opts.pinnedId === slot.id;
+      const slotOpts = {
+        open,
+        pinned,
+        loading: !!opts.loading,
+        when,
+        refreshIcon: opts.refreshIcon,
+        icons: opts.icons,
+        secState: opts.secState,
+        expandedFolds: opts.expandedFolds,
+      };
+
+      if (!wrap) {
+        const frag = parseFrag(renderSlot(slot, opts));
+        wrap = frag.firstElementChild;
+        if (open) {
+          const panel = wrap.querySelector(".hs-panel");
+          if (panel) panel.classList.add("is-entering");
+        }
+        container.insertBefore(wrap, container.children[i] || null);
+        continue;
+      }
+
+      if (container.children[i] !== wrap) {
+        container.insertBefore(wrap, container.children[i] || null);
+      }
+
+      const wasOpen = wrap.classList.contains("is-open");
+      wrap.classList.toggle("is-open", open);
+      wrap.classList.toggle("is-pinned", pinned);
+
+      // 1. Update trigger text/classes/bars in place (no teardown).
+      const st = slot.status;
+      const title = st?.title || slot.label || slot.name || slot.id;
+      const items = st?.items || [];
+      const hasErr = slot.state === "error" || (!!st?.error && !items.length);
+      const tone = st?.tone || (hasErr ? "warn" : "");
+      const compact = compactFallback(slot);
+
+      const trig = wrap.querySelector(":scope > .hs-trigger");
+      if (trig) {
+        const trigCls = `hs-trigger${toneCls(tone)}`;
+        if (trig.className !== trigCls) trig.className = trigCls;
+        const expStr = String(open);
+        if (trig.getAttribute("aria-expanded") !== expStr) trig.setAttribute("aria-expanded", expStr);
+        if (trig.getAttribute("title") !== title) trig.setAttribute("title", title);
+
+        const deskEl = trig.querySelector(".hs-desktop");
+        if (deskEl) {
+          const deskHtml = renderDesktopMain(slot, opts);
+          if (deskEl._hsHtml !== deskHtml) {
+            morphChildren(deskEl, parseFrag(deskHtml));
+            deskEl._hsHtml = deskHtml;
+          }
+        }
+        const mobIcoEl = trig.querySelector(".hs-mobile-ico");
+        if (mobIcoEl) {
+          const mobIcoHtml = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
+            || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
+          if (mobIcoEl._hsHtml !== mobIcoHtml) {
+            mobIcoEl.innerHTML = mobIcoEl._hsHtml = mobIcoHtml;
+          }
+        }
+        const mobTextEl = trig.querySelector(".hs-mobile-t");
+        if (mobTextEl && mobTextEl.textContent !== compact) {
+          mobTextEl.textContent = compact;
+        }
+      }
+
+      // 2. Toggle scrim & panel visibility in place; only play open animation on closed -> open.
+      const scrim = wrap.querySelector(":scope > .hs-scrim");
+      if (scrim && scrim.hidden !== !open) scrim.hidden = !open;
+      const panel = wrap.querySelector(":scope > .hs-panel");
+      if (!panel) continue;
+      if (panel.hidden !== !open) panel.hidden = !open;
+      panel.classList.toggle("is-pinned", pinned);
+      if (panel.getAttribute("aria-label") !== title) panel.setAttribute("aria-label", title);
+      if (!wasOpen && open) {
+        panel.classList.remove("is-entering");
+        void panel.offsetWidth;
+        panel.classList.add("is-entering");
+      } else if (wasOpen && !open) {
+        panel.classList.remove("is-entering");
+      }
+
+      // 3. Patch panel header metadata/spinner in place.
+      const phTitle = panel.querySelector(".hs-ph-t b");
+      if (phTitle && phTitle.textContent !== title) phTitle.textContent = title;
+      const pinTag = panel.querySelector(".hs-pin-tag");
+      if (pinTag && pinTag.hidden !== !pinned) pinTag.hidden = !pinned;
+      const atEl = panel.querySelector(".hs-ph-at");
+      if (atEl) {
+        const updated = st?.updated_at ? when(st.updated_at) : "";
+        if (atEl.textContent !== updated) atEl.textContent = updated;
+        if (atEl.hidden !== !updated) atEl.hidden = !updated;
+      }
+      const refBtn = panel.querySelector(".hs-ref");
+      if (refBtn) refBtn.classList.toggle("spinning", !!opts.loading);
+
+      // 4. Patch panel body in place while preserving scrollTop / clicked anchor.
+      const body = panel.querySelector(".hs-body");
+      if (body) {
+        const bodyHtml = renderPanelBodyInner(slot, slotOpts);
+        if (body._hsHtml !== bodyHtml) {
+          const prevScroll = body.scrollTop;
+          let anchorOffset = null;
+          if (open && opts.anchorSelector) {
+            const anchorEl = body.querySelector(opts.anchorSelector);
+            if (anchorEl) {
+              anchorOffset = anchorEl.getBoundingClientRect().top - body.getBoundingClientRect().top;
+            }
+          }
+          morphChildren(body, parseFrag(bodyHtml));
+          body._hsHtml = bodyHtml;
+          if (open) {
+            if (anchorOffset !== null && opts.anchorSelector) {
+              const nextAnchor = body.querySelector(opts.anchorSelector);
+              if (nextAnchor) {
+                const nextOffset = nextAnchor.getBoundingClientRect().top - body.getBoundingClientRect().top;
+                const target = prevScroll + (nextOffset - anchorOffset);
+                body.scrollTop = Math.max(0, Math.min(body.scrollHeight - body.clientHeight, target));
+              } else {
+                body.scrollTop = prevScroll;
+              }
+            } else {
+              body.scrollTop = prevScroll;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  window.collieHeaderStatus = { render, renderSlot, patch, compactFallback };
 })();

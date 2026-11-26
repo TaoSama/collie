@@ -1938,9 +1938,9 @@
     }
     return "";
   }
-  function renderHeaderStatus() {
+  function renderHeaderStatus({ anchorSelector = "" } = {}) {
     if (!window.collieHeaderStatus) return;
-    const html = window.collieHeaderStatus.render(hdrStatus.slots, {
+    const opts = {
       openId: hdrStatus.openId,
       pinnedId: hdrStatus.pinnedId,
       secState: hdrStatus.secState,
@@ -1949,18 +1949,26 @@
       loading: hdrStatus.loading,
       when,
       refreshIcon: ico("refresh-cw"),
-    });
+      anchorSelector,
+    };
     $$("[data-hdr-slots]").forEach((el) => {
-      if (el._html !== html) el.innerHTML = el._html = html;
-      el.hidden = !html;
+      if (typeof window.collieHeaderStatus.patch === "function") {
+        window.collieHeaderStatus.patch(el, hdrStatus.slots, opts);
+      } else {
+        const html = window.collieHeaderStatus.render(hdrStatus.slots, opts);
+        if (el._html !== html) el.innerHTML = el._html = html;
+        el.hidden = !html;
+      }
     });
   }
-  async function fetchHeaderStatus({ fresh = false } = {}) {
+  async function fetchHeaderStatus({ fresh = false, silent = false } = {}) {
     if (hdrStatus.inflight && !fresh) return hdrStatus.inflight;
     const model = activeHeaderModel();
     hdrStatus.model = model;
-    hdrStatus.loading = true;
-    if (hdrStatus.openId) renderHeaderStatus();
+    if (!silent) {
+      hdrStatus.loading = true;
+      if (hdrStatus.openId) renderHeaderStatus();
+    }
     const qs = new URLSearchParams();
     if (model) qs.set("model", model);
     if (fresh) qs.set("fresh", "1");
@@ -2000,7 +2008,7 @@
     if (view !== "collie" && view !== "pane" && view !== "ext") return;
     const model = activeHeaderModel();
     if (force || !hdrStatus.at || model !== hdrStatus.model || Date.now() - hdrStatus.at >= HDR_STATUS_EVERY_MS) {
-      fetchHeaderStatus({ fresh: force });
+      fetchHeaderStatus({ fresh: force, silent: !force });
     }
   }
   // Desktop hover preview (150ms open delay, stays open while pointer is inside
@@ -2068,7 +2076,7 @@
         ? !!hdrStatus.secState[key]
         : secBtn.dataset.hsSecDefault === "1";
       hdrStatus.secState[key] = !cur;
-      renderHeaderStatus();
+      renderHeaderStatus({ anchorSelector: `[data-hs-sec="${CSS.escape(key)}"]` });
       return;
     }
     const foldRowBtn = e.target.closest("[data-hs-fold-row]");
@@ -2076,7 +2084,7 @@
       e.stopPropagation();
       const key = foldRowBtn.dataset.hsFoldRow;
       hdrStatus.expandedFolds[key] = !hdrStatus.expandedFolds[key];
-      renderHeaderStatus();
+      renderHeaderStatus({ anchorSelector: `[data-hs-fold-row="${CSS.escape(key)}"]` });
       return;
     }
     const actEl = e.target.closest("[data-hs-action]");
