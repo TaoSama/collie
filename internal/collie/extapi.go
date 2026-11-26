@@ -298,6 +298,7 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 	msgs, unavailable := s.inboxRecent(r.Context(), &c, msgs, outs)
 	for i := range msgs {
 		s.inboxMediaURLs(c.ID, &msgs[i])
+		msgs[i].Avatar = s.senderAvatarPath(c.ID, msgs[i].Avatar)
 	}
 	writeJSON(w, 200, map[string]any{"conv": s.convView(c), "msgs": msgs, "outbox": outs, "history_unavailable": unavailable})
 }

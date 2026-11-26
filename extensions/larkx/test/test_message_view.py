@@ -105,6 +105,31 @@ class MessageViewTest(unittest.TestCase):
         f.normalize(dict(reply, msg_id="m3", position=3, create_time=1795720000))
         self.assertEqual([r["id"] for r in f.history.recent("123")], ["m1", "m2", "r1"], "a message of the chat's own stream comes from its positions")
 
+    def test_senders_have_their_pictures(self):
+        """Each sender's avatar comes with the window, the people looked up once in one call."""
+        class Client:
+            calls = []
+
+            def api(self, method, params):
+                self.calls.append((method, params))
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"123": {"lastVisibleMessagePosition": 2}}}
+                if method == "chats.PullChatChattersByIDsRequest":
+                    return {"chatters": {7: {"avatar": {"thumbnail": {"urls": ["https://cdn.example/7"]}}}}}
+                return {"messages": {str(p): {"id": "m%d" % p, "chatId": "123", "type": 4, "fromId": str(5 + 2 * p),
+                                              "content": U.L.entities.TextContent(richText=richtext.build(U.L, "你好")).SerializeToString(),
+                                              "createTime": 1795700000 + p} for p in params["positions"]}}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client = Client()
+        f.user_name = lambda uid, chat: "甲"
+        rows = f.history.recent("123")
+        self.assertEqual([r.get("sender_avatar") for r in rows], ["https://cdn.example/7", None])
+        self.assertEqual(f.client.calls[-1][1]["chatterIds"], [7, 9])
+        f.history.invalidate("123")
+        f.history.recent("123")
+        self.assertNotEqual(f.client.calls[-1][0], "chats.PullChatChattersByIDsRequest", "kept an hour")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -113,15 +114,22 @@ func fetchAvatar(raw, path string) error {
 	return os.Rename(tmp, path)
 }
 
-// inboxAvatar serves a conversation's picture (GET /api/inbox/avatar?id=…).
+// inboxAvatar serves a conversation's picture (GET /api/inbox/avatar?id=…),
+// or with u and its sig the picture of someone who wrote in it.
 func (s *Server) inboxAvatar(w http.ResponseWriter, r *http.Request) {
-	c, ok := s.ext.store.conv(r.URL.Query().Get("id"))
+	q := r.URL.Query()
+	c, ok := s.ext.store.conv(q.Get("id"))
 	m := s.ext.manifest(c.Ext)
-	if !ok || c.Avatar == "" || m == nil {
+	pic := c.Avatar
+	if u := q.Get("u"); u != "" {
+		pic = u
+		ok = ok && hmac.Equal([]byte(q.Get("sig")), []byte(s.senderAvatarSig(c.ID, u)))
+	}
+	if !ok || pic == "" || m == nil {
 		http.NotFound(w, r)
 		return
 	}
-	raw, err := avatarURL(m, c.Avatar)
+	raw, err := avatarURL(m, pic)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
@@ -142,6 +150,21 @@ func avatarPath(c InboxConv) string {
 		return ""
 	}
 	return "/api/inbox/avatar?id=" + url.QueryEscape(c.ID) + "&v=" + avatarKey(c.Avatar)[:8]
+}
+
+// senderAvatarPath is where the page asks for a sender's picture: the hub
+// signs the address, so the page can't have it fetch any other.
+func (s *Server) senderAvatarPath(conv, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	return "/api/inbox/avatar?" + url.Values{"id": {conv}, "u": {raw}, "sig": {s.senderAvatarSig(conv, raw)}}.Encode()
+}
+
+func (s *Server) senderAvatarSig(conv, raw string) string {
+	mac := hmac.New(sha256.New, []byte("collie-inbox-avatar\n"+s.token))
+	fmt.Fprintf(mac, "%q %q", conv, raw)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 const (

@@ -1243,6 +1243,15 @@ func TestInboxAvatar(t *testing.T) {
 	if body := rec.Body.String(); strings.Contains(body, cdn.URL) || !strings.Contains(body, `"/api/inbox/avatar?id=fake%3Ag1`) {
 		t.Fatalf("the list names the hub's address only: %s", body)
 	}
+	// A sender's picture: the address the hub signed, and no other.
+	path := h.s.senderAvatarPath("fake:g1", cdn.URL+"/u2.png")
+	for want, p := range map[int]string{200: path, 404: strings.Replace(path, "u2.png", "u3.png", 1)} {
+		rec := httptest.NewRecorder()
+		h.s.inboxAvatar(rec, httptest.NewRequest("GET", p, nil))
+		if rec.Code != want {
+			t.Fatalf("%s: %d, want %d", p, rec.Code, want)
+		}
+	}
 }
 
 // The read state puts a chat's name right (an old 私聊（还不知道对方是谁）

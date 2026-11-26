@@ -201,6 +201,9 @@ type Message struct {
 	// ChatAvatar: the chat's picture, an https address on one of the
 	// manifest's permissions.network hosts; Collie fetches and keeps it.
 	ChatAvatar string `json:"chat_avatar,omitempty"`
+	// SenderAvatar: the sender's picture, the same kind of address, in a
+	// recent window (inbox.recent).
+	SenderAvatar string `json:"sender_avatar,omitempty"`
 	// AtMe: someone else @-mentioned the signed-in person, or everyone.
 	AtMe bool `json:"at_me,omitempty"`
 	// Mention: the signed-in person @-mentioned themselves (the @ already

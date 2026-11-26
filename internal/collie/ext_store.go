@@ -164,6 +164,7 @@ type InboxMsg struct {
 	At         time.Time `json:"at"`
 	Sender     string    `json:"sender,omitempty"`
 	SenderName string    `json:"sender_name,omitempty"`
+	Avatar     string    `json:"avatar,omitempty"` // the sender's picture: the source's address, the hub's on the page
 	Mine       bool      `json:"mine,omitempty"`
 	Text       string    `json:"text"`
 	Ref        string    `json:"ref,omitempty"` // a send of Collie's: its outbox ref

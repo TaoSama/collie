@@ -546,6 +546,21 @@ class Feishu:
         name = sender_name or name or (self.user_name(uid, chat) if uid else "")
         return name or "私聊 " + (uid or chat)[-6:]
 
+    def user_pictures(self, chat, uids):
+        """People's avatars in a chat, {user id: https address}, looked up an hour, the ones not kept in one call."""
+        want = sorted({u for u in uids if u.isdigit() and self.names.peek("pic:" + u) is None})
+        if want and self.client is not None:
+            try:
+                r = self.client.api("chats.PullChatChattersByIDsRequest",
+                                    {"chatId": chat, "chatterIds": [int(u) for u in want], "needChatters": True}) or {}
+            except Exception as e:
+                log.warning("pictures in %s: %s", chat, e)
+                return {}
+            got = {str(k): picture_url(v.get("avatar") or {}) for k, v in (r.get("chatters") or {}).items()}
+            for u in want:
+                self.names.get("pic:" + u, lambda: got.get(u, ""))
+        return {u: self.names.peek("pic:" + u) or "" for u in uids}
+
     def user_name(self, uid, chat):
         if not uid or self.client is None:
             return ""

@@ -115,6 +115,7 @@ func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message,
 			if stored[i].Ref == "" && m.View != nil {
 				stored[i].View = m.View
 			}
+			stored[i].Avatar = m.SenderAvatar
 			continue
 		}
 		at := parseAt(m.At)
@@ -124,7 +125,7 @@ func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message,
 		ids[m.ID] = len(stored)
 		mine := m.Owner != nil && *m.Owner
 		stored = append(stored, InboxMsg{ID: m.ID, Conv: c.ID, At: at, Sender: m.Sender, SenderName: m.SenderName,
-			Mine: mine, Bot: mine && endsInFooter(m.Text, footer), Text: m.Text, View: m.View})
+			Avatar: m.SenderAvatar, Mine: mine, Bot: mine && endsInFooter(m.Text, footer), Text: m.Text, View: m.View})
 	}
 	slices.SortStableFunc(stored, func(a, b InboxMsg) int { return a.At.Compare(b.At) })
 	if len(stored) > inboxKeepMsgs {

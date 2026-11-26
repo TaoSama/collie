@@ -524,7 +524,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", icon_url: "ext-icons/workbench.svg", runtime: { feature: "workbench" },
       description: "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。" }, setting: { id: "workbench", enabled: true } }] };
   const inboxConvs = [
-    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "微信ClawBot", kind: "dm", last_at: ago(6), preview: "你: 部署好了吗", on: true, owner: true, handler: "collie" },
+    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "微信ClawBot", kind: "dm", last_at: ago(6), preview: "你: 好的，谢谢", on: true, owner: true, handler: "collie" },
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
     { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(12), preview: "赵六: @你 今晚的灰度帮忙盯一下", unread: 4, at_me: true, on: false, handler: "agent" },
@@ -538,12 +538,20 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { id: "m2", conv: "larkx:oc_1", at: ago(4), sender_name: "张三", mine: true, text: "/ai 帮我总结今天的讨论" },
     { id: "out:o1", conv: "larkx:oc_1", at: ago(3), mine: true, ref: "o1", text: "今天定了三件事：\n\n1. 周五评审\n2. 接口先冻结\n3. 张三负责发布说明\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 58秒" },
   ] };
+  // Made-up people's pictures: a colored circle with a letter.
+  const face = (bg, ch) => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="${bg}"/><text x="20" y="26" font-size="17" text-anchor="middle" fill="#fff" font-family="sans-serif">${ch}</text></svg>`);
+  const wx = "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat";
+  inboxMsgs[wx] = [
+    { id: "w1", conv: wx, at: ago(9), mine: true, text: "部署好了吗" },
+    { id: "out:w2", conv: wx, at: ago(8), mine: true, ref: "w2", text: "部署好了：hub 和 6 台电脑都是最新版，线上页面已核对。" },
+    { id: "w3", conv: wx, at: ago(6), mine: true, text: "好的，谢谢" },
+  ];
   inboxMsgs["larkx:oc_7"] = [
     {"id": "d1", "conv": "larkx:oc_7", "at": ago(1560), "sender_name": "", "mine": false, "text": "值班同学加入了会话", "view": {"kind": "system", "nodes": [{"kind": "text", "text": "值班同学加入了会话"}]}},
-    {"id": "d2", "conv": "larkx:oc_7", "at": ago(1500), "sender_name": "王五", "mine": false, "text": "昨晚 23:10 数据库连接池告警，我先看下监控"},
+    {"id": "d2", "conv": "larkx:oc_7", "at": ago(1500), "sender_name": "王五", "avatar": face("#c2410c", "王"), "mine": false, "text": "昨晚 23:10 数据库连接池告警，我先看下监控"},
     {"id": "d3", "conv": "larkx:oc_7", "at": ago(1498), "sender_name": "值班助手", "mine": false, "text": "[卡片] 数据库告警已恢复", "view": {"kind": "card", "title": "数据库告警已恢复", "subtitle": "生产环境 · API 服务", "tone": "blue", "url": "", "nodes": [{"kind": "markdown", "text": "**连接池已恢复**\n错误率已回落，值班同学可继续观察。"}, {"kind": "columns", "children": [{"kind": "group", "children": [{"kind": "markdown", "text": "**错误率**\n0.08%"}]}, {"kind": "group", "children": [{"kind": "markdown", "text": "**影响范围**\n华东一区"}]}]}, {"kind": "fields", "children": [{"kind": "field", "children": [{"kind": "markdown", "text": "**负责人**\n数据库值班"}], "tone": "short"}, {"kind": "field", "children": [{"kind": "text", "text": "状态 · 已恢复"}], "tone": "short"}]}, {"kind": "rule"}, {"kind": "actions", "children": [{"kind": "button", "text": "查看监控", "url": "https://example.com/monitor", "tone": "primary"}, {"kind": "button", "text": "确认恢复"}]}]}},
-    {"id": "d4", "conv": "larkx:oc_7", "at": ago(1440), "sender_name": "李四", "mine": false, "text": "复盘记录", "view": {"kind": "post", "title": "复盘记录", "nodes": [{"kind": "paragraph", "children": [{"kind": "text", "text": "复盘要点", "tone": "bold"}]}, {"kind": "quote", "children": [{"kind": "paragraph", "children": [{"kind": "text", "text": "恢复时间已更新。"}]}]}, {"kind": "paragraph", "children": [{"kind": "link", "text": "记录", "url": "https://example.com/review"}]}]}},
-    {"id": "d5", "conv": "larkx:oc_7", "at": ago(50), "sender_name": "李四", "mine": false, "text": "[文件] 复盘摘要.txt", "view": {"kind": "media", "nodes": [{"kind": "file", "text": "复盘摘要.txt", "key": "file_example", "tone": "18"}]}},
+    {"id": "d4", "conv": "larkx:oc_7", "at": ago(1440), "sender_name": "李四", "avatar": face("#0f766e", "李"), "mine": false, "text": "复盘记录", "view": {"kind": "post", "title": "复盘记录", "nodes": [{"kind": "paragraph", "children": [{"kind": "text", "text": "复盘要点", "tone": "bold"}]}, {"kind": "quote", "children": [{"kind": "paragraph", "children": [{"kind": "text", "text": "恢复时间已更新。"}]}]}, {"kind": "paragraph", "children": [{"kind": "link", "text": "记录", "url": "https://example.com/review"}]}]}},
+    {"id": "d5", "conv": "larkx:oc_7", "at": ago(50), "sender_name": "李四", "avatar": face("#0f766e", "李"), "mine": false, "text": "[文件] 复盘摘要.txt", "view": {"kind": "media", "nodes": [{"kind": "file", "text": "复盘摘要.txt", "key": "file_example", "tone": "18"}]}},
     {"id": "d6", "conv": "larkx:oc_7", "at": ago(49), "sender_name": "李四", "mine": false, "text": "[图片]", "view": {"kind": "media", "nodes": [{"kind": "image", "key": "img_v3_example"}]}},
     {"id": "d7", "conv": "larkx:oc_7", "at": ago(20), "sender_name": "", "mine": true, "text": "/ai 帮我总结一下这次告警"},
     { id: "out:o7", conv: "larkx:oc_7", at: ago(18), mine: true, ref: "o7", text: "这次告警是连接池耗尽，22:40 扩容后已恢复，错误率回到 0.08%。\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 41秒" },

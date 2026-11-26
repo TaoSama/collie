@@ -2386,8 +2386,9 @@ select.picked { display: none; }
 .conv-msg { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: start; padding-top: 3px; }
 .conv-msg.head { padding-top: 12px; }
 .conv-msg.me { grid-template-columns: minmax(0, 1fr); justify-items: end; }
-.conv-ava { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-size: var(--fs-small); font-weight: var(--fw-strong); color: var(--t-secondary); }
+.conv-ava { position: relative; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-size: var(--fs-small); font-weight: var(--fw-strong); color: var(--t-secondary); }
 .conv-msg.head .conv-ava { background: var(--bg-3); }
+.conv-ava > svg { width: 15px; height: 15px; }
 .conv-body { display: grid; gap: 3px; min-width: 0; max-width: min(560px, 100%); justify-items: start; }
 .conv-msg.me .conv-body { justify-items: end; }
 .conv-msg .meta { display: flex; gap: 8px; align-items: baseline; padding: 0 4px; font-size: var(--fs-small); color: var(--t-meta); }

@@ -278,7 +278,7 @@
   const AI_ON = "on"; // the channel key of 已交给 AI
   // A channel's filters: [key, label, which chats, icon]; 单聊、@我、群聊
   // only where it has both direct chats and groups. 全部 lists every chat,
-  // the others only the unread ones; each counts the unread chats it has.
+  // the others only the unread ones; each counts the chats it lists.
   const unread = (c) => c.unread > 0;
   const SUBS = [
     ["", "全部", () => true, "message-square-text"],
@@ -331,8 +331,8 @@
     if (p.on || !p.ch) return "";
     const chip = ([k, l, pick, icon, mixed]) => {
       if (mixed && !p.ch.mixed) return "";
-      const n = p.ch.convs.filter(pick).filter(unread).length, on = p.sub === k;
-      const tone = n && k === "at" ? " attn" : n ? " info" : "";
+      const n = p.ch.convs.filter(pick).length, on = p.sub === k;
+      const tone = n && k === "at" ? " attn" : n && k ? " info" : "";
       return `<button type="button" class="inbox-chip${on ? " on" : ""}" data-inbox-sub="${esc(k)}"${on ? ' aria-current="true"' : ""}>${ico(icon)}<span>${esc(l)}</span><span class="inbox-nav-n${tone}">${n}</span></button>`;
     };
     return `<div class="inbox-chips" role="toolbar" aria-label="筛选${esc(p.ch.label)}会话">${SUBS.map(chip).join("")}</div>`;
@@ -381,8 +381,10 @@
     const worker = c.worker ? (href ? `<a href="${esc(href)}">${esc(c.worker)} →</a>` : esc(c.worker)) : "";
     // A chat's messages as a chat app shows them: yours (and Collie's answers,
     // sent from your account) on the right, others on the left with their
-    // initial; a day line between days; one header for a run of messages from
-    // the same sender within a few minutes; system notices in the middle.
+    // picture or initial; in your own chat with a bot (c.owner) the answers are
+    // the bot's, on the left. A day line between days; one header for a run of
+    // messages from the same sender within a few minutes; system notices in
+    // the middle.
     const RUN_GAP = 5 * 60e3;
     const who = (m) => m.ref || m.bot ? "ai" : m.mine ? "me" : m.sender || m.sender_name || "";
     const msg = (m, i, list) => {
@@ -392,14 +394,14 @@
       const day = dayLabel(m.at), newer = list[i - 1], older = list[i + 1];
       const line = !newer || dayLabel(newer.at) !== day ? `<li class="conv-day"><span>${esc(day)}</span></li>` : "";
       if (m.view?.kind === "system") return `${line}<li class="conv-sys">${collieInboxMessage.render(m.view)}</li>`;
-      const ai = who(m) === "ai", mine = ai || m.mine;
+      const ai = who(m) === "ai", mine = ai ? !c.owner : m.mine;
       // Newest first: a run's header sits on its oldest message, the one shown lowest.
       const head = !older || who(older) !== who(m) || dayLabel(older.at) !== day || Date.parse(m.at) - Date.parse(older.at) > RUN_GAP;
       const name = ai ? "AI 代答" : m.mine ? "你" : m.sender_name || "";
       const card = rich && (m.view.kind === "card" || m.view.kind === "calendar" || m.view.kind === "media");
       const body = rich ? collieInboxMessage.render(m.view) : m.ref ? md(m.text) : esc(text);
       return `${line}<li class="conv-msg ${mine ? "me" : "them"}${ai ? " bot" : ""}${head ? " head" : ""}">
-        ${mine ? "" : `<span class="conv-ava" aria-hidden="true">${head ? esc((name || "?").slice(0, 1)) : ""}</span>`}
+        ${mine ? "" : `<span class="conv-ava" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${m.avatar ? `<img class="inbox-pic" src="${esc(m.avatar)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}
         <div class="conv-body">${head ? `<div class="meta">${name ? `<b>${ai ? ico("bot") : ""}${esc(name)}</b>` : ""}<time title="${esc(when(m.at))}">${esc(clock(m.at))}</time></div>` : ""}
           <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : m.ref ? "assistant" : ""}">${body}</div>${o ? outLine(o) : ""}</div></li>`;
     };

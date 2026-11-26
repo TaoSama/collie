@@ -175,7 +175,7 @@ COLLIE_HOME/ext/<id>/
 
 `actions` 方式发消息时，`connector.send_action` 指定的动作参数为 `{chat, text, reply_to?}`，`request_id` 就是 Collie 的 `ref`。
 
-带 `inbox_recent` 能力的扩展提供 `connector.inbox.recent({chat_id}) → {messages}` 和 `connector.inbox.media({chat_id, message_id, key}) → {mime, data}`。前者返回最旧到最新的消息，不触发请求或改变已读状态。消息可带 `preview`（一行可读摘要）和 `view`（带类型的正文结构，见 `internal/extproto/types.go`），推送也可带这两项。附件的 `key` 来自对应消息，hub 生成仅登录用户可访问的签名地址。附件内容沿用 base64，最多 20 MB。
+带 `inbox_recent` 能力的扩展提供 `connector.inbox.recent({chat_id}) → {messages}` 和 `connector.inbox.media({chat_id, message_id, key}) → {mime, data}`。前者返回最旧到最新的消息，不触发请求或改变已读状态。消息可带 `preview`（一行可读摘要）和 `view`（带类型的正文结构，见 `internal/extproto/types.go`），推送也可带这两项。消息可带 `sender_avatar`（发送人的头像，要求同 `chat_avatar`），hub 签名后经 `/api/inbox/avatar` 代取。附件的 `key` 来自对应消息，hub 生成仅登录用户可访问的签名地址。附件内容沿用 base64，最多 20 MB。
 
 ### 3.4 扩展调用 Collie 的方法和事件
 

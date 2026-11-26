@@ -90,7 +90,12 @@ class History:
         ids = {m["id"] for m in messages}
         messages += [m for m in replies if m["id"] not in ids]
         messages.sort(key=lambda m: m["at"])
-        return messages[-RECENT_COUNT:]
+        messages = messages[-RECENT_COUNT:]
+        pictures = adapter.user_pictures(chat, {m["sender"] for m in messages if m["sender_name"]})
+        for m in messages:
+            if pictures.get(m["sender"]):
+                m["sender_avatar"] = pictures[m["sender"]]
+        return messages
 
     def media(self, chat, mid, key):
         if not chat.isdigit() or not mid.isdigit() or not message_view.media_key(key):
