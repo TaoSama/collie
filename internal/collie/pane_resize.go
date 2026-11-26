@@ -11,10 +11,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -51,8 +54,22 @@ type paneResizer struct {
 	sessions map[string]*paneResizeSess
 	streams  map[string]int
 	gen      map[string]uint64
+	origs    map[string]Rect
 	idle     time.Duration
 	spawn    func(ctx context.Context, socket, home, paneID string, cols, rows int) (resizeProc, error)
+	ptySize  func(ctx context.Context, info PaneProcessInfo) (Rect, bool)
+}
+
+func (r *paneResizer) origSize(paneID string) (Rect, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s := r.sessions[paneID]; s != nil && s.origCols > 0 && s.origRows > 0 {
+		return Rect{Width: s.origCols, Height: s.origRows}, true
+	}
+	if sz, ok := r.origs[paneID]; ok && sz.Width > 0 && sz.Height > 0 {
+		return sz, true
+	}
+	return Rect{}, false
 }
 
 func (r *paneResizer) idleTTL() time.Duration {
@@ -128,10 +145,14 @@ func (r *paneResizer) set(ctx context.Context, socket, home, paneID string, orig
 	if r.gen == nil {
 		r.gen = map[string]uint64{}
 	}
+	if r.origs == nil {
+		r.origs = map[string]Rect{}
+	}
 	r.gen[paneID]++
 	myGen := r.gen[paneID]
 	cur := r.sessions[paneID]
 	if cur != nil {
+		orig = Rect{Width: cur.origCols, Height: cur.origRows}
 		if cols == cur.origCols && rows == cur.origRows {
 			r.mu.Unlock()
 			r.restore(paneID)
@@ -158,13 +179,24 @@ func (r *paneResizer) set(ctx context.Context, socket, home, paneID string, orig
 			r.mu.Unlock()
 			return Rect{Width: cols, Height: rows}, nil
 		}
-		// Existing controller died; drop it and start fresh below.
+		// Existing controller died; drop it and start fresh below while keeping
+		// the original pre-resize PTY dimensions.
 		r.dropDead(paneID, cur)
-	} else {
+		r.mu.Lock()
+		if r.gen[paneID] == myGen {
+			r.origs[paneID] = orig
+		}
 		r.mu.Unlock()
+	} else {
+		if prevOrig, ok := r.origs[paneID]; ok && prevOrig.Width > 0 && prevOrig.Height > 0 {
+			orig = prevOrig
+		}
 		if cols == orig.Width && rows == orig.Height {
+			r.mu.Unlock()
 			return Rect{Width: cols, Height: rows}, nil
 		}
+		r.origs[paneID] = orig
+		r.mu.Unlock()
 	}
 
 	spawnFn := r.spawn
@@ -173,6 +205,11 @@ func (r *paneResizer) set(ctx context.Context, socket, home, paneID string, orig
 	}
 	proc, err := spawnFn(ctx, socket, home, paneID, cols, rows)
 	if err != nil {
+		r.mu.Lock()
+		if r.gen[paneID] == myGen && r.sessions[paneID] == nil {
+			delete(r.origs, paneID)
+		}
+		r.mu.Unlock()
 		return Rect{}, err
 	}
 
@@ -199,6 +236,7 @@ func (r *paneResizer) set(ctx context.Context, socket, home, paneID string, orig
 		r.restoreIfSame(paneID, sess)
 	})
 	r.sessions[paneID] = sess
+	r.origs[paneID] = orig
 	r.mu.Unlock()
 
 	if prev != nil {
@@ -221,6 +259,7 @@ func (r *paneResizer) dropDead(paneID string, sess *paneResizeSess) {
 	removed := r.sessions[paneID] == sess
 	if removed {
 		delete(r.sessions, paneID)
+		delete(r.origs, paneID)
 		if sess.idleTimer != nil {
 			sess.idleTimer.Stop()
 		}
@@ -238,6 +277,7 @@ func (r *paneResizer) restoreIfSame(paneID string, target *paneResizeSess) {
 		return
 	}
 	delete(r.sessions, paneID)
+	delete(r.origs, paneID)
 	if r.gen != nil {
 		r.gen[paneID]++
 	}
@@ -254,6 +294,7 @@ func (r *paneResizer) restore(paneID string) bool {
 		r.gen = map[string]uint64{}
 	}
 	r.gen[paneID]++
+	delete(r.origs, paneID)
 	sess := r.sessions[paneID]
 	if sess == nil {
 		r.mu.Unlock()
@@ -418,6 +459,99 @@ func (s *Server) paneDisplaySize(ctx context.Context, id string) (Rect, error) {
 	return s.herdr.PaneSize(ctx, id)
 }
 
+func ttyPath(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" || s == "?" || s == "??" || s == "-" {
+		return ""
+	}
+	if strings.HasPrefix(s, "/") {
+		return s
+	}
+	return "/dev/" + s
+}
+
+func readTTYSize(path string) (Rect, bool) {
+	if path == "" {
+		return Rect{}, false
+	}
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return Rect{}, false
+	}
+	defer unix.Close(fd)
+	ws, err := unix.IoctlGetWinsize(fd, unix.TIOCGWINSZ)
+	if err != nil || ws.Col == 0 || ws.Row == 0 {
+		return Rect{}, false
+	}
+	return Rect{Width: int(ws.Col), Height: int(ws.Row)}, true
+}
+
+func readPIDTTYSize(ctx context.Context, pid int) (Rect, bool) {
+	if pid <= 0 {
+		return Rect{}, false
+	}
+	if runtime.GOOS == "linux" {
+		for _, n := range []string{"0", "1", "2"} {
+			target, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, n))
+			if err == nil && strings.HasPrefix(target, "/dev/") {
+				if sz, ok := readTTYSize(target); ok {
+					return sz, true
+				}
+			}
+		}
+	}
+	pctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(pctx, "ps", "-o", "tty=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return Rect{}, false
+	}
+	return readTTYSize(ttyPath(string(out)))
+}
+
+func panePTYSizeFromInfo(ctx context.Context, info PaneProcessInfo) (Rect, bool) {
+	if sz, ok := readTTYSize(ttyPath(info.TTY)); ok {
+		return sz, true
+	}
+	seen := map[int]bool{}
+	tryPID := func(pid int) (Rect, bool) {
+		if pid <= 0 || seen[pid] {
+			return Rect{}, false
+		}
+		seen[pid] = true
+		return readPIDTTYSize(ctx, pid)
+	}
+	if sz, ok := tryPID(info.ShellPID); ok {
+		return sz, true
+	}
+	for _, p := range info.ForegroundProcesses {
+		if sz, ok := tryPID(p.PID); ok {
+			return sz, true
+		}
+	}
+	return Rect{}, false
+}
+
+// paneRestoreSize returns the pane's actual PTY dimensions before resizing.
+// herdr's pane.layout reports outer pane rectangles (e.g. 120x40 when the real
+// PTY is 119x40, or 60x40 when a split pane's PTY is 57x38), so reading the
+// PTY winsize directly avoids restoring to the wrong geometry.
+func (s *Server) paneRestoreSize(ctx context.Context, id string) (Rect, error) {
+	if orig, ok := s.resizer.origSize(id); ok {
+		return orig, nil
+	}
+	if info, err := s.herdr.PaneProcessInfo(ctx, id); err == nil {
+		readPTY := s.resizer.ptySize
+		if readPTY == nil {
+			readPTY = panePTYSizeFromInfo
+		}
+		if sz, ok := readPTY(ctx, info); ok {
+			return sz, nil
+		}
+	}
+	return s.herdr.PaneSize(ctx, id)
+}
+
 func (s *Server) resizePane(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Cols    int  `json:"cols"`
@@ -433,7 +567,7 @@ func (s *Server) resizePane(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "restored": true})
 		return
 	}
-	orig, err := s.herdr.PaneSize(r.Context(), id)
+	orig, err := s.paneRestoreSize(r.Context(), id)
 	if err != nil {
 		fail(w, err)
 		return

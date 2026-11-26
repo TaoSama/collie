@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,10 +16,12 @@ import (
 )
 
 type fakeResizeProc struct {
-	mu      sync.Mutex
-	resizes [][2]int
-	closed  bool
-	doneCh  chan struct{}
+	mu        sync.Mutex
+	resizes   [][2]int
+	resizeErr error
+	onResize  func(cols, rows int)
+	closed    bool
+	doneCh    chan struct{}
 }
 
 func newFakeResizeProc(cols, rows int) *fakeResizeProc {
@@ -31,7 +34,13 @@ func newFakeResizeProc(cols, rows int) *fakeResizeProc {
 func (f *fakeResizeProc) resize(cols, rows int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.resizeErr != nil {
+		return f.resizeErr
+	}
 	f.resizes = append(f.resizes, [2]int{cols, rows})
+	if f.onResize != nil {
+		f.onResize(cols, rows)
+	}
 	return nil
 }
 
@@ -204,6 +213,11 @@ func TestResizePaneEndpointAndDirectRoute(t *testing.T) {
 									"read": map[string]any{"text": "hello", "revision": 1},
 								},
 							}
+						default:
+							resp = map[string]any{
+								"id":    req.ID,
+								"error": map[string]any{"code": "unsupported", "message": "not mocked"},
+							}
 						}
 						b, _ := json.Marshal(resp)
 						c2.Write(append(b, '\n'))
@@ -246,5 +260,174 @@ func TestResizePaneEndpointAndDirectRoute(t *testing.T) {
 	}
 	if proc == nil || len(proc.history()) != 2 || proc.history()[1] != [2]int{120, 40} {
 		t.Fatalf("proc did not restore original 120x40: %v", proc.history())
+	}
+}
+
+func mockResizeHerdr(layout Rect, procInfo *PaneProcessInfo) *Herdr {
+	return &Herdr{
+		local: &Machine{
+			ID: "", Name: "test", Local: true, Online: true,
+			conn: &herdrConn{dial: func(ctx context.Context) (net.Conn, error) {
+				c1, c2 := net.Pipe()
+				go func() {
+					defer c2.Close()
+					sc := bufio.NewScanner(c2)
+					for sc.Scan() {
+						var req struct {
+							ID     string         `json:"id"`
+							Method string         `json:"method"`
+							Params map[string]any `json:"params"`
+						}
+						if json.Unmarshal(sc.Bytes(), &req) != nil {
+							return
+						}
+						var resp map[string]any
+						switch req.Method {
+						case "pane.layout":
+							resp = map[string]any{
+								"id": req.ID,
+								"result": map[string]any{
+									"layout": map[string]any{
+										"panes": []map[string]any{
+											{"pane_id": "w1:p1", "rect": map[string]any{"width": layout.Width, "height": layout.Height}},
+										},
+									},
+								},
+							}
+						case "pane.process_info":
+							if procInfo != nil {
+								resp = map[string]any{
+									"id":     req.ID,
+									"result": map[string]any{"process_info": procInfo},
+								}
+							} else {
+								resp = map[string]any{
+									"id":    req.ID,
+									"error": map[string]any{"code": "not_found", "message": "no process info"},
+								}
+							}
+						default:
+							resp = map[string]any{
+								"id":    req.ID,
+								"error": map[string]any{"code": "unsupported", "message": "not mocked"},
+							}
+						}
+						b, _ := json.Marshal(resp)
+						c2.Write(append(b, '\n'))
+					}
+				}()
+				return c1, nil
+			}},
+		},
+		remote: map[string]*Machine{},
+	}
+}
+
+func TestResizePaneRestoresActualPTYSize(t *testing.T) {
+	// Simulate herdr where pane.layout reports 120x40 while the actual PTY is 119x40.
+	h := mockResizeHerdr(Rect{Width: 120, Height: 40}, &PaneProcessInfo{
+		PaneID:   "w1:p1",
+		ShellPID: 4242,
+	})
+	s := &Server{herdr: h, token: "tok"}
+
+	var mu sync.Mutex
+	livePTY := Rect{Width: 119, Height: 40}
+	var spawned []*fakeResizeProc
+	s.resizer.ptySize = func(ctx context.Context, info PaneProcessInfo) (Rect, bool) {
+		if info.ShellPID != 4242 {
+			return Rect{}, false
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return livePTY, true
+	}
+	s.resizer.spawn = func(ctx context.Context, socket, home, paneID string, cols, rows int) (resizeProc, error) {
+		mu.Lock()
+		livePTY = Rect{Width: cols, Height: rows}
+		p := newFakeResizeProc(cols, rows)
+		p.onResize = func(c, r int) {
+			mu.Lock()
+			livePTY = Rect{Width: c, Height: r}
+			mu.Unlock()
+		}
+		spawned = append(spawned, p)
+		mu.Unlock()
+		return p, nil
+	}
+
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/panes/w1:p1/resize", bytes.NewBufferString(body))
+		req.SetPathValue("id", "w1:p1")
+		w := httptest.NewRecorder()
+		s.resizePane(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("resize %s status = %d, body = %s", body, w.Code, w.Body.String())
+		}
+		return w
+	}
+
+	// First visit: 119x40 -> 49x30 -> 82x32 -> leave restores 119x40 (not layout's 120x40).
+	post(`{"cols":49,"rows":30}`)
+	post(`{"cols":82,"rows":32}`)
+	post(`{"restore":true}`)
+
+	mu.Lock()
+	gotPTY := livePTY
+	firstHist := spawned[0].history()
+	mu.Unlock()
+	if gotPTY != (Rect{Width: 119, Height: 40}) {
+		t.Fatalf("livePTY after first restore = %+v, want 119x40 (history=%v)", gotPTY, firstHist)
+	}
+	wantHist := [][2]int{{49, 30}, {82, 32}, {119, 40}}
+	if len(firstHist) != len(wantHist) {
+		t.Fatalf("first resize history = %v, want %v", firstHist, wantHist)
+	}
+	for i := range wantHist {
+		if firstHist[i] != wantHist[i] {
+			t.Fatalf("first resize history[%d] = %v, want %v (full: %v)", i, firstHist[i], wantHist[i], firstHist)
+		}
+	}
+
+	// Second visit: dead controller respawn still keeps original 119x40 instead of live 49x30.
+	post(`{"cols":49,"rows":30}`)
+	mu.Lock()
+	secondProc := spawned[1]
+	secondProc.mu.Lock()
+	secondProc.resizeErr = errors.New("controller exited")
+	secondProc.mu.Unlock()
+	mu.Unlock()
+
+	post(`{"cols":60,"rows":28}`)
+	post(`{"restore":true}`)
+
+	mu.Lock()
+	gotPTY = livePTY
+	nSpawn := len(spawned)
+	thirdHist := spawned[2].history()
+	mu.Unlock()
+	if nSpawn != 3 {
+		t.Fatalf("spawned = %d, want 3", nSpawn)
+	}
+	if gotPTY != (Rect{Width: 119, Height: 40}) {
+		t.Fatalf("livePTY after respawn restore = %+v, want 119x40 (history=%v)", gotPTY, thirdHist)
+	}
+}
+
+func TestTTYPath(t *testing.T) {
+	cases := map[string]string{
+		"":            "",
+		"   ":         "",
+		"?":           "",
+		"??":          "",
+		"-":           "",
+		"pts/4":       "/dev/pts/4",
+		"ttys005\n":   "/dev/ttys005",
+		"/dev/pts/12": "/dev/pts/12",
+	}
+	for in, want := range cases {
+		if got := ttyPath(in); got != want {
+			t.Errorf("ttyPath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

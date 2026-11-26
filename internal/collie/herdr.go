@@ -206,6 +206,15 @@ type Rect struct {
 	Height int `json:"height"`
 }
 
+type PaneProcessInfo struct {
+	PaneID              string `json:"pane_id"`
+	ShellPID            int    `json:"shell_pid"`
+	TTY                 string `json:"tty"`
+	ForegroundProcesses []struct {
+		PID int `json:"pid"`
+	} `json:"foreground_processes"`
+}
+
 func (h *Herdr) Workspaces(ctx context.Context) ([]Workspace, error) {
 	var r struct {
 		Workspaces []Workspace `json:"workspaces"`
@@ -321,6 +330,14 @@ func (h *Herdr) PaneSize(ctx context.Context, paneID string) (Rect, error) {
 		}
 	}
 	return Rect{Width: 120, Height: 40}, nil
+}
+
+func (h *Herdr) PaneProcessInfo(ctx context.Context, paneID string) (PaneProcessInfo, error) {
+	var r struct {
+		ProcessInfo PaneProcessInfo `json:"process_info"`
+	}
+	err := h.Call(ctx, "pane.process_info", map[string]any{"pane_id": paneID}, &r)
+	return r.ProcessInfo, err
 }
 
 // CreateWorkspace opens a new workspace (one shell pane) without stealing the
