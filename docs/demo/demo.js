@@ -508,8 +508,8 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       self_mention: { type: "boolean", title: "@自己唤起", description: "你在消息里 @ 自己，也算唤起 agent。", default: true },
       group_topics: { type: "boolean", title: "群话题各开对话", description: "群里每个话题各用一段对话。", default: true },
       hide_muted: { type: "boolean", title: "免打扰的会话不显示", description: "关掉后照样显示，未读数是灰色，也不提醒。", default: true, "x-hide": "muted" },
-      hide_meego_story: { type: "boolean", title: "Meego 需求同步群不显示", description: "群名带「[需求同步群]」的会话。", default: true, "x-hide": "name:[需求同步群]" },
-      hide_meego_bug: { type: "boolean", title: "Meego 缺陷同步群不显示", description: "群名带「[缺陷同步群]」的会话。", default: true, "x-hide": "name:[缺陷同步群]" } } } };
+      hide_meego_story: { type: "boolean", title: "Meego 需求同步群不显示", description: "Meego 为需求建的群：群描述是需求链接，群名带「[需求同步群]」。群名太长被截短时也认得出。", default: true, "x-hide": ["tag:meego-story", "name:[需求同步群]"] },
+      hide_meego_bug: { type: "boolean", title: "Meego 缺陷同步群不显示", description: "Meego 为缺陷建的群：群描述是缺陷链接，群名带「[缺陷同步群]」。群名太长被截短时也认得出。", default: true, "x-hide": ["tag:meego-issue", "name:[缺陷同步群]"] } } } };
   const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}",
     machines: [{ id: "", name: "hub", os: "linux/amd64", agents: [], local: true, online: true }, { id: "mini", name: "mac-mini", os: "darwin/arm64", agents: ["claude"], online: true }],
     extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu", self_mention: true, group_topics: true, hide_muted: false, hide_meego_story: true, hide_meego_bug: true } },

@@ -44,6 +44,10 @@
     if (p.since && Date.now() - Date.parse(p.since) < 5 * 60e3) return { key: needsLogin(m) ? "login" : "starting", dot: "starting", label: needsLogin(m) ? "未登录" : "启动中", text: s.error || "正在启动…", busy: true };
     return { key: "error", dot: "blocked", label: "出错", text: s.error || "出错" };
   }
+  // The state as a coloured pill (app.css .pill): running green, needs you
+  // amber, broken red, getting ready blue, off grey.
+  const TONE_OF = { on: "ok", login: "attn", error: "bad", starting: "info busy", off: "off" };
+  const statePill = (st) => `<span class="pill ${TONE_OF[st.key] || "off"}">${esc(st.label)}</span>`;
   // Its logo (or first letter) on a tile that says how it is: faded when
   // off, ringed when it needs you.
   const TONE = { asleep: "off", blocked: "bad" };
@@ -123,7 +127,7 @@
         (m.contributes?.connector?.actions || []).length ? `${m.contributes.connector.actions.length} 个动作` : ""].filter(Boolean).join(" · ");
       return `<a class="row ext-row" href="#/auto/hooks/ext/${encodeURIComponent(m.id)}">${extIcon(m, st)}
         <div><div class="meta"><b>${esc(m.name)}</b></div><div class="text">${esc(sub)}</div></div>
-        <span class="right ext-row-state"><span class="ext-st"><span class="ext-st-l"><span class="dot ${esc(st.dot)}"></span>${esc(st.label)}</span>${v.setting.enabled && !declarative(m) ? `<span class="ext-st-on">${esc(machineName(ms, v.setting.machine))}</span>` : ""}</span><span class="chev" aria-hidden="true">›</span></span></a>`;
+        <span class="right ext-row-state"><span class="ext-st">${statePill(st)}${v.setting.enabled && !declarative(m) ? `<span class="ext-st-on">${esc(machineName(ms, v.setting.machine))}</span>` : ""}</span><span class="chev" aria-hidden="true">›</span></span></a>`;
     };
     const nav = (href, title, sub, icon) => `<a class="row ext-row" href="${href}">${symTile(icon)}<div><div class="meta"><b>${title}</b></div><div class="text">${esc(sub)}</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a>`;
     const updates = (markets?.markets || []).reduce((n, mk) => n + (mk.index || []).filter((e) => mk.installed?.[e.id] && mk.installed[e.id] !== e.version).length, 0);
@@ -155,7 +159,7 @@
     const danger = (attr, label, note) => `<button type="button" class="btn small danger" ${attr}>${label}</button><small class="muted">${note}</small>`;
     return `${pageHead(esc(m.name), `<span class="muted">${esc(m.version)} · ${m.market ? "市场" : m.local ? "本地" : "内置"}</span>`, extIcon(m, st, true))}
       <div class="card ext-card" data-ext="${esc(m.id)}"><div class="form">
-        <div class="ext-status"><span class="dot ${esc(st.dot)}"></span><div><b${st.title ? ` title="${esc(st.title)}"` : ""}>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${machine}${primary}</div>
+        <div class="ext-status">${statePill(st)}<div><b${st.title ? ` title="${esc(st.title)}"` : ""}>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${machine}${primary}</div>
         ${machineNote}
         ${loginPanel(m, qr)}
       </div></div>
@@ -189,25 +193,33 @@
       </form></div>`;
   }
 
-  // 扩展市场: the repositories extensions are installed from.
+  // 扩展市场: the repositories extensions are installed from, each with how
+  // it is and what each of its extensions is to you; adding one below, apart.
   function marketsHTML(mr) {
     const ms = mr?.markets || [];
     const entry = (m, e) => {
-      const have = m.installed?.[e.id];
+      const have = m.installed?.[e.id], newer = have && have !== e.version;
+      const state = !have ? "" : newer ? `<span class="pill info">可更新 · 已装 ${esc(have)}</span>` : `<span class="pill ok">已安装</span>`;
       const act = !have ? `<button class="btn small" data-market-install="${esc(e.id)}">安装</button>`
-        : have !== e.version ? `<button class="btn small primary" data-market-install="${esc(e.id)}">更新到 ${esc(e.version)}</button>` : `<span class="muted">已安装</span>`;
-      return `<li class="row market-entry">${symTile("package")}<div><div class="meta"><b>${esc(e.name || e.id)}</b><span class="mono">${esc(e.id)} ${esc(e.version)}</span>${have && have !== e.version ? `<span>已装 ${esc(have)}</span>` : ""}</div><div class="text">${esc(e.description || "")}</div></div><span class="right">${act}</span></li>`;
+        : newer ? `<button class="btn small primary" data-market-install="${esc(e.id)}">更新到 ${esc(e.version)}</button>` : "";
+      return `<li class="row market-entry">${symTile("package")}<div><div class="meta"><b>${esc(e.name || e.id)}</b><span class="mono">${esc(e.id)} ${esc(e.version)}</span></div><div class="text">${esc(e.description || "")}</div></div><span class="right market-act">${state}${act}</span></li>`;
     };
-    return `${pageHead("扩展市场")}<div class="card"><div class="card-h">${cardTitle("store", "市场")}<button class="btn small" data-market-refresh>刷新</button></div>
-      <div class="form"><p class="ext-desc">飞书、微信和工作台是自带的，其他扩展从市场安装。市场就是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。私有仓库要填一个能读取它的 token，只存在 hub 上，填完不再显示。</p></div>
-      ${ms.map((m) => `<div class="market" data-market="${esc(m.repo)}"><div class="market-h">${ico("folder-git-2")}<b>${esc(m.name || m.repo)}</b><span class="muted mono">${esc(m.repo)}${m.ref ? "@" + esc(m.ref) : ""}${m.commit ? " · " + esc(m.commit.slice(0, 7)) : ""}${m.has_token ? " · 有 token" : ""}</span><button class="btn small ghost" data-market-remove>移除</button></div>
-        ${m.error ? `<p class="ext-warn">${esc(m.error)}</p>` : ""}
-        <ul class="rows">${(m.index || []).map((e) => entry(m, e)).join("") || `<li class="empty-row">这个市场里还没有扩展</li>`}</ul></div>`).join("")}
-      <form class="form" id="market-form"><div class="set-grid">
-        <label>仓库<input name="repo" placeholder="owner/name" autocorrect="off" autocapitalize="off" spellcheck="false" required></label>
-        <label>分支或标签<input name="ref" placeholder="默认分支" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
-        <label class="span2">Token（私有仓库需要）<input name="token" type="password" autocomplete="off" placeholder="留空不改"></label>
-      </div><div class="form-actions"><button class="btn primary small">添加或更新市场</button></div></form></div>`;
+    const market = (m) => `<div class="card market" data-market="${esc(m.repo)}">
+        <div class="card-h market-h">${symTile("folder-git-2")}<div class="market-t"><b>${esc(m.name || m.repo)}</b><span class="muted mono">${esc(m.repo)}${m.ref ? "@" + esc(m.ref) : ""}${m.commit ? " · " + esc(m.commit.slice(0, 7)) : ""}</span></div>
+          ${m.error ? `<span class="pill bad">出错</span>` : `<span class="pill ok">可用</span>`}${m.has_token ? `<span class="pill plain off">有 token</span>` : ""}
+          <button class="btn small danger" data-market-remove>移除</button></div>
+        ${m.error ? `<p class="ext-warn bad market-err">${esc(m.error)}</p>` : ""}
+        <ul class="rows">${(m.index || []).map((e) => entry(m, e)).join("") || (m.error ? "" : `<li class="empty-row">这个市场里还没有扩展</li>`)}</ul></div>`;
+    return `${pageHead("扩展市场")}
+      <div class="market-bar"><p class="ext-desc">飞书、微信和工作台是自带的，其他扩展从市场安装。市场就是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。</p>
+        ${ms.length ? `<button class="btn small" data-market-refresh>${ico("refresh-cw")}刷新</button>` : ""}</div>
+      ${ms.map(market).join("") || `<div class="card"><div class="empty-row with-ico">${ico("store")}<div>还没有市场，在下面添加一个</div></div></div>`}
+      <div class="card"><div class="card-h">${cardTitle("plus", "添加市场")}</div>
+        <form class="form" id="market-form"><div class="set-grid">
+          <label>仓库<input name="repo" placeholder="owner/name" autocorrect="off" autocapitalize="off" spellcheck="false" required></label>
+          <label>分支或标签<input name="ref" placeholder="默认分支" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
+          <label class="span2">Token（私有仓库需要）<input name="token" type="password" autocomplete="off" placeholder="留空不改"><small>只存在 hub 上，填完不再显示。填已有市场的仓库就是更新它的分支或 token。</small></label>
+        </div><div class="form-actions"><button class="btn primary small">添加或更新</button></div></form></div>`;
   }
 
   function outLine(o) {
@@ -216,18 +228,46 @@
     return `<span class="ext-out ${tone}">${esc(text)}${o.reason && o.state !== "pending" ? "：" + esc(o.reason) : ""}</span>`;
   }
 
+  // A list's time: the hour today, then 昨天, the weekday within a week,
+  // the date this year, the full date before.
+  const WEEKDAY = "日一二三四五六";
+  function shortTime(t) {
+    const d = new Date(t);
+    if (!(d.getFullYear() > 2000)) return "";
+    const now = new Date(), day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((day(now) - day(d)) / 864e5);
+    const p2 = (n) => String(n).padStart(2, "0");
+    if (days <= 0) return `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    if (days === 1) return "昨天";
+    if (days < 7) return "周" + WEEKDAY[d.getDay()];
+    return d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}月${d.getDate()}日` : `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  }
+  const unreadText = (n) => n > 99 ? "99+" : String(n);
+
   // 收件箱: every chat of every extension; the open one beside it.
   function inboxHTML(r, cur, detail, filter) {
     const convs = (r?.convs || []).filter((c) => !c.hidden); // folded, or switched off in 接入
-    const shown = convs.filter((c) => filter === "on" ? c.on : filter && filter !== "all" ? c.ext === filter : true);
+    const unread = convs.filter((c) => c.unread > 0);
+    const shown = convs.filter((c) => filter === "on" ? c.on : filter === "unread" ? c.unread > 0 : filter && filter !== "all" ? c.ext === filter : true);
     const exts = [...new Set(convs.map((c) => c.ext))];
-    const chips = [["all", "全部"], ["on", `处理中 ${convs.filter((c) => c.on).length}`], ...exts.map((x) => [x, convs.find((c) => c.ext === x)?.label || x, logo(x)])]
+    const chips = [["all", "全部"], ["unread", `未读 ${unread.length}`], ["on", `处理中 ${convs.filter((c) => c.on).length}`], ...exts.map((x) => [x, convs.find((c) => c.ext === x)?.label || x, logo(x)])]
       .map(([k, l, lg]) => `<button type="button" data-inbox-filter="${esc(k)}" class="${(filter || "all") === k ? "on" : ""}">${lg || ""}${esc(l)}</button>`).join("");
-    const row = (c) => `<li class="row inbox-row ${c.id === cur ? "sel" : ""}" data-conv="${esc(c.id)}">
-        <span class="dot ${c.on ? "idle" : "asleep"}" title="${c.on ? "处理中" : "不处理"}"></span>
-        <div><div class="meta"><b${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</b><span class="inbox-src">${logo(c.ext)}${esc(c.label)} · ${ico(KIND_ICON[c.kind])}${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread${c.muted ? " muted" : ""}"${c.muted ? ' title="在原应用里设了免打扰"' : ""}>${c.muted ? ico("bell-off") : ""}${c.unread}</span>` : ""}</div>
-          <div class="text">${esc(c.preview || "")}</div>${c.on ? outLine(c.out) : ""}</div>
-        <span class="right">${when(c.last_at)}</span></li>`;
+    // Unread: the name in full ink and a count (grey when muted in the chat
+    // app); read: no count, the preview quieter. The tile is the chat's kind
+    // with its app's logo in the corner.
+    const row = (c) => {
+      const n = c.unread > 0 ? c.unread : 0, kind = KIND[c.kind] || c.kind || "";
+      const name = c.name || c.chat;
+      // A direct chat's preview needn't repeat who it is with.
+      const preview = c.kind === "dm" && c.preview?.startsWith(name + ": ") ? c.preview.slice(name.length + 2) : c.preview || "";
+      return `<li class="row inbox-row${n ? " unread" : ""}${c.id === cur ? " sel" : ""}" data-conv="${esc(c.id)}">
+        <span class="inbox-ava" title="${esc(c.label)} · ${esc(kind)}">${ico(KIND_ICON[c.kind] || "message-circle")}${logo(c.ext)}</span>
+        <div class="inbox-main">
+          <div class="inbox-l1"><b class="inbox-name"${name !== c.chat ? ` title="${esc(name)}"` : ""}>${esc(name)}</b>${c.muted ? `<span class="inbox-mute" title="在原应用里设了免打扰">${ico("bell-off")}</span>` : ""}${c.on ? `<span class="pill plain info inbox-on">处理中</span>` : ""}<time class="inbox-time" datetime="${esc(c.last_at || "")}" title="${esc(when(c.last_at))}">${esc(shortTime(c.last_at))}</time></div>
+          <div class="inbox-l2"><span class="inbox-prev">${esc(preview)}</span>${n ? `<span class="inbox-unread${c.muted ? " muted" : ""}" title="${n} 条未读${c.muted ? "（免打扰）" : ""}">${unreadText(n)}</span>` : ""}</div>
+          ${c.on ? outLine(c.out) : ""}
+        </div></li>`;
+    };
     const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;
     if (!convs.length) return intro + `<div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
     return intro + `<div class="seg inbox-filter">${chips}</div>

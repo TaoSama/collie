@@ -3360,12 +3360,12 @@
         toast(`已添加：${describeSpec(r.spec)}`);
         loadAuto();
       } else if (f.id === "market-form") {
-        const btn = f.querySelector("button"); btn.disabled = true;
+        const btn = f.querySelector("button.primary"); busy(btn);
         try {
           autoData.markets = await api("/api/ext-markets", { body: { repo: f.repo.value, ref: f.ref.value, token: f.token.value } });
           f.reset(); toast("市场已添加");
         } catch (err) { toast(err.message, "attn"); await fetchAuto("markets").catch(() => {}); }
-        btn.disabled = false;
+        busy(btn, false);
         drawAuto(autoData.settings);
       } else if (f.hasAttribute("data-ext-secret")) {
         const id = f.closest("[data-ext]").dataset.ext;
@@ -3490,17 +3490,17 @@
     if (b.dataset.convSet) { setConv({ [b.dataset.convSet]: b.dataset.convSet === "anyone" ? b.dataset.v === "true" : b.dataset.v }); return; }
     const market = b.closest("[data-market]")?.dataset.market;
     if (b.hasAttribute("data-market-refresh")) {
-      b.disabled = true;
+      busy(b);
       await fetchAuto("markets").catch(() => {}); await api("/api/ext-markets?fresh").then((r) => { autoData.markets = r; }).catch((err) => toast(err.message, "attn"));
       drawAuto(autoData.settings); return;
     }
     if (market && b.hasAttribute("data-market-remove")) {
-      if (!(await ask({ title: "移除这个市场？", text: "已安装的扩展不受影响，它的 token 会删掉。", ok: "移除" }))) return;
+      if (!(await ask({ title: "移除这个市场？", text: "已安装的扩展不受影响，它的 token 会删掉。", ok: "移除", warn: true }))) return;
       autoData.markets = await api("/api/ext-markets/remove", { body: { repo: market } }).catch((err) => { toast(err.message, "attn"); return autoData.markets; });
       drawAuto(autoData.settings); return;
     }
     if (market && b.dataset.marketInstall) {
-      b.disabled = true; b.textContent = "安装中…";
+      busy(b, true, b.classList.contains("primary") ? "更新中…" : "安装中…");
       try { await api("/api/ext-markets/install", { body: { repo: market, id: b.dataset.marketInstall } }); toast("已安装，打开它就能用"); }
       catch (err) { toast(err.message, "attn"); }
       await Promise.all([fetchAuto("markets"), fetchAuto("ext")]).catch(() => {});
@@ -3525,7 +3525,7 @@
     } else if (b.hasAttribute("data-ext-login-cancel")) {
       extLogin = null; drawAuto(autoData.settings);
     } else if (b.hasAttribute("data-ext-uninstall")) {
-      const purge = await ask({ title: "卸载这个扩展？", text: "会停掉它、删掉它的设置和 hub 上的安装包。要连它在那台电脑上的数据和登录态一起删，在下面输入「删除数据」。", value: "", ok: "卸载" });
+      const purge = await ask({ title: "卸载这个扩展？", text: "会停掉它、删掉它的设置和 hub 上的安装包。要连它在那台电脑上的数据和登录态一起删，在下面输入「删除数据」。", value: "", ok: "卸载", warn: true });
       if (purge === false || purge == null) return;
       try { await api(`/api/ext/${encodeURIComponent(id)}/uninstall`, { body: { purge: purge === "删除数据" } }); toast("已卸载"); }
       catch (err) { toast(err.message, "attn"); }
@@ -3540,14 +3540,17 @@
       resumeLogin();
       drawAuto(autoData.settings);
     } else if (b.hasAttribute("data-ext-logout")) {
-      if (!(await ask({ title: "退出登录？", text: "之后要重新扫码。", ok: "退出登录" }))) return;
+      if (!(await ask({ title: "退出登录？", text: "之后要重新扫码。", ok: "退出登录", warn: true }))) return;
+      busy(b);
       api(`/api/ext/${encodeURIComponent(id)}/logout`, { body: {} }).then(() => toast("已退出登录")).catch((err) => toast(err.message, "attn")).then(loadAuto);
     } else if (b.hasAttribute("data-ext-save")) {
       const form = b.closest(".ext-config");
       form?.classList.remove("dirty");
       const config = {};
       card.querySelectorAll("[data-ext-config]").forEach((el) => { config[el.dataset.extConfig] = el.type === "checkbox" ? el.checked : el.value; });
+      busy(b);
       if (!(await extConfigure(id, { config }, "已保存，扩展会重启"))) form?.classList.add("dirty");
+      busy(b, false);
     }
   });
   // A setting changed and not yet saved: the save button says so, and the
@@ -4106,6 +4109,12 @@
   const askDlg = $("#ask");
   // askEnd answers the ask on screen; replacing it answers the old one null.
   let askEnd = null;
+  // A button working on what it was clicked for: a spinner, no second click (app.css .btn[aria-busy]).
+  function busy(b, on = true, label) {
+    if (!b) return;
+    if (on) b.setAttribute("aria-busy", "true"); else b.removeAttribute("aria-busy");
+    if (label) b.textContent = label;
+  }
   function ask({ title, text = "", value, ok = "确定", warn = false }) {
     askEnd?.("");
     if (askDlg.open) askDlg.close("");
