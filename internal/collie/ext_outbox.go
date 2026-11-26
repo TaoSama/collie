@@ -305,8 +305,8 @@ func sentIDOf(text string) string {
 // retrySends tries the extension's pending sends again, oldest first,
 // until one finds it unreachable.
 func (h *extHost) retrySends(r *extRun) {
-	for _, o := range h.store.outs("", outPending) {
-		if strings.HasPrefix(o.Conv, r.man.ID+":") && !h.trySend(r, o) {
+	for _, o := range h.store.pendingOutsFor(r.man.ID) {
+		if !h.trySend(r, o) {
 			return
 		}
 	}

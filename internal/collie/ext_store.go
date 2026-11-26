@@ -329,22 +329,19 @@ func (st *extStore) out(ref string) *OutboxItem {
 	return o
 }
 
-// outs lists sends: of one conversation (conv != ""), or in some states.
-func (st *extStore) outs(conv string, states ...string) []*OutboxItem {
-	q, args := `SELECT data FROM ext_outbox WHERE 1=1`, []any{}
-	if conv != "" {
-		q += ` AND conv = ?`
-		args = append(args, conv)
-	}
-	if len(states) > 0 {
-		q += ` AND state IN (?` + strings.Repeat(",?", len(states)-1) + `)`
-		for _, s := range states {
-			args = append(args, s)
-		}
-	}
+// outs lists matching sends, oldest first. Callers supply a fixed SQL condition.
+func (st *extStore) outs(condition string, args ...any) []*OutboxItem {
 	var out []*OutboxItem
-	loadRows(st.db, q+` ORDER BY at`, func(o *OutboxItem) { out = append(out, o) }, args...)
+	if err := loadRows(st.db, `SELECT data FROM ext_outbox WHERE `+condition+` ORDER BY at`,
+		func(o *OutboxItem) { out = append(out, o) }, args...); err != nil {
+		log.Printf("ext: read sends: %v", err)
+	}
 	return out
+}
+
+// pendingOutsFor selects one extension's pending sends by its literal prefix.
+func (st *extStore) pendingOutsFor(ext string) []*OutboxItem {
+	return st.outs(`state = ? AND instr(conv, ?) = 1`, outPending, ext+":")
 }
 
 // recentOuts is conv's sends since a time.
@@ -381,7 +378,8 @@ func (st *extStore) waitingConvs(states ...string) []string {
 
 // expireStale ends sends pending for too long (the extension stayed off).
 func (st *extStore) expireStale(before time.Time) {
-	for _, o := range st.outs("", outPending) {
+	// The indexed time is in seconds. Check the full timestamp at the cutoff.
+	for _, o := range st.outs(`state = ? AND at <= ?`, outPending, before.Unix()) {
 		if o.At.Before(before) {
 			o.State, o.Reason, o.DoneAt = "expired", "扩展一直没有运行，没有发出", time.Now()
 			st.putOutIf(o, outPending)
@@ -390,8 +388,10 @@ func (st *extStore) expireStale(before time.Time) {
 }
 
 func (st *extStore) trimOutbox(now time.Time) {
-	for _, o := range st.outs("") {
-		if o.At.Before(now.Add(-outboxKeep)) && o.State != outPending {
+	before := now.Add(-outboxKeep)
+	// Attachment cleanup uses the full time, while row deletion uses seconds.
+	for _, o := range st.outs(`at <= ? AND state != ?`, before.Unix(), outPending) {
+		if o.At.Before(before) && o.State != outPending {
 			for _, f := range o.Files {
 				if err := os.Remove(f.Path); err != nil && !os.IsNotExist(err) {
 					log.Printf("ext: drop a sent file: %v", err)
@@ -399,7 +399,7 @@ func (st *extStore) trimOutbox(now time.Time) {
 			}
 		}
 	}
-	if _, err := st.db.Exec(`DELETE FROM ext_outbox WHERE at < ? AND state != ?`, now.Add(-outboxKeep).Unix(), outPending); err != nil {
+	if _, err := st.db.Exec(`DELETE FROM ext_outbox WHERE at < ? AND state != ?`, before.Unix(), outPending); err != nil {
 		log.Printf("ext: trim outbox: %v", err)
 	}
 }

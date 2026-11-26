@@ -258,7 +258,7 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outs := map[string]*OutboxItem{}
-	for _, o := range s.ext.store.outs(id) {
+	for _, o := range s.ext.store.outs(`conv = ?`, id) {
 		outs[o.Ref] = o
 	}
 	writeJSON(w, 200, map[string]any{"conv": c, "msgs": s.ext.store.msgs(id, time.Time{}), "outbox": outs})
