@@ -18,7 +18,7 @@
     "properties": {
       "conversation_name": {
         "type": "string",
-        "title": "会话显示名",
+        "title": "昵称",
         "default": "微信ClawBot",
         "description": "显示在 Collie 的微信会话中。留空恢复默认。"
       }

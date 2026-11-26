@@ -143,3 +143,163 @@ func avatarPath(c InboxConv) string {
 	}
 	return "/api/inbox/avatar?id=" + url.QueryEscape(c.ID) + "&v=" + avatarKey(c.Avatar)[:8]
 }
+
+const (
+	wechatBuiltin   = "wechat"
+	wechatAvatarMax = 2 << 20
+)
+
+func allowedWechatAvatarType(b []byte) (string, bool) {
+	if len(b) == 0 {
+		return "", false
+	}
+	typ := http.DetectContentType(b)
+	switch typ {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return typ, true
+	default:
+		return "", false
+	}
+}
+
+func wechatAvatarURLFor(b []byte) string {
+	sum := sha256.Sum256(b)
+	return "/api/ext/" + wechatBuiltin + "/avatar?v=" + hex.EncodeToString(sum[:6])
+}
+
+func (h *extHost) wechatAvatarFile() string {
+	return filepath.Join(extDir(h.home, wechatBuiltin), "avatar")
+}
+
+func (h *extHost) loadWechatAvatarLocked() {
+	b, err := os.ReadFile(h.wechatAvatarFile())
+	if err != nil || len(b) > wechatAvatarMax {
+		return
+	}
+	typ, ok := allowedWechatAvatarType(b)
+	if !ok {
+		return
+	}
+	h.avatarBytes, h.avatarType, h.avatarURL = b, typ, wechatAvatarURLFor(b)
+}
+
+func (h *extHost) setWechatAvatar(b []byte) (string, error) {
+	if len(b) > wechatAvatarMax {
+		return "", errors.New("头像图片不能超过 2 MB")
+	}
+	typ, ok := allowedWechatAvatarType(b)
+	if !ok {
+		return "", errors.New("请上传 PNG、JPEG、GIF 或 WebP 图片")
+	}
+	path := h.wechatAvatarFile()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	u := wechatAvatarURLFor(b)
+	h.mu.Lock()
+	h.avatarBytes, h.avatarType, h.avatarURL = append([]byte(nil), b...), typ, u
+	h.mu.Unlock()
+	return u, nil
+}
+
+func (h *extHost) clearWechatAvatar() error {
+	if err := os.Remove(h.wechatAvatarFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	h.mu.Lock()
+	h.avatarBytes, h.avatarType, h.avatarURL = nil, "", ""
+	h.mu.Unlock()
+	return nil
+}
+
+func (h *extHost) wechatAvatar() ([]byte, string, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.avatarBytes, h.avatarType, h.avatarURL
+}
+
+// convAvatarPath returns the picture URL for a conversation; for WeChat, a
+// custom avatar set in 接入 › 微信 takes precedence.
+func (h *extHost) convAvatarPath(c InboxConv) string {
+	if c.Ext == wechatBuiltin {
+		if m := h.manifest(c.Ext); m != nil && m.Runtime.Builtin == wechatBuiltin {
+			if _, _, u := h.wechatAvatar(); u != "" {
+				return u
+			}
+		}
+	}
+	return avatarPath(c)
+}
+
+func (s *Server) isWechatExt(id string) bool {
+	m := s.ext.manifest(id)
+	return m != nil && m.Runtime.Builtin == wechatBuiltin
+}
+
+func (s *Server) extAvatar(w http.ResponseWriter, r *http.Request) {
+	if !s.isWechatExt(r.PathValue("id")) {
+		http.NotFound(w, r)
+		return
+	}
+	b, typ, _ := s.ext.wechatAvatar()
+	if len(b) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	hdr := w.Header()
+	hdr.Set("Content-Type", typ)
+	if r.URL.Query().Get("v") != "" {
+		hdr.Set("Cache-Control", "private, max-age=31536000, immutable")
+	} else {
+		hdr.Set("Cache-Control", "private, no-cache")
+	}
+	hdr.Set("X-Content-Type-Options", "nosniff")
+	hdr.Set("Content-Security-Policy", "default-src 'none'")
+	if _, err := w.Write(b); err != nil {
+		log.Printf("ext %s: avatar: %v", r.PathValue("id"), err)
+	}
+}
+
+func (s *Server) extSetAvatar(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.isWechatExt(id) {
+		writeJSON(w, 404, map[string]any{"error": "no avatar setting for " + id})
+		return
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, wechatAvatarMax+1))
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "读取图片失败"})
+		return
+	}
+	if len(b) > wechatAvatarMax {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "头像图片不能超过 2 MB"})
+		return
+	}
+	u, err := s.ext.setWechatAvatar(b)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"avatar_url": u, "view": s.ext.view(id)})
+}
+
+func (s *Server) extClearAvatar(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.isWechatExt(id) {
+		writeJSON(w, 404, map[string]any{"error": "no avatar setting for " + id})
+		return
+	}
+	if err := s.ext.clearWechatAvatar(); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"avatar_url": "", "view": s.ext.view(id)})
+}

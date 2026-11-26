@@ -3935,10 +3935,24 @@
       await api("/api/ext/" + encodeURIComponent(id), { body });
       if (done) toast(done);
       await Promise.all([fetchAuto("ext"), fetchAuto("inbox").catch(() => {})]);
+      if (inboxDetail?.conv?.ext === id) { inboxLoading = null; loadConv().catch(() => {}); }
       fetchHeaderStatus({ fresh: true });
       if (view === "auto" && autoTab === "hooks") drawAuto(autoData.settings);
       return true;
     } catch (err) { toast(err.message, "attn"); return false; }
+  }
+  async function refreshExtAvatar(id) {
+    await Promise.all([fetchAuto("ext"), fetchAuto("inbox").catch(() => {})]);
+    if (inboxDetail?.conv?.ext === id) { inboxLoading = null; await loadConv().catch(() => {}); }
+    if (view !== "auto" || autoTab !== "hooks") return;
+    const dirty = $("#auto-body .ext-config.dirty");
+    if (dirty) {
+      const v = (autoData.ext?.extensions || []).find((x) => x.manifest.id === id);
+      const box = dirty.querySelector(".ext-avatar");
+      if (v && box) box.outerHTML = collieExt.wechatAvatarField(v);
+      return;
+    }
+    drawAuto(autoData.settings);
   }
   // The 接入 page open: "" the list, ext/<id>, reply, markets or webhooks.
   const hooksSub = () => (current && current.startsWith("hooks/") ? current.slice(6) : "");
@@ -4059,6 +4073,16 @@
       if (!(await ask({ title: "退出登录？", text: "之后要重新扫码。", ok: "退出登录", warn: true }))) return;
       busy(b);
       api(`/api/ext/${encodeURIComponent(id)}/logout`, { body: {} }).then(() => toast("已退出登录")).catch((err) => toast(err.message, "attn")).then(loadAuto);
+    } else if (b.hasAttribute("data-ext-avatar-pick")) {
+      card.querySelector("[data-ext-avatar-input]")?.click();
+    } else if (b.hasAttribute("data-ext-avatar-clear")) {
+      busy(b);
+      try {
+        await api(`/api/ext/${encodeURIComponent(id)}/avatar`, { method: "DELETE" });
+        toast("已恢复默认头像");
+        await refreshExtAvatar(id);
+      } catch (err) { toast(err.message, "attn"); }
+      busy(b, false);
     } else if (b.hasAttribute("data-ext-save")) {
       const form = b.closest(".ext-config");
       form?.classList.remove("dirty");
@@ -4080,9 +4104,28 @@
   $("#auto-body").addEventListener("input", (e) => {
     if (e.target.closest("[data-ext-config]")) e.target.closest(".ext-config")?.classList.add("dirty");
   });
-  $("#auto-body").addEventListener("change", (e) => {
+  $("#auto-body").addEventListener("change", async (e) => {
     const sel = e.target.closest("[data-ext-machine]");
-    if (sel) extConfigure(sel.closest("[data-ext]").dataset.ext, { machine: sel.value }, "已换电脑");
+    if (sel) { extConfigure(sel.closest("[data-ext]").dataset.ext, { machine: sel.value }, "已换电脑"); return; }
+    const input = e.target.closest("[data-ext-avatar-input]");
+    if (!input) return;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    const card = input.closest("[data-ext]"), id = card?.dataset.ext;
+    if (!id) return;
+    const btn = card.querySelector("[data-ext-avatar-pick]");
+    if (btn) busy(btn, true, "上传中…");
+    try {
+      const body = await shrinkImage(file, file.name || "avatar.png");
+      const res = await fetch(`/api/ext/${encodeURIComponent(id)}/avatar`, { method: "POST", body, credentials: "same-origin" });
+      if (res.status === 401) { showLogin(); throw new Error("unauthorized"); }
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || res.statusText);
+      toast("已更新头像");
+      await refreshExtAvatar(id);
+    } catch (err) { toast(err.message, "attn"); }
+    if (btn) busy(btn, false);
   });
 
   $("#auto-body").addEventListener("click", async (e) => {

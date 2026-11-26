@@ -518,7 +518,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { manifest: { manifest_version: 1, id: "wechat", label: "微信", name: "微信", version: "1.0.0", icon_url: "ext-icons/wechat.png", engines: { collie_protocol: 1 }, runtime: { builtin: "wechat" },
       description: "在微信里和 Collie 聊天：扫码绑定一个微信机器人，你私聊它的消息交给 Collie，回复发回微信。用的是腾讯官方接口（iLink），只处理你本人发的消息。",
       contributes: { connector: { id: "wechat", login: "qr", capabilities: ["status", "login", "receive", "send"] }, channel: { format: "markdown" } }, permissions: { network: ["*.weixin.qq.com"] },
-      configuration: { type: "object", properties: { conversation_name: { type: "string", title: "会话显示名", default: "微信ClawBot", description: "显示在 Collie 的微信会话中。留空恢复默认。" } } } },
+      configuration: { type: "object", properties: { conversation_name: { type: "string", title: "昵称", default: "微信ClawBot", description: "显示在 Collie 的微信会话中。留空恢复默认。" } } } },
       setting: { id: "wechat", enabled: true, machine: "" }, proc: { state: "running", pid: 4343 },
       status: { state: "ok", account: "你的微信", account_id: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", detail: { "绑定人": "o9cq80…8h9i@im.wechat", "剩余额度": 9, "回复窗口剩余": "22h41m" } } },
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", icon_url: "ext-icons/workbench.svg", runtime: { feature: "workbench" },
@@ -620,6 +620,20 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if (p === "/api/ext") return json(extData);
     if (p === "/api/ext-markets") return json({ markets: [{ repo: "owner/collie-extensions", name: "我的扩展", commit: "4f2c9a1d", has_token: true, installed: { notes: "1.0.0" },
       index: [{ id: "notes", version: "1.1.0", name: "笔记搜索", description: "让 agent 搜索和打开你自己的笔记服务" }, { id: "photos", version: "0.3.0", name: "相册", description: "按日期和地点找照片" }] }] });
+    if (p === "/api/ext/wechat/avatar") {
+      const v = extData.extensions.find((x) => x.manifest.id === "wechat");
+      if (method === "POST" && init.body) {
+        const u = URL.createObjectURL(init.body);
+        if (v) v.avatar_url = u;
+        for (const c of inboxConvs) if (c.ext === "wechat") c.avatar = u;
+        return json({ avatar_url: u, view: v });
+      }
+      if (method === "DELETE") {
+        if (v) v.avatar_url = "";
+        for (const c of inboxConvs) if (c.ext === "wechat") c.avatar = "";
+        return json({ avatar_url: "", view: v });
+      }
+    }
     if ((m = p.match(/^\/api\/ext\/([^/]+)$/)) && method === "POST") {
       const v = extData.extensions.find((x) => x.manifest.id === m[1]);
       if (v) Object.assign(v.setting, body.enabled != null ? { enabled: body.enabled } : {}, body.machine != null ? { machine: body.machine } : {});

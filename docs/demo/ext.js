@@ -88,13 +88,23 @@
       return `<label>${esc(p.title)}<input data-ext-config="${esc(k)}" value="${esc(val ?? "")}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
     });
   }
+  function wechatAvatarField(v) {
+    if (v?.manifest?.runtime?.builtin !== "wechat") return "";
+    const pic = v.avatar_url ? `<img class="inbox-pic" src="${esc(v.avatar_url)}" alt="">` : "";
+    return `<div class="ext-avatar"><span>头像</span><div class="ext-avatar-row">
+      <span class="inbox-ava">${ico("user")}${pic}${logo(v.manifest.id)}</span>
+      <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-ext-avatar-input>
+      <button type="button" class="btn small" data-ext-avatar-pick>${v.avatar_url ? "更换" : "上传"}</button>
+      ${v.avatar_url ? `<button type="button" class="btn small ghost" data-ext-avatar-clear>恢复默认</button>` : ""}
+    </div><small>显示在 Collie 的微信会话中。</small></div>`;
+  }
   // The choices first, then the switches in one column, and those that
   // leave chats out of the 收件箱 (x-hide) under a heading of their own.
   function configGrid(v) {
     const props = Object.entries(v.manifest.configuration?.properties || {});
     const fields = configFields(v), hides = props.map(([, p]) => p.type === "boolean" && !!p["x-hide"]);
     const pick = (f) => fields.filter((_, i) => f(props[i][1], hides[i])).join("");
-    const choices = pick((p) => p.type !== "boolean"), switches = pick((p, h) => p.type === "boolean" && !h), hidden = pick((_, h) => h);
+    const choices = pick((p) => p.type !== "boolean") + wechatAvatarField(v), switches = pick((p, h) => p.type === "boolean" && !h), hidden = pick((_, h) => h);
     return (choices ? `<div class="set-grid">${choices}</div>` : "") + (switches ? `<div class="ext-switches">${switches}</div>` : "")
       + (hidden ? `<div class="set-sub">收件箱里不显示</div><div class="ext-switches">${hidden}</div>` : "");
   }
@@ -119,8 +129,10 @@
 
   // 接入: one line per extension, then the shared settings, the
   // marketplaces and the webhooks, each a page of its own.
+  const extRank = (m) => (m?.market ? 1 : m?.local ? 2 : 0);
   function hooksList(r, inbox, markets) {
-    const list = r?.extensions || [], ms = r?.machines || [];
+    const list = [...(r?.extensions || [])].sort((a, b) => extRank(a.manifest) - extRank(b.manifest) || String(a.manifest?.id || "").localeCompare(String(b.manifest?.id || "")));
+    const ms = r?.machines || [];
     const convs = inbox?.convs || [];
     const row = (v) => {
       const m = v.manifest, st = stateOf(v);
@@ -396,5 +408,5 @@
   function logo(id) { const u = icons[id]; return u ? `<img class="src-logo" src="${esc(u)}" alt="">` : ""; }
   const known = () => Object.keys(icons).length > 0;
 
-  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, inboxShown, inboxPlace, convHTML, detailHTML, timerChannels, label, logo, known, learn, stateOf };
+  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, inboxShown, inboxPlace, convHTML, detailHTML, timerChannels, wechatAvatarField, label, logo, known, learn, stateOf };
 })();

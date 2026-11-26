@@ -32,6 +32,9 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("POST /api/ext/{id}/login", s.extLogin)
 	api("POST /api/ext/{id}/logout", s.extLogout)
 	api("GET /api/ext/{id}/icon", s.extIcon)
+	api("GET /api/ext/{id}/avatar", s.extAvatar)
+	api("POST /api/ext/{id}/avatar", s.extSetAvatar)
+	api("DELETE /api/ext/{id}/avatar", s.extClearAvatar)
 	api("GET /api/ext-actions", s.extActions)
 	api("GET /api/ext-markets", s.extMarkets)
 	api("POST /api/ext-markets", s.extAddMarket)
@@ -231,7 +234,7 @@ func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 	hides := map[string][]string{}
 	readBack := map[string]bool{} // extensions that mark what you read here read in the app too
 	for _, c := range convs {
-		v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: avatarPath(c)}
+		v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: s.ext.convAvatarPath(c)}
 		if m := s.ext.manifest(c.Ext); m != nil {
 			v.Label = extLabel(m)
 			if _, ok := hides[c.Ext]; !ok {
@@ -340,7 +343,7 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 
 // convView is one conversation as the page gets it: its label and its picture through the hub.
 func (s *Server) convView(c InboxConv) convView {
-	v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: avatarPath(c)}
+	v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: s.ext.convAvatarPath(c)}
 	if m := s.ext.manifest(c.Ext); m != nil {
 		v.Label = extLabel(m)
 	}

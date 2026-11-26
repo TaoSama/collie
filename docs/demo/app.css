@@ -2454,6 +2454,9 @@ select.picked { display: none; }
 .form .ext-field b { font-size: var(--fs-meta); font-weight: var(--fw-medium); color: var(--fg); }
 .ext-status > .ext-field { flex: none; }
 .ext-field-note { margin-top: -4px; font-size: var(--fs-small); }
+.form .ext-avatar { display: grid; gap: 6px; align-content: start; font-size: var(--fs-small); font-weight: var(--fw-strong); color: var(--t-secondary); min-width: 0; }
+.form .ext-avatar small { font-weight: var(--fw-normal); color: var(--t-desc); font-size: var(--fs-small); }
+.ext-avatar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: var(--input-h); }
 .ext-switches { display: grid; gap: 14px; }
 .ext-actions { margin: 0; padding-left: 18px; font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.3); }
 /* Stop or remove: one button a row, what it does beside it. */

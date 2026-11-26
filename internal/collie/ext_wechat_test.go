@@ -109,6 +109,9 @@ func TestWeChatConversationDisplayName(t *testing.T) {
 		request("POST", "/api/inbox/conv", `{"id":"`+id+`","seen":true}`, &detail)
 		check(detail.Conv)
 	}
+	if prop, ok := h.manifest(wechatExt).Configuration.propertyOK(wechatConversationNameKey); !ok || prop.Title != "昵称" {
+		t.Fatalf("want wechat conversation_name title 昵称, got %+v", prop)
+	}
 	checkName("微信ClawBot")
 	var saved struct{ Setting ExtSetting }
 	request("POST", "/api/ext/wechat", `{"config":{"conversation_name":"  我的微信助手  "}}`, &saved)
@@ -131,6 +134,169 @@ func TestWeChatConversationDisplayName(t *testing.T) {
 	}
 	request("POST", "/api/ext/wechat", `{"config":{"conversation_name":"  "}}`, &saved)
 	checkName("微信ClawBot")
+}
+
+func TestExtViewsOrderBuiltinsBeforeMarket(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.cat = map[string]*ExtManifest{}
+	for _, m := range cat {
+		h.cat[m.ID] = m
+	}
+	h.cat["aaa-market"] = &ExtManifest{ID: "aaa-market", Name: "AAA", Market: &ExtMarketRef{Repo: "owner/repo"}}
+	h.cat["zzz-market"] = &ExtManifest{ID: "zzz-market", Name: "ZZZ", Market: &ExtMarketRef{Repo: "owner/repo"}}
+	h.cat["000-local"] = &ExtManifest{ID: "000-local", Name: "Local", Local: true}
+	h.mu.Unlock()
+
+	views := h.views()
+	got := make([]string, len(views))
+	for i, v := range views {
+		got[i] = v.Manifest.ID
+	}
+	want := []string{"larkx", "wechat", "workbench", "aaa-market", "zzz-market", "000-local"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("views order = %v, want %v", got, want)
+	}
+}
+
+func TestWeChatCustomAvatar(t *testing.T) {
+	sp, h, dir := newExtTestHub(t)
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	for _, m := range cat {
+		if m.ID == wechatExt {
+			h.cat[m.ID] = m
+		}
+	}
+	h.mu.Unlock()
+	chat := "owner@im.wechat"
+	id := convID(wechatExt, chat)
+	if err := h.incoming(h.manifest(wechatExt), incomingMsg{Chat: chat, ChatName: chat, ChatKind: "dm", ID: "m1", Owner: true, At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.incoming(h.manifest("fakew"), incomingMsg{Chat: "c2", ChatName: "其他", ID: "m2", At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	h.s.token = "test"
+	h.s.web = web.FS
+	mux := http.NewServeMux()
+	h.s.extRoutes(mux)
+	do := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer test")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w
+	}
+	checkAvatar := func(want string) {
+		t.Helper()
+		var extList struct{ Extensions []extView }
+		w := do("GET", "/api/ext", nil)
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &extList) != nil {
+			t.Fatalf("GET /api/ext: %d %s", w.Code, w.Body)
+		}
+		for _, v := range extList.Extensions {
+			if v.Manifest.ID == wechatExt && v.AvatarURL != want {
+				t.Fatalf("ext view avatar_url = %q, want %q", v.AvatarURL, want)
+			}
+			if v.Manifest.ID != wechatExt && v.AvatarURL != "" {
+				t.Fatalf("unexpected avatar_url on %s: %q", v.Manifest.ID, v.AvatarURL)
+			}
+		}
+		var list struct{ Convs []convView }
+		w = do("GET", "/api/inbox", nil)
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &list) != nil {
+			t.Fatalf("GET /api/inbox: %d %s", w.Code, w.Body)
+		}
+		for _, c := range list.Convs {
+			if c.ID == id && c.Avatar != want {
+				t.Fatalf("inbox list wechat avatar = %q, want %q", c.Avatar, want)
+			}
+			if c.ID == "fakew:c2" && c.Avatar != "" {
+				t.Fatalf("unexpected avatar on fakew conv: %q", c.Avatar)
+			}
+		}
+		var detail struct{ Conv convView }
+		w = do("GET", "/api/inbox/conv?id="+url.QueryEscape(id), nil)
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &detail) != nil || detail.Conv.Avatar != want {
+			t.Fatalf("GET /api/inbox/conv: %d %+v want %q", w.Code, detail, want)
+		}
+		w = do("POST", "/api/inbox/conv", []byte(`{"id":"`+id+`","seen":true}`))
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &detail) != nil || detail.Conv.Avatar != want {
+			t.Fatalf("POST /api/inbox/conv: %d %+v want %q", w.Code, detail, want)
+		}
+	}
+
+	checkAvatar("")
+	if w := do("GET", "/api/ext/wechat/avatar", nil); w.Code != 404 {
+		t.Fatalf("unset avatar status = %d, want 404", w.Code)
+	}
+	if w := do("POST", "/api/ext/fakew/avatar", []byte("\x89PNG\r\n\x1a\n")); w.Code != 404 {
+		t.Fatalf("non-wechat upload status = %d, want 404", w.Code)
+	}
+	if w := do("POST", "/api/ext/wechat/avatar", []byte("<svg></svg>")); w.Code != 400 {
+		t.Fatalf("svg upload status = %d, want 400", w.Code)
+	}
+	if w := do("POST", "/api/ext/wechat/avatar", append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte("a"), wechatAvatarMax)...)); w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized upload status = %d, want 413", w.Code)
+	}
+
+	pngBytes := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde")
+	var uploaded struct {
+		AvatarURL string  `json:"avatar_url"`
+		View      extView `json:"view"`
+	}
+	w := do("POST", "/api/ext/wechat/avatar", pngBytes)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &uploaded) != nil {
+		t.Fatalf("POST png avatar: %d %s", w.Code, w.Body)
+	}
+	if !strings.HasPrefix(uploaded.AvatarURL, "/api/ext/wechat/avatar?v=") || uploaded.View.AvatarURL != uploaded.AvatarURL {
+		t.Fatalf("unexpected upload response: %+v", uploaded)
+	}
+	checkAvatar(uploaded.AvatarURL)
+
+	w = do("GET", uploaded.AvatarURL, nil)
+	if w.Code != 200 || w.Header().Get("Content-Type") != "image/png" || w.Header().Get("X-Content-Type-Options") != "nosniff" || !bytes.Equal(w.Body.Bytes(), pngBytes) {
+		t.Fatalf("GET uploaded avatar: %d %v len=%d", w.Code, w.Header(), w.Body.Len())
+	}
+
+	// Survives reopening the host.
+	reopened := newExtHost(h.s, sp, dir)
+	if got := reopened.convAvatarPath(InboxConv{Ext: wechatExt}); got != uploaded.AvatarURL {
+		t.Fatalf("reopened convAvatarPath = %q, want %q", got, uploaded.AvatarURL)
+	}
+
+	// Replacing with JPEG updates the cache-busting URL and content type.
+	jpgBytes := []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
+	var replaced struct {
+		AvatarURL string `json:"avatar_url"`
+	}
+	w = do("POST", "/api/ext/wechat/avatar", jpgBytes)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &replaced) != nil || replaced.AvatarURL == uploaded.AvatarURL {
+		t.Fatalf("replace jpeg avatar: %d %+v", w.Code, replaced)
+	}
+	checkAvatar(replaced.AvatarURL)
+	if w := do("GET", replaced.AvatarURL, nil); w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("GET replaced avatar: %d %s", w.Code, w.Header().Get("Content-Type"))
+	}
+
+	// Clearing restores default.
+	if w := do("DELETE", "/api/ext/wechat/avatar", nil); w.Code != 200 {
+		t.Fatalf("DELETE avatar: %d %s", w.Code, w.Body)
+	}
+	checkAvatar("")
+	if w := do("GET", "/api/ext/wechat/avatar", nil); w.Code != 404 {
+		t.Fatalf("cleared avatar status = %d, want 404", w.Code)
+	}
 }
 
 // startWeChat runs the fake extension under the id wechat, signed in.

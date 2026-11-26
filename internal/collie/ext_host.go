@@ -57,6 +57,10 @@ type extHost struct {
 	sets     map[string]ExtSetting
 	runs     map[string]*extRun
 	ctx      context.Context
+
+	avatarBytes []byte
+	avatarType  string
+	avatarURL   string
 }
 
 // extRun is one enabled extension's connection.
@@ -96,6 +100,7 @@ func newExtHost(s *Server, sp *Super, home string) *extHost {
 	for _, x := range sets {
 		h.sets[x.ID] = x
 	}
+	h.loadWechatAvatarLocked()
 	return h
 }
 
@@ -558,9 +563,23 @@ type extView struct {
 	Setting  ExtSetting    `json:"setting"`
 	Proc     *extProcState `json:"proc,omitempty"`
 	// Secrets: which x-secret fields of its config are set (never their values).
-	Secrets []string         `json:"secrets,omitempty"`
-	Status  *extproto.Status `json:"status,omitempty"`
-	Problem string           `json:"problem,omitempty"`
+	Secrets   []string         `json:"secrets,omitempty"`
+	Status    *extproto.Status `json:"status,omitempty"`
+	Problem   string           `json:"problem,omitempty"`
+	AvatarURL string           `json:"avatar_url,omitempty"`
+}
+
+func extSortRank(m *ExtManifest) int {
+	switch {
+	case m == nil:
+		return 3
+	case m.Market != nil:
+		return 1
+	case m.Local:
+		return 2
+	default:
+		return 0
+	}
 }
 
 func (h *extHost) views() []extView {
@@ -569,8 +588,14 @@ func (h *extHost) views() []extView {
 	for id := range h.cat {
 		ids = append(ids, id)
 	}
+	sort.Slice(ids, func(i, j int) bool {
+		ri, rj := extSortRank(h.cat[ids[i]]), extSortRank(h.cat[ids[j]])
+		if ri != rj {
+			return ri < rj
+		}
+		return ids[i] < ids[j]
+	})
 	h.mu.Unlock()
-	sort.Strings(ids)
 	out := []extView{}
 	for _, id := range ids {
 		out = append(out, h.view(id))
@@ -581,6 +606,9 @@ func (h *extHost) views() []extView {
 func (h *extHost) view(id string) extView {
 	h.mu.Lock()
 	v := extView{Manifest: h.cat[id], Setting: h.settingLocked(id)}
+	if v.Manifest != nil && v.Manifest.Runtime.Builtin == wechatBuiltin {
+		v.AvatarURL = h.avatarURL
+	}
 	r := h.runs[id]
 	h.mu.Unlock()
 	for k := range h.configSecrets(id) {
