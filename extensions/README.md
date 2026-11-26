@@ -355,4 +355,4 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 1. 建 `extensions/<id>/collie-extension.json` 和 `README.md`。内置扩展再写 `package <id>`，并在 `internal/collie/ext_manifest.go` 的 `builtinExts` 登记（`collie ext-<id>` 由 `internal/collie/main.go` 分派）。没登记的内置清单不进目录。
 2. 选定收消息的方式（`archive` 或 `receive`）和发消息的方式（`actions` 或 `send`），照第 3 节实现。
 3. 按第 10 节写测试。
-4. `go build ./... && go vet ./... && go test ./... -count=1` 通过后提交。清单通过 `extensions/embed.go` 自动进入内置目录。
+4. `sh scripts/check.sh` 通过后提交。清单通过 `extensions/embed.go` 自动进入内置目录。

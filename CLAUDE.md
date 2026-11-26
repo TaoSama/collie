@@ -9,7 +9,7 @@
 - **本机和账号相关的值**（主机名、本地路径、个人凭证的位置）写在 `CLAUDE.local.md`，不提交。
 - **踩到坑随手记下来**。各类文档放在哪、怎么归档，见 `docs/README.md`。
 - **本文件保持简短**：只放项目是什么、这些约定、验证命令、最常见的坑和目录结构。架构写在 `docs/architecture.md`，搭建、部署、发布步骤写在 `docs/runbook/`，在这里留链接。
-- **一条命令完成全部验证**：第一个模块落地后，加一个统一入口（如 `scripts/check.sh`）跑构建、lint 和测试。Git 钩子和 CI 都调用它，下面的「构建与验证」只写这条命令。
+- **常规验证入口**：Git 钩子、CI 和发布流程共用 `scripts/check.sh`。
 - **项目级 `.claude/` 只放本项目特有的内容**：`.claude/rules/` 下的规则，以及 `.claude/skills/` 下针对本项目部署、发布或领域流程的技能。通用技能留在用户级。
 - **界面改动遵循设计系统**：样式的值以 design token 的形式放在代码里，规则写在 `docs/design/DESIGN_SYSTEM.md`。改界面前先读它，第一次做界面时创建它。
 - **引用承载细节的文档**：本文件里的规则、坑和目录表的行，结尾带上对应文档的路径，例如 ``| `server/` | Go 模块（`docs/server/server.md`） |``，让读的人知道下一步该打开什么。文档移动时同步更新这些路径。
@@ -23,8 +23,8 @@ go build -o bin/collie .
 COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 ```
 
-- Go 检查运行 `go build ./...`、`go vet ./...`、`go test ./... -count=1`。
-- 前端检查运行 `node --check web/app.js` 和 `node --test scripts/test/*.test.mjs`。改了 `web/` 后运行 `sh scripts/demo.sh` 重建 `docs/demo/`，随源码一起提交。
+- 运行 `sh scripts/check.sh` 进行 Go 构建、vet、测试以及前端语法检查和测试。
+- 改了 `web/` 后运行 `sh scripts/demo.sh` 重建 `docs/demo/`，随源码一起提交。
 - 在仓库内运行 `sh docs/install.sh hub` 会用源码构建并安装服务。安装 node 用 `sh docs/install.sh node --hub URL --code CODE`，已配对后可只传 `node`。Linux 后台服务日志用 `journalctl --user -u collie-hub -f`，node 服务名为 `collie-node`。macOS 日志在 `~/Library/Logs/collie-hub.log` 和 `~/Library/Logs/collie-node.log`。
 - 发布前可运行 `sh scripts/release.sh v2026.1124.1 --dry`，交叉编译和校验和输出到 `dist/`。正式版本号格式为 `vYYYY.MMDD.N`。
 - 部署上线（发布 Release、切换 hub、逐台升级 node、线上核对）按 `collie-deploy` 技能做（`.claude/skills/collie-deploy/SKILL.md`）。
