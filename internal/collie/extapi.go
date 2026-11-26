@@ -44,10 +44,14 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) extList(w http.ResponseWriter, r *http.Request) {
+	// What the 运行在 picker shows, as every computer picker does.
 	type machine struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Online bool   `json:"online"`
+		ID     string   `json:"id"`
+		Name   string   `json:"name"`
+		OS     string   `json:"os,omitempty"`
+		Agents []string `json:"agents"`
+		Local  bool     `json:"local"`
+		Online bool     `json:"online"`
 	}
 	var ms []machine
 	for _, m := range s.herdr.Machines() {
@@ -55,7 +59,7 @@ func (s *Server) extList(w http.ResponseWriter, r *http.Request) {
 		if m.Local {
 			id = ""
 		}
-		ms = append(ms, machine{ID: id, Name: m.Name, Online: m.Online || m.Local})
+		ms = append(ms, machine{ID: id, Name: m.Name, OS: m.OS, Agents: m.Agents, Local: m.Local, Online: m.Online || m.Local})
 	}
 	s.sup.mu.Lock()
 	set := s.sup.st.Settings

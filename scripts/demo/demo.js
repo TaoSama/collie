@@ -502,7 +502,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     contributes: { connector: { id: "larkx", capabilities: ["status", "login", "archive", "actions"] }, channel: { format: "markdown" } },
     configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] } } } };
   const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}",
-    machines: [{ id: "", name: "hub", online: true }, { id: "mini", name: "mac-mini", online: true }],
+    machines: [{ id: "", name: "hub", os: "linux/amd64", agents: [], local: true, online: true }, { id: "mini", name: "mac-mini", os: "darwin/arm64", agents: ["claude"], online: true }],
     extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu" } },
       proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } }] };
   const inboxConvs = [
