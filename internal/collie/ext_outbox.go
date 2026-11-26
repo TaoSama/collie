@@ -108,8 +108,8 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 			}
 		}
 	}
-	if !conv.AskAt.IsZero() {
-		vars["elapsed"] = elapsedText(time.Since(conv.AskAt))
+	if !conv.AskAt.IsZero() && kind == extproto.KindAnswer {
+		vars["elapsed"] = elapsedText(time.Since(conv.AskAt)) // a push answers no ask: no time to show
 	}
 	full, footer := text, ""
 	if kind != extproto.KindProgress {
