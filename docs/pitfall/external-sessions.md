@@ -36,6 +36,10 @@ Antigravity 桌面 App 的 `conversation_summaries.db` 也列出 agy CLI 起的�
 
 `agy --conversation <id>` 只认 CLI 自己的会话。桌面 App 起的会话，CLI 报 `not found in any store`（macpro 实测），CLI 也没有指定数据目录的参数或环境变量。所以 `desktopSessions`（`internal/collie/desktop.go`）只给 App 索引里 `source` 是 CLI 的行开放接管，App 自己的会话要在 App 里继续。这些行没有进程可以先结束，所以 App 说这个会话正在跑或在等后台任务时，也不给接管。herdr 外正在跑的 agy 进程、herdr 里跑过已结束的 agy 会话，各自走原来的接管和续接。接管和其他启动一样走 `startAgentAs`：只有带 `--dangerously-skip-permissions` 启动时，才预先信任目录（`trustForStart`）。否则新目录会停在 agy 的目录信任提示，在 Collie 里显示成等你确认（`agy -p` 不问信任，所以它用过的目录可能还没被信任）。
 
+## 没有 Antigravity App 的电脑读 CLI 自己的索引
+
+App 的 `~/.gemini/antigravity/conversation_summaries.db` 也列出 CLI 起的会话，所以有它的电脑只读它，不再读 CLI 的，免得同一个会话列两次。Linux 上没有 App，`agyDesktopRows`（`internal/collie/desktop.go`）改读 CLI 自己的 `~/.gemini/antigravity-cli/conversation_summaries.db`。这样在 herdr 外起的、已经结束的 CLI 会话也能列出来，并能在 herdr 里继续。两份索引的表结构相同，但 CLI 在自己的索引里不填 `source`，所以从它读出的行都按 CLI 的会话算。空会话（`step_count = 0`）照样不列。
+
 ## Antigravity 没建成的会话留在索引里
 
 新建失败的会话会在 `conversation_summaries` 里留一行：标题空、`step_count = 0`、`last_modified_time` 是零值 `0001-01-01`、`killed = 0`。App 自己加载不到它（日志报 `conversation … not found`），所以从 Collie 归档、改名时 `UpdateConversation` 也会失败。`agyDesktopRows` 只列 `step_count > 0`（旧索引没有这一列就不看）且有修改时间的会话；`agyAnnotate` 遇到 `not_found` 时说明 App 加载不到这个会话。Codex 的线程表里没见到这种空行（App 的线程都带第一条消息），没有加同样的过滤。
