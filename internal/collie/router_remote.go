@@ -1,7 +1,6 @@
 package collie
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,11 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log"
 	"maps"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -380,47 +377,6 @@ func routerPath(dir, rel string) (string, error) {
 		return "", fmt.Errorf("bad router path %q", rel)
 	}
 	return filepath.Join(dir, filepath.FromSlash(clean)), nil
-}
-
-// nodeStatusError is a node's answer other than 200. An older node has no
-// such route: 404.
-type nodeStatusError struct {
-	Code int
-	msg  string
-}
-
-func (e *nodeStatusError) Error() string { return e.msg }
-
-// nodeJSON calls a node's own API through the tunnel.
-func nodeJSON(ctx context.Context, client *http.Client, method, p string, in, out any) error {
-	var body io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://node"+p, body)
-	if err != nil {
-		return err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return &nodeStatusError{Code: resp.StatusCode, msg: fmt.Sprintf("node %s %s: %s %s", method, p, resp.Status, strings.TrimSpace(string(b)))}
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 // routerContext is checkHandover's reading of Collie's context, wherever it runs.

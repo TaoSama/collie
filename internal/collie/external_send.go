@@ -566,19 +566,10 @@ func (s *Server) stopCodexTurn(ctx context.Context, machine, thread string) erro
 	if err != nil {
 		return err
 	}
-	b, _ := json.Marshal(map[string]any{"thread": thread})
-	req, _ := http.NewRequestWithContext(ctx, "POST", "http://node/api/codex/interrupt", bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
-		return fmt.Errorf("interrupt: %s %s", resp.Status, msg)
-	}
-	return nil
+	in := map[string]string{"thread": thread}
+	return nodeJSONWithStatusError(ctx, c, http.MethodPost, "/api/codex/interrupt", in, nil, func(resp *http.Response) error {
+		return fmt.Errorf("interrupt: %s %s", resp.Status, nodeErrorBody(resp, 500))
+	})
 }
 
 // ---------------------------------------------------------------- HTTP

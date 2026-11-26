@@ -1,7 +1,6 @@
 package collie
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -101,18 +100,10 @@ func (s *Server) trustRemote(ctx context.Context, machine, cwd string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	b, _ := json.Marshal(map[string]string{"kind": "agy", "dir": cwd})
-	req, _ := http.NewRequestWithContext(ctx, "POST", "http://node/api/trust", bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
+	in := map[string]string{"kind": "agy", "dir": cwd}
+	return nodeJSONWithStatusError(ctx, client, http.MethodPost, "/api/trust", in, nil, func(resp *http.Response) error {
 		return fmt.Errorf("node: %s", resp.Status) // an older node: 404
-	}
-	return nil
+	})
 }
 
 // trustFolder is the node side of trustRemote.

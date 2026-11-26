@@ -3,7 +3,7 @@ package collie
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -132,19 +132,12 @@ func (h *extHost) remoteLocal(ctx context.Context, machine string) ([]*ExtManife
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "GET", "http://node/api/ext-local", nil)
-	resp, err := c.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s", resp.Status)
-	}
 	var out struct {
 		Extensions []*ExtManifest `json:"extensions"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := nodeJSONWithStatusError(ctx, c, http.MethodGet, "/api/ext-local", nil, &out, func(resp *http.Response) error {
+		return errors.New(resp.Status)
+	}); err != nil {
 		return nil, err
 	}
 	var ok []*ExtManifest
