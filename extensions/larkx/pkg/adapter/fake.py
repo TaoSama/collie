@@ -57,10 +57,16 @@ class Fake:
              "sender_name": "示例联系人", "owner": False, "text": "周五的会改到几点？", "at": now},
             {"id": "m2", "chat_id": "c_group", "chat": "示例群", "chat_kind": "group", "sender": "u_b",
              "sender_name": "示例同事", "owner": False, "text": "大家好", "at": now},
+            {"id": "m3", "chat_id": "c_self", "chat": ACCOUNT, "chat_kind": "self", "sender": ME,
+             "sender_name": ACCOUNT, "owner": True, "text": "/ai 今天有什么会", "at": now},
         ):
             on_message(m)
         while not stop.is_set() and self.signed_in:
             self.wake.wait(1)
+
+    def react(self, message_id, key=lark.WORKING_REACTION):
+        with open(os.path.join(os.environ.get("COLLIE_EXTENSION_DATA", "."), "fake-reactions.jsonl"), "a") as f:
+            f.write(json.dumps({"message_id": message_id, "key": key}) + "\n")
 
     def post(self, chat, markdown, footer="", reply_to=""):
         if chat == "c_refuse":

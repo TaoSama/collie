@@ -66,6 +66,8 @@ class Extension:
             return self.send(params)
         if method == "channel.interest":
             return {}
+        if method == "channel.working":
+            return self.working(params)
         raise peer.Error("unknown_method", method)
 
     def initialize(self, p):
@@ -170,6 +172,15 @@ class Extension:
         except OSError as e:  # it went out: say so even if the record didn't stick
             log.error("recording send %s: %s", ref, e)
         return {"message_id": mid}
+
+    def working(self, p):
+        if self.backend is None or not self.account:
+            raise peer.Error("not_signed_in", "飞书没有登录")
+        try:
+            self.backend.react(p.get("message_id") or "")
+        except Exception as e:
+            raise peer.Error("internal", "加表情失败：%s" % e)
+        return {}
 
     # Sends already made, by ref: a ref goes out once, across restarts.
 

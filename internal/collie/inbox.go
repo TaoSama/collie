@@ -317,8 +317,24 @@ func (h *extHost) hand(conv InboxConv, in incomingMsg, text string) {
 		t.Status, t.Targets = "delivered", nil
 	}
 	sp.mu.Unlock()
+	if t != nil {
+		go h.markWorking(conv, in.ID)
+	}
 	if t != nil && start {
 		go h.startConvWorker(conv, w, t, text)
+	}
+}
+
+// markWorking tells the extension a request was taken, for the chat app
+// to show it (only extensions with the working capability).
+func (h *extHost) markWorking(conv InboxConv, msg string) {
+	r := h.run(conv.Ext)
+	if r == nil || !r.man.has(capWorking) || !r.running() {
+		return
+	}
+	args := extproto.Working{Contribution: r.man.Contributes.Connector.ID, Chat: conv.Chat, MessageID: msg}
+	if err := r.call(context.Background(), extproto.MChannelWorking, args, nil); err != nil {
+		log.Printf("ext %s: working on %s: %v", conv.Ext, msg, err)
 	}
 }
 

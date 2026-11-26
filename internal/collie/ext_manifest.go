@@ -189,6 +189,7 @@ const (
 	capActions  = "actions"
 	capSend     = "send"
 	capInterest = "interest"
+	capWorking  = "working"
 	chatSelf    = "self" // a chat kind: your chat with yourself
 )
 

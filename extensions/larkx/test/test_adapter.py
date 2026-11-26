@@ -150,6 +150,14 @@ class Post(unittest.TestCase):
         self.assertIn(req.cid, f.own_cids)
         self.assertIsNone(f.normalize({"msg_id": "7001", "chat_id": "oc_1", "from_id": "u", "msg_type": 2, "cid": req.cid}))
 
+    def test_react(self):
+        f = self.feishu(answer("1"))
+        asked = []
+        f.client.api = lambda name, data: asked.append((name, data))
+        f.react("7001")
+        f.react("doc:d1")
+        self.assertEqual(asked, [("reactions.PutReactionRequest", {"messageId": "7001", "reactionType": "OnIt"})])
+
     def test_reply_in_topic(self):
         f = self.feishu(answer("7002"))
         f.recent["m_child"] = ("m_root", "问")
@@ -373,7 +381,10 @@ class Protocol(unittest.TestCase):
         step = self.call("connector.login.step", {"step": "poll"})["result"]
         self.assertTrue(step["done"])
         self.assertIn("example", base64.b64decode(self.secret).decode())
-        self.until("its messages", lambda: len(self.received) == 2)
+        self.until("its messages", lambda: len(self.received) == 3)
+        self.assertEqual(self.call("channel.working", {"chat": "c_self", "message_id": "m3"})["result"], {})
+        with open(os.path.join(self.data, "fake-reactions.jsonl")) as f:
+            self.assertEqual(json.loads(f.readline()), {"message_id": "m3", "key": "OnIt"})
         self.assertEqual(self.status()["account"], "示例账号")
 
         text = "改到 **三点**\n\n" + FOOTER

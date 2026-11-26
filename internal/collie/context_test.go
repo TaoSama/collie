@@ -19,10 +19,11 @@ func TestContextUsage(t *testing.T) {
 		t.Fatalf("claude: %+v", u)
 	}
 	cx := filepath.Join(dir, "x.jsonl")
-	os.WriteFile(cx, []byte(`{"type":"event_msg","payload":{"type":"token_count","info":null}}
+	os.WriteFile(cx, []byte(`{"type":"turn_context","payload":{"cwd":"/x","model":"gpt-6.2-sol","effort":"medium"}}
+{"type":"event_msg","payload":{"type":"token_count","info":null}}
 {"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":21500,"total_tokens":21619},"model_context_window":475000}}}
 `), 0o600)
-	if u := contextUsage(cx, "codex", 0); u.Used != 21619 || u.Window != 475000 || u.Pct() != 4 {
+	if u := contextUsage(cx, "codex", 0); u.Used != 21619 || u.Window != 475000 || u.Pct() != 4 || u.Model != "gpt-6.2-sol" || u.Effort != "medium" {
 		t.Fatalf("codex: %+v", u)
 	}
 }

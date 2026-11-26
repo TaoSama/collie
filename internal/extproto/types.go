@@ -256,6 +256,17 @@ type Changed struct {
 	Scope        string `json:"scope"` // inbox | chats | status | outbox
 }
 
+// MChannelWorking marks a message Collie took as a request: the chat app
+// shows it is being worked on (larkx: a reaction).
+const MChannelWorking = "channel.working"
+
+// Working is channel.working's params.
+type Working struct {
+	Contribution string `json:"contribution,omitempty"`
+	Chat         string `json:"chat"`
+	MessageID    string `json:"message_id"`
+}
+
 // MChannelInterest tells the extension which chats wait for results.
 const MChannelInterest = "channel.interest"
 

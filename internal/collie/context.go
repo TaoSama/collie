@@ -133,6 +133,21 @@ func readUsage(path, format string, size int64) ctxUsage {
 				last.Model, last.Effort = m, e.Effort
 			}
 		case "codex":
+			// turn_context says which model and effort a turn ran with;
+			// token_count how full the window is.
+			if bytes.Contains(line, []byte(`"turn_context"`)) {
+				var t struct {
+					Type    string `json:"type"`
+					Payload struct {
+						Model  string `json:"model"`
+						Effort string `json:"effort"`
+					} `json:"payload"`
+				}
+				if json.Unmarshal(line, &t) == nil && t.Type == "turn_context" && t.Payload.Model != "" {
+					last.Model, last.Effort = t.Payload.Model, t.Payload.Effort
+				}
+				continue
+			}
 			if !bytes.Contains(line, []byte(`"token_count"`)) {
 				continue
 			}
@@ -151,7 +166,7 @@ func readUsage(path, format string, size int64) ctxUsage {
 				continue
 			}
 			if e.Payload.Info.Last.Total > 0 {
-				last = ctxUsage{Used: e.Payload.Info.Last.Total, Window: e.Payload.Info.Window}
+				last.Used, last.Window = e.Payload.Info.Last.Total, e.Payload.Info.Window
 			}
 		}
 	}
