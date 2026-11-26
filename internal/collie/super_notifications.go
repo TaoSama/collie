@@ -158,6 +158,9 @@ func (sp *Super) sendNotifications() {
 	sp.mu.Unlock()
 	dialogs := sp.push.takeDialogs()
 	if looking {
+		if n := len(pushes) + len(dialogs); n > 0 {
+			log.Printf("push: %d not sent, a page of Collie is in front of you", n)
+		}
 		return
 	}
 	if sp.push.has() && (len(pushes) > 0 || len(dialogs) > 0) {

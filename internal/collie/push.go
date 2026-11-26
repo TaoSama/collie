@@ -193,6 +193,9 @@ func (wp *webPush) deliver(ctx context.Context, subject string, s pushSub, n pus
 	wp.mu.Lock()
 	wp.last[s.Endpoint] = res
 	wp.mu.Unlock()
+	if err == nil { // failures are logged by the caller
+		log.Printf("push %q to %s (%s): %d", n.Tag, s.Device, pushHost(s.Endpoint), code)
+	}
 	if code == http.StatusNotFound || code == http.StatusGone {
 		log.Printf("push: %s is gone (%d), forgetting it", pushHost(s.Endpoint), code)
 		wp.remove(s.Endpoint)
