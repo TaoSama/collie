@@ -31,11 +31,10 @@ func (x *extension) start(c Credentials) error {
 		return err
 	}
 	health := &HealthTracker{}
-	diag := NewNotificationCycleDiagnostics(x.opt.pollEvery, nil, nil, NewNotificationRecoveryStore(filepath.Join(dir, recoveryFileName)))
 	var g *Gateway
 	x.loop.do(func() {
 		g, err = NewGateway(GatewayOptions{State: state, ILink: ilink, Host: &peerHost{peer: x.peer, contribution: contributionID},
-			DataDir: dir, Health: health, MediaHTTP: x.opt.http, Diagnostics: diag})
+			DataDir: dir, Health: health, MediaHTTP: x.opt.http})
 		if err == nil {
 			health.StartRun()
 		}

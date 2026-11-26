@@ -142,28 +142,26 @@ func (g *Gateway) process(ctx context.Context, m InboundMessage, ready func()) (
 		g.health.RecordMessageProgress()
 		return outcomeProcessed, nil
 	}
-	if len(m.UnsupportedKinds) > 0 || !stored && m.Text == "" {
-		ready()
-		reason := "media_unavailable"
-		if len(m.UnsupportedKinds) > 0 {
-			reason = strings.Join(m.UnsupportedKinds, ",")
-		}
-		traceEvent(ctx, "message.unsupported", Fields{"reason": reason})
-		// The fixed notice is durable like any reply: a restart resends it without duplicates.
-		return g.fixedReply(ctx, m, SourceUnsupportedMedia, UnsupportedMediaReply)
-	}
 	g.ilink.sendTyping(m.ChatID)
+	// Content that can't be passed on (a video, an attachment that failed)
+	// goes to Collie too, named in Unsupported: the Router decides what to say.
 	text := m.Text
 	if !stored {
-		text += MediaFailedNote
+		text = strings.TrimSpace(text + MediaFailedNote)
 	}
 	ready()
 	held, err := g.stash.held(m.ChatID)
 	if err != nil {
 		return "", err
 	}
-	if conflict := g.conflicts(m, text); conflict {
-		return g.fixedReply(ctx, m, SourceConflict, ConflictReply)
+	if g.conflicts(m, text) {
+		// The same id with other content: taken as the message already handed over.
+		writeLogLine(map[string]any{"event": "message_conflict_ignored"}, "")
+		if err := s.RecordProcessedMessageKey(m.DeliveryKey, true); err != nil {
+			return "", err
+		}
+		g.health.RecordMessageProgress()
+		return outcomeSkipped, nil
 	}
 	if err := traceStep(ctx, "message.host", nil, func() error { return g.forward(ctx, m, text, append(held, media...)) }); err != nil {
 		return "", err
@@ -172,23 +170,6 @@ func (g *Gateway) process(ctx context.Context, m InboundMessage, ready func()) (
 		return "", err
 	}
 	if err := s.RecordProcessedMessageKey(m.DeliveryKey, true); err != nil {
-		return "", err
-	}
-	g.health.RecordMessageProgress()
-	return outcomeProcessed, nil
-}
-
-// fixedReply answers m with a durable fixed text from source.
-func (g *Gateway) fixedReply(ctx context.Context, m InboundMessage, source, text string) (string, error) {
-	s := g.state
-	if err := s.PutOutbox(DeliveryOutboxItem{Kind: "reply", Source: source, ChatID: m.ChatID, MessageID: m.MessageID,
-		DeliveryKey: m.DeliveryKey, SplitMaxChars: g.splitMaxChars, Status: OutboxPending}); err != nil {
-		return "", err
-	}
-	if err := s.RecordProcessedMessageKey(m.DeliveryKey, true); err != nil {
-		return "", err
-	}
-	if err := g.deliverReply(ctx, s.Outbox[m.DeliveryKey], replyContent{Text: text}); err != nil {
 		return "", err
 	}
 	g.health.RecordMessageProgress()
@@ -211,7 +192,7 @@ func (g *Gateway) conflicts(m InboundMessage, text string) bool {
 func (g *Gateway) forward(ctx context.Context, m InboundMessage, text string, media []DownloadedMedia) error {
 	owner := true
 	msg := extproto.Message{ID: m.DeliveryKey, Text: text, ChatID: m.ChatID, ChatKind: "dm", Sender: m.ChatID, Owner: &owner,
-		Quote: m.Quote, Unsupported: m.IgnoredKinds}
+		Quote: m.Quote, Unsupported: append(append([]string(nil), m.UnsupportedKinds...), m.IgnoredKinds...)}
 	if m.CreatedAtMs != nil {
 		msg.At = time.UnixMilli(*m.CreatedAtMs).UTC().Format(time.RFC3339Nano)
 	}
@@ -259,8 +240,8 @@ func (g *Gateway) storeInboundMedia(ctx context.Context, m InboundMessage) ([]Do
 	return out, true, nil
 }
 
-// steer hands a message to the request running in its chat. Unsupported
-// content gets its own notice, so it is not steered.
+// steer hands a message to the request running in its chat. Content that
+// can't be passed on is left to normal processing.
 func (g *Gateway) steer(m InboundMessage) (bool, error) {
 	if len(m.UnsupportedKinds) > 0 {
 		return false, nil

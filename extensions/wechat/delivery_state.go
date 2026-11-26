@@ -14,8 +14,9 @@ const (
 
 // Outbox sources: whose reply a reference points at.
 const (
-	SourceController       = "controller" // legacy references without a source
-	SourceEngine           = "engine"     // Collie's answer, frozen in the reply store
+	SourceController = "controller" // legacy references without a source
+	SourceEngine     = "engine"     // Collie's answer, frozen in the reply store
+	// Fixed notices older state may still hold; no longer sent.
 	SourceConflict         = "conflict"
 	SourceUnsupportedMedia = "unsupported-media"
 )

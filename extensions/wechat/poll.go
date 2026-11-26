@@ -19,7 +19,7 @@ func (c *ILinkClient) pollBatch(ctx context.Context) (PollBatch, error) {
 	current := c.state.SyncBuf
 	response, err := c.request(ctx, endpointGetUpdates, map[string]any{
 		"get_updates_buf": current, "base_info": map[string]any{"channel_version": ChannelVersion},
-	}, account.Token, c.PollBudgetMs(), nil)
+	}, account.Token, c.PollBudgetMs())
 	if err != nil {
 		return PollBatch{}, err
 	}

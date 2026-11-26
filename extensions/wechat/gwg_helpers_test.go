@@ -132,7 +132,7 @@ func gwgCustom(t *testing.T, o harnessOptions, fetch fetchFunc) *harness {
 	h.ilink = newTestClient(t, s, h.loop, h.http)
 	h.loop.do(func() {
 		h.gateway, err = NewGateway(GatewayOptions{State: s, ILink: h.ilink, Host: h.host, DataDir: h.dir, MediaHTTP: h.http,
-			SplitMaxChars: o.splitMax, Health: &HealthTracker{}, Diagnostics: o.diagnosis})
+			SplitMaxChars: o.splitMax, Health: &HealthTracker{}})
 	})
 	mustNoErr(t, err)
 	t.Cleanup(func() { h.gateway.Stop() })

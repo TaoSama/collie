@@ -98,15 +98,7 @@ func (g *Gateway) runLoop(pollIntervalMs int64, onError, onNotificationError fun
 // notifyOnce runs one notification cycle; an error back means the loop
 // must stop (a failing error callback).
 func (g *Gateway) notifyOnce(onError, onNotificationError func(error)) error {
-	var err error
-	if g.diagnostics != nil {
-		err = g.diagnostics.Run(g.ctx, func(ctx context.Context) error {
-			_, err := g.deliverNotificationsOnce(ctx)
-			return err
-		}, func() bool { return !g.stopped && g.ctx.Err() == nil }, func(error) bool { return true })
-	} else {
-		_, err = g.deliverNotificationsOnce(g.ctx)
-	}
+	_, err := g.deliverNotificationsOnce(g.ctx)
 	if err == nil || g.stopped || g.ctx.Err() != nil {
 		return nil
 	}

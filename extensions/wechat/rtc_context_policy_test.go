@@ -18,8 +18,8 @@ func rtcBudget(patch func(*ContextBudgetState)) *ContextBudgetState {
 
 func rtcAssertDeferred(t *testing.T, state *ContextBudgetState, kind, reason string, now int64) {
 	t.Helper()
-	if CanSend(state, DefaultContextPolicy, kind, now) {
-		t.Fatalf("CanSend(%+v, %s) = true, want deferred %s", state, kind, reason)
+	if canSend(state, DefaultContextPolicy, kind, now) {
+		t.Fatalf("canSend(%+v, %s) = true, want deferred %s", state, kind, reason)
 	}
 	_, err := ConsumeSend(state, DefaultContextPolicy, kind, now)
 	d, ok := asDeferred(err)
@@ -89,7 +89,7 @@ func TestRtcContextPolicyExpiredWindows(t *testing.T) {
 		rtcAssertDeferred(t, rtcBudget(func(b *ContextBudgetState) { b.RefreshedAt = rtcNow + 1 }), kind, DeferWindowExpired, rtcNow)
 		rtcAssertDeferred(t, rtcBudget(nil), kind, DeferWindowExpired, rtcNow+w)
 		rtcAssertDeferred(t, rtcBudget(nil), kind, DeferWindowExpired, rtcNow+w+1)
-		if !CanSend(rtcBudget(nil), DefaultContextPolicy, kind, rtcNow+w-1) {
+		if !canSend(rtcBudget(nil), DefaultContextPolicy, kind, rtcNow+w-1) {
 			t.Fatalf("%s: last millisecond of the window refused", kind)
 		}
 	}
@@ -126,17 +126,17 @@ func TestRtcContextPolicyReservesFinalSends(t *testing.T) {
 		t.Fatalf("remaining = %d", next.Remaining)
 	}
 	rtcAssertDeferred(t, &next, SendProgress, DeferBudgetExhausted, rtcNow)
-	if !CanSend(&next, DefaultContextPolicy, SendFinal, rtcNow) {
+	if !canSend(&next, DefaultContextPolicy, SendFinal, rtcNow) {
 		t.Fatal("final refused with three left")
 	}
 	strict, _ := ValidateContextPolicy(PolicyOptions{SendBudget: 3})
-	if CanSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 3 }), strict, SendProgress, rtcNow) ||
-		!CanSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 1 }), strict, SendFinal, rtcNow) {
+	if canSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 3 }), strict, SendProgress, rtcNow) ||
+		!canSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 1 }), strict, SendFinal, rtcNow) {
 		t.Fatal("budget 3 reservation wrong")
 	}
 	single, _ := ValidateContextPolicy(PolicyOptions{SendBudget: 1})
-	if CanSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 1 }), single, SendProgress, rtcNow) ||
-		!CanSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 1 }), single, SendFinal, rtcNow) {
+	if canSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 1 }), single, SendProgress, rtcNow) ||
+		!canSend(rtcBudget(func(b *ContextBudgetState) { b.Remaining = 1 }), single, SendFinal, rtcNow) {
 		t.Fatal("budget 1 reservation wrong")
 	}
 }
@@ -185,14 +185,14 @@ func TestRtcContextPolicyTightening(t *testing.T) {
 	tightened, _ := ValidateContextPolicy(PolicyOptions{SendBudget: 5})
 	g := int64(10)
 	overspent := rtcBudget(func(b *ContextBudgetState) { b.GrantedBudget, b.Remaining = &g, 3 })
-	if CanSend(overspent, tightened, SendFinal, rtcNow) {
+	if canSend(overspent, tightened, SendFinal, rtcNow) {
 		t.Fatal("overspent window allowed")
 	}
 	if _, err := ConsumeSend(overspent, tightened, SendFinal, rtcNow); func() bool { d, ok := asDeferred(err); return !ok || d.Reason != DeferBudgetExhausted }() {
 		t.Fatalf("error = %v", err)
 	}
 	state := rtcBudget(func(b *ContextBudgetState) { b.GrantedBudget, b.Remaining = &g, 8 })
-	if CanSend(state, tightened, SendProgress, rtcNow) {
+	if canSend(state, tightened, SendProgress, rtcNow) {
 		t.Fatal("progress allowed inside the final reservation")
 	}
 	for expected := int64(2); expected >= 0; expected-- {
@@ -203,7 +203,7 @@ func TestRtcContextPolicyTightening(t *testing.T) {
 			t.Fatalf("state = %+v (grant %d)", state, *state.GrantedBudget)
 		}
 	}
-	if CanSend(state, tightened, SendFinal, rtcNow) {
+	if canSend(state, tightened, SendFinal, rtcNow) {
 		t.Fatal("exhausted window allowed")
 	}
 }
@@ -221,7 +221,7 @@ func TestRtcContextPolicyRaising(t *testing.T) {
 			t.Fatalf("state = %+v", state)
 		}
 	}
-	if CanSend(state, raised, SendFinal, rtcNow) {
+	if canSend(state, raised, SendFinal, rtcNow) {
 		t.Fatal("raised budget refilled an old window")
 	}
 }
@@ -236,4 +236,8 @@ func TestRtcContextPolicyInvalidGrants(t *testing.T) {
 			rtcAssertDeferred(t, state, kind, DeferBudgetExhausted, rtcNow)
 		}
 	}
+}
+
+func canSend(state *ContextBudgetState, policy ContextPolicy, kind string, now int64) bool {
+	return GetDeferReason(state, policy, kind, now) == ""
 }

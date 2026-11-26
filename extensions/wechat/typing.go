@@ -25,7 +25,7 @@ type typingEntry struct {
 }
 
 type typingOptions struct {
-	request      func(ctx context.Context, endpoint string, payload map[string]any, token string, timeoutMs int64, d *RequestDiagnostics) (map[string]any, error)
+	request      func(ctx context.Context, endpoint string, payload map[string]any, token string, timeoutMs int64) (map[string]any, error)
 	account      func() *typingAccount
 	contextToken func(chatID string) string
 	timeoutMs    int64
@@ -111,7 +111,7 @@ func (t *TypingIndicator) perform(ctx context.Context, chatID string, status int
 			return false, err
 		}
 		config, err := t.opt.request(ctx, endpointGetConfig, map[string]any{"ilink_user_id": chatID, "context_token": contextToken,
-			"base_info": map[string]any{"channel_version": ChannelVersion}}, account.token, remaining, nil)
+			"base_info": map[string]any{"channel_version": ChannelVersion}}, account.token, remaining)
 		if err != nil {
 			return false, err
 		}
@@ -135,7 +135,7 @@ func (t *TypingIndicator) perform(ctx context.Context, chatID string, status int
 		return false, err
 	}
 	receipt, err := t.opt.request(ctx, endpointSendTyping, map[string]any{"ilink_user_id": chatID, "typing_ticket": entry.ticket,
-		"status": status, "base_info": map[string]any{"channel_version": ChannelVersion}}, account.token, remaining, nil)
+		"status": status, "base_info": map[string]any{"channel_version": ChannelVersion}}, account.token, remaining)
 	if err != nil {
 		return false, err
 	}

@@ -33,12 +33,6 @@ type ReplyOptions struct {
 	RenewalReminder bool
 }
 
-// SendMarkdownReply is sendMarkdownReply for callers outside the loop.
-func (c *ILinkClient) SendMarkdownReply(ctx context.Context, chatID, text string, o ReplyOptions) (n int, err error) {
-	c.loop.do(func() { n, _, err = c.sendMarkdownReply(ctx, chatID, text, o) })
-	return n, err
-}
-
 // sendMarkdownReply sends text as written, cut into a frozen chunk plan.
 // Each chunk is charged, its intent persisted, sent, then confirmed; a
 // chunk without a receipt is never sent again. A replay continues the plan

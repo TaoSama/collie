@@ -126,10 +126,6 @@ func EffectiveRemaining(state ContextBudgetState, policy ContextPolicy) int64 {
 	return min(state.Remaining, max(0, policy.SendBudget-spent))
 }
 
-func CanSend(state *ContextBudgetState, policy ContextPolicy, kind string, now int64) bool {
-	return GetDeferReason(state, policy, kind, now) == ""
-}
-
 // ConsumeSend returns the state after one send; the original is left as is.
 func ConsumeSend(state *ContextBudgetState, policy ContextPolicy, kind string, now int64) (ContextBudgetState, error) {
 	reason := GetDeferReason(state, policy, kind, now)

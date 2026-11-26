@@ -31,6 +31,10 @@ var (
 	traceSink   io.Writer = os.Stderr
 	traceWarned bool
 	instanceID  = newUUID()
+	// traceOn turns on the message_latency lines, off by default: one poll
+	// writes several, and the lines that matter (errors) would scroll out of
+	// 接入. COLLIE_EXT_PASS_ENV=WECHAT_TRACE WECHAT_TRACE=1 turns them on.
+	traceOn = os.Getenv("WECHAT_TRACE") == "1"
 )
 
 // MessageTrace follows one message (or one poll) through the gateway: the
@@ -63,7 +67,7 @@ type Fields map[string]any
 // traceEvent writes one message_latency line with only allowed fields.
 func traceEvent(ctx context.Context, stage string, fields Fields) {
 	t := currentTrace(ctx)
-	if t == nil {
+	if t == nil || t.sink == nil && !traceOn {
 		return
 	}
 	event := map[string]any{"schema": 1, "event": "message_latency", "service": "gateway", "instanceId": instanceID,

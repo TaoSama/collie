@@ -47,7 +47,7 @@ func newWxbTyping(t *testing.T, timeoutMs int64) *wxbTyping {
 	f.now = &atomic.Int64{}
 	f.now.Store(1_000)
 	f.typing = newTypingIndicator(typingOptions{timeoutMs: timeoutMs, now: f.now.Load,
-		request: func(ctx context.Context, endpoint string, payload map[string]any, token string, timeoutMs int64, _ *RequestDiagnostics) (map[string]any, error) {
+		request: func(ctx context.Context, endpoint string, payload map[string]any, token string, timeoutMs int64) (map[string]any, error) {
 			c := wxbTypingCall{endpoint: endpoint, payload: payload, token: token, timeoutMs: timeoutMs, ctx: ctx}
 			f.calls = append(f.calls, c)
 			if f.hook != nil {

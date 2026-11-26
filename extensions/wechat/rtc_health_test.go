@@ -39,11 +39,6 @@ func TestRtcHealthTrackerLifecycle(t *testing.T) {
 	if h.Status != HealthHealthy || h.ConsecutiveErrors != 0 || h.LastPollSucceededAt == "" {
 		t.Fatalf("after success: %+v", h)
 	}
-	tracker.RecordStop()
-	h, _ = tracker.Snapshot()
-	if h.Status != HealthStopped {
-		t.Fatalf("after stop: %+v", h)
-	}
 }
 
 // from: gateway/tests/runtime/health.test.ts: Log error classification and output redaction verification

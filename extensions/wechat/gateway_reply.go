@@ -293,10 +293,6 @@ func (g *Gateway) withRecoveryTrace(ctx context.Context, item DeliveryOutboxItem
 
 func (g *Gateway) frozenReply(item DeliveryOutboxItem) (replyContent, error) {
 	switch item.Source {
-	case SourceConflict:
-		return replyContent{Text: ConflictReply}, nil
-	case SourceUnsupportedMedia:
-		return replyContent{Text: UnsupportedMediaReply}, nil
 	case SourceEngine:
 		r := g.answers.get(item.DeliveryKey)
 		if r == nil || r.State != "" {

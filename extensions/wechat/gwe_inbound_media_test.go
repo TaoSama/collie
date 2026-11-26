@@ -73,8 +73,9 @@ func TestGweImageAloneHeldAsContext(t *testing.T) {
 	})
 }
 
-// from: gateway/tests/gateway/inbound-media.test.ts: a failed image download falls back to the fixed notice
-func TestGweFailedImageDownloadFixedNotice(t *testing.T) {
+// A failed image download with no text goes to Collie with the note that
+// the attachment did not arrive; the extension sends nothing of its own.
+func TestGweFailedImageDownloadGoesToCollie(t *testing.T) {
 	h := gweMediaHarness(t, gweMediaMessage("img", gweImageItem), func() (*http.Response, error) {
 		return rawResponse(404, "gone"), nil
 	})
@@ -85,8 +86,11 @@ func TestGweFailedImageDownloadFixedNotice(t *testing.T) {
 			t.Fatal("failed image stored")
 		}
 	})
-	if texts := h.sentTexts(); len(texts) != 1 || texts[0] != UnsupportedMediaReply {
-		t.Fatalf("texts %q", texts)
+	if texts := h.sentTexts(); len(texts) != 0 {
+		t.Fatalf("the extension answered by itself: %q", texts)
+	}
+	if got := h.host.messages(); len(got) != 1 || got[0].Text != strings.TrimSpace(MediaFailedNote) {
+		t.Fatalf("handed over %+v", got)
 	}
 }
 

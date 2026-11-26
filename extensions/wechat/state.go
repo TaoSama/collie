@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -400,12 +399,4 @@ func (s *StateManager) recordReceived(key, hash string) error {
 	}
 	s.received = next
 	return s.save(func() { s.received = previous })
-}
-
-// removeStateFile is for logout: the next account starts from nothing.
-func (s *StateManager) removeStateFile() error {
-	if err := os.Remove(s.StatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
 }

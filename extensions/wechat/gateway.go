@@ -11,20 +11,15 @@ import (
 )
 
 const (
-	// UnsupportedMediaReply answers content that cannot be passed on.
-	UnsupportedMediaReply = "暂时无法处理这条消息。目前支持文字、语音、图片和文件，视频等内容暂不支持；如果发送的是图片或文件，可能是接收失败，请稍后重发或改用文字描述。"
 	// MediaFailedNote is appended when a message's attachments could not be
 	// received, so nobody assumes they exist.
 	MediaFailedNote = "\n（用户随消息发送的图片或文件未能接收，请勿假设已收到附件。）"
-	// ConflictReply answers a message id seen before with other content.
-	ConflictReply = "这条消息的编号与已处理消息相同，但内容不同。为避免误执行，我没有处理新内容；请重新发送一条消息。"
 
 	minNotificationIntervalMs   = 1
 	notificationInterestCacheMs = 30_000
 	defaultBaselineBatches      = 20
 	inboxFileName               = "state.json.inbox.json"
 	resultOutboxFileName        = "result-outbox.json"
-	recoveryFileName            = "notification-recovery.json"
 )
 
 // PollCycleSummary counts one poll.
@@ -49,7 +44,6 @@ type GatewayOptions struct {
 	SplitMaxChars int
 	Health        *HealthTracker
 	MediaHTTP     *http.Client
-	Diagnostics   *NotificationCycleDiagnostics
 }
 
 type notificationInterest struct {
@@ -69,7 +63,6 @@ type Gateway struct {
 	splitMaxChars int
 	health        *HealthTracker
 	mediaHTTP     *http.Client
-	diagnostics   *NotificationCycleDiagnostics
 
 	ctx    context.Context // ends at stop: the notification abort
 	cancel context.CancelFunc
@@ -113,7 +106,7 @@ func NewGateway(o GatewayOptions) (*Gateway, error) {
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	g := &Gateway{state: o.State, ilink: o.ILink, host: o.Host, loop: o.ILink.loop, splitMaxChars: split, health: o.Health,
-		mediaHTTP: o.MediaHTTP, diagnostics: o.Diagnostics, ctx: ctx, kick: make(chan struct{}, 1),
+		mediaHTTP: o.MediaHTTP, ctx: ctx, kick: make(chan struct{}, 1),
 		queryStarts: map[string]chan struct{}{}, activeInboundChats: map[string]bool{}, activeReplyDeliveries: map[string]bool{},
 		progress: map[string]*QueryProgress{}, progressRefs: map[string]QueryProgressResult{}, awaiting: map[string]int64{}}
 	g.cancel = func() { cancel(errors.New("WeChat notification delivery stopped")) }
@@ -233,7 +226,7 @@ func (g *Gateway) wireResults() {
 }
 
 // reportNotificationSendFailure is the line kept for a result that may
-// have been sent; diagnostics cannot reopen its delivery.
+// have been sent: it is never sent again.
 func reportNotificationSendFailure(id, attemptID, errorType string) error {
 	writeLogLine(map[string]any{"event": "notification_send_failed", "notificationId": id, "attemptId": attemptID, "errorType": errorType},
 		"[gateway] notification diagnostic write failed\n")
@@ -262,22 +255,22 @@ func (g *Gateway) deliverNotificationsOnce(ctx context.Context) (ResultDispatchS
 		g.refreshInterest()
 	}
 	if _, _, err := g.renewal.DeliverOnce(g.renewalInterestedChats()); err != nil {
-		renewalErr = rememberNotificationStage(ctx, err, StageRenewal)
+		renewalErr = err
 	}
 	if err := g.flushRepliesOnce(ctx, "", ""); err != nil {
-		first = rememberNotificationStage(ctx, err, StageReplyRecovery)
+		first = err
 	}
 	g.refreshInterest()
 	if s, err := g.dispatcher.DeliverOnce(g.interest.chatIDs); err != nil {
-		first = firstErr(first, rememberNotificationStage(ctx, err, StageResultDelivery))
+		first = firstErr(first, err)
 	} else {
 		summary = s
 	}
 	if _, _, err := g.renewal.DeliverOnce(g.renewalInterestedChats()); err != nil && renewalErr == nil {
-		renewalErr = rememberNotificationStage(ctx, err, StageRenewal)
+		renewalErr = err
 	}
 	if err := g.results.prune(nowMs()); err != nil {
-		first = firstErr(first, rememberNotificationStage(ctx, err, StageResultDelivery))
+		first = firstErr(first, err)
 	}
 	if first != nil {
 		return summary, first

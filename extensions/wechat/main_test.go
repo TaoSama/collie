@@ -6,8 +6,10 @@ import (
 	"testing"
 )
 
-// TestMain keeps trace lines out of test output unless WECHAT_TRACE is set.
+// TestMain turns the trace on, as the tests check it, and keeps its lines
+// out of test output unless WECHAT_TRACE is set.
 func TestMain(m *testing.M) {
+	traceOn = true
 	if os.Getenv("WECHAT_TRACE") == "" {
 		traceSink = io.Discard
 	}

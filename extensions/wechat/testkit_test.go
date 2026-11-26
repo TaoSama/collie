@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/TaoSama/collie/internal/extproto"
 )
@@ -214,12 +215,11 @@ type harnessHooks struct {
 }
 
 type harnessOptions struct {
-	policy    PolicyOptions
-	noBase    bool // baseline not established
-	noWindow  bool // chat has no window yet
-	account   *Account
-	splitMax  int
-	diagnosis *NotificationCycleDiagnostics
+	policy   PolicyOptions
+	noBase   bool // baseline not established
+	noWindow bool // chat has no window yet
+	account  *Account
+	splitMax int
 }
 
 func newHarness(t testing.TB, o harnessOptions) *harness {
@@ -242,7 +242,7 @@ func newHarness(t testing.TB, o harnessOptions) *harness {
 	h.ilink = newTestClient(t, s, h.loop, h.http)
 	h.loop.do(func() {
 		h.gateway, err = NewGateway(GatewayOptions{State: s, ILink: h.ilink, Host: h.host, DataDir: h.dir, MediaHTTP: h.http,
-			SplitMaxChars: o.splitMax, Health: &HealthTracker{}, Diagnostics: o.diagnosis})
+			SplitMaxChars: o.splitMax, Health: &HealthTracker{}})
 	})
 	mustNoErr(t, err)
 	t.Cleanup(func() { h.gateway.Stop() })
@@ -358,3 +358,21 @@ func inbound(chat, clientID, text string, createdAt int64) map[string]any {
 	return map[string]any{"message_type": 1, "from_user_id": chat, "client_id": clientID, "create_time_ms": createdAt,
 		"context_token": testContext, "item_list": []any{map[string]any{"type": 1, "text_item": map[string]any{"text": text}}}}
 }
+
+func mustParseISO(t *testing.T, s string) int64 {
+	t.Helper()
+	tm, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		t.Fatalf("timestamp %q: %v", s, err)
+	}
+	return tm.UnixMilli()
+}
+
+func rtdEqual(t *testing.T, got, want any, what string) {
+	t.Helper()
+	if jsonText(got) != jsonText(want) {
+		t.Fatalf("%s = %s, want %s", what, jsonText(got), jsonText(want))
+	}
+}
+
+func itoa(i int) string { return jsonText(i) }

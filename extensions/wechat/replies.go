@@ -184,21 +184,6 @@ func (s *StateManager) updateReplyDelivery(key string, index int, inFlight, ackn
 	})
 }
 
-func (s *StateManager) RecordReplyChunkProgress(key string, chunksSent int) error {
-	if key == "" {
-		return nil
-	}
-	prev, had := s.SentReplyProgress[key]
-	s.SentReplyProgress[key] = chunksSent
-	return s.save(func() {
-		if had {
-			s.SentReplyProgress[key] = prev
-		} else {
-			delete(s.SentReplyProgress, key)
-		}
-	})
-}
-
 // replyKeys lists the reply plans oldest first. The order survives restarts
 // in the state file; plans it does not name come last, sorted.
 func (s *StateManager) replyKeys() []string {

@@ -38,7 +38,8 @@ func TestRtdStateFailedProcessedCheckpoint(t *testing.T) {
 	dir, account := t.TempDir(), rtdAccount("fake-token", "test-bot")
 	s := rtdState(t, dir, account, PolicyOptions{})
 	key := s.ComputeDeliveryKey("test-chat", "test-message")
-	mustNoErr(t, s.RecordReplyChunkProgress(key, 2))
+	s.SentReplyProgress[key] = 2
+	mustNoErr(t, s.save(func() { delete(s.SentReplyProgress, key) }))
 	restore := rtdFailSaves(s)
 	if err := s.RecordProcessedMessageKey(key, false); !errors.Is(err, rtdFailure) {
 		t.Fatalf("error = %v", err)

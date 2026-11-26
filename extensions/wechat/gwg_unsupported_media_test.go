@@ -3,10 +3,7 @@ package wechat
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"net/http"
-	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,8 +28,9 @@ func gwgPagesHarness(t *testing.T, o harnessOptions) (*harness, *gwgPages) {
 	return h, p
 }
 
-// from: gateway/tests/gateway/unsupported-media.test.ts: image-only inbound gets one fixed notice without a Controller turn
-func TestGwgUnsupportedMediaFixedNotice(t *testing.T) {
+// Content that can't be passed on goes to Collie, named in Unsupported,
+// once: the extension sends nothing of its own.
+func TestGwgUnsupportedContentGoesToCollie(t *testing.T) {
 	h, pages := gwgPagesHarness(t, harnessOptions{noWindow: true})
 	created := i64(time.Now().UnixMilli() - 1000)
 	pages.set([]any{gwgImageOnly("img", created), gwgImageOnly("img", created)}, []any{gwgImageOnly("img", created)})
@@ -42,81 +40,19 @@ func TestGwgUnsupportedMediaFixedNotice(t *testing.T) {
 	if s := gwgPoll(t, h); s.ProcessedCount != 0 {
 		t.Fatalf("second = %+v", s)
 	}
-	gwgEqual(t, "sent", h.sentTexts(), []string{UnsupportedMediaReply})
-	if n := len(h.host.messages()); n != 0 {
-		t.Fatalf("%d messages handed to Collie", n)
+	if len(h.sent()) != 0 {
+		t.Fatalf("the extension answered by itself: %q", h.sentTexts())
+	}
+	got := h.host.messages()
+	if len(got) != 1 || got[0].Text != "" || len(got[0].Unsupported) == 0 {
+		t.Fatalf("handed over %+v", got)
 	}
 	h.do(func() {
 		key := h.state.ComputeDeliveryKey(testChat, "img")
 		if _, ok := h.state.Outbox[key]; !h.state.IsMessageProcessed(key) || ok || h.state.ContextTokens[testChat] != "ctx-img" {
-			t.Fatal("notice not finished, or the real inbound did not refresh the context")
+			t.Fatal("not finished, or the real inbound did not refresh the context")
 		}
 	})
-}
-
-// from: gateway/tests/gateway/unsupported-media.test.ts: a deferred notice is recovered once after restart and never re-sent for a replay
-func TestGwgUnsupportedMediaDeferredNoticeRecovered(t *testing.T) {
-	h, pages := gwgPagesHarness(t, harnessOptions{noWindow: true})
-	// No timestamp opens no window, so the notice is deferred (the original mocked a deferral).
-	pages.set([]any{gwgImageOnly("img", nil)})
-	gwgPoll(t, h)
-	var key string
-	h.do(func() {
-		key = h.state.ComputeDeliveryKey(testChat, "img")
-		if item := h.state.Outbox[key]; item.Source != SourceUnsupportedMedia || item.Status != OutboxPending {
-			t.Fatalf("outbox = %+v", item)
-		}
-	})
-	if len(h.sent()) != 0 {
-		t.Fatal("deferred notice was sent")
-	}
-	restarted := gwgReopen(t, h, PolicyOptions{}, 0)
-	restarted.do(func() {
-		_, err := restarted.state.RecordInboundContext("window", testChat, i64(nowMs()-500), true, "ctx-img")
-		mustNoErr(t, err)
-	})
-	mustNoErr(t, gwgFlush(restarted, ""))
-	gwgEqual(t, "sent", h.sentTexts(), []string{UnsupportedMediaReply})
-	restarted.do(func() {
-		if _, ok := restarted.state.Outbox[key]; ok {
-			t.Fatal("outbox kept after delivery")
-		}
-	})
-	pages.set([]any{gwgImageOnly("img", nil)})
-	gwgPoll(t, restarted)
-	mustNoErr(t, gwgFlush(restarted, ""))
-	gwgEqual(t, "sent", h.sentTexts(), []string{UnsupportedMediaReply})
-	if len(h.host.messages()) != 0 {
-		t.Fatal("notice content was handed to Collie")
-	}
-}
-
-// from: gateway/tests/gateway/unsupported-media.test.ts: a notice whose send completed before a crash is not delivered again
-func TestGwgUnsupportedMediaCrashAfterSend(t *testing.T) {
-	h, pages := gwgPagesHarness(t, harnessOptions{noWindow: true})
-	pages.set([]any{gwgImageOnly("img", i64(time.Now().UnixMilli()-1000))})
-	key := h.state.ComputeDeliveryKey(testChat, "img")
-	h.do(func() {
-		h.state.failSave = func() error {
-			// The cleanup checkpoint: the reference is gone and its reply complete.
-			if _, ok := h.state.Outbox[key]; !ok && h.state.ReplyDeliveries[key].TotalChunks == 1 && h.state.ReplyDeliveries[key].AcknowledgedChunks == 1 {
-				return errors.New("injected crash before outbox cleanup")
-			}
-			return nil
-		}
-	})
-	if _, err := gwgPollErr(h); err == nil || err.Error() != "injected crash before outbox cleanup" {
-		t.Fatalf("poll error = %v", err)
-	}
-	gwgEqual(t, "sent", h.sentTexts(), []string{UnsupportedMediaReply})
-	restarted := gwgReopen(t, h, PolicyOptions{}, 0)
-	mustNoErr(t, gwgFlush(restarted, ""))
-	restarted.do(func() {
-		if _, ok := restarted.state.Outbox[key]; ok {
-			t.Fatal("outbox kept")
-		}
-	})
-	gwgEqual(t, "sent", h.sentTexts(), []string{UnsupportedMediaReply})
 }
 
 // from: gateway/tests/gateway/unsupported-media.test.ts: unauthorized chats and baseline history never receive the notice
@@ -126,8 +62,8 @@ func TestGwgUnsupportedMediaUnauthorizedAndBaseline(t *testing.T) {
 	if s := gwgPoll(t, denied); s.SkippedCount != 1 {
 		t.Fatalf("denied = %+v", s)
 	}
-	if len(denied.sent()) != 0 {
-		t.Fatal("notice sent to an unauthorized chat")
+	if len(denied.sent()) != 0 || len(denied.host.messages()) != 0 {
+		t.Fatal("an unauthorized chat was answered or handed over")
 	}
 	denied.do(func() {
 		if !denied.state.IsMessageProcessed(denied.state.ComputeDeliveryKey(testChat, "img")) {
@@ -142,83 +78,8 @@ func TestGwgUnsupportedMediaUnauthorizedAndBaseline(t *testing.T) {
 	})
 	hp.set([]any{gwgImageOnly("old", i64(time.Now().UnixMilli()-1000))})
 	gwgPoll(t, history)
-	if len(history.sent()) != 0 {
-		t.Fatal("baseline history got a notice")
-	}
-}
-
-// from: gateway/tests/gateway/unsupported-media.test.ts: unsupported content arriving during a running turn is not steered and is answered after it
-func TestGwgUnsupportedMediaNotSteered(t *testing.T) {
-	h := newHarness(t, harnessOptions{noWindow: true})
-	started := make(chan struct{})
-	var startOnce sync.Once
-	polls := 0
-	var sendMu sync.Mutex
-	sends := 0
-	h.setHooks(func(k *harnessHooks) {
-		k.poll = func() (*http.Response, error) {
-			polls++
-			now := time.Now().UnixMilli() - 1000
-			switch polls {
-			case 1:
-				return jsonResponse(200, map[string]any{"ret": 0, "get_updates_buf": "one", "msgs": []any{inbound(testChat, "text", "查一下部署", now)}}), nil
-			case 2:
-				<-started
-				return jsonResponse(200, map[string]any{"ret": 0, "get_updates_buf": "two", "msgs": []any{gwgImageOnly("img", &now)}}), nil
-			}
-			time.Sleep(time.Millisecond)
-			return jsonResponse(200, map[string]any{"ret": 0, "get_updates_buf": "done", "msgs": []any{}}), nil
-		}
-		k.send = func(map[string]any) (*http.Response, error) {
-			sendMu.Lock()
-			sends++
-			n := sends
-			sendMu.Unlock()
-			if n == 1 {
-				// The notice went out while Collie is still answering; now the answer arrives.
-				go func() {
-					_, _ = h.send(extproto.Send{Ref: "answer", Text: "部署正常", Kind: extproto.KindAnswer})
-				}()
-			}
-			if n == 2 {
-				go h.gateway.Stop()
-			}
-			return jsonResponse(200, map[string]any{"ret": 0}), nil
-		}
-	})
-	h.host.mu.Lock()
-	h.host.receive = func(extproto.Message) error { startOnce.Do(func() { close(started) }); return nil }
-	h.host.mu.Unlock()
-	var failures []error
-	var fmu sync.Mutex
-	done := make(chan error, 1)
-	go func() {
-		done <- h.gateway.RunLoop(1, func(err error) { fmu.Lock(); failures = append(failures, err); fmu.Unlock(); go h.gateway.Stop() }, nil)
-	}()
-	select {
-	case err := <-done:
-		mustNoErr(t, err)
-	case <-time.After(15 * time.Second):
-		t.Fatal("run loop did not stop")
-	}
-	if len(failures) > 0 {
-		t.Fatalf("failures: %v", failures)
-	}
-	// Not steered: Collie only has the text. The notice no longer waits behind the turn, since
-	// the turn runs at Collie; it goes out first and the answer follows.
-	if got := h.host.messages(); len(got) != 1 || got[0].Text != "查一下部署" {
-		t.Fatalf("handed over %+v", got)
-	}
-	gwgEqual(t, "sent", h.sentTexts(), []string{UnsupportedMediaReply, "部署正常"})
-	h.do(func() {
-		if !h.state.IsMessageProcessed(h.state.ComputeDeliveryKey(testChat, "img")) {
-			t.Fatal("image not processed")
-		}
-	})
-	inbox, err := NewFileInboundInbox(filepath.Join(h.dir, inboxFileName), h.state.LoginFingerprint, 1000)
-	mustNoErr(t, err)
-	if list, err := inbox.List(); err != nil || len(list) != 0 {
-		t.Fatalf("inbox = %v, %v", list, err)
+	if len(history.sent()) != 0 || len(history.host.messages()) != 0 {
+		t.Fatal("baseline history was answered or handed over")
 	}
 }
 
@@ -261,6 +122,27 @@ func TestGwgSteeredImageBelongsToRootReply(t *testing.T) {
 		if _, ok := s.Outbox[rootKey]; !s.IsMessageProcessed(rootKey) || s.ReplyDeliveries[imageReplyPrefix+rootKey].AcknowledgedChunks != 1 ||
 			s.ReplyDeliveries[rootKey].AcknowledgedChunks != 1 || ok {
 			t.Fatal("root reply not delivered as one reply with its picture")
+		}
+	})
+}
+
+// A message id handed to Collie before with other content (a crash between
+// handing over and marking it done, then the same id with new text) is
+// ignored and logged: no fixed reply, nothing handed over again.
+func TestGwgReusedIDWithOtherContentIgnored(t *testing.T) {
+	h, pages := gwgPagesHarness(t, harnessOptions{noWindow: true})
+	key := h.state.ComputeDeliveryKey(testChat, "same")
+	h.do(func() { mustNoErr(t, h.state.recordReceived(key, "content handed over before")) })
+	pages.set([]any{inbound(testChat, "same", "新的内容", time.Now().UnixMilli()-1000)})
+	if s := gwgPoll(t, h); s.SkippedCount != 1 {
+		t.Fatalf("poll = %+v", s)
+	}
+	if len(h.sent()) != 0 || len(h.host.messages()) != 0 {
+		t.Fatalf("sent %q, handed over %+v", h.sentTexts(), h.host.messages())
+	}
+	h.do(func() {
+		if !h.state.IsMessageProcessed(key) {
+			t.Fatal("not marked processed: it would come back every poll")
 		}
 	})
 }

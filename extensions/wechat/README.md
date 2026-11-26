@@ -48,7 +48,6 @@
 | `pending-media.json`、`inbound-blobs/` | 只发了图片或文件、等下一条文字一起交给 Collie 的附件 |
 | `results.json`、`artifacts/` | 结果队列和结果附件 |
 | `result-outbox.json` | 结果投递的 claim / defer / receipt 意图 |
-| `notification-recovery.json` | 通知循环失败的恢复证据（≤64 条，7 天过期） |
 
 ## 怎么测试
 
@@ -58,7 +57,7 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 
 测试全部离线：iLink 和 CDN 用 `http.RoundTripper` 桩（`testkit_test.go`），端到端测试 `e2e_test.go` 用 `httptest` TLS 服务冒充 iLink，用 `io.Pipe` 接一个假 Collie，走完 登录 → 基线 → 收消息 → receive → channel.send → 分段发送 → 回执 → delivery 事件 → 同 ref 不重发 → 登录过期。
 
-原测试逐条移植：`testdata/original.txt` 是原实现`gateway/tests/{wechat,runtime,results,gateway}` 的全部用例，`testdata/ported.txt` 写明每条对应的 Go 测试或跳过原因，每个 Go 测试上方有 `// from: <原文件>: <原用例名>`。`coverage_test.go` 校验三者一一对应，少一条就失败。设 `WECHAT_TRACE=1` 可看到测试里的 trace 行。
+原测试逐条移植：`testdata/original.txt` 是原实现`gateway/tests/{wechat,runtime,results,gateway}` 的全部用例，`testdata/ported.txt` 写明每条对应的 Go 测试或跳过原因，每个 Go 测试上方有 `// from: <原文件>: <原用例名>`。`coverage_test.go` 校验三者一一对应，少一条就失败。测试里 trace 总是打开，设 `WECHAT_TRACE=1` 可看到它的行。
 
 ## 移植对照表
 
@@ -104,8 +103,8 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 | D3 | 准入 | `gateway.ts` `admitMessage` | `gateway_inbound.go`: `admitMessage` |
 | D4 | 非白名单标记已处理后跳过 | `gateway.ts` | `gateway_inbound.go`: `processMessage`、`admitMessage`；`gateway.go`: `assertChatAllowed` |
 | D5 | InboundRunner | `runtime/inbound-runner.ts` | `runner.go`: `InboundRunner` |
-| D6 | 处理一条消息 | `gateway.ts` `processMessage` | `gateway_inbound.go`: `processMessage`、`process`、`fixedReply` |
-| D7 | 固定文案与冲突 | `gateway.ts`、`leader/contracts.ts` | `gateway.go`: `UnsupportedMediaReply`、`MediaFailedNote`、`ConflictReply`；`gateway_inbound.go`: `conflicts` |
+| D6 | 处理一条消息 | `gateway.ts` `processMessage` | `gateway_inbound.go`: `processMessage`、`process` |
+| D7 | 固定文案与冲突 | `gateway.ts`、`leader/contracts.ts` | 不回固定文案（见下）；`gateway.go`: `MediaFailedNote`；`gateway_inbound.go`: `conflicts` |
 | D8 | 投递回复 | `gateway.ts` `deliverReply` | `gateway_reply.go`: `deliverReply` |
 | D9 | flushRepliesOnce | `gateway.ts` | `gateway_reply.go`: `flushRepliesOnce`、`frozenReply` |
 | D10 | 引擎确认 | `gateway.ts` `ackEngineReply` | `gateway_reply.go`: `ackEngineReply`（发 `channel.delivery`） |
@@ -113,15 +112,15 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 | D12 | 通知循环顺序 | `gateway.ts` `deliverNotificationsOnce` | `gateway.go`: `deliverNotificationsOnce`、`renewalInterestedChats`、`SetInterest` |
 | D13 | 结果投递状态机 | `results/contracts.ts`、`delivery.ts`、`dispatcher.ts`、`outbox.ts` | `result_contract.go`、`result_runner.go`、`dispatcher.go`、`result_outbox.go`；结果服务端语义在 `result_store.go` |
 | D14 | 旧版通知 outbox | `runtime/notification-outbox.ts` | 并入 D13 的同一条队列（`gateway_send.go`: `sendResult`）；未确认发送的诊断行 `gateway.go`: `reportNotificationSendFailure` |
-| D15 | 通知失败恢复证据 | `runtime/notification-recovery-store.ts` | `recovery.go`：`NotificationRecoveryStore` |
+| D15 | 通知失败恢复证据 | `runtime/notification-recovery-store.ts` | 不移植（见下） |
 | D16 | 续期提醒 | `results/renewal.ts` | `renewal.go`: `RenewalNotifier` |
 | D17 | runLoop | `gateway.ts` `runLoop` | `runloop.go`: `runLoop`、`pollBackoffMs`、`notifyOnce` |
 | E1 | Markdown 原样发送 | `client.ts` verbatim 路径 | `send.go`: `sendMarkdownReply`（只有 `wechat-verbatim-v2`） |
 | E2 | 旧版 digest 兼容 | `client.ts` | 不移植（见下） |
 | E3 | 查看会话列表、控制台链接 | `packages/wechat-text/index.js` | 都不移植（见下） |
 | F1 | 健康状态 | `runtime/health.ts` | `health.go`: `HealthTracker`、`SanitizeErrorType`；`bot.go`: `status`、`statusDetail` |
-| F2 | message_latency trace | `runtime/telemetry.ts` | `telemetry.go`: `traceEvent`、`traceSpan` |
-| F3 | 请求与通知诊断 | `runtime/request-diagnostics.ts`、`notification-diagnostics.ts` | `diagnostics.go`；`notify_diag.go` |
+| F2 | message_latency trace | `runtime/telemetry.ts` | `telemetry.go`: `traceEvent`、`traceSpan`；默认关（见下） |
+| F3 | 请求与通知诊断 | `runtime/request-diagnostics.ts`、`notification-diagnostics.ts` | 不移植（见下）；错误仍写一行日志（`writeLogLine`） |
 | G1 | 扫码登录 | 新增 | `login.go`: `loginStep`、`loginClient` |
 | G2 | `-14` 登录过期 | 新增 | `poll.go`: `pollBatch` → `ErrSessionExpired`；`bot.go`: `run` |
 | G3 | 轮询失败退避 | 新增 | `runloop.go`: `pollBackoffMs` |
@@ -131,7 +130,10 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 - **Markdown 原样发送**：所有发送都走原来的 verbatim 路径，`markdownToWeChat` 和旧 digest 兼容（`legacyDigest`、`wechat-plain-v1`、引用清洗）不移植。分段仍切原文。
 - **快捷指令都删除**：「控制台链接」不移植；「查看会话列表」这类话不再绕过模型，和别的消息一样交给 Collie 的 Router 回答。
 - **Controller / Leader 换成 Collie**：白名单只认登录时的 `ilink_user_id`；「交给引擎」是 `channel.receive`，答案经 `channel.send` 异步到达，冻结在扩展自己的数据目录（替代 `getFrozenReply`）；`ackEngineReply` 是 `channel.delivery` 事件；正在处理时来的新消息（steer）也直接 receive。因为答案是异步的，消息交给 Collie 后到答案到达之前（最长 `MaxEngineRequestMs`）这个聊天算「有回复待发」，结果投递会等它。
-- **同一 deliveryKey 内容不同**：原来由引擎判定，现在扩展记录交给 Collie 的每条消息的内容哈希（最多 1000 条），不同就回 `ConflictReply`。
+- **不替 Router 回话**：收不到的内容（视频等）、没有文字又下载失败的附件，原来回一段固定文案；现在照常交给 Collie，`channel.receive` 的 `unsupported` 写明收不到什么（下载失败时正文是 `MediaFailedNote`），由 Router 决定怎么回。
+- **同一 deliveryKey 内容不同**：原来由引擎判定并回固定文案；现在扩展记录交给 Collie 的每条消息的内容哈希（最多 1000 条），不同就当作已经交过的那条，标记已处理、记一行 `message_conflict_ignored` 日志，不回复。
+- **通知诊断和恢复证据不移植**：原来每轮通知循环的失败、恢复写成日志事件并存进 `notification-recovery.json`；它们不改变任何投递，观察的大多是原来远端服务的请求。健康看 `connector.status` 的 `detail` 和 Collie 的健康检查；可能已发出的结果仍写一行 `notification_send_failed`。
+- **trace 默认关**：`message_latency` 每次轮询都写好几行，会把真正的报错挤出接入页的最近日志。要看时在 Collie 侧设 `COLLIE_EXT_PASS_ENV=WECHAT_TRACE WECHAT_TRACE=1`。
 - **只有媒体的消息**：原来存成 Controller 的附件记录；现在存进 `pending-media.json`，和同一聊天的下一条文字一起 receive，超过回复窗口（23 小时）的不再带上。
 - **通知 outbox 并入结果队列**：一条队列，行为取并集。明确拒收的结果按结果队列的规则改为等待（`deferred`，原因「微信拒收」），不再像旧通知 outbox 那样标为 uncertain。
 - **健康不写 `health.json`**：放进 `connector.status` 的 `detail`；日志写 stderr，每行一个 JSON。

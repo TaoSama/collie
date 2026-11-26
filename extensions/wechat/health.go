@@ -1,7 +1,10 @@
 package wechat
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net"
 	"regexp"
 	"strings"
 )
@@ -103,14 +106,11 @@ var errInvalidPhaseBudget = errors.New("Invalid health phase budget")
 type HealthTracker struct {
 	data          *GatewayHealth
 	phaseRevision int
-	// onChange is told after every change (the status event).
-	onChange func()
 }
 
 func (h *HealthTracker) StartRun() GatewayHealth {
 	now := isoTime(nowMs())
 	h.data = &GatewayHealth{RunID: "run_" + newUUID(), Status: HealthStarting, StartedAt: now, UpdatedAt: now}
-	h.flush()
 	return *h.data
 }
 
@@ -136,7 +136,6 @@ func (h *HealthTracker) RecordPollStart(budgetMs int64) error {
 	if err := h.setPhase("polling", budgetMs); err != nil {
 		return err
 	}
-	h.flush()
 	return nil
 }
 
@@ -162,7 +161,6 @@ func (h *HealthTracker) RecordMessageStart(budgetMs int64) (int, error) {
 		return 0, err
 	}
 	h.data.UpdatedAt = isoTime(nowMs())
-	h.flush()
 	return h.phaseRevision, nil
 }
 
@@ -173,7 +171,6 @@ func (h *HealthTracker) RecordMessageProgress() {
 	h.data.ProcessedMessageCount++
 	h.data.UpdatedAt = isoTime(nowMs())
 	h.data.Phase = nil
-	h.flush()
 }
 
 // RecordProcessingEnd clears the phase unless a newer one began (revision).
@@ -183,7 +180,6 @@ func (h *HealthTracker) RecordProcessingEnd(revision int) {
 	}
 	h.data.Phase = nil
 	h.data.UpdatedAt = isoTime(nowMs())
-	h.flush()
 }
 
 func (h *HealthTracker) RecordPollSuccess() {
@@ -195,7 +191,6 @@ func (h *HealthTracker) RecordPollSuccess() {
 	h.data.ConsecutiveErrors = 0
 	h.data.Status = HealthHealthy
 	h.data.Phase = nil
-	h.flush()
 }
 
 func (h *HealthTracker) RecordPollError(err error) {
@@ -210,21 +205,22 @@ func (h *HealthTracker) RecordPollError(err error) {
 	h.data.LastErrorAt = now
 	h.data.Status = HealthDegraded
 	h.data.Phase = nil
-	h.flush()
 }
 
-func (h *HealthTracker) RecordStop() {
-	if h == nil || h.data == nil {
-		return
+// errorName is the JavaScript-style category of err.
+func errorName(err error) string {
+	var syntax *json.SyntaxError
+	var netErr net.Error
+	var dnsErr *net.DNSError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "TimeoutError"
+	case errors.Is(err, context.Canceled), errors.Is(err, errAbort):
+		return "AbortError"
+	case errors.As(err, &syntax):
+		return "SyntaxError"
+	case errors.As(err, &dnsErr), errors.As(err, &netErr):
+		return "TypeError"
 	}
-	h.data.UpdatedAt = isoTime(nowMs())
-	h.data.Status = HealthStopped
-	h.data.Phase = nil
-	h.flush()
-}
-
-func (h *HealthTracker) flush() {
-	if h.onChange != nil {
-		h.onChange()
-	}
+	return "Error"
 }
