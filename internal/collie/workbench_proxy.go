@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 )
 
 // A module whose 「由 hub 保管登录」 is on opens through the hub at
-// https://<id>.<wb domain>/ (-wb-domain), not at its own address. The hub
+// https://<proxy host>.<wb domain>/ (-wb-domain), not at its own address. The hub
 // keeps the cookies its site sets (workbench_jar.go) and sends them on, so a
 // login made on one device holds on all of them.
 //
@@ -35,15 +36,16 @@ const (
 )
 
 type wbTicket struct {
-	module, device, to, parent string
-	expires                    time.Time
+	host, device, to, parent string
+	expires                  time.Time
 }
 
 // wbSession is a device let in to one module. device is the hash of its
 // token ("" for the master token): removing the device ends it.
 type wbSession struct {
-	module, device, parent string
-	expires                time.Time
+	host, device, parent string
+	ctx                  context.Context
+	cancel               context.CancelFunc
 }
 
 // wbGate holds the tickets and sessions, in memory: after a restart the page
@@ -76,42 +78,61 @@ func (g *wbGate) newTicket(t wbTicket) string {
 	return k
 }
 
-// redeem swaps a ticket for module for a session, once. The session the
+// redeem swaps a ticket for a proxy host for a session, once. The session the
 // browser already had there (old) ends: each open would otherwise leave one.
-func (g *wbGate) redeem(ticket, module, old string) (string, wbTicket, bool) {
+func (g *wbGate) redeem(ticket, host, old string) (string, wbTicket, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	t, ok := g.tickets[ticket]
 	delete(g.tickets, ticket)
 	now := time.Now()
-	if !ok || now.After(t.expires) || t.module != module {
+	if !ok || now.After(t.expires) || t.host != host {
 		return "", wbTicket{}, false
 	}
-	if o, ok := g.sessions[old]; ok && o.module == module {
+	if o, ok := g.sessions[old]; ok && o.host == host {
+		o.cancel()
 		delete(g.sessions, old)
 	}
 	for k, v := range g.sessions {
-		if now.After(v.expires) {
+		if v.ctx.Err() != nil {
+			v.cancel()
 			delete(g.sessions, k)
 		}
 	}
 	k := randomToken()
-	g.sessions[k] = wbSession{module: t.module, device: t.device, parent: t.parent, expires: now.Add(wbSessionTTL)}
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(wbSessionTTL))
+	g.sessions[k] = wbSession{host: t.host, device: t.device, parent: t.parent, ctx: ctx, cancel: cancel}
 	return k, t, true
 }
 
-func (g *wbGate) session(k, module string) (wbSession, bool) {
+func (g *wbGate) session(k, host string) (wbSession, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	s, ok := g.sessions[k]
-	if !ok || s.module != module || time.Now().After(s.expires) {
+	if !ok || s.host != host || s.ctx.Err() != nil {
 		return wbSession{}, false
 	}
 	return s, true
 }
 
-// wbHostModule is the module a request's host names, if it is one of ours.
-func (s *Server) wbHostModule(r *http.Request) (string, bool) {
+func (g *wbGate) revokeDevice(device string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for k, t := range g.tickets {
+		if t.device == device {
+			delete(g.tickets, k)
+		}
+	}
+	for k, s := range g.sessions {
+		if s.device == device {
+			s.cancel()
+			delete(g.sessions, k)
+		}
+	}
+}
+
+// wbProxyHost returns the proxy label for requests under the workbench domain.
+func (s *Server) wbProxyHost(r *http.Request) (string, bool) {
 	if s.wbDomain == "" {
 		return "", false
 	}
@@ -119,18 +140,17 @@ func (s *Server) wbHostModule(r *http.Request) (string, bool) {
 	if hh, _, err := net.SplitHostPort(h); err == nil {
 		h = hh
 	}
-	id, ok := strings.CutSuffix(strings.ToLower(h), "."+s.wbDomain)
-	return id, ok && wbIDRe.MatchString(id)
+	label, ok := strings.CutSuffix(strings.ToLower(h), "."+s.wbDomain)
+	return label, ok && label != "" && !strings.Contains(label, ".")
 }
 
-// wbProxyURL is where module id opens, on the scheme and port of request r
-// to Collie.
-func (s *Server) wbProxyURL(r *http.Request, id string) string {
+// wbProxyURL uses the scheme and port of the request to Collie.
+func (s *Server) wbProxyURL(r *http.Request, host string) string {
 	port := ""
 	if _, p, err := net.SplitHostPort(r.Host); err == nil {
 		port = ":" + p
 	}
-	return requestScheme(r) + "://" + id + "." + s.wbDomain + port
+	return requestScheme(r) + "://" + host + "." + s.wbDomain + port
 }
 
 func requestScheme(r *http.Request) string {
@@ -152,11 +172,6 @@ func (s *Server) wbEnter(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"error": "hub 没有设置工作台代理域名（-wb-domain）"})
 		return
 	}
-	m, ok := s.sup.wb.module(body.ID)
-	if !ok || m.Kind != wbKindWeb || !m.HubLogin {
-		writeJSON(w, 404, map[string]any{"error": "这个模块没有打开「由 hub 保管登录」"})
-		return
-	}
 	master, d := s.identity(r)
 	device := ""
 	if !master {
@@ -165,6 +180,15 @@ func (s *Server) wbEnter(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		device = d.Hash
+	}
+	m, jar, err := s.sup.wb.proxyModule(body.ID, "")
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if jar == nil {
+		writeJSON(w, 404, map[string]any{"error": "这个模块没有打开「由 hub 保管登录」"})
+		return
 	}
 	u, err := url.Parse(m.URL)
 	if err != nil {
@@ -175,8 +199,8 @@ func (s *Server) wbEnter(w http.ResponseWriter, r *http.Request) {
 	if parent == "" || parent == "null" {
 		parent = requestScheme(r) + "://" + r.Host
 	}
-	t := s.wbGate.newTicket(wbTicket{module: m.ID, device: device, to: u.RequestURI(), parent: parent})
-	writeJSON(w, 200, map[string]any{"url": s.wbProxyURL(r, m.ID) + wbEnterPath + "?t=" + t})
+	t := s.wbGate.newTicket(wbTicket{host: jar.Host, device: device, to: u.RequestURI(), parent: parent})
+	writeJSON(w, 200, map[string]any{"url": s.wbProxyURL(r, jar.Host) + wbEnterPath + "?t=" + t})
 }
 
 // wbStillIn: the device behind a session is still paired.
@@ -195,14 +219,19 @@ func wbRefuse(w http.ResponseWriter, code int, text string) {
 }
 
 // serveWBProxy answers every request to a module's host.
-func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, id string) {
+func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, host string) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if !s.workbenchOn() {
 		wbRefuse(w, 409, wbOffText)
 		return
 	}
-	m, ok := s.sup.wb.module(id)
-	if !ok || m.Kind != wbKindWeb || !m.HubLogin {
+	_, id, _ := strings.Cut(host, "-")
+	m, jar, err := s.sup.wb.proxyModule(id, host)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if jar == nil {
 		wbRefuse(w, 404, "没有这个模块，或它没有打开「由 hub 保管登录」。")
 		return
 	}
@@ -212,8 +241,8 @@ func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, id string)
 		if c, err := r.Cookie(wbSessCookie); err == nil {
 			old = c.Value
 		}
-		k, t, ok := s.wbGate.redeem(r.URL.Query().Get("t"), id, old)
-		if !ok {
+		k, t, ok := s.wbGate.redeem(r.URL.Query().Get("t"), host, old)
+		if !ok || !s.wbStillIn(t.device) {
 			wbRefuse(w, 403, "链接已失效：回到 Collie 的工作台重新打开这个模块。")
 			return
 		}
@@ -228,12 +257,12 @@ func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, id string)
 		wbRefuse(w, 401, "请从 Collie 的工作台打开这个模块。")
 		return
 	}
-	sess, ok := s.wbGate.session(c.Value, id)
+	sess, ok := s.wbGate.session(c.Value, host)
 	if !ok || !s.wbStillIn(sess.device) {
 		wbRefuse(w, 401, "登录已过期：回到 Collie 的工作台重新打开这个模块。")
 		return
 	}
-	self := s.wbProxyURL(r, id)
+	self := s.wbProxyURL(r, host)
 	// The jar signs whatever comes in with the session cookie, so only the
 	// module's own pages may use it: not another module's scripts (same
 	// site, so they get the cookie too), nor another site's form.
@@ -268,10 +297,10 @@ func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, id string)
 					out.Del("Referer")
 				}
 			}
-			s.wbRequestCookies(pr, m.ID, up.Scheme == "https")
+			s.wbRequestCookies(pr, jar, up.Scheme == "https")
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			s.wbResponseCookies(resp, m.ID, r.URL.Path)
+			s.wbResponseCookies(resp, m.ID, jar, r.URL.Path)
 			h := resp.Header
 			if loc := h.Get("Location"); loc != "" {
 				if lu, err := url.Parse(loc); err == nil && lu.Host != "" && strings.EqualFold(lu.Host, up.Host) {
@@ -294,7 +323,16 @@ func (s *Server) serveWBProxy(w http.ResponseWriter, r *http.Request, id string)
 			wbRefuse(w, 502, "打不开 "+up.Host+"。")
 		},
 	}
-	rp.ServeHTTP(w, r)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	stopSession := context.AfterFunc(sess.ctx, cancel)
+	defer stopSession()
+	stopJar := context.AfterFunc(jar.ctx, cancel)
+	defer stopJar()
+	if sess.ctx.Err() != nil || jar.ctx.Err() != nil {
+		cancel()
+	}
+	rp.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // wbOwnRequest: a request a page of the module made, or a navigation to it
@@ -316,11 +354,8 @@ func wbOwnRequest(r *http.Request, self string) bool {
 // wbRequestCookies sends the jar's cookies, and the cookies the page's own
 // scripts set, but never ours. A cookie scripts can read is the browser's
 // when it has one: the page may have changed it since.
-func (s *Server) wbRequestCookies(pr *httputil.ProxyRequest, id string, secure bool) {
-	jar, err := s.sup.wb.cookiesFor(id, pr.In.URL.Path, secure)
-	if err != nil {
-		log.Printf("workbench jar %s: %v", id, err)
-	}
+func (s *Server) wbRequestCookies(pr *httputil.ProxyRequest, j *wbJar, secure bool) {
+	jar := s.sup.wb.cookiesFor(j, pr.In.URL.Path, secure)
 	have := map[string]bool{}
 	var parts []string
 	for _, c := range pr.In.Cookies() {
@@ -342,10 +377,10 @@ func (s *Server) wbRequestCookies(pr *httputil.ProxyRequest, id string, secure b
 
 // wbResponseCookies keeps the site's cookies in the jar. Those its scripts
 // may read (not HttpOnly) go on to the browser as well, for this host only.
-func (s *Server) wbResponseCookies(resp *http.Response, id, reqPath string) {
+func (s *Server) wbResponseCookies(resp *http.Response, id string, j *wbJar, reqPath string) {
 	set := resp.Cookies()
 	resp.Header.Del("Set-Cookie")
-	if err := s.sup.wb.storeCookies(id, reqPath, set); err != nil {
+	if err := s.sup.wb.storeCookies(id, j, reqPath, set); err != nil {
 		log.Printf("workbench jar %s: %v", id, err)
 	}
 	for _, c := range set {

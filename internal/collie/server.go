@@ -40,7 +40,7 @@ type Server struct {
 	screens screenMetaCache
 	direct  directTokens // node only: tokens for a browser on this computer
 
-	wbDomain string  // hub only: modules kept by the hub open at <id>.<wbDomain> (-wb-domain)
+	wbDomain string  // hub only: modules kept by the hub open at <proxy host>.<wbDomain> (-wb-domain)
 	wbGate   *wbGate // hub only: the way into those modules
 }
 
@@ -67,8 +67,8 @@ func (s *Server) Routes() http.Handler {
 	h := securityHeaders(compress(cors(mux)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// A module's own host is its site, through the hub: none of Collie's routes.
-		if id, ok := s.wbHostModule(r); ok && s.wbGate != nil {
-			s.serveWBProxy(w, r, id)
+		if host, ok := s.wbProxyHost(r); ok && s.wbGate != nil {
+			s.serveWBProxy(w, r, host)
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -178,6 +178,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if !cookieAllowed(r) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: "", Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(0, 0), Secure: r.TLS != nil,

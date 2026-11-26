@@ -562,6 +562,9 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	if d.Kind == "machine" {
 		s.herdr.detach(d.ID, nil)
 	}
+	if s.wbGate != nil {
+		s.wbGate.revokeDevice(d.Hash)
+	}
 	if s.sup != nil {
 		s.sup.push.dropDevice(d.ID)
 	}
