@@ -1539,6 +1539,8 @@ a.foot-status:hover, a.foot-status.active { background: var(--bg-3); }
 @media (min-width: 1680px) { :root { --col: 880px; } }
 
 /* ─── pickers (enhanced <select>) ─── */
+/* The narrow layout below sets the pickers’ touch height. */
+.imgedit .pick { height: 34px; }
 select.picked { display: none; }
 .pick {
   display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 32px; padding: 0 8px 0 10px; text-align: left;

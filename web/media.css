@@ -297,7 +297,7 @@ dialog.imgedit::backdrop { background: #000; }
 }
 .ie-ink:active { transform: scale(.9); }
 .ie-ink[aria-pressed="true"] { box-shadow: 0 0 0 2px #000, 0 0 0 4.5px #fff; }
-.imgedit .pick { height: 34px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .15); color: #fff; }
+.imgedit .pick { border: 0; border-radius: 999px; background: rgba(255, 255, 255, .15); color: #fff; }
 .imgedit .pick:hover { background: rgba(255, 255, 255, .25); }
 .imgedit .pick .pc, .imgedit .pick:hover .pc, .imgedit .pick[aria-expanded="true"] .pc { color: rgba(255, 255, 255, .7); }
 .imgedit .pick[aria-expanded="true"] { box-shadow: 0 0 0 2px rgba(255, 255, 255, .55); }
