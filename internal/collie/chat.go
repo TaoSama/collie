@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log"
@@ -459,7 +460,8 @@ type agentDetail struct {
 		Kind  string `json:"kind"`
 		Value string `json:"value"`
 	} `json:"agent_session"`
-	TerminalTitle string `json:"terminal_title"`
+	TerminalTitle         string `json:"terminal_title"`
+	TerminalTitleStripped string `json:"terminal_title_stripped"`
 }
 
 // A title can identify a likely replay for display. Replies leaving Collie
@@ -493,7 +495,7 @@ func (s *Server) transcriptFor(key, pane string, a agentDetail, cache map[string
 		return tr
 	}
 	if kind == "codex" && value == "" {
-		value = s.codexIDByTitle(a.TerminalTitle, deref(a.Cwd))
+		value = s.codexIDByTitle(cmp.Or(a.TerminalTitleStripped, a.TerminalTitle), deref(a.Cwd))
 	}
 	ck := key + "|" + kind + "|" + sessKind + ":" + value
 	if tr := cache[ck]; tr != nil {

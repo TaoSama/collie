@@ -280,14 +280,17 @@ func TestCodexReplayCorrupt(t *testing.T) {
 
 func TestTranscriptCodexByTitle(t *testing.T) {
 	for _, tc := range []struct {
-		name, index, cwd string
-		want             bool
+		name, index, cwd, title, stripped string
+		want                              bool
 	}{
-		{"same directory", "id Topic", "/one", true},
-		{"different directory", "id Topic", "/two", false},
-		{"same title", "other Topic,id Topic", "/one", false},
-		{"renamed away", "id Topic,id Renamed", "/one", false},
-		{"old title reused", "other Topic,other Renamed,id Topic", "/one", true},
+		{"same directory", "id Topic", "/one", "Topic | me", "", true},
+		{"working spinner in raw title", "id Topic", "/one", "⠋ Topic | me", "", true},
+		{"stripped title beats spinner", "id Topic", "/one", "◐ Topic | me", "Topic | me", true},
+		{"generic title with spinner", "id codex", "/one", "⠋ codex | me", "", false},
+		{"different directory", "id Topic", "/two", "Topic | me", "", false},
+		{"same title", "other Topic,id Topic", "/one", "Topic | me", "", false},
+		{"renamed away", "id Topic,id Renamed", "/one", "Topic | me", "", false},
+		{"old title reused", "other Topic,other Renamed,id Topic", "/one", "Topic | me", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -302,7 +305,7 @@ func TestTranscriptCodexByTitle(t *testing.T) {
 			}
 			must(t, os.WriteFile(filepath.Join(home, "session_index.jsonl"), []byte(index.String()), 0o644))
 			codex := "codex"
-			a := agentDetail{Agent: &codex, Cwd: &tc.cwd, TerminalTitle: "Topic | me"}
+			a := agentDetail{Agent: &codex, Cwd: &tc.cwd, TerminalTitle: tc.title, TerminalTitleStripped: tc.stripped}
 			tr := (&Server{home: home}).transcriptFor("k", "w1:p1", a, map[string]*transcript{})
 			if (tr != nil) != tc.want || tr != nil && tr.path != rollout {
 				t.Fatalf("transcript = %+v, want match %t", tr, tc.want)

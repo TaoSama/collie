@@ -239,3 +239,24 @@ func TestCodexLastReplyNeedsReportedSession(t *testing.T) {
 		t.Fatalf("reported-session local reply = %q", got)
 	}
 }
+
+func TestStreamChatCodexWorkingSpinner(t *testing.T) {
+	s, f, pane := chatServer(t, 0, "codex")
+	s.home = t.TempDir()
+	t.Setenv("CODEX_HOME", s.home)
+	log := strings.Replace(zstRollout, `"payload":{}`, `"payload":{"cwd":"/tmp"}`, 1)
+	writeFiles(t, s.home, map[string]string{
+		"session_index.jsonl":                       `{"id":"id","thread_name":"Topic"}` + "\n",
+		"sessions/2026/11/26/rollout-date-id.jsonl": log,
+	})
+	f.panes[pane].status = "working"
+	f.panes[pane].title = "⠋ Topic | me"
+	evs := paneChatEvents(t, s, pane, 500*time.Millisecond)
+	joined := strings.Join(evs, ",")
+	if !strings.Contains(joined, `"structured":true`) || !slices.Contains(evs, "patch") {
+		t.Fatalf("streamChat fell back instead of streaming structured Codex transcript: %v", evs)
+	}
+	if slices.Contains(evs, "log") {
+		t.Fatalf("unexpected log fallback in streamChat: %v", evs)
+	}
+}

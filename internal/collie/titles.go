@@ -68,11 +68,15 @@ func (s *Server) codexIDByTitle(title, cwd string) string {
 		title = title[:i]
 	}
 	title = strings.TrimSpace(title)
-	if cwd == "" || genericTitles[strings.ToLower(title)] || !s.loadCodexNames() {
+	cleaned := strings.TrimSpace(strings.TrimLeftFunc(title, spinnerGlyph))
+	if cwd == "" || genericTitles[strings.ToLower(cleaned)] || !s.loadCodexNames() {
 		return ""
 	}
 	codexNames.Lock()
 	id := codexNames.byName[title]
+	if id == "" && cleaned != title {
+		id = codexNames.byName[cleaned]
+	}
 	codexNames.Unlock()
 	if id == "" {
 		return ""
