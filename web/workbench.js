@@ -97,23 +97,37 @@
          <button type="button" class="btn small ghost" data-wb-newgroup>新建分组</button></div>`;
     }
 
+    // A module kept by the hub opens through a ticket (workbench_proxy.go):
+    // the frame, or a new tab, gets its address when it opens.
+    async function enterURL(m) { return (await api("/api/wb/enter", { body: { id: m.id } })).url; }
+    async function enterFrame(m) {
+      const f = $(".wb-frame");
+      try { const url = await enterURL(m); if (f?.isConnected) f.src = url; } catch (err) { toast(err.message, "attn"); }
+    }
+    async function openTab(m) {
+      if (!m.hub_login) { window.open(m.url, "_blank", "noopener,noreferrer"); return; }
+      const w = window.open("", "_blank"); // before the await, or it counts as a popup
+      if (w) w.opener = null;
+      try { const url = await enterURL(m); if (w) w.location = url; } catch (err) { w?.close(); toast(err.message, "attn"); }
+    }
+
     function pageHTML(m) {
       if (m.embed === "iframe") {
-        return `<iframe class="wb-frame" src="${esc(m.url)}" sandbox="${FRAME_SANDBOX}" allow="${FRAME_ALLOW}" referrerpolicy="no-referrer" title="${esc(m.title)}"></iframe>`;
+        return `<iframe class="wb-frame" ${m.hub_login ? "" : `src="${esc(m.url)}" `}sandbox="${FRAME_SANDBOX}" allow="${FRAME_ALLOW}" referrerpolicy="no-referrer" title="${esc(m.title)}"></iframe>`;
       }
       const snap = m.snap_at ? `最近一次快照 ${new Date(m.snap_at).toLocaleString()}` : "";
       return `<div class="wb-link-card">
         <div class="wb-card-ico big">${icon(m)}</div><h3>${esc(m.title)}</h3>
         <p class="muted">${esc(host(m.url))} 在新标签里打开（网站不允许被嵌入时用这种方式）。</p>
-        <a class="btn primary" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">在新标签打开</a>
+        <button type="button" class="btn primary" data-wb-open>在新标签打开</button>
         <p class="muted wb-share-line">给 Agent：${SHARE[m.share]}${snap ? " · " + esc(snap) : ""}${m.snap_err ? ` · <span class="wb-err">${esc(m.snap_err)}</span>` : ""}</p></div>`;
     }
 
     function headHTML(m) {
       $("#wb-name").textContent = m ? m.title : "工作台";
-      $("#wb-meta").textContent = m ? [host(m.url), m.embed === "iframe" ? "嵌入" : "新标签打开", "给 Agent：" + SHARE[m.share]].join(" · ") : "把你关心的网页和页面放在这里，选哪些交给 Agent";
+      $("#wb-meta").textContent = m ? [host(m.url), m.embed === "iframe" ? "嵌入" : "新标签打开", ...(m.hub_login ? ["hub 保管登录"] : []), "给 Agent：" + SHARE[m.share]].join(" · ") : "把你关心的网页和页面放在这里，选哪些交给 Agent";
       $("#wb-acts").innerHTML = m ? `
-        <a class="icon-btn" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" title="新标签打开"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></a>
+        <button type="button" class="icon-btn" data-wb-open title="新标签打开"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
         ${m.embed === "iframe" ? '<button type="button" class="icon-btn" data-wb-reload title="刷新"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>' : ""}
         ${m.feed ? '<button type="button" class="icon-btn" data-wb-send title="把它现在的数据发给 Collie"><svg viewBox="0 0 24 24"><path d="M12 3l2.2 6.8H21l-5.5 4 2.1 6.7L12 16.4l-5.6 4.1 2.1-6.7L3 9.8h6.8z"/></svg></button>' : ""}
         <button type="button" class="icon-btn" data-wb-edit="${esc(m.id)}" title="设置"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>`
@@ -127,10 +141,11 @@
       headHTML(m);
       $("#wb-nav").innerHTML = navHTML();
       const main = $("#wb-main");
-      const key = m ? `${m.id}|${m.url}|${m.embed}|${m.share}|${m.snap_at || ""}|${m.snap_err || ""}` : "overview:" + JSON.stringify(cfg);
+      const key = m ? `${m.id}|${m.url}|${m.embed}|${m.hub_login}|${m.share}|${m.snap_at || ""}|${m.snap_err || ""}` : "overview:" + JSON.stringify(cfg);
       if (main._key === key) return;
       main._key = key;
       main.innerHTML = m ? pageHTML(m) : overviewHTML();
+      if (m?.hub_login && m.embed === "iframe") enterFrame(m);
     }
 
     async function open(id) {
@@ -151,7 +166,7 @@
       $("#wb-main")._key = "";
       render();
     }
-    const clone = () => JSON.parse(JSON.stringify({ groups: cfg.groups, modules: cfg.modules.map(({ has_token, snap_at, snap_err, ...m }) => m) }));
+    const clone = () => JSON.parse(JSON.stringify({ groups: cfg.groups, modules: cfg.modules.map(({ has_token, cookies, snap_at, snap_err, ...m }) => m) }));
 
     // ── the module sheet: add or edit one module
     const dlg = $("#wb-edit");
@@ -165,6 +180,7 @@
       const share = segVal("share") || "off";
       $("#wb-share-hint").textContent = SHARE_HINT[share];
       $("#wb-keep-every").hidden = share !== "keep";
+      $("#wb-hub-f").hidden = !web || !cfg?.proxy;
     }
     function editModule(m) {
       editing = m || null;
@@ -178,6 +194,10 @@
       field("clear-token").checked = false;
       $("#wb-clear-row").hidden = !m?.has_token;
       field("sensitive").checked = !!m?.sensitive;
+      field("hub-login").checked = !!m?.hub_login;
+      field("logout").checked = false;
+      $("#wb-logout-row").hidden = !m?.cookies;
+      $("#wb-cookies").textContent = m?.cookies || 0;
       field("every").value = m?.every || "";
       field("group").innerHTML = cfg.groups.map((g) => `<option value="${esc(g.id)}">${esc(g.title)}</option>`).join("");
       field("group").value = m?.group || cfg.groups[0]?.id || "";
@@ -212,6 +232,7 @@
         Object.assign(v, {
           kind: "web", url: field("url").value.trim(), embed: segVal("embed") || "tab", feed: field("feed").value.trim(),
           share: segVal("share") || "off", sensitive: field("sensitive").checked, every: Number(field("every").value) || 0,
+          hub_login: !!cfg.proxy && field("hub-login").checked,
         });
         if (!v.title) v.title = host(v.url) || "网页";
       }
@@ -227,6 +248,7 @@
       const added = !editing;
       await save(next, purge);
       editing = mod(id); // saved: trying again after a failed token edits it, not a copy
+      if (field("logout").checked) await api("/api/wb/logout", { body: { id } });
       const token = field("token").value.trim(), clear = field("clear-token").checked;
       if (token || clear) {
         await api("/api/wb/token", { body: { id, token: clear ? "" : token } });
@@ -284,7 +306,7 @@
       }
     };
     $("#v-wb").addEventListener("click", (e) => {
-      const t = e.target.closest("[data-wb-link],[data-wb-add],[data-wb-edit],[data-wb-group],[data-wb-newgroup],[data-wb-send],[data-wb-reload]");
+      const t = e.target.closest("[data-wb-link],[data-wb-add],[data-wb-edit],[data-wb-group],[data-wb-newgroup],[data-wb-send],[data-wb-reload],[data-wb-open]");
       if (!t) return;
       e.preventDefault();
       if (t.dataset.wbLink) openLink(LINKS[t.dataset.wbLink]);
@@ -293,7 +315,12 @@
       else if (t.dataset.wbGroup) guard(groupMenu)(t.dataset.wbGroup);
       else if (t.hasAttribute("data-wb-newgroup")) guard(newGroup)();
       else if (t.hasAttribute("data-wb-send")) sendToCollie();
-      else if (t.hasAttribute("data-wb-reload")) { const f = $(".wb-frame"); if (f) f.src = f.src; }
+      else if (t.hasAttribute("data-wb-open")) { const m = mod(cur); if (m) openTab(m); }
+      else if (t.hasAttribute("data-wb-reload")) {
+        const m = mod(cur), f = $(".wb-frame");
+        if (m?.hub_login) enterFrame(m); // the old address was a ticket, used up
+        else if (f) f.src = f.src;
+      }
     });
     dlg.addEventListener("click", (e) => {
       const b = e.target.closest("[data-seg] button");
@@ -304,6 +331,8 @@
       else if (e.target === dlg) dlg.close();
     });
     field("url").addEventListener("change", probe);
+    // Through the hub any page can be embedded: its frame headers are Collie's.
+    field("hub-login").addEventListener("change", (e) => { if (e.target.checked) setSeg("embed", "iframe"); });
     dlg.querySelector("form").addEventListener("submit", (e) => {
       if (e.submitter?.value !== "save") return;
       e.preventDefault();

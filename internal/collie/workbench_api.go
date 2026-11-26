@@ -12,6 +12,8 @@ func (s *Server) wbRoutes(mux *http.ServeMux) {
 	api("POST /api/wb", s.wbSave)
 	api("POST /api/wb/token", s.wbToken)
 	api("POST /api/wb/probe", s.wbProbeURL)
+	api("POST /api/wb/enter", s.wbEnter)
+	api("POST /api/wb/logout", s.wbLogout)
 	// What agents call lives under /api/super/, where the computers' tokens
 	// reach too: Collie and its workers run on any of them.
 	api("GET /api/super/wb/ls", s.wbList)
@@ -52,6 +54,7 @@ func (s *Server) workbenchToggled() {
 type wbModuleView struct {
 	WBModule
 	HasToken bool      `json:"has_token,omitempty"`
+	Cookies  int       `json:"cookies,omitempty"` // hub_login: cookies of the site's login kept on the hub
 	SnapAt   time.Time `json:"snap_at,omitzero"`
 	SnapErr  string    `json:"snap_err,omitempty"`
 }
@@ -70,6 +73,9 @@ func (wb *workbench) views() ([]WBGroup, []wbModuleView, error) {
 		return nil, nil, err
 	}
 	for i := range mods {
+		if mods[i].HubLogin {
+			mods[i].Cookies = wb.jarCount(mods[i].ID)
+		}
 		if mods[i].Share == wbShareKeep {
 			_, mods[i].SnapAt = wb.latestSnap(mods[i].ID)
 		}
@@ -83,7 +89,27 @@ func (s *Server) wbGet(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"groups": groups, "modules": mods})
+	// proxy: the hub can keep logins (it has a wb domain).
+	writeJSON(w, 200, map[string]any{"groups": groups, "modules": mods, "proxy": s.wbDomain != ""})
+}
+
+// wbLogout forgets the login the hub keeps for a module.
+func (s *Server) wbLogout(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if _, ok := s.sup.wb.module(body.ID); !ok {
+		writeJSON(w, 404, map[string]any{"error": "没有这个模块"})
+		return
+	}
+	if err := s.sup.wb.clearJar(body.ID); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) wbSave(w http.ResponseWriter, r *http.Request) {

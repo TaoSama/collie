@@ -499,6 +499,11 @@
         <div class="seg" data-seg="embed"><button type="button" data-v="iframe">嵌在工作台里</button><button type="button" data-v="tab">新标签打开</button></div>
         <small class="muted">网站不允许被嵌入时会白屏，就改成新标签打开</small>
       </div>
+      <div class="field wb-web" id="wb-hub-f">
+        <label class="wb-check"><input type="checkbox" name="hub-login"> 由 hub 保管登录：经 hub 打开，在任一设备登录一次，所有设备共用</label>
+        <small class="muted">网站的 cookie 存在 hub 上，Agent 拿不到。登录态存在浏览器本地、或要跳到第三方账号登录的网站用不了</small>
+        <label class="wb-check" id="wb-logout-row"><input type="checkbox" name="logout"> 清除 hub 保管的登录态（<span id="wb-cookies"></span> 个 cookie）</label>
+      </div>
       <div class="field wb-two">
         <div><label for="wb-title">名字</label><input id="wb-title" name="title" maxlength="40" autocomplete="off"></div>
         <div class="wb-icon-f"><label for="wb-icon">图标</label><input id="wb-icon" name="icon" maxlength="4" placeholder="🌐" autocomplete="off"></div>

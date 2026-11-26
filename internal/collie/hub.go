@@ -173,6 +173,13 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
+// has reports whether a device with this token hash is still paired.
+func (a *Auth) has(hash string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.devices[hash] != nil
+}
+
 // who identifies a token: the master token, a device, or nothing.
 func (a *Auth) who(token string) (master bool, d *Device) {
 	if token == "" {

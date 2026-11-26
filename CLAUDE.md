@@ -64,7 +64,7 @@ COLLIE_HOME="$PWD/.collie-dev" ./bin/collie --addr 127.0.0.1:17789
 | `internal/collie/` 调度 | 调度（`super.go`）、API 与 Webhook（`superapi.go`）、Web Push（`webpush.go`、`push.go`、`pushapi.go`）、CLI（`cli.go`）、数据与持久化（`store.go`、`db.go`） |
 | `extensions/` | 扩展，一个子目录一个，`collie-extension.json` 编进二进制；规范见 `extensions/README.md` |
 | `internal/collie/` 扩展 | 宿主（`ext_host.go`）、进程与安装（`ext_proc.go`、`ext_install.go`）、收件箱与触发（`inbox.go`）、回复与尾标（`ext_outbox.go`）、扩展市场（`ext_market.go`，Release 包的下载和解包在 `ext_market_pkg.go`）、大文件下载链接（`ext_links.go`）；协议在 `internal/extproto/`（`docs/pitfall/extensions.md`） |
-| `internal/collie/` 工作台 | 模块与权限（`workbench.go`）、嵌入探测与读取（`workbench_fetch.go`）、快照（`workbench_snap.go`）、API（`workbench_api.go`）、CLI（`cli_wb.go`）（`docs/workbench/workbench.md`） |
+| `internal/collie/` 工作台 | 模块与权限（`workbench.go`）、嵌入探测与读取（`workbench_fetch.go`）、快照（`workbench_snap.go`）、hub 保管登录的代理与 cookie（`workbench_proxy.go`、`workbench_jar.go`）、API（`workbench_api.go`）、CLI（`cli_wb.go`）（`docs/workbench/workbench.md`） |
 | `web/` | 原生 HTML/CSS/JS，由 [embed.go](web/embed.go) 打进二进制；样式变量和皮肤见 `docs/design/DESIGN_SYSTEM.md` |
 | `scripts/` | `release.sh` 交叉编译和发布，`demo.sh` 用真实前端和 `scripts/demo/demo.js` 的示例数据生成在线体验 |
 | `docs/` | 项目文档（[文档索引](docs/README.md)）及 GitHub Pages 站点（`index.html`、`install.sh`、`demo/`、`img/`） |

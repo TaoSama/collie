@@ -73,6 +73,9 @@ type WBModule struct {
 	Share     string `json:"share"`
 	Sensitive bool   `json:"sensitive,omitempty"`
 	Every     int    `json:"every,omitempty"` // hours between snapshots, 0 = daily
+	// HubLogin: the page opens through the hub, which keeps its site's login
+	// for every device (workbench_proxy.go).
+	HubLogin bool `json:"hub_login,omitempty"`
 }
 
 type wbConfig struct {
@@ -93,6 +96,9 @@ type workbench struct {
 	cfg     wbConfig
 	checked map[string]wbCheck // module → its last snapshot attempt
 
+	jarMu sync.Mutex                     // the jars, in memory and on disk
+	jars  map[string]map[string]wbCookie // module → its site's cookies (workbench_jar.go)
+
 	snapping  atomic.Bool
 	lastCheck atomic.Int64 // unix seconds of the last due-check
 }
@@ -102,6 +108,7 @@ func newWorkbench(db *sql.DB, home, routerDir string) *workbench {
 		db: db, dir: filepath.Join(home, "wb"), router: routerDir,
 		client:  &http.Client{Timeout: wbFetchTimeout},
 		checked: map[string]wbCheck{},
+		jars:    map[string]map[string]wbCookie{},
 	}
 	var raw string
 	err := db.QueryRow(`SELECT v FROM kv WHERE k=?`, wbKV).Scan(&raw)
@@ -156,7 +163,7 @@ func (wb *workbench) module(id string) (WBModule, bool) {
 }
 
 // save validates and stores a whole layout. Modules that are gone lose their
-// token; purge also deletes their snapshots and notes.
+// token, and their login when the hub no longer keeps it; purge also deletes their snapshots and notes.
 func (wb *workbench) save(c wbConfig, purge []string) error {
 	wb.saveMu.Lock()
 	defer wb.saveMu.Unlock()
@@ -179,6 +186,9 @@ func (wb *workbench) save(c wbConfig, purge []string) error {
 	}
 	wb.mu.Unlock()
 	if err := wb.dropTokens(c); err != nil {
+		return err
+	}
+	if err := wb.dropJars(c); err != nil {
 		return err
 	}
 	for _, id := range purge {
@@ -238,7 +248,7 @@ func (c *wbConfig) normalize() error {
 			if !wbLinks[m.URL] {
 				return fmt.Errorf("「%s」指向的页面 %q 不存在", m.Title, m.URL)
 			}
-			m.Embed, m.Feed = "", ""
+			m.Embed, m.Feed, m.HubLogin = "", "", false
 		default:
 			return fmt.Errorf("「%s」的类型 %q 不支持", m.Title, m.Kind)
 		}

@@ -36,6 +36,9 @@ type Server struct {
 	sysmon  *sysMonitor  // this computer's load and tokens; nil in tests
 	wakes   paneWake     // streams to nudge when input reaches a pane
 	direct  directTokens // node only: tokens for a browser on this computer
+
+	wbDomain string  // hub only: modules kept by the hub open at <id>.<wbDomain> (-wb-domain)
+	wbGate   *wbGate // hub only: the way into those modules
 }
 
 func (s *Server) Routes() http.Handler {
@@ -58,7 +61,15 @@ func (s *Server) Routes() http.Handler {
 	s.wbRoutes(mux)
 	s.pushRoutes(mux)
 	s.hubRoutes(mux)
-	return securityHeaders(compress(cors(mux)))
+	h := securityHeaders(compress(cors(mux)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A module's own host is its site, through the hub: none of Collie's routes.
+		if id, ok := s.wbHostModule(r); ok && s.wbGate != nil {
+			s.serveWBProxy(w, r, id)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // machineRoutes are the endpoints about one machine's panes. The hub serves
