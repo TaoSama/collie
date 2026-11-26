@@ -5547,6 +5547,7 @@
   let homeFollowups = 0;
   let homeFollowupBusy = false;
   let lastSseSeq = 0;
+  let wheelGen = 0;
   let pendingScrollPerf = null;
   let lastWheelRtt = 80;
   let screenPrependGen = 0;
@@ -5560,6 +5561,7 @@
   const wheelOut = window.collieWheel.sender((pane, text) => {
     const isUp = text.includes("\x1b[<64;");
     const genBefore = screenPrependGen;
+    const wg = wheelGen;
     const tSent = performance.now();
     const payload = isUp
       ? { text, wait: true, diff: true, base_seq: lastSseSeq }
@@ -5568,7 +5570,7 @@
       .then((data) => {
         const rtt = performance.now() - tSent;
         lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
-        if (pane !== current || curMode() !== "screen") return;
+        if (wg !== wheelGen || pane !== current || curMode() !== "screen") return;
         if (data?.frame) drawScreen(data.frame, null, true);
         if (isUp && screenPrependGen === genBefore) {
           armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));
@@ -5577,6 +5579,7 @@
       .catch((e) => { if (e?.name !== "TimeoutError" && e?.name !== "AbortError") toast(e.message); });
   });
   function cancelScreenScrollTimers() {
+    wheelGen++;
     clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
     clearTimeout(topProbeTimer); topProbeTimer = null;
     pendingScrollPerf = null;
@@ -5721,6 +5724,11 @@
 
   function sendScreenHome() {
     if (!current) return;
+    if (homeFollowupBusy) {
+      screenCache.returnToLive();
+      updateScreenScrollbar();
+      return;
+    }
     cancelScreenScrollTimers();
     wheelOut.drop();
     const home = wheelUp.home();
@@ -5746,13 +5754,14 @@
     const n = Math.min(6, Math.max(1, count | 0));
     const pane = current;
     const genBefore = screenPrependGen;
+    const wg = wheelGen;
     const tSent = performance.now();
     wheelUp.scrolled(pane, -n * Math.max(10, (size.rows || 40) - 8));
     postPane(pane, "text", { text: window.collieWheel.PAGE_UP.repeat(n), wait: true, diff: true, base_seq: lastSseSeq }, { timeoutMs: 4000 })
       .then((data) => {
         const rtt = performance.now() - tSent;
         lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
-        if (pane !== current || curMode() !== "screen") return;
+        if (wg !== wheelGen || pane !== current || curMode() !== "screen") return;
         if (data?.frame) drawScreen(data.frame, null, true);
         if (screenPrependGen === genBefore) {
           armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));

@@ -321,3 +321,39 @@ test("agy partial returnToLive still showing ↓ 27 lines stays not-at-bottom un
   assert.equal(c.scrollbar().atBottom, true);
   assert.equal(c.scrollbar().ratio, 1);
 });
+
+test("Claude cold-opened at verified top: multi-step drag down to bottom never sends upward ticks and lands at ratio 1.0 even with stale mid-drag pill frame", () => {
+  const c = createScreenCache();
+  // Opened already at confirmed top (banner + rows 2..21, total ~64, NO pill)
+  const topFrame = makeClaudeFrame(2, { sticky: false, pill: false });
+  topFrame[0] = "  Claude Code v2.1.302";
+  c.ingest(topFrame, { pane: "w10:p1", kind: "claude", cols: 120, rows: 40, hist: 64, now: 100 });
+  assert.equal(c.scrollbar().visible, true);
+  assert.equal(c.scrollbar().ratio, 0);
+
+  // Intermediate pointermove steps while dragging downward from top -> bottom
+  for (const r of [0.15, 0.35, 0.65, 0.85]) {
+    const step = c.scrollToRatio(r, 200);
+    assert.equal(step.pageUp, 0, `downward drag at r=${r} must never send PageUp`);
+    assert.ok(step.sendTicks >= 0, `downward drag at r=${r} must never send upward ticks (got ${step.sendTicks})`);
+  }
+
+  // Final drag step reaches bottom (r = 1.0)
+  const endDrag = c.scrollToRatio(1.0, 250);
+  assert.equal(endDrag.goHome, true);
+  assert.equal(c.scrollbar().ratio, 1);
+
+  // Even if an older in-flight scrolled frame (with Jump-to-bottom pill) arrives
+  // before the live bottom frame, once the real bottom frame (rows 29..58, no
+  // pill, no banner) arrives, returningHome cleanly restores ratio = 1.0!
+  const staleTopWithPill = makeClaudeFrame(2, { sticky: false, pill: true });
+  staleTopWithPill[0] = "  Claude Code v2.1.302";
+  c.ingest(staleTopWithPill, { pane: "w10:p1", kind: "claude", cols: 120, rows: 40, now: 300 });
+
+  const liveBottom = makeClaudeFrame(29, { sticky: false, pill: false });
+  c.ingest(liveBottom, { pane: "w10:p1", kind: "claude", cols: 120, rows: 40, now: 400 });
+  const sb = c.scrollbar();
+  assert.equal(sb.atBottom, true, "live bottom frame after drag-to-bottom must be atBottom=true");
+  assert.equal(sb.ratio, 1, `ratio must be 1.0 (not stuck at 0.0, got ${sb.ratio})`);
+  assert.equal(sb.hitTop, false, "disjoint jump to bottom must clear stale hitTop");
+});

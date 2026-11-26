@@ -234,6 +234,7 @@
     let hitTop = false;   // true once scrolling up reaches real top of history
     let atBottom = true;  // true when user is following live bottom
     let seenBottom = true; // false if pane opened while already scrolled up
+    let returningHome = false; // true after returnToLive/drag-to-bottom until live bottom frame confirms
     let estBelow = 0;     // estimated transcript lines below `lines` when !seenBottom
     let pendingPageUpLines = 0;
     let totalHint = 0;    // server-estimated total transcript lines (optional)
@@ -266,6 +267,7 @@
       hitTop = false;
       atBottom = true;
       seenBottom = true;
+      returningHome = false;
       estBelow = 0;
       pendingPageUpLines = 0;
       totalHint = 0;
@@ -513,8 +515,11 @@
       } else {
         // Disjoint jump (e.g. PageUp / ctrl+End jump far outside cached window,
         // or a brand-new screen after /clear).
-        if (atBottom) {
-          // If live bottom jumped far ahead, reset cache cleanly to the new live view.
+        const fullToBottom = bodyKeys.length >= 16 && bodyKeys.slice(-2).some((k) => k !== "");
+        const nativeScrolledToTop = hasBanner && (seg.scrolledIndicator || totalHint > seg.body.length + 2 || fullToBottom);
+        if ((atBottom || returningHome) && !scrolledFromBottom && !nativeScrolledToTop) {
+          // Live bottom jumped far ahead (or user returned home from top):
+          // reset cache cleanly to the confirmed live bottom view.
           lines = seg.body.slice();
           keys = bodyKeys;
           clean = seg.body.map((l) => !hasOverlayPill(l));
@@ -522,12 +527,21 @@
           viewTop = 0;
           agentTop = 0;
           hitTop = hasBanner;
+          atBottom = true;
+          seenBottom = true;
+          returningHome = false;
+          estBelow = 0;
+          pendingPageUpLines = 0;
+          pendingUpDemand = 0;
         } else {
-          // User jumped upward into an uncached distant page: anchor at top of a
-          // fresh stitched window (keep totalHint and estimated lines below).
+          // User (or native terminal) jumped into an uncached distant page:
+          // anchor at top of a fresh stitched window (keep totalHint & estBelow).
           disjointUp = true;
           const prevLen = lines.length;
+          atBottom = false;
           seenBottom = false;
+          returningHome = false;
+          hitTop = hasBanner;
           if (seg.belowLines > 0) estBelow = seg.belowLines;
           else estBelow = Math.max(estBelow + prevLen, pendingPageUpLines || seg.body.length);
           pendingPageUpLines = 0;
@@ -542,6 +556,14 @@
       }
 
       if (hasBanner && agentTop === 0) hitTop = true;
+      if (returningHome && !scrolledFromBottom && !disjointUp) {
+        atBottom = true;
+        seenBottom = true;
+        returningHome = false;
+        estBelow = 0;
+        viewTop = Math.max(0, lines.length - seg.body.length);
+        if (!hasBanner) hitTop = false;
+      }
       prefetchInFlight = false;
       if (agentTop < prevAgentTop) pendingUpSentAt = 0;
 
@@ -578,6 +600,7 @@
       if (!lines.length || !deltaLines) {
         return { hit: false, renderLines: null, sendTicks: deltaLines, syncDelta: 0, goHome: false, needPrefetch: false };
       }
+      if (deltaLines < 0) returningHome = false;
       lastUserScrollAt = now;
       const h = visibleBodyHeight(false, viewTop);
       const maxT = Math.max(0, lines.length - h);
@@ -731,6 +754,7 @@
         viewTop = maxBottomTop;
         atBottom = true;
         seenBottom = true;
+        returningHome = !wasSeenBottom || agentTop < viewTop || !wasAtBottom;
         estBelow = 0;
         pendingPageUpLines = 0;
         pendingUpDemand = 0;
@@ -743,6 +767,7 @@
           syncDelta: 0,
         };
       }
+      returningHome = false;
       const targetVirtual = Math.round(r * sb.maxOffset);
       const cacheIdx = targetVirtual - sb.unknownAbove;
       const maxT = maxViewTopFor(false);
@@ -751,6 +776,7 @@
         const wasAtBottom = atBottom;
         viewTop = maxBottomTop;
         atBottom = true;
+        returningHome = agentTop < viewTop || !wasAtBottom;
         pendingUpDemand = 0;
         return {
           hit: true,
@@ -772,6 +798,24 @@
           pageUp: 0,
           sendTicks: 0,
           syncDelta: viewTop - agentTop,
+        };
+      }
+
+      // Target is in unseen history BELOW our cached window (e.g. dragging
+      // downward from a verified top-of-history viewport): NEVER send upward
+      // ticks; scroll downward toward newer lines instead!
+      if (cacheIdx > maxT) {
+        const needDown = Math.max(1, cacheIdx - maxT);
+        viewTop = maxT;
+        atBottom = false;
+        const sendTicks = Math.min(8, Math.max(2, Math.ceil(needDown / linesPerTick)));
+        return {
+          hit: true,
+          renderLines: compose(maxT, false),
+          goHome: false,
+          pageUp: 0,
+          sendTicks,
+          syncDelta: 0,
         };
       }
 
@@ -817,6 +861,7 @@
       viewTop = Math.max(0, lines.length - h);
       atBottom = true;
       seenBottom = true;
+      returningHome = true;
       estBelow = 0;
       pendingPageUpLines = 0;
       pendingUpDemand = 0;
