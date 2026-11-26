@@ -500,10 +500,13 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     description: "用你自己的飞书账号和 agent 对话：扫码登录后，飞书会话出现在收件箱。你在任意会话里发一条以触发词开头的消息，Collie 先给它点个「在做了」，做完以你的名义回复，格式照常显示，末尾带一段尾标。",
     warning: "用的是飞书网页版接口，飞书升级后可能失效；登录状态只存在运行它的那台电脑上；用公司账号前先确认公司规定。",
     contributes: { connector: { id: "larkx", capabilities: ["status", "login", "archive", "actions"] }, channel: { format: "markdown" } },
-    configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] } } } };
+    configuration: { type: "object", properties: { region: { type: "string", title: "站点", default: "feishu", enum: ["feishu", "lark"], "x-labels": ["飞书", "Lark（国际版）"] },
+      hide_muted: { type: "boolean", title: "免打扰的会话不显示", description: "关掉后照样显示，未读数是灰色，也不提醒。", default: true, "x-hide": "muted" },
+      hide_meego_story: { type: "boolean", title: "Meego 需求同步群不显示", description: "群名带「[需求同步群]」的会话。", default: true, "x-hide": "name:[需求同步群]" },
+      hide_meego_bug: { type: "boolean", title: "Meego 缺陷同步群不显示", description: "群名带「[缺陷同步群]」的会话。", default: true, "x-hide": "name:[缺陷同步群]" } } } };
   const extData = { trigger: "", footer: "", default_trigger: "/ai", default_footer: "🤖 AI 代答，仅供参考 · {agent} · {model} · {elapsed}",
     machines: [{ id: "", name: "hub", os: "linux/amd64", agents: [], local: true, online: true }, { id: "mini", name: "mac-mini", os: "darwin/arm64", agents: ["claude"], online: true }],
-    extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu" } },
+    extensions: [{ manifest: larkx, setting: { id: "larkx", enabled: true, machine: "mini", config: { region: "feishu", hide_muted: false, hide_meego_story: true, hide_meego_bug: true } },
       proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } },
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", runtime: { feature: "workbench" },
       description: "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。" }, setting: { id: "workbench", enabled: true } }] };
@@ -511,6 +514,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
     { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", unread: 12, muted: true, on: false, handler: "agent" },
+    { id: "larkx:oc_4", ext: "larkx", chat: "oc_4", label: "飞书", name: "登录页改版 - [需求同步群]", kind: "group", last_at: ago(30), preview: "Meego: 状态变更为开发中", unread: 3, on: false, handler: "agent", hidden: true },
   ];
   const inboxMsgs = { "larkx:oc_1": [
     { id: "m1", conv: "larkx:oc_1", at: ago(9), sender_name: "李四", text: "评审定在周五，接口先冻结" },

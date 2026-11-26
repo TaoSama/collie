@@ -25,6 +25,8 @@
 
 - **握手、登录、状态**：`initialize`、`connector.login.step`（返回要编码成二维码的文字，每 2 秒轮询一次；过期自动换新码，最多 3 次）、`connector.status`、`connector.logout`。
 - **收推送**：适配层自己读 websocket 的帧（上游的循环只认未压缩的 cmd 6）：压缩过的帧（gzip、zlib）先解开；cmd 6000 只推 sid，按 sid 补拉（`improto.PullPacketsBySidsRequest`）；cmd 14004 是云文档的评论、回复和 @你（`docs.PushDocFeedRequest`），每篇文档算一个会话（`doc:<feed id>`，类型「文档评论」），正文前写明是谁做了什么和文档链接。文档评论暂时只收不回，往这类会话发送会直接失败。读不了的帧计数，每 10 分钟最多记一条日志。
+- **折叠的会话**：在飞书里被折叠的会话（会话的 feed 卡片挂在「折叠的会话」盒子下，`parentCardId` 不为 0，网关 `feed.PullFeedCardsByIdsRequest`），消息带上 `folded: true`，收件箱不列出它。和会话信息一样缓存一小时。
+- **收件箱显示**：「接入」里飞书扩展有三个开关，默认都开：免打扰的会话不显示、Meego 需求同步群不显示（群名带「[需求同步群]」）、Meego 缺陷同步群不显示（群名带「[缺陷同步群]」）。它们是 Collie 自己的设置（清单里的 `x-hide`），改了不会重启扩展。隐藏只影响列表，你本人发的触发词照常处理。
 - **免打扰**：会话在飞书里设了免打扰（会话信息的 `isRemind` 为 false），消息带上 `muted: true`。Collie 的收件箱不为它提醒，未读数照常显示但用灰色。会话信息缓存一小时，所以在飞书里改了免打扰，最多一小时后跟上。
 - **收消息**：websocket 推来的每条消息都用 `channel.receive` 交给 Collie，会话开关、谁能唤起和触发词在 Collie 侧判定。系统消息不交；图片和文件（20 MB 以内）下载后作为附件交过去；引用的消息在本次运行见过时带上原文。自己发出的帖子推回来时按 `cid` 认出来丢掉，不会再触发。
 - **发消息**：`channel.send`。正文和尾标分开（`footer`），排成一条 post（`PutMessageRequest` type 2）。按 ref 只发一次：发之前先记下 ref，答复里拿到消息 id 才算发出；连不上或被拒收是「失败」，其余（超时、断线、答复里没有 id）是「可能已发出」，不再重发。暂时只发文字，带图片或文件的发送直接失败。

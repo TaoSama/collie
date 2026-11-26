@@ -184,8 +184,9 @@ type Message struct {
 	ChatKind    string   `json:"chat_kind,omitempty"` // dm | group | self | doc (a document's comments)
 	Sender      string   `json:"sender,omitempty"`
 	SenderName  string   `json:"sender_name,omitempty"`
-	Owner       *bool    `json:"owner,omitempty"` // sent by the signed-in person
-	Muted       *bool    `json:"muted,omitempty"` // the chat is muted in the chat app (nil: not known)
+	Owner       *bool    `json:"owner,omitempty"`  // sent by the signed-in person
+	Muted       *bool    `json:"muted,omitempty"`  // the chat is muted in the chat app (nil: not known)
+	Folded      *bool    `json:"folded,omitempty"` // folded away in the chat app's list (nil: not known)
 	At          string   `json:"at,omitempty"`
 	Quote       string   `json:"quote,omitempty"`
 	Forward     string   `json:"forward,omitempty"`

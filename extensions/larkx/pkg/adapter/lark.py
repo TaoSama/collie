@@ -395,6 +395,9 @@ class Feishu:
             out["chat"] = info.get("name") or ""
         if "isRemind" in info:
             out["muted"] = not info["isRemind"]  # 免打扰 is isRemind off
+        folded = self.folded(chat)
+        if folded is not None:
+            out["folded"] = folded
         at = msg.get("create_time")
         if at:
             at = int(at) / (1000 if int(at) > 10 ** 12 else 1)
@@ -416,6 +419,19 @@ class Feishu:
         if self.client is None:
             return {}
         return self.names.get("chatinfo:" + chat, lambda: self.client.get_chat_info(chat)) or {}
+
+    def folded(self, chat):
+        """The chat is in 折叠的会话: its feed card sits in a box (parentCardId). None when not known."""
+        if self.client is None:
+            return None
+
+        def look():
+            cards = (self.client.api("feed.PullFeedCardsByIdsRequest", {"cardIds": [chat]}) or {}).get("cards") or {}
+            card = cards.get(chat)
+            return "" if card is None else ("folded" if int(card.get("parentCardId") or 0) else "open")
+
+        got = self.names.get("feedcard:" + chat, look)
+        return None if not got else got == "folded"
 
     def user_name(self, uid, chat):
         if not uid or self.client is None:

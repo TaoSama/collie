@@ -37,6 +37,7 @@ type incomingMsg struct {
 	ID, Sender, SenderName   string
 	Mine                     bool  // sent by the signed-in account
 	Muted                    *bool // the chat is muted in the chat app (nil: not known)
+	Folded                   *bool // folded away in the chat app's list (nil: not known)
 	Owner                    bool  // sent by the person the bot is bound to
 	Text, Quote              string
 	At                       time.Time
@@ -92,7 +93,7 @@ func (h *extHost) received(r *extRun, m extproto.Message) error {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, ID: m.ID, Sender: m.Sender,
+	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, Folded: m.Folded, ID: m.ID, Sender: m.Sender,
 		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Text: m.Text, Quote: m.Quote, At: at, Live: true,
 		Unsupported: m.Unsupported}
 	for _, b := range append(append([]extproto.Blob(nil), m.Images...), m.Files...) {
@@ -151,6 +152,9 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 	}
 	if in.Muted != nil {
 		c.Muted = *in.Muted
+	}
+	if in.Folded != nil {
+		c.Folded = *in.Folded
 	}
 	if !in.At.Before(c.LastAt) {
 		c.LastAt = in.At

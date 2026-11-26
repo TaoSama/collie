@@ -158,6 +158,11 @@ class Post(unittest.TestCase):
         f.react("doc:d1")
         self.assertEqual(asked, [("reactions.PutReactionRequest", {"messageId": "7001", "reactionType": "OnIt"})])
 
+    def test_folded(self):
+        f = self.feishu(answer("1"))
+        f.client.api = lambda name, data: {"cards": {"c1": {"parentCardId": 6621832799357763847}, "c2": {"parentCardId": 0}}}
+        self.assertEqual((f.folded("c1"), f.folded("c2"), f.folded("c3")), (True, False, None))
+
     def test_is_request(self):
         for text, ok in [("/ai 总结一下", True), ("  /AI：查查", True), ("/ai", True), ("/ai\n第二行", True),
                          ("/aide 不算", False), ("说 /ai", False), ("/a", False)]:
@@ -223,6 +228,7 @@ class Normalize(unittest.TestCase):
         f.me, f.self_chat = "u_me", "c_self"
         f.user_name = lambda uid, chat: {"u_me": "我", "u_a": "甲"}.get(uid, "")
         f.chat_info = lambda chat: {"name": "示例群", "isRemind": chat != "c_g"}
+        f.folded = lambda chat: chat == "c_g"
         rt = richtext.build(U.L, "你好 `x`")
         content = {"richText": protobuf_to_dict(rt)}
         m = f.normalize({"msg_id": "1", "chat_id": "c_g", "from_id": "u_a", "msg_type": 4, "chat_type": 2,
@@ -230,10 +236,12 @@ class Normalize(unittest.TestCase):
         self.assertEqual((m["text"], m["chat_kind"], m["chat"], m["owner"], m["sender_name"]), ("你好 `x`", "group", "示例群", False, "甲"))
         self.assertEqual(m["at"], "2025-11-24T16:00:00Z")
         self.assertTrue(m["muted"], "isRemind off is 免打扰")
+        self.assertTrue(m["folded"])
         m = f.normalize({"msg_id": "2", "chat_id": "c_self", "from_id": "u_me", "msg_type": 4, "chat_type": 1,
                          "content_data": content, "parent_id": "1"})
         self.assertEqual((m["chat_kind"], m["owner"], m["quote"]), ("self", True, "你好 `x`"))
         self.assertFalse(m["muted"])
+        self.assertFalse(m["folded"])
         self.assertIsNone(f.normalize({"msg_id": "3", "chat_id": "c", "from_id": "u", "msg_type": 6}))
         card = {"cardHeader": {"title": "分析中"}, "jsonCard": '{"body":{}}'}
         m = f.normalize({"msg_id": "4", "chat_id": "c_g", "from_id": "u_a", "msg_type": 14, "chat_type": 2, "content_data": card})
