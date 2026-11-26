@@ -517,7 +517,11 @@ func TestPaneWheel(t *testing.T) {
 	}{
 		{"claude fullscreen", Pane{Agent: str("claude"), Scroll: scroll(0)}, true},
 		{"claude inline with history", Pane{Agent: str("claude"), Scroll: scroll(58)}, false},
-		{"codex", Pane{Agent: str("codex"), Scroll: scroll(0)}, false},
+		{"codex fullscreen", Pane{Agent: str("codex"), Scroll: scroll(0)}, true},
+		{"codex inline with history", Pane{Agent: str("codex"), Scroll: scroll(130)}, false},
+		{"agy fullscreen", Pane{Agent: str("agy"), Scroll: scroll(0)}, true},
+		{"agy inline with history", Pane{Agent: str("agy"), Scroll: scroll(142)}, false},
+		{"agent not tried", Pane{Agent: str("opencode"), Scroll: scroll(0)}, false},
 		{"shell", Pane{Scroll: scroll(0)}, false},
 		{"herdr without scroll info", Pane{Agent: str("claude")}, false},
 	} {

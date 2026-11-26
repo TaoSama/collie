@@ -25,7 +25,6 @@ Claude 画的反色块要去掉反色，否则闪烁的块光标和下面的反�
 屏幕模式把 `pane.read` 的 `recent` 整段画成一个和行数一样高的 xterm（`scrollback: 0`），靠 `#screen` 自己的滚动条往上翻；人往上看时新帧先压着不画（`pendingScreen`），回到底部再画并恢复跟随。
 
 - herdr 的 `pane.read` 不管 `lines` 传多大，最多返回 1000 行（0.9.5 实测），所以 `screenLines` 就是 1000。herdr 自己留的 scrollback 有一万行左右，再多也读不到。
-- Claude Code 设了 `tui: fullscreen` 时在备用屏里，herdr 没有它的 scrollback（`pane.get` 的 `scroll.max_offset_from_bottom` 是 0），页面上只有当前一屏。这时 hub 在帧里带 `wheel: true`（`paneWheel`），页面滚到头以后，滚轮和手指上下拖动换算成行数，以 SGR 鼠标滚轮报告（`ESC [<64;列;行M` 往上，`65` 往下，每行一个）发给 Claude，让它自己滚，下一帧就是滚过的画面（这类帧不压着，页面上本来就没有历史）。左右拖动还是页面自己的（手机横向看宽屏）。
-- 只认 `agent == "claude"` 且 scrollback 为 0：herdr 的 API 不告诉我们 pane 开没开鼠标上报，shell 收到这些报告会原样打出来。行内模式的 Claude 收到会忽略，不会进输入框（实测）。
-- Codex 不转发：在 herdr 里它一直是行内模式（`-c tui.fullscreen_transcript=true`、`tui.alternate_screen="always"` 都试过），历史在 herdr 的 scrollback 里，页面原生滚动就能看；滚轮报告和 PageUp 发过去它都不理（0.172 实测）。
+- agent 全屏画时在备用屏里，herdr 没有它的 scrollback（`pane.get` 的 `scroll.max_offset_from_bottom` 是 0），页面上只有当前一屏：Claude Code 设了 `tui: fullscreen`；Codex 默认就是（devbox 上手开的 `codex` 是带 `--no-alt-screen` 的 alias，所以是行内，Collie 起的 worker 直接 exec，不带这个参数，就在备用屏）；agy 设了 `altScreenMode: "always"`（默认行内）。这时 hub 在帧里带 `wheel: true`（`paneWheel`），页面滚到头以后，滚轮和手指上下拖动换算成行数，以 SGR 鼠标滚轮报告（`ESC [<64;列;行M` 往上，`65` 往下，每行一个）发给 agent，让它自己滚，下一帧就是滚过的画面（这类帧不压着，页面上本来就没有历史）。左右拖动还是页面自己的（手机横向看宽屏）。
+- 只认 `agentKinds` 里的 agent（claude、codex、agy）且 scrollback 为 0：herdr 的 API 不告诉我们 pane 开没开鼠标上报，shell 收到这些报告会原样打出来。三种 agent 在行内模式下收到都会忽略，不会进输入框（Claude Code 2.1、Codex 0.172、agy 实测），所以行内但历史还不满一屏时误发也没事。别的 agent 没试过，不转发。
 - 代价随行数线性涨：一直在滚的满屏 shell，每帧要重画全部行（DOM 渲染器），帧也是整段发、SSE 不压缩。80 列带颜色的输出持续滚动时，从 500 行到 1000 行，每帧从约 63 KB 涨到约 126 KB，浏览器主线程占用约翻倍。没有输出时不发帧，没有影响。

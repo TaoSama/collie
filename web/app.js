@@ -5033,7 +5033,7 @@
       term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
     });
   }
-  // Claude Code's fullscreen view keeps its history to itself, so once the
+  // An agent drawing fullscreen keeps its history to itself, so once the
   // page can't scroll any further that way, the wheel or a finger's drag
   // goes to it as mouse wheel reports (SGR, one per line) and it scrolls
   // its own view; the next frames show where it went.

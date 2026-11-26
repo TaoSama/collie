@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -440,12 +441,15 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 const screenLines = 1000
 
 // paneWheel reports whether screen mode should hand the wheel to the program
-// in the pane instead of scrolling the page: Claude Code's fullscreen view
-// keeps its history to itself (herdr has no scrollback for it) and scrolls
-// on mouse wheel reports. Other programs keep the page's own scrolling: a
-// shell would print the reports, and Codex ignores them.
+// in the pane instead of scrolling the page: an agent drawing fullscreen
+// (Claude Code with tui=fullscreen, Codex without --no-alt-screen, agy with
+// altScreenMode=always) keeps its history to itself, so herdr has no
+// scrollback for it, and scrolls on mouse wheel reports. All three ignore
+// the reports when inline, so a short inline history (no scrollback yet)
+// gets them harmlessly. Shells and other programs keep the page's own
+// scrolling: a shell would print the reports.
 func paneWheel(p Pane) bool {
-	return p.Agent != nil && *p.Agent == "claude" && p.Scroll != nil && p.Scroll.MaxOffset == 0
+	return p.Agent != nil && slices.Contains(agentKinds, *p.Agent) && p.Scroll != nil && p.Scroll.MaxOffset == 0
 }
 
 func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
