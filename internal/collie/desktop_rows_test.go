@@ -253,3 +253,30 @@ func TestAgyDesktopRowsSkipEmptyConversations(t *testing.T) {
 		t.Fatalf("rows = %+v, want only the conversation with steps and a time", rows)
 	}
 }
+
+func TestAgyDesktopSessionsTakeOverOnlyTheCLIs(t *testing.T) {
+	desktopCache.Lock()
+	desktopCache.at, desktopCache.app = time.Now(), false
+	desktopCache.rows = []desktopRow{
+		{id: "ag-idle", kind: "agy", surface: surfaceCLI, session: "idle", cwd: "/root"},
+		{id: "ag-app", kind: "agy", session: "app", cwd: "/root"},
+		{id: "ag-running", kind: "agy", surface: surfaceCLI, session: "running", cwd: "/root", running: true},
+		{id: "ag-waiting", kind: "agy", surface: surfaceCLI, session: "waiting", cwd: "/root", waiting: true},
+		{id: "ag-nowhere", kind: "agy", surface: surfaceCLI, session: "nowhere"},
+	}
+	desktopCache.Unlock()
+	t.Cleanup(forgetDesktopRows)
+	got := map[string]bool{}
+	for _, e := range (&Server{home: t.TempDir()}).desktopSessions(nil, nil, time.Now()) {
+		got[e.Session] = e.CanTakeOver
+	}
+	// Only a resting conversation the CLI started, with a directory to resume
+	// it in: the CLI can't open the App's own, and a running turn has no
+	// process here to stop first.
+	want := map[string]bool{"idle": true, "app": false, "running": false, "waiting": false, "nowhere": false}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("CanTakeOver[%s] = %v, want %v", id, got[id], w)
+		}
+	}
+}

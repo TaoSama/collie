@@ -168,6 +168,10 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			} else {
 				e.ReadOnly = "Antigravity 没有打开：打开它之后就能从这里发消息"
 			}
+			// `agy --conversation` resumes the CLI's own conversations, which
+			// the App lists too; the App's it can't find. Not while a turn
+			// runs: there is no process here to stop first.
+			e.CanTakeOver = d.surface == surfaceCLI && e.Session != "" && e.Cwd != "" && !e.Live
 		}
 		out = append(out, e)
 	}
