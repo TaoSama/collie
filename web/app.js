@@ -1743,19 +1743,58 @@
   const TASK_REFRESH_MS = 10e3;
   let taskFiles = null, taskAt = 0, taskErr = "";
   const taskBtn = $("#task-btn"), taskPanel = $("#task-panel");
+  // Where a task stands, its workers first (they are live), then what the
+  // file's newest entry says; listed in this order. A task with nothing to go
+  // on shows no state.
+  const TASK_STATE = { wait: ["等你", "blocked"], work: ["在做", "working"], ship: ["待上线", "online"], idle: ["空闲", "idle"] };
+  const TASK_ORDER = ["wait", "work", "ship", "idle", ""];
   function taskPanelHTML() {
-    const tasks = (taskFiles || []).filter(isOpenTask);
     const pend = new Set(activePending().map((p) => p.task));
-    const row = (f) => {
-      const head = f.text.split("\n").find((l) => /^#\s/.test(l));
-      const name = head ? head.replace(/^#+\s*/, "") : f.name.replace(/^tasks\/|\.md$/g, "");
-      const ws = taskWorkers(f.text).filter((w) => !w.ended);
-      const st = ws.some((w) => workerStatus(w) === "blocked" || pend.has(w.name)) ? ["blocked", STATUS_LABEL.blocked]
-        : ws.some(workerBusy) ? ["working", "执行中"] : null;
-      return `<div class="tp-item"><div class="tp-top"><span class="tp-name">${esc(name)}</span>${st ? `<span class="tp-st ${st[0]}">${st[1]}</span>` : ""}</div>${taskCrewHTML(ws)}</div>`;
+    const tasks = (taskFiles || []).filter(isOpenTask).map((f) => {
+      const t = window.collieTasks.parse(f.name, f.text), ws = taskWorkers(f.text).filter((w) => !w.ended);
+      const state = ws.some((w) => workerStatus(w) === "blocked" || pend.has(w.name)) ? "wait" : ws.some(workerBusy) ? "work"
+        : t.phase === "ask" ? "wait" : t.phase === "ship" ? "ship" : ws.length ? "idle" : "";
+      return { f, t, ws, state };
+    }).sort((a, b) => TASK_ORDER.indexOf(a.state) - TASK_ORDER.indexOf(b.state));
+    const row = ({ f, t, ws, state }) => {
+      const st = TASK_STATE[state];
+      const sum = t.next ? ["下一步", t.next] : t.goal ? ["目标", t.goal] : null;
+      const meta = t.title !== t.slug ? `<span class="tp-slug mono">${esc(t.slug)}</span>` : "";
+      return `<div class="tp-item" data-task="${esc(f.name)}">
+        <div class="tp-top"><button type="button" class="tp-name" title="在记忆里打开 ${esc(f.name)}">${esc(t.title)}</button>${st ? `<span class="tp-st ${state}"><span class="dot ${st[1]}"></span>${st[0]}</span>` : ""}</div>
+        ${sum ? `<div class="tp-sum"><span class="tp-k">${sum[0]}</span>${esc(sum[1])}</div>` : ""}
+        ${meta || ws.length ? `<div class="tp-foot">${meta}${ws.map(taskChipHTML).join("")}</div>` : ""}</div>`;
     };
-    return `<div class="tp-h">进行中的任务${taskFiles ? `<span class="count">${tasks.length}</span>` : ""}</div>
-      ${!taskFiles ? `<div class="tp-empty">${taskErr ? "读取失败：" + esc(taskErr) : "加载中…"}</div>` : tasks.length ? tasks.map(row).join("") : `<div class="tp-empty">没有进行中的任务</div>`}`;
+    const tally = TASK_ORDER.filter((k) => TASK_STATE[k] && k !== "idle").map((k) => [k, tasks.filter((x) => x.state === k).length]).filter(([, n]) => n);
+    return `<div class="tp-h">进行中的任务${taskFiles ? `<span class="count">${tasks.length}</span>` : ""}${tally.length ? `<span class="tp-tally">${tally.map(([k, n]) => `<span class="${k}">${n} ${TASK_STATE[k][0]}</span>`).join(" · ")}</span>` : ""}</div>
+      ${!taskFiles ? `<div class="tp-empty">${taskErr ? "读取失败：" + esc(taskErr) : "加载中…"}</div>`
+        : tasks.length ? tasks.map(row).join("") : `<div class="tp-empty">没有进行中的任务<span>Collie 接下的活会列在这里，一件事一条。</span></div>`}
+      ${taskFiles ? `<button type="button" class="tp-more" data-task="">在「记忆」里查看全部，包括已完成的</button>` : ""}`;
+  }
+  // A worker on a task by the name the file uses, its session title after.
+  function taskChipHTML(w) {
+    const label = workerLabel(w);
+    return workerLinkHTML(w, { cls: "chip tp-chip", name: w.name, more: label !== w.name ? label : "" });
+  }
+  // 自动化 › 记忆, scrolled to a task file and unfolded (or at the top).
+  let memReveal = "";
+  function openTaskFile(path) {
+    toggleTaskPanel(false);
+    memReveal = path;
+    autoTab = "memory"; store.set("autoTab", autoTab);
+    scrollByRoute.delete("auto:memory");
+    if (location.hash !== "#/auto") location.hash = "#/auto";
+    else { markProgrammaticScroll(); $("#auto-body").scrollTop = 0; openAuto(); }
+  }
+  // Once, on the first draw after: a file gone by then is not unfolded later.
+  function revealMem() {
+    const d = memReveal && $("#auto-body").querySelector(`details[data-path="${CSS.escape(memReveal)}"]`);
+    memReveal = "";
+    if (!d) return;
+    d.open = true;
+    markProgrammaticScroll();
+    d.scrollIntoView({ block: "start" });
+    d.querySelector("summary").focus({ preventScroll: true });
   }
   function renderTaskPanel() {
     if (taskPanel.hidden) return;
@@ -1776,6 +1815,10 @@
     if (open) { taskAt = 0; renderTaskPanel(); }
   }
   taskBtn.addEventListener("click", () => toggleTaskPanel(taskPanel.hidden));
+  taskPanel.addEventListener("click", (e) => {
+    const item = !e.target.closest("a") && e.target.closest("[data-task]");
+    if (item) openTaskFile(item.dataset.task);
+  });
   document.addEventListener("click", (e) => {
     // Outside it, or a worker in it opened.
     if (!taskPanel.hidden && (!e.target.closest(".task-wrap") || e.target.closest("#task-panel a[href]"))) toggleTaskPanel(false);
@@ -2621,13 +2664,7 @@
   }, (saved) => openAuto(saved));
 
   // The follow-up line under 自动化 opens the open tasks (top of 记忆).
-  $("#nav-auto-sub").addEventListener("click", () => {
-    if (sup.follow?.next) {
-      autoTab = "memory"; store.set("autoTab", autoTab);
-      scrollByRoute.delete("auto:memory");
-      if (view === "auto") { markProgrammaticScroll(); $("#auto-body").scrollTop = 0; openAuto(); }
-    }
-  });
+  $("#nav-auto-sub").addEventListener("click", () => { if (sup.follow?.next) openTaskFile(""); });
 
   // Each tab draws from the last answer to its request at once; the request
   // only refreshes it. The answers ride in the startup snapshot.
@@ -2657,6 +2694,7 @@
       body.replaceChildren(...memParked.nodes);
       body._memSig = memParked.sig;
       if (restore) restoreSimpleScroll(body, restore);
+      revealMem();
     } else if (have) drawAuto(have, restore);
     else body.innerHTML = "";
     clearInterval(autoTimer);
@@ -2759,6 +2797,7 @@
       } else if (restore) {
         restoreSimpleScroll(body, restore);
       }
+      revealMem();
     } else {
       const sig = JSON.stringify(r);
       if (sig === body._sig) { if (restore) restoreSimpleScroll(body, restore); return; }
@@ -2783,15 +2822,19 @@
     for (const w of sup.workers) if (!latest.has(w.name) || new Date(w.created_at) > new Date(latest.get(w.name).created_at)) latest.set(w.name, w);
     return [...latest.values()].filter((w) => new RegExp(`(^|[^\\w-])${reEsc(w.name)}(?![\\w-])`).test(text));
   }
+  // A worker's session: live, or the one it ended with.
+  function workerHref(w) {
+    const pane = !w.ended && paneOf(w.name), past = !pane && workerHist(w.name, w.created_at);
+    return pane ? `#/p/${encodeURIComponent(pane)}` : past ? `#/h/${encodeURIComponent(past.id)}` : "";
+  }
+  // A worker as a link to its session, with its state.
+  function workerLinkHTML(w, { cls = "", name = workerLabel(w), more = "" } = {}) {
+    const href = workerHref(w), st = workerStatus(w);
+    return `<a ${cls ? `class="${cls}"` : ""} ${href ? `href="${href}"` : ""} title="${esc(workerLabel(w) + " · " + (KIND_LABEL[w.kind] || w.kind) + " · " + (STATUS_LABEL[st] || st))}"><span class="dot ${esc(st)}"></span>${esc(name)}${more ? `<span class="k">${esc(more)}</span>` : ""}</a>`;
+  }
   // The workers on a task, live, each opening its session.
   function taskCrewHTML(ws) {
-    if (!ws.length) return "";
-    return `<span class="mem-crew">${ws.map((w) => {
-      const pane = !w.ended && paneOf(w.name), past = !pane && workerHist(w.name, w.created_at);
-      const href = pane ? `#/p/${encodeURIComponent(pane)}` : past ? `#/h/${encodeURIComponent(past.id)}` : "";
-      const st = workerStatus(w);
-      return `<a ${href ? `href="${href}"` : ""} title="${esc((KIND_LABEL[w.kind] || w.kind) + " · " + (STATUS_LABEL[st] || st))}"><span class="dot ${esc(st)}"></span>${esc(workerLabel(w))}</a>`;
-    }).join("")}</span>`;
+    return ws.length ? `<span class="mem-crew">${ws.map((w) => workerLinkHTML(w)).join("")}</span>` : "";
   }
   let memEditing = false;
   // Workers' states count too: the task cards show them.
