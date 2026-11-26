@@ -277,9 +277,14 @@ func (h *extHost) ours(conv, id, text, footer string) (bool, error) {
 			return true, nil
 		}
 	}
+	return endsInFooter(text, footer), nil
+}
+
+// endsInFooter: the text's last line starts as the footer does, as Collie's answers end.
+func endsInFooter(text, footer string) bool {
 	lines := strings.Split(strings.TrimSpace(text), "\n")
 	prefix := strings.TrimSpace(footerPrefix(footer))
-	return prefix != "" && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), prefix), nil
+	return prefix != "" && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), prefix)
 }
 
 func (h *extHost) trigger() string {

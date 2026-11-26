@@ -163,6 +163,8 @@ type InboxMsg struct {
 	Mine       bool                  `json:"mine,omitempty"`
 	Text       string                `json:"text"`
 	Ref        string                `json:"ref,omitempty"` // a send of Collie's: its outbox ref
+	// Bot: Collie's answer, sent from your account (it ends in the footer).
+	Bot bool `json:"bot,omitempty"`
 	View       *extproto.MessageView `json:"view,omitempty"`
 }
 

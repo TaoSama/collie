@@ -2,6 +2,7 @@
 import base64
 import collections
 import importlib
+import json
 import logging
 import os
 import re
@@ -37,7 +38,7 @@ READ_BATCH = 100  # chats a PullChatsByIdsRequest
 AT_ALL = "all"  # the user id of an @所有人
 # A picture by its key on Feishu's CDN, 180 px: groups give only a key (and a plain-http origin).
 FEISHU_PICTURE = "https://s1-imfile.feishucdn.com/static-resource/v1/%s~?image_size=180x180&cut_type=&quality=&format=image&sticker_format=.webp"
-DM_PICTURES_A_SYNC = 10  # direct chats whose picture one read-state answer may look up
+DM_LOOKUPS_A_SYNC = 10  # direct chats whose people one read-state answer may look up
 NAME_TTL = 3600
 RECENT_MOST = 2000
 # A group Meego (飞书项目) opened for one story or issue: its description is the
@@ -408,13 +409,18 @@ class Feishu:
             if at is not None:
                 out[k]["at_me"] = k in at
             if v.get("type") == CHAT_P2P:
-                # A direct chat's picture is the other person's: a call each, so a few an answer.
-                known = self.names.peek("dmpic:" + k)
-                if known is None and looked < DM_PICTURES_A_SYNC:
+                # A direct chat's name and picture are the other person's: a call each, so a few an answer.
+                if k != self.self_chat and self.names.peek("chatters:" + k) is None:
+                    if looked >= DM_LOOKUPS_A_SYNC:
+                        continue
                     looked += 1
-                    known = self.dm_picture(k)
-                pic = known or ""
+                peer = self.peer(k)
+                if peer is None or peer[0]:
+                    out[k]["name"] = self.dm_name(k, peer)
+                pic = self.dm_picture(k)
             else:
+                if v.get("name"):
+                    out[k]["name"] = v["name"]
                 pic = self.group_picture(v)
             if pic:
                 out[k]["avatar"] = pic
@@ -427,16 +433,23 @@ class Feishu:
 
     def dm_picture(self, chat):
         """A direct chat's picture: the other person's avatar, yours in your chat with yourself."""
+        people = self.chatters(chat)
+        other = next((v for k, v in people.items() if k != self.me), None) or people.get(self.me)
+        return other[1] if other else ""
+
+    def chatters(self, chat):
+        """A direct chat's people, {user id: (name, picture)}, looked up an hour; {} when not known."""
         if self.client is None:
-            return ""
+            return {}
 
         def look():
             r = self.client.api("chats.PullChatChattersRequest", {"chatId": chat, "needChatters": True, "limit": 10}) or {}
-            people = r.get("chatters") or {}
-            other = next((v for k, v in people.items() if k != self.me), None) or people.get(self.me) or {}
-            return picture_url(other.get("avatar") or {})
+            people = {k: [v.get("localizedName") or v.get("name") or "", picture_url(v.get("avatar") or {})]
+                      for k, v in (r.get("chatters") or {}).items()}
+            return json.dumps(people, ensure_ascii=False) if people else ""
 
-        return self.names.get("dmpic:" + chat, look) or ""
+        got = self.names.get("chatters:" + chat, look)
+        return {k: tuple(v) for k, v in json.loads(got).items()} if got else {}
 
     def at_chats(self):
         """The chats of the unread messages that @-mention you or everyone, as Feishu keeps them
@@ -503,21 +516,13 @@ class Feishu:
             return known, ""
         if chat == self.self_chat:
             return None
-
-        def look():
-            r = self.client.api("chats.PullChatChattersRequest", {"chatId": chat, "needChatters": True, "limit": 10}) or {}
-            others = [(k, v) for k, v in (r.get("chatters") or {}).items() if k != self.me]
-            if not (r.get("chatters") or {}):
-                return ""
-            if not others:
-                return "self"
-            uid, c = others[0]
-            return "%s\t%s" % (uid, c.get("localizedName") or c.get("name") or "")
-
-        got = self.names.get("peer:" + chat, look) if self.client is not None else ""
-        if got == "self":
+        people = self.chatters(chat)
+        if not people:
+            return "", ""
+        others = [(k, v) for k, v in people.items() if k != self.me]
+        if not others:
             return None
-        uid, _, name = got.partition("\t")
+        uid, (name, _) = others[0]
         return uid, name
 
     def dm_name(self, chat, peer, sender_name=""):

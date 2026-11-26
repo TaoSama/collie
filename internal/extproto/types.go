@@ -459,6 +459,9 @@ type ChatRead struct {
 	AtMe *bool `json:"at_me,omitempty"`
 	// Avatar: the chat's picture, as chat_avatar ("" not known).
 	Avatar string `json:"avatar,omitempty"`
+	// Name: the chat's name as the app shows it now ("" not known), so a
+	// name given before (or by an older extension) is put right.
+	Name string `json:"name,omitempty"`
 }
 
 // ReadMarked is connector.read.mark's result: the chats marked, and why the others weren't.

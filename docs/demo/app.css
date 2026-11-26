@@ -2250,9 +2250,12 @@ select.picked { display: none; }
 .inbox-nav-src > ul { margin: 1px 0 4px; }
 .inbox-nav-i, .inbox-nav-toggle { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 8px; border: 0; border-radius: calc(8px * var(--round)); background: transparent; color: var(--t-secondary); font-size: var(--fs-meta); text-align: left; transition: background .12s, color .12s; }
 .inbox-nav-i:hover, .inbox-nav-toggle:hover { background: var(--bg-2); color: var(--fg); }
-.inbox-nav-i.on { background: var(--bg-3); color: var(--fg); font-weight: var(--fw-medium); }
+/* The chosen filter: its icon and words in the same blue, on a light wash of it. */
+.inbox-nav-i.on, .inbox-chip.on { background: color-mix(in srgb, var(--info) 11%, var(--bg)); color: var(--info); font-weight: var(--fw-medium); }
+.inbox-nav-i.on > svg, .inbox-chip.on > svg { color: var(--info); }
 .inbox-nav-i.src { color: var(--fg); font-weight: var(--fw-medium); }
-.inbox-nav-i.sub { padding-left: 34px; height: 32px; }
+.inbox-nav-i.sub { padding-left: 26px; height: 32px; }
+.inbox-nav-i.sub > svg { width: 15px; height: 15px; }
 .inbox-nav-i > svg, .inbox-nav-toggle > svg { width: 16px; height: 16px; color: var(--t-icon); flex: none; }
 .inbox-nav-i > .src-logo { width: 16px; height: 16px; flex: none; }
 .inbox-nav-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2314,6 +2317,8 @@ select.picked { display: none; }
 .conv-msg:last-child { border-bottom: 0; }
 .conv-msg .meta { display: flex; gap: 8px; align-items: baseline; font-size: var(--fs-meta); color: var(--t-meta); }
 .conv-msg .meta b { color: var(--fg); }
+.conv-msg.bot .meta b { display: inline-flex; align-items: center; gap: 4px; color: var(--info); }
+.conv-msg.bot .meta b > svg { width: 13px; height: 13px; }
 .conv-msg .msg { margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-meta); }
 .conv-msg .msg.assistant { white-space: normal; }
 .conv-close { display: none; }
@@ -2652,6 +2657,33 @@ select.picked { display: none; }
   .ext-status > .ext-field { padding-left: 0; }
 }
 .hooks-h { margin: 22px 0 10px; font-size: var(--fs-card-h); font-weight: var(--fw-card-h); }
+
+/* A source's own page (飞书 in the sidebar): its filters as a row of chips
+   above its chats, sliding sideways on a phone; the list and the open chat. */
+.inbox-chips { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.inbox-chips::-webkit-scrollbar { display: none; }
+.inbox-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 10px; flex: none; border: var(--bw) solid var(--line-2); border-radius: 999px; background: var(--bg); color: var(--t-secondary); font-size: var(--btn-fs); white-space: nowrap; transition: background .12s, border-color .12s, color .12s; }
+.inbox-chip > svg { width: 15px; height: 15px; color: var(--t-icon); }
+.inbox-chip:hover { border-color: var(--fg-4); color: var(--fg); }
+.inbox-chip.on { border-color: color-mix(in srgb, var(--info) 35%, var(--bg)); }
+.inbox-chip:focus-visible { outline: none; box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--fg) 10%, transparent); }
+.inbox-split.src { grid-template-columns: minmax(260px, 400px) minmax(0, 1fr); }
+.inbox-split.src.has-cur { grid-template-columns: min(34%, 360px) minmax(0, 1fr); }
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  .inbox-split.src, .inbox-split.src.has-cur { grid-template-columns: minmax(0, 1fr); }
+  .inbox-list-h.src { display: flex; }
+}
+/* 飞书, 微信 in the sidebar: one tap to their chats. */
+.nav-item.nav-src .nav-ico { background: var(--logo-bg); overflow: hidden; }
+.nav-item.nav-src .nav-ico > img { width: 82%; height: 82%; object-fit: contain; filter: none; }
+.nav-src .count-pill.at { background: var(--attn); color: var(--on-attn); }
+#v-auto.src-page #auto-tabs { display: none; }
+#v-auto .d-name { display: flex; align-items: center; gap: 8px; }
+#v-auto .d-name > .src-logo { width: 20px; height: 20px; border-radius: 6px; }
+#nav-srcs { display: contents; }
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  .inbox-chips:has(+ .inbox-split.has-cur) { display: none; }
+}
 
 /* demo only */
 .demo-badge { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 999; font: 500 12px/1 var(--sans); padding: 7px 10px; border-radius: 999px; background: var(--fg); color: var(--bg); text-decoration: none; opacity: .85; }

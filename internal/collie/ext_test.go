@@ -1244,3 +1244,31 @@ func TestInboxAvatar(t *testing.T) {
 		t.Fatalf("the list names the hub's address only: %s", body)
 	}
 }
+
+// The read state puts a chat's name right (an old 私聊（还不知道对方是谁）
+// among them), and in recent messages Collie's answers from your account
+// are told from what you wrote yourself.
+func TestInboxNamesAndAnswers(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	m := h.manifest("fake")
+	in := incomingMsg{Chat: "c1", ChatName: "私聊（还不知道对方是谁）", ChatKind: "self", ID: "1", Sender: "me", Mine: true, Owner: true, Text: "x", At: time.Now(), Live: true}
+	if err := h.incoming(m, in); err != nil {
+		t.Fatal(err)
+	}
+	h.store.appRead("fake", map[string]extproto.ChatRead{"c1": {Name: "陆文韬（我）"}, "c9": {Name: "不在收件箱"}})
+	if c, _ := h.store.conv("fake:c1"); c.Name != "陆文韬（我）" {
+		t.Fatalf("put right: %q", c.Name)
+	}
+	h.store.appRead("fake", map[string]extproto.ChatRead{"c1": {}})
+	if c, _ := h.store.conv("fake:c1"); c.Name != "陆文韬（我）" {
+		t.Fatalf("no name said, the name stays: %q", c.Name)
+	}
+	yes := true
+	got := mergeInboxRecent(InboxConv{ID: "fake:c1", Chat: "c1"}, nil, []extproto.Message{
+		{ID: "a", ChatID: "c1", Owner: &yes, Text: "你好！\n\n🤖 AI 代答，仅供参考 · Codex · 7秒", At: "2026-11-26T12:00:00Z"},
+		{ID: "b", ChatID: "c1", Owner: &yes, Text: "你好", At: "2026-11-26T12:01:00Z"},
+	}, nil, defaultFooter)
+	if len(got) != 2 || !got[0].Bot || got[1].Bot {
+		t.Fatalf("the answer is the bot's, your own message yours: %+v", got)
+	}
+}

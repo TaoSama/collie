@@ -41,7 +41,7 @@ func (s *Server) inboxRecent(ctx context.Context, c *InboxConv, stored []InboxMs
 		return stored, true
 	}
 	s.repairInboxPreview(c, recent.Messages)
-	return mergeInboxRecent(*c, stored, recent.Messages, outs), false
+	return mergeInboxRecent(*c, stored, recent.Messages, outs, s.ext.footer()), false
 }
 
 // Replace an old placeholder only when the source still has that last message.
@@ -73,7 +73,7 @@ func (s *Server) repairInboxPreview(c *InboxConv, messages []extproto.Message) {
 
 var legacyInboxPreview = regexp.MustCompile(`\[卡片\]$|\[(日历|分享日程)\] [\[{]`)
 
-func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message, outs map[string]*OutboxItem) []InboxMsg {
+func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message, outs map[string]*OutboxItem, footer string) []InboxMsg {
 	ids := make(map[string]int, len(stored))
 	for i, m := range stored {
 		ids[m.ID] = i
@@ -96,8 +96,9 @@ func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message,
 			continue
 		}
 		ids[m.ID] = len(stored)
+		mine := m.Owner != nil && *m.Owner
 		stored = append(stored, InboxMsg{ID: m.ID, Conv: c.ID, At: at, Sender: m.Sender, SenderName: m.SenderName,
-			Mine: m.Owner != nil && *m.Owner, Text: m.Text, View: m.View})
+			Mine: mine, Bot: mine && endsInFooter(m.Text, footer), Text: m.Text, View: m.View})
 	}
 	slices.SortStableFunc(stored, func(a, b InboxMsg) int { return a.At.Compare(b.At) })
 	if len(stored) > inboxKeepMsgs {

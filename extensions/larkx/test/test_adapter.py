@@ -764,6 +764,19 @@ class Read(unittest.TestCase):
         calls.clear()
         f.unread(["11"])
         self.assertNotIn("chats.PullChatChattersRequest", [c[0] for c in calls], "kept an hour")
+        self.assertNotIn("name", got["10"], "no name known, none said")
         f.region = "lark"
         self.assertEqual(f.group_picture({"avatar": {"key": "v3_abc"}}), "", "Lark's CDN isn't known")
         self.assertEqual(lark.picture_url({"origin": {"urls": ["https://o"]}}), "https://o")
+
+    def test_names_put_right(self):
+        """A name given before (私聊（还不知道对方是谁）) is put right with the read state."""
+        f, calls = self.feishu({"12": {"type": 1, "chatMode": 1}, "13": {"type": 1, "chatMode": 1}, "14": {"type": 2, "chatMode": 1, "name": "群"}})
+        f.me, f.self_chat = "u_me", "13"
+        f.user_name = lambda uid, chat: {"u_me": "陆文韬", "u_b": "乙"}.get(uid, "")
+        got = f.unread(["12", "13", "14"])
+        self.assertEqual((got["12"]["name"], got["13"]["name"], got["14"]["name"]), ("乙", "陆文韬（我）", "群"))
+        f2, _ = self.feishu({str(20 + i): {"type": 1, "chatMode": 1} for i in range(lark.DM_LOOKUPS_A_SYNC + 2)})
+        f2.me = "u_me"
+        named = [k for k, v in f2.unread([str(20 + i) for i in range(lark.DM_LOOKUPS_A_SYNC + 2)]).items() if "name" in v]
+        self.assertEqual(len(named), lark.DM_LOOKUPS_A_SYNC, "a few direct chats looked up an answer, the rest the next time")
