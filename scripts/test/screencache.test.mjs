@@ -338,17 +338,21 @@ test("Claude cold-opened at verified top: multi-step drag down to bottom never s
     assert.ok(step.sendTicks >= 0, `downward drag at r=${r} must never send upward ticks (got ${step.sendTicks})`);
   }
 
-  // Final drag step reaches bottom (r = 1.0)
+  // Final drag steps reach bottom and stay at r = 1.0 across multiple pointermove events
   const endDrag = c.scrollToRatio(1.0, 250);
   assert.equal(endDrag.goHome, true);
   assert.equal(c.scrollbar().ratio, 1);
+  // Subsequent pointermove events still at r = 1.0 must NOT clear returningHome!
+  const stayBottom1 = c.scrollToRatio(1.0, 265);
+  assert.equal(stayBottom1.goHome, false);
+  const stayBottom2 = c.scrollToRatio(1.0, 280);
+  assert.equal(stayBottom2.goHome, false);
 
-  // Even if an older in-flight scrolled frame (with Jump-to-bottom pill) arrives
-  // before the live bottom frame, once the real bottom frame (rows 29..58, no
-  // pill, no banner) arrives, returningHome cleanly restores ratio = 1.0!
-  const staleTopWithPill = makeClaudeFrame(2, { sticky: false, pill: true });
-  staleTopWithPill[0] = "  Claude Code v2.1.302";
-  c.ingest(staleTopWithPill, { pane: "w10:p1", kind: "claude", cols: 120, rows: 40, now: 300 });
+  // An intermediate downward-tick frame (still showing Jump-to-bottom pill) arrives
+  // before HOME_SEQ completes, then the real bottom frame (rows 29..58, no pill,
+  // no banner) arrives -> returningHome must still cleanly restore ratio = 1.0!
+  const midDownWithPill = makeClaudeFrame(6, { sticky: true, pill: true });
+  c.ingest(midDownWithPill, { pane: "w10:p1", kind: "claude", cols: 120, rows: 40, now: 300 });
 
   const liveBottom = makeClaudeFrame(29, { sticky: false, pill: false });
   c.ingest(liveBottom, { pane: "w10:p1", kind: "claude", cols: 120, rows: 40, now: 400 });
@@ -356,6 +360,7 @@ test("Claude cold-opened at verified top: multi-step drag down to bottom never s
   assert.equal(sb.atBottom, true, "live bottom frame after drag-to-bottom must be atBottom=true");
   assert.equal(sb.ratio, 1, `ratio must be 1.0 (not stuck at 0.0, got ${sb.ratio})`);
   assert.equal(sb.hitTop, false, "disjoint jump to bottom must clear stale hitTop");
+  assert.equal(sb.visible, true);
 });
 
 function screenPipeline() {

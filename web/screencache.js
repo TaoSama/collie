@@ -751,17 +751,18 @@
       if (r >= 0.96 || sb.maxOffset === 0) {
         const wasAtBottom = atBottom;
         const wasSeenBottom = seenBottom;
+        const needHome = !wasSeenBottom || agentTop < maxBottomTop || !wasAtBottom;
         viewTop = maxBottomTop;
         atBottom = true;
         seenBottom = true;
-        returningHome = !wasSeenBottom || agentTop < viewTop || !wasAtBottom;
+        returningHome = returningHome || needHome;
         estBelow = 0;
         pendingPageUpLines = 0;
         pendingUpDemand = 0;
         return {
           hit: true,
           renderLines: compose(viewTop, true),
-          goHome: !wasSeenBottom || agentTop < viewTop || !wasAtBottom,
+          goHome: needHome,
           pageUp: 0,
           sendTicks: 0,
           syncDelta: 0,
@@ -774,14 +775,15 @@
 
       if (seenBottom && cacheIdx >= maxBottomTop) {
         const wasAtBottom = atBottom;
+        const needHome = agentTop < maxBottomTop || !wasAtBottom;
         viewTop = maxBottomTop;
         atBottom = true;
-        returningHome = agentTop < viewTop || !wasAtBottom;
+        returningHome = returningHome || needHome;
         pendingUpDemand = 0;
         return {
           hit: true,
           renderLines: compose(viewTop, true),
-          goHome: agentTop < viewTop || !wasAtBottom,
+          goHome: needHome,
           pageUp: 0,
           sendTicks: 0,
           syncDelta: 0,
