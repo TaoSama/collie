@@ -31,6 +31,8 @@ type InboxConv struct {
 	LastAt  time.Time `json:"last_at"`
 	Preview string    `json:"preview,omitempty"`
 	Unread  int       `json:"unread,omitempty"`
+	// Muted in the chat app: never an alert in Collie, its unread count grey.
+	Muted bool `json:"muted,omitempty"`
 	// Owner: the signed-in person's own chat with the bot (WeChat).
 	Owner bool `json:"owner,omitempty"`
 	// What you set: handled at all, by anyone in it or only you, by whom.

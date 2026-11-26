@@ -173,7 +173,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.secrets.load` | `{contribution}` | `{data?}`：上次存的 base64 |
 | `connector.secrets.save` | `{contribution, data}` | `{}`。在扩展所在的电脑上写 `secrets.json`，不经过 hub |
 | `connector.secrets.delete` | `{contribution}` | `{}` |
-| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, at?, quote?, images?, files?, unsupported?}}` | `{}`。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
+| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
 | 事件 `connector.changed` | `{contribution, scope: inbox\|chats\|status\|outbox}` | 有新消息或状态变了；有 `archive` 能力时 Collie 收到就去拉。最多每 3 秒一次 |
 | 事件 `channel.delivery` | `{contribution, ref, state: sent\|deferred\|uncertain\|failed\|expired, message_id?, reason?}` | 一次发送最后怎样了。`uncertain` 表示可能已发出，**不会再重发** |
 

@@ -510,7 +510,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
   const inboxConvs = [
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
-    { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", on: false, handler: "agent" },
+    { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", unread: 12, muted: true, on: false, handler: "agent" },
   ];
   const inboxMsgs = { "larkx:oc_1": [
     { id: "m1", conv: "larkx:oc_1", at: ago(9), sender_name: "李四", text: "评审定在周五，接口先冻结" },

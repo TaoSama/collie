@@ -222,16 +222,18 @@ class Normalize(unittest.TestCase):
         f = lark.Feishu(U, "feishu", lambda d: None)
         f.me, f.self_chat = "u_me", "c_self"
         f.user_name = lambda uid, chat: {"u_me": "我", "u_a": "甲"}.get(uid, "")
-        f.names.get = lambda key, look: "示例群"
+        f.chat_info = lambda chat: {"name": "示例群", "isRemind": chat != "c_g"}
         rt = richtext.build(U.L, "你好 `x`")
         content = {"richText": protobuf_to_dict(rt)}
         m = f.normalize({"msg_id": "1", "chat_id": "c_g", "from_id": "u_a", "msg_type": 4, "chat_type": 2,
                          "content_data": content, "root_id": "0", "create_time": 1764000000})
         self.assertEqual((m["text"], m["chat_kind"], m["chat"], m["owner"], m["sender_name"]), ("你好 `x`", "group", "示例群", False, "甲"))
         self.assertEqual(m["at"], "2025-11-24T16:00:00Z")
+        self.assertTrue(m["muted"], "isRemind off is 免打扰")
         m = f.normalize({"msg_id": "2", "chat_id": "c_self", "from_id": "u_me", "msg_type": 4, "chat_type": 1,
                          "content_data": content, "parent_id": "1"})
         self.assertEqual((m["chat_kind"], m["owner"], m["quote"]), ("self", True, "你好 `x`"))
+        self.assertFalse(m["muted"])
         self.assertIsNone(f.normalize({"msg_id": "3", "chat_id": "c", "from_id": "u", "msg_type": 6}))
         card = {"cardHeader": {"title": "分析中"}, "jsonCard": '{"body":{}}'}
         m = f.normalize({"msg_id": "4", "chat_id": "c_g", "from_id": "u_a", "msg_type": 14, "chat_type": 2, "content_data": card})

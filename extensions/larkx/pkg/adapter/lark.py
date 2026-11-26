@@ -388,10 +388,13 @@ class Feishu:
         p2p = msg.get("chat_type") == CHAT_P2P
         out["chat_kind"] = "self" if p2p and chat == self.self_chat else "dm" if p2p else "group"
         out["sender_name"] = self.user_name(sender, chat)
+        info = self.chat_info(chat)
         if p2p and not out["owner"]:
             out["chat"] = out["sender_name"]
         else:
-            out["chat"] = self.names.get("chat:" + chat, lambda: (self.client.get_chat_info(chat) or {}).get("name"))
+            out["chat"] = info.get("name") or ""
+        if "isRemind" in info:
+            out["muted"] = not info["isRemind"]  # 免打扰 is isRemind off
         at = msg.get("create_time")
         if at:
             at = int(at) / (1000 if int(at) > 10 ** 12 else 1)
@@ -407,6 +410,12 @@ class Feishu:
             while len(self.recent) > RECENT_MOST:
                 self.recent.popitem(last=False)
             return True
+
+    def chat_info(self, chat):
+        """The chat as the signed-in person sees it (name, isRemind…), kept an hour like names."""
+        if self.client is None:
+            return {}
+        return self.names.get("chatinfo:" + chat, lambda: self.client.get_chat_info(chat)) or {}
 
     def user_name(self, uid, chat):
         if not uid or self.client is None:
