@@ -94,16 +94,20 @@ func TestDreamSkills(t *testing.T) {
 func TestAgyFullTranscript(t *testing.T) {
 	dir := t.TempDir()
 	short, full := filepath.Join(dir, "transcript.jsonl"), filepath.Join(dir, "transcript_full.jsonl")
-	os.WriteFile(short, nil, 0o600)
-	if tr := newTranscript(short, "agy"); tr.path != short {
-		t.Errorf("no full one: got %s", tr.path)
+	if err := os.WriteFile(short, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	os.WriteFile(full, nil, 0o600)
-	if tr := newTranscript(short, "agy"); tr.path != full {
-		t.Errorf("full one: got %s", tr.path)
+	if path := transcriptPath(short, "agy"); path != short {
+		t.Errorf("no full one: got %s", path)
 	}
-	if tr := newTranscript(short, "claude"); tr.path != short {
-		t.Errorf("not agy: got %s", tr.path)
+	if err := os.WriteFile(full, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if path := transcriptPath(short, "agy"); path != full {
+		t.Errorf("full one: got %s", path)
+	}
+	if path := transcriptPath(short, "claude"); path != short {
+		t.Errorf("not agy: got %s", path)
 	}
 }
 

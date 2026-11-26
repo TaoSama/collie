@@ -666,7 +666,7 @@
     // anchored historical message never vanishes from the DOM on SSE updates.
     if (sup.entries?.length && s.entries.length) {
       const sc = $("#super-thread")?.parentElement;
-      const keepSpilled = older.length > 0 || (view === "collie"
+      const keepSpilled = older.length > 0 || olderBusy || olderFailedBefore || (view === "collie"
         ? !!(sc && sc.clientHeight > 0 && sc.scrollHeight - sc.scrollTop - sc.clientHeight > AT_BOTTOM_PX)
         : scrollByRoute.get("collie")?.atBottom === false);
       if (keepSpilled) {
@@ -1421,7 +1421,7 @@
 
   // Older chat, loaded a page at a time when you ask: the hub only sends the
   // latest 200 lines. olderMore: whether there is more before that.
-  let older = [], olderMore = null, olderBusy = false, superScrollRAF = 0;
+  let older = [], olderMore = null, olderBusy = false, olderFailedBefore = "", superScrollRAF = 0;
   function chatEntries() {
     const have = new Set(sup.entries.map((e) => e.id));
     for (let i = pendingSays.length - 1; i >= 0; i--) if (pendingSays[i].id && have.has(pendingSays[i].id)) pendingSays.splice(i, 1);
@@ -1429,16 +1429,16 @@
     return old.length || pendingSays.length ? [...old, ...sup.entries, ...pendingSays] : sup.entries;
   }
   // More before what is shown? Until asked, guess from a full page.
-  const canLoadOlder = () => olderMore ?? !!sup.earlier;
+  const canLoadOlder = () => !!olderFailedBefore || (olderMore ?? !!sup.earlier);
   async function loadOlder(keepPos = true, untilId = "") {
-    const first = chatEntries().find((e) => e.id);
-    if (olderBusy || !first) return false;
+    const before = olderFailedBefore || chatEntries().find((e) => e.id)?.id;
+    if (olderBusy || !before) return false;
     olderBusy = true;
     renderSuper();
-    const scroller = $("#super-thread").parentElement, fromBottom = scroller.scrollHeight - scroller.scrollTop;
+    const scroller = $("#super-thread").parentElement;
     let added = false;
     try {
-      let url = `/api/super/earlier?before=${encodeURIComponent(first.id)}`;
+      let url = `/api/super/earlier?before=${encodeURIComponent(before)}`;
       if (untilId) url += `&until=${encodeURIComponent(untilId)}`;
       const r = await api(url);
       const batch = r.entries || [];
@@ -1451,13 +1451,18 @@
         }
       }
       olderMore = batch.length ? !!r.more : false;
-    } catch (e) { olderMore = false; toast(e.message, "attn"); }
+      olderFailedBefore = "";
+    } catch (err) {
+      olderFailedBefore = before;
+      if (untilId) toast(err.message, "attn");
+    }
+    const top = scroller.scrollTop, fromBottom = scroller.scrollHeight - top;
     olderBusy = false;
     renderSuper();
     if (keepPos) {
       if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(superScrollRAF);
       markProgrammaticScroll();
-      scroller.scrollTop = scroller.scrollHeight - fromBottom; // stay where you were reading
+      scroller.scrollTop = olderFailedBefore ? top : scroller.scrollHeight - fromBottom; // stay where you were reading
     }
     return added;
   }
@@ -1489,7 +1494,10 @@
       m = document.querySelector(sel);
       if (!ok) break;
     }
-    if (!m) { toast("这条消息太早了，已经不在这里"); return; }
+    if (!m) {
+      if (!olderFailedBefore) toast("这条消息太早了，已经不在这里");
+      return;
+    }
     if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(superScrollRAF);
     const sc = $("#super-thread").parentElement;
     const want = centerTop(sc, m);
@@ -2038,7 +2046,8 @@
       if (items) html += `<div class="needs">${items}</div>`;
     }
     renderPendingBar();
-    if (olderBusy) html = `<div class="earlier-row">加载中…</div>` + html;
+    if (olderBusy) html = `<div class="earlier-row" role="status">加载中…</div>` + html;
+    else if (olderFailedBefore) html = `<div class="earlier-row"><button type="button" class="btn" data-retry-older>加载历史失败，重试</button></div>` + html;
     const busyChanged = (busy || "") !== prevBusy, crewChanged = crewHTML !== prevCrew;
     if (html !== superSig || force) {
       superSig = html;
@@ -2095,7 +2104,7 @@
     }
     updateSuperJump();
   }
-  $("#super-thread")._loadMore = () => canLoadOlder() && loadOlder();
+  $("#super-thread")._loadMore = () => !olderFailedBefore && canLoadOlder() && loadOlder();
   {
     const sc = $("#super-thread")?.parentElement;
     sc?.addEventListener("scroll", updateSuperJump, { passive: true });
@@ -2173,6 +2182,10 @@
 
   $("#super-thread").addEventListener("mousedown", (e) => { if (e.target.closest(".ask button")) e.preventDefault(); });
   $("#super-thread").addEventListener("click", async (e) => {
+    if (e.target.closest("[data-retry-older]")) {
+      await loadOlder();
+      return;
+    }
     const idea = e.target.closest("[data-idea]")?.dataset.idea;
     if (idea) { $("#super-input").value = idea; grow($("#super-input")); $("#super-input").focus(); }
     // Answering a stuck agent from here.

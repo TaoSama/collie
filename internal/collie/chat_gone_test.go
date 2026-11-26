@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -99,5 +102,37 @@ func TestChatStreamKeepsAgentThroughFailedRead(t *testing.T) {
 	all := strings.Join(evs, ",")
 	if strings.Contains(all, "gone") || strings.Contains(all, `"shell"`) || !strings.Contains(all, `"status":"working"`) {
 		t.Fatalf("failed agent lookup: got %v", evs)
+	}
+}
+
+func TestAgyDualTranscriptStaysIdle(t *testing.T) {
+	s, f, pane := chatServer(t, 0, "agy")
+	s.home = t.TempDir()
+	const id = "11111111-1111-4111-8111-111111111111"
+	short := filepath.Join(s.agyCLIHome(), "brain", id, agyTranscriptRelPath)
+	if err := os.MkdirAll(filepath.Dir(short), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(short, []byte(`{"type":"USER_INPUT","content":"short"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	full := filepath.Join(filepath.Dir(short), "transcript_full.jsonl")
+	if err := os.WriteFile(full, []byte(`{"type":"USER_INPUT","content":"full"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.panes[pane].log = id
+
+	events := paneChatEvents(t, s, pane, 2*time.Second)
+	if polls := f.count("agent.get"); polls < 2 {
+		t.Fatalf("need at least two idle polls, got %d", polls)
+	}
+	var historyEvents []string
+	for _, event := range events {
+		if event == "reset" || event == "patch" {
+			historyEvents = append(historyEvents, event)
+		}
+	}
+	if !slices.Equal(historyEvents, []string{"reset", "patch"}) {
+		t.Fatalf("idle conversation sent history events %v, want one reset and one patch", historyEvents)
 	}
 }

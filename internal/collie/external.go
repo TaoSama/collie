@@ -544,7 +544,7 @@ func (s *Server) streamExternal(w http.ResponseWriter, r *http.Request) {
 	var tr *transcript
 	var ms msgSync
 	if e.path != "" {
-		tr = newTranscript(e.path, e.format)
+		tr = newTranscript(transcriptPath(e.path, e.format), e.format)
 		tr.openTail()
 	}
 	first, beat := true, time.Now()

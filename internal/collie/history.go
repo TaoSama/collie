@@ -213,7 +213,7 @@ func (s *Server) getTranscript(w http.ResponseWriter, r *http.Request) {
 		writeEarlier(w, path, format, before)
 		return
 	}
-	tr := newTranscript(path, format)
+	tr := newTranscript(transcriptPath(path, format), format)
 	tr.openTail()
 	writeJSON(w, 200, map[string]any{"messages": tr.view(), "earlier": tr.earlierCursor()})
 }

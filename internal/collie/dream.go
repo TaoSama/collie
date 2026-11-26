@@ -468,7 +468,7 @@ func (sp *Super) writeDreamInput(ctx context.Context) error {
 		if h.Machine != "" {
 			msgs = sp.remoteMessages(ctx, h)
 		} else if path, format := sp.s.findTranscript(h.Kind, "id", h.Session, "", ""); path != "" {
-			tr := newTranscript(path, format)
+			tr := newTranscript(transcriptPath(path, format), format)
 			tr.update()
 			msgs = tr.msgs
 		}

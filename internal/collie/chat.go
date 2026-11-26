@@ -56,14 +56,18 @@ const (
 	maxInput    = 400
 )
 
-func newTranscript(path, format string) *transcript {
-	if format == "agy" {
-		// transcript.jsonl cuts long messages ("<truncated 3142 bytes>");
-		// Antigravity keeps the whole of them, line for line, next to it.
-		if full := strings.TrimSuffix(path, "transcript.jsonl") + "transcript_full.jsonl"; full != path && isFile(full) {
-			path = full
+// Resolve the file before opening it or comparing it with a cached transcript.
+// Antigravity keeps complete messages next to its truncated transcript.jsonl.
+func transcriptPath(path, format string) string {
+	if format == "agy" && filepath.Base(path) == "transcript.jsonl" {
+		if full := filepath.Join(filepath.Dir(path), "transcript_full.jsonl"); isFile(full) {
+			return full
 		}
 	}
+	return path
+}
+
+func newTranscript(path, format string) *transcript {
 	return &transcript{path: path, format: format, tools: map[string]*Message{}}
 }
 
@@ -213,6 +217,7 @@ func (t *transcript) earlierCursor() int64 {
 // last `want` of them, and the cursor for the ones before those (0: none).
 // It reads a little past `before` too, so a tool call there gets its output.
 func earlierMessages(path, format string, before int64, want int) ([]*Message, int64) {
+	path = transcriptPath(path, format)
 	fi, err := os.Stat(path)
 	if err != nil || before <= 0 {
 		return nil, 0
@@ -688,6 +693,7 @@ func (s *Server) transcriptFor(key, pane string, a agentDetail, cache map[string
 		defer cancel()
 		path, _ := s.agyPaneSession(ctx, pane, deref(a.Cwd), sessKind, value)
 		ck := key + "|agy"
+		path = transcriptPath(path, kind)
 		if path == "" {
 			delete(cache, ck)
 			return nil
