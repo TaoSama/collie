@@ -332,12 +332,29 @@
   $$("select").forEach(enhance);
 
 
-  function toast(msg, kind = "") {
+  function toast(msg, kind = "", { action, ms } = {}) {
     const t = document.createElement("div");
-    t.className = "toast " + kind;
-    t.textContent = msg;
+    t.className = ["toast", kind, action ? "has-act" : ""].filter(Boolean).join(" ");
+    let timer = null;
+    const close = () => { clearTimeout(timer); t.remove(); };
+    if (action) {
+      const span = document.createElement("span");
+      span.className = "toast-msg";
+      span.textContent = msg;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-act";
+      btn.textContent = action.label;
+      btn.addEventListener("click", () => {
+        close();
+        Promise.resolve(action.onClick()).catch((err) => toast(err.message, "attn"));
+      }, { once: true });
+      t.append(span, btn);
+    } else {
+      t.textContent = msg;
+    }
     $("#toasts").append(t);
-    setTimeout(() => t.remove(), kind === "attn" ? 5000 : 2600);
+    timer = setTimeout(close, ms ?? (action ? 6000 : kind === "attn" ? 5000 : 2600));
   }
 
   // ───────────────────────────── auth
@@ -4132,7 +4149,7 @@
   const SIDE_KINDS = [...AGENT_KINDS, ["term", "终端"]];
   let extAll = store.get("extAll", false);
   let sideView = store.get("sideView", "all"), sideKind = store.get("sideKind", "");
-  if (!(sideView === "all" || sideView === "status" || sideView === "archive" || sideView.startsWith("m:"))) sideView = "all";
+  if (!(sideView === "all" || sideView === "status" || sideView.startsWith("m:"))) sideView = "all";
   if (!SIDE_KINDS.some(([k]) => k === sideKind)) sideKind = "";
   // Folds of groupings that are gone are dropped.
   const sideFold = Object.fromEntries(Object.entries(store.get("sideFold", {})).filter(([k]) => /^(status|p):/.test(k)));
@@ -4218,12 +4235,11 @@
       if (r.mark?.unread && r.rank >= ENDED_RANK) r.bucket = "done";
       return r;
     };
-    const extRows = ext.filter((e) => !workerSessions.has(e.session)).map((e) => {
+    const extRows = ext.filter((e) => !readOnlyHidden(e) && !workerSessions.has(e.session)).map((e) => {
       const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
-      if (readOnlyHidden(e) && !isCollieArchived({ kind: shortKind(e.kind), mark: m })) return null;
       return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
         t: new Date(e.updated || e.started), human: +new Date(e.human_at || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, surface: e.surface, live: !!e.live });
-    }).filter(Boolean);
+    });
     const histRows = hist.filter((h) => !collieRan(h)).map((h) => {
       const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
       return rest({ id: "h:" + h.id, src: "hist", html: histRow(h, key, m), kind: shortKind(h.kind), bucket: "recent", rank: ENDED_RANK, t: new Date(h.ended), human: +new Date(h.human_at || h.ended), machine, cwd: h.cwd,
@@ -4239,23 +4255,6 @@
       ...extRows.filter((r) => r.live || !histKeys.has(r.key)),
       ...histRows.filter((r) => !liveKeys.has(r.key)),
     ].filter((r) => !(r.archived && r.rank >= RANK.done));
-  }
-  // Native archives drop out of the agent's list. Keep enough of the saved
-  // entry to restore it even when the source computer is offline.
-  function missingArchiveRows(rows) {
-    const present = new Set(rows.map((r) => r.key));
-    return Object.entries(marks).flatMap(([key, mark]) => {
-      const [tag, kind, session] = key.split("|");
-      if (!session || present.has(key) || !isCollieArchived({ kind, mark })) return [];
-      const [local, hub] = tag.split("~"), machine = hub ? tagged(local, hub) : local;
-      const id = "archive:" + key, name = mark.title || mark.archive?.name || session;
-      const sub = [KIND_LABEL[kind] || kind, machine && machineName(machine)].filter(Boolean).join(" · ");
-      const html = `<li><button type="button" class="item ended" data-row="${esc(id)}" data-archive-menu title="${esc(name)}">
-        <span class="glyph">${sessionGlyph(kind)}</span>
-        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(sub)}</div></span></button></li>`;
-      return [{ id, key, mark, name, kind, machine, session, html, src: "archive", bucket: "recent", rank: ENDED_RANK,
-        t: new Date(mark.at), human: +new Date(mark.at), cwd: mark.archive?.cwd, surface: mark.archive?.surface }];
-    });
   }
   // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {
@@ -4295,12 +4294,7 @@
   // Narrowed to a kind, the status groups show open.
   const sideFoldable = () => !(sideView === "status" && sideKind);
   function renderSessions() {
-    const archiveView = sideView === "archive";
-    const allRows = sideRows();
-    const archivedRows = allRows.filter(isCollieArchived);
-    const missing = missingArchiveRows(allRows);
-    const hasArchived = archivedRows.length || missing.length;
-    const all = archiveView ? [...archivedRows, ...missing] : allRows.filter((r) => !isCollieArchived(r));
+    const all = sideRows().filter((r) => !isCollieArchived(r));
     readOnOpen(all);
     sideByRow = new Map(all.filter((r) => r.kind || r.term).map((r) => [r.id, r]));
     const kindOf = (r) => r.bucket === "term" ? "term" : r.kind;
@@ -4319,7 +4313,7 @@
     const rows = sideKind ? viewRows.filter((r) => kindOf(r) === sideKind || r.bucket === "attn") : viewRows;
     const nKind = {};
     for (const r of all) if (inView(r)) nKind[kindOf(r)] = (nKind[kindOf(r)] || 0) + 1;
-    const viewList = [["all", "全部"], ["status", "状态"], ...(hasArchived || archiveView ? [["archive", "已归档"]] : []), ...(ids.length > 1 || on !== null ? ids.map((id) => ["m:" + id, machineName(id), online(id)]) : [])];
+    const viewList = [["all", "全部"], ["status", "状态"], ...(ids.length > 1 || on !== null ? ids.map((id) => ["m:" + id, machineName(id), online(id)]) : [])];
     const viewHTML = viewList.map(([v, label, up]) =>
       `<button type="button" data-view="${esc(v)}" class="${v === sideView ? "on" : ""}">${up === undefined ? "" : `<span class="dot ${up ? "online" : "offline"}"></span>`}${esc(label)}</button>`).join("");
     const kinds = SIDE_KINDS.filter(([v]) => nKind[v] || v === sideKind);
@@ -4346,7 +4340,7 @@
     // 进行中 is always there when nothing runs, to say how to start one.
     const groups = sideGroups(rows).filter((g) => g.rows.length || (g.key === "going" && !sideKind
       && !rows.some((r) => ["done", "going", "idle"].includes(r.bucket))));
-    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${archiveView ? "暂无已归档的会话。" : sideKind === "term" ? "没有开着的终端。"
+    const html = groups.map(groupHTML).join("") || `<p class="empty-hint">${sideKind === "term" ? "没有开着的终端。"
       : sideKind ? "没有这个 agent 的会话。" : on !== null ? "这台电脑上没有会话。" : "没有会话。点右上角 + 新建，或让 Collie 派一个。"}</p>`;
     const box = $("#side-groups"), views = $("#side-view"), bar = $("#side-only");
     if (box._html !== html) box.innerHTML = box._html = html;
@@ -4455,10 +4449,7 @@
   $(".side-scroll").addEventListener("click", (ev) => {
     const v = ev.target.closest("[data-view]"), k = ev.target.closest("[data-kind]");
     const det = ev.target.closest("summary")?.parentElement, fold = det?.dataset.fold;
-    if (v) {
-      sideView = v.dataset.view; store.set("sideView", sideView);
-      if (sideView === "archive") { sideKind = ""; store.set("sideKind", sideKind); }
-    }
+    if (v) { sideView = v.dataset.view; store.set("sideView", sideView); }
     // A kind is on or off: tapping it again shows every kind.
     else if (k) { sideKind = k.dataset.kind === sideKind ? "" : k.dataset.kind; store.set("sideKind", sideKind); }
     else if (fold) {
@@ -4535,7 +4526,7 @@
     ctxRow = row;
     const unread = !!row.mark?.unread;
     const items = row.term ? [["close", "关闭", false]] : [
-      ["rename", "重命名", row.src === "archive" || (!typesRename(row) && !row.session)],
+      ["rename", "重命名", !typesRename(row) && !row.session],
       [unread ? "read" : "unread", unread ? "标记为已读" : "标记为未读", !row.key],
       ["copy", "复制对话 ID", !row.session],
       ["archive", isCollieArchived(row) ? "取消归档" : "归档", !row.key],
@@ -4593,12 +4584,6 @@
   // events that close it again (and open the row); cancel them.
   sideBox.addEventListener("touchend", (e) => { if (hold?.fired) e.preventDefault(); }, { passive: false });
   sideBox.addEventListener("click", (e) => {
-    const button = e.target.closest("[data-archive-menu]");
-    const row = sideByRow.get(button?.dataset.row);
-    if (row && !hold?.fired) {
-      const pos = button.getBoundingClientRect();
-      openCtx(row, pos.left, pos.bottom);
-    }
     if (hold?.fired) { e.preventDefault(); e.stopPropagation(); }
     hold = null;
   }, true);
@@ -4646,15 +4631,16 @@
     const busy = r.status === "working" || r.status === "blocked";
     if (archived && !await ask({
       title: `归档「${r.name}」？`,
-      text: closePane ? (busy ? "这个 Codex 窗格有正在运行的任务，关闭会中断任务。归档后可以在侧栏「已归档」里恢复会话。"
-        : "会先关闭这个 Codex 窗格，再同步归档。你可以在侧栏「已归档」里恢复会话。")
-        : "Collie 会尝试同步归档。你可以在侧栏「已归档」里恢复。",
+      text: closePane ? (busy ? "这个 Codex 窗格有正在运行的任务，关闭会中断任务，随后同步归档。"
+        : "会先关闭这个 Codex 窗格，再同步归档。")
+        : "Collie 会尝试同步归档。",
       ok: "归档",
     })) return;
     if (closePane && find(r.id)?.session !== r.session) {
       toast("窗格里的会话已变化，请重新选择要归档的会话", "attn");
       return;
     }
+    const undo = archived ? { action: { label: "撤销", onClick: () => archiveRow(r, false) } } : undefined;
     changingArchive.add(r.key);
     try {
       if (archived) await setMark(r.key, { collie_archived: true, archive: { name: r.name, cwd: r.cwd, surface: r.surface } });
@@ -4668,15 +4654,15 @@
         }
         result = await api(`/api/sessions/${sessionPath(r)}/${archived ? "archive" : "unarchive"}`, { body: { kind: r.kind, surface: r.surface, just_closed: closePane } });
       } catch (err) {
-        const action = archived ? "已在 Collie 归档，但" : "还在 Collie 的「已归档」中，";
+        const action = archived ? "已在 Collie 归档，但" : "取消归档失败，";
         const detail = [404, 405].includes(err.status) ? "这台电脑的 Collie 版本可能较旧" : err.status ? err.message : "连接不到这台电脑，请重试";
-        toast(`${action} ${agent} 那边没改成：${detail}`, "attn");
+        toast(`${action} ${agent} 那边没改成：${detail}`, "attn", undo);
         return;
       }
       if (!archived) await setMark(r.key, { collie_archived: false });
       const done = archived ? "已归档" : "已取消归档";
-      if (result.note) toast(`已在 Collie ${archived ? "归档" : "取消归档"}。${result.note}`, "attn");
-      else toast(done);
+      if (result.note) toast(`已在 Collie ${archived ? "归档" : "取消归档"}。${result.note}`, "attn", undo);
+      else toast(done, "", undo);
       loadExternal();
       loadHistory();
     } finally {

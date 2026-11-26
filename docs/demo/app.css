@@ -335,7 +335,6 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 10px;
   padding: var(--row-py) var(--row-px); border-radius: calc(10px * var(--round)); text-decoration: none; transition: background .12s;
 }
-button[data-archive-menu] { width: 100%; border: 0; background: transparent; text-align: left; }
 .nav-item:hover, .item:hover { background: var(--bg-3); }
 .nav-item.active, .item.active { background: var(--sel-bg); box-shadow: var(--sel-ring); }
 .nav-ico { width: 26px; height: 26px; display: grid; place-items: center; border-radius: calc(8px * var(--round)); background: var(--bg); border: var(--bw) solid var(--line); color: var(--t-secondary); }
@@ -1483,6 +1482,11 @@ a.url:hover { text-decoration-color: currentColor; }
 /* ─── toasts ─── */
 .toasts { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translateX(-50%); display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); }
 .toast { padding: 10px 16px; border-radius: calc(12px * var(--round)); font-size: var(--fs-meta); background: var(--fg); color: var(--bg); box-shadow: var(--shadow); animation: rise .2s ease-out; }
+.toast.has-act { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: min(320px, calc(100vw - 32px)); padding: 6px 8px 6px 16px; }
+.toast-msg { min-width: 0; line-height: var(--lh-ui); }
+.toast-act { flex: none; min-height: 32px; padding: 0 12px; border: 0; border-radius: calc(8px * var(--round)); background: color-mix(in srgb, currentColor 14%, transparent); color: inherit; font-size: var(--fs-meta); font-weight: var(--fw-strong); cursor: pointer; }
+.toast-act:hover { background: color-mix(in srgb, currentColor 22%, transparent); }
+.toast-act:active { background: color-mix(in srgb, currentColor 28%, transparent); }
 .toast.attn { background: var(--attn); color: var(--on-attn); }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
@@ -2212,8 +2216,12 @@ select.picked { display: none; }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
   /* Toasts drop from under the header, clear of the input box. */
   .toasts { top: calc(env(safe-area-inset-top) + 64px); bottom: auto; }
+  /* Action snackbars (e.g. undo archive) sit at the bottom for easy thumb reach. */
+  .toasts:has(.toast.has-act) { top: auto; bottom: calc(env(safe-area-inset-bottom) + 60px); width: calc(100vw - 24px); max-width: 480px; }
+  .toast.has-act { width: 100%; min-width: 0; min-height: 52px; padding: 4px 6px 4px 16px; font-size: var(--fs-body); }
+  .toast-act { min-height: 44px; min-width: 56px; padding: 0 14px; font-size: var(--fs-body); }
   #update-bar { top: calc(env(safe-area-inset-top) + 64px); }
-  .has-update .toasts { top: calc(env(safe-area-inset-top) + 108px); }
+  .has-update .toasts:not(:has(.toast.has-act)) { top: calc(env(safe-area-inset-top) + 108px); }
   .auto-body { scroll-padding-bottom: 96px; }
   /* While typing, the strip of running workers gives its room to the chat. */
   #v-collie:has(.composer textarea:focus) .crew { display: none; }
