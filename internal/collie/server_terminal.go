@@ -1,0 +1,218 @@
+package collie
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+)
+
+// streamPane mirrors one pane over SSE.
+//
+//	mode=screen: recent output with ANSI styling, for a scrollable terminal render,
+//	             the cursor marked in it (markScreenCursor).
+//	mode=log:    recent output with soft wraps joined, for reading on narrow screens.
+//
+// screenLines is how far back screen mode can scroll: herdr's pane.read
+// returns at most 1000 lines however many you ask for.
+const screenLines = 1000
+
+// paneWheel reports whether screen mode should hand the wheel to the program
+// in the pane instead of scrolling the page: an agent drawing fullscreen
+// (Claude Code with tui=fullscreen, Codex without --no-alt-screen, agy with
+// altScreenMode=always) keeps its history to itself, so herdr has no
+// scrollback for it, and scrolls on mouse wheel reports. All three ignore
+// the reports when inline, so a short inline history (no scrollback yet)
+// gets them harmlessly. Shells and other programs keep the page's own
+// scrolling: a shell would print the reports.
+func paneWheel(p Pane) bool {
+	return p.Agent != nil && slices.Contains(agentKinds, *p.Agent) && p.Scroll != nil && p.Scroll.MaxOffset == 0
+}
+
+func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	mode := r.URL.Query().Get("mode")
+	sse, ok := newSSE(w)
+	if !ok {
+		return
+	}
+	rates := pollRates{normal: 200 * time.Millisecond, quick: 50 * time.Millisecond, burst: 10 * time.Millisecond}
+	if mode == "log" {
+		rates = pollRates{normal: 700 * time.Millisecond, quick: 100 * time.Millisecond}
+	}
+	var woke time.Time
+	wake, unsubscribe := s.wakes.subscribe(id)
+	defer unsubscribe()
+	var lastText string
+	var lastSize Rect
+	var wheel bool
+	var sizeAt time.Time
+	beat := time.Now()
+	for {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		var (
+			res ReadResult
+			err error
+		)
+		if mode == "log" {
+			res, err = s.herdr.Read(ctx, id, "recent_unwrapped", "text", 600)
+		} else {
+			if time.Since(sizeAt) > 2*time.Second {
+				if sz, e := s.herdr.PaneSize(ctx, id); e == nil {
+					lastSize = sz
+				}
+				if p, e := s.herdr.Pane(ctx, id); e == nil {
+					wheel = paneWheel(p)
+				}
+				sizeAt = time.Now()
+			}
+			res, err = s.herdr.Read(ctx, id, "recent", "ansi", screenLines)
+		}
+		cancel()
+		if err != nil {
+			if notFound(err) {
+				b, _ := json.Marshal(map[string]any{"error": err.Error()})
+				sse.send("gone", b)
+				return
+			}
+		} else {
+			if res.Text != lastText {
+				lastText = res.Text
+				text, cursor := res.Text, false
+				if mode != "log" {
+					text, cursor = markScreenCursor(text, lastSize.Height)
+					text = trimScreenBlankTail(text)
+				}
+				b, _ := json.Marshal(map[string]any{
+					"text": text, "revision": res.Revision, "truncated": res.Truncated,
+					"cols": lastSize.Width, "rows": lastSize.Height, "cursor": cursor, "wheel": wheel,
+				})
+				if sse.send("frame", b) != nil {
+					return
+				}
+				beat = time.Now()
+			}
+		}
+		if time.Since(beat) > 15*time.Second {
+			sse.comment()
+			beat = time.Now()
+		}
+		if !pollAfter(r.Context().Done(), wake, rates, &woke) {
+			return
+		}
+	}
+}
+
+// trimScreenBlankTail drops unpainted blank rows at the bottom of an ANSI
+// snapshot while keeping internal blank rows and background-styled bars.
+func trimScreenBlankTail(s string) string {
+	for len(s) > 0 {
+		i := strings.LastIndexByte(s, '\n')
+		line := s[i+1:]
+		if !isUnpaintedBlankRow(line) {
+			break
+		}
+		if i < 0 {
+			return ""
+		}
+		if i > 0 && s[i-1] == '\r' {
+			i--
+		}
+		s = s[:i]
+	}
+	return s
+}
+
+func isUnpaintedBlankRow(line string) bool {
+	rest := strings.ReplaceAll(line, "\x1b[0m", "")
+	rest = strings.ReplaceAll(rest, "\x1b[m", "")
+	for i := 0; i < len(rest); i++ {
+		if rest[i] != ' ' && rest[i] != '\r' {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text  string `json:"text"`
+		Enter bool   `json:"enter"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	id := r.PathValue("id")
+	ctx := r.Context()
+	if body.Text != "" {
+		if err := s.herdr.SendText(ctx, id, body.Text); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	if body.Enter {
+		if err := s.herdr.SendKeys(ctx, id, "enter"); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	s.wakes.wake(id)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) sendKeys(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Keys []string `json:"keys"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if len(body.Keys) == 0 || len(body.Keys) > 64 {
+		writeJSON(w, 400, map[string]any{"error": "keys required"})
+		return
+	}
+	if err := s.herdr.SendKeys(r.Context(), r.PathValue("id"), body.Keys...); err != nil {
+		fail(w, err)
+		return
+	}
+	s.wakes.wake(r.PathValue("id"))
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) promptAgent(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Text) == "" {
+		writeJSON(w, 400, map[string]any{"error": "empty prompt"})
+		return
+	}
+	if err := s.herdr.Prompt(r.Context(), r.PathValue("target"), body.Text); err != nil {
+		fail(w, err)
+		return
+	}
+	s.wakes.wake(r.PathValue("target"))
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// closePane closes one terminal; herdr closes its workspace with its last pane.
+func (s *Server) closePane(w http.ResponseWriter, r *http.Request) {
+	if err := s.herdr.Call(r.Context(), "pane.close", map[string]any{"pane_id": r.PathValue("id")}, nil); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) closeWorkspace(w http.ResponseWriter, r *http.Request) {
+	if err := s.herdr.Call(r.Context(), "workspace.close", map[string]any{"workspace_id": r.PathValue("id")}, nil); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
