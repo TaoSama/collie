@@ -41,7 +41,33 @@ func (s *Server) inboxRecent(ctx context.Context, c *InboxConv, stored []InboxMs
 		return stored, true
 	}
 	s.repairInboxPreview(c, recent.Messages)
-	return mergeInboxRecent(*c, stored, recent.Messages, outs, s.ext.footer()), false
+	merged := mergeInboxRecent(*c, stored, recent.Messages, outs, s.ext.footer())
+	// The chat app may have a message newer than the list shows (one that
+	// came while nothing passed it on): the list follows it.
+	if at, preview := latestLine(merged); at.After(c.LastAt) {
+		s.ext.store.noteLatest(c.ID, at, preview)
+		if cur, ok := s.ext.store.conv(c.ID); ok {
+			c.LastAt, c.Preview = cur.LastAt, cur.Preview
+		}
+	}
+	return merged, false
+}
+
+// latestLine is the newest message as the list shows it: who sent it (AI
+// 代答 for Collie's answers from your account) and its first words.
+func latestLine(msgs []InboxMsg) (time.Time, string) {
+	if len(msgs) == 0 {
+		return time.Time{}, ""
+	}
+	last := msgs[len(msgs)-1]
+	if last.Ref != "" || last.Bot {
+		text := strings.TrimSpace(last.Text)
+		if i := strings.LastIndex(text, "\n\n"); i > 0 {
+			text = text[:i] // the footer, its last paragraph
+		}
+		return last.At, inboxPreview(text, aiSender, false)
+	}
+	return last.At, inboxPreview(last.Text, last.SenderName, last.Mine)
 }
 
 // Replace an old placeholder only when the source still has that last message.

@@ -235,6 +235,9 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 	return c
 }
 
+// aiSender names Collie's answers, sent from your account, in previews.
+const aiSender = "AI 代答"
+
 func inboxPreview(text, sender string, mine bool) string {
 	text = oneLine(text)
 	if text == "" {

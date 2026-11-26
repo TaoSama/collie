@@ -161,6 +161,9 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 	}
 	h.store.putOut(o)
 	h.store.addMsg(InboxMsg{ID: "out:" + o.Ref, Conv: convID, At: o.At, Mine: true, Text: full, Ref: o.Ref})
+	// The chat's last line is now Collie's answer: the app keeps the echo of
+	// our own send from Collie, so nothing else would move the preview on.
+	h.store.noteLatest(convID, o.At, inboxPreview(text, aiSender, false))
 	if r := h.run(conv.Ext); r != nil {
 		go h.trySend(r, o)
 	}

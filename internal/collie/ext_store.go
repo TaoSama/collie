@@ -159,17 +159,17 @@ func (c *InboxConv) setAsk(topic string, change func(*ConvAsk)) {
 
 // InboxMsg is one message of an open conversation.
 type InboxMsg struct {
-	ID         string                `json:"id"`
-	Conv       string                `json:"conv"`
-	At         time.Time             `json:"at"`
-	Sender     string                `json:"sender,omitempty"`
-	SenderName string                `json:"sender_name,omitempty"`
-	Mine       bool                  `json:"mine,omitempty"`
-	Text       string                `json:"text"`
-	Ref        string                `json:"ref,omitempty"` // a send of Collie's: its outbox ref
+	ID         string    `json:"id"`
+	Conv       string    `json:"conv"`
+	At         time.Time `json:"at"`
+	Sender     string    `json:"sender,omitempty"`
+	SenderName string    `json:"sender_name,omitempty"`
+	Mine       bool      `json:"mine,omitempty"`
+	Text       string    `json:"text"`
+	Ref        string    `json:"ref,omitempty"` // a send of Collie's: its outbox ref
 	// Bot: Collie's answer, sent from your account (it ends in the footer).
-	Bot bool `json:"bot,omitempty"`
-	View       *extproto.MessageView `json:"view,omitempty"`
+	Bot  bool                  `json:"bot,omitempty"`
+	View *extproto.MessageView `json:"view,omitempty"`
 }
 
 // OutboxItem is one send to a conversation.
@@ -211,6 +211,13 @@ type extStore struct {
 func newExtStore(db *sql.DB) *extStore {
 	st := &extStore{db: db, convs: map[string]*InboxConv{}}
 	loadRows(db, `SELECT data FROM ext_convs`, func(c *InboxConv) { st.convs[c.ID] = c })
+	// Saved before Collie's answers moved a chat's last message on: catch up with them.
+	for id, c := range st.convs {
+		if at, line := latestLine(st.msgs(id, c.LastAt)); at.After(c.LastAt) && line != "" {
+			c.LastAt, c.Preview = at, line
+			st.putConvLocked(c)
+		}
+	}
 	return st
 }
 
@@ -294,6 +301,22 @@ func trimInboxMsgs(w inboxWriter, conv string) error {
 	_, err := w.Exec(`DELETE FROM ext_msgs WHERE conv = ? AND id NOT IN (SELECT id FROM ext_msgs WHERE conv = ? ORDER BY at DESC LIMIT ?)`,
 		conv, conv, inboxKeepMsgs)
 	return err
+}
+
+// noteLatest moves a conversation's last message on, when at is not older
+// than the one it shows.
+func (st *extStore) noteLatest(id string, at time.Time, preview string) {
+	if preview == "" {
+		return
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c := st.convs[id]
+	if c == nil || at.Before(c.LastAt) || c.LastAt.Equal(at) && c.Preview == preview {
+		return
+	}
+	c.LastAt, c.Preview = at, preview
+	st.putConvLocked(c)
 }
 
 func (st *extStore) addMsg(m InboxMsg) {

@@ -1272,3 +1272,63 @@ func TestInboxNamesAndAnswers(t *testing.T) {
 		t.Fatalf("the answer is the bot's, your own message yours: %+v", got)
 	}
 }
+
+// A chat handed to AI shows its latest message: Collie's own answer moves
+// the list on (the app keeps the echo of it from Collie), and so does a
+// newer message the chat app has when the chat is opened.
+func TestInboxLatestMessage(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	m := h.manifest("fake")
+	asked := time.Now().Add(-time.Minute)
+	in := incomingMsg{Chat: "c1", ChatName: "我", ChatKind: "self", ID: "1", Sender: "me", Mine: true, Owner: true, Text: "/ai 你好", At: asked, Live: true}
+	if err := h.incoming(m, in); err != nil {
+		t.Fatal(err)
+	}
+	h.store.update("fake:c1", func(c *InboxConv) { c.On = true; c.AskMsg = "1"; c.AskAt = asked })
+	if _, err := h.sendOut("ext:fake:c1", "你好！有什么可以帮你？", extproto.KindAnswer, runInfo{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := h.store.conv("fake:c1")
+	if c.Preview != "AI 代答: 你好！有什么可以帮你？" || !c.LastAt.After(asked) {
+		t.Fatalf("the answer is the latest: %q at %v", c.Preview, c.LastAt)
+	}
+	before := c.LastAt
+	h.store.noteLatest("fake:c1", before.Add(-time.Hour), "旧的")
+	if c, _ = h.store.conv("fake:c1"); c.Preview != "AI 代答: 你好！有什么可以帮你？" {
+		t.Fatalf("an older message doesn't move it back: %q", c.Preview)
+	}
+}
+
+func TestInboxLatestLine(t *testing.T) {
+	at := time.Date(2026, 11, 27, 0, 52, 0, 0, time.UTC)
+	for _, c := range []struct {
+		m    InboxMsg
+		want string
+	}{
+		{InboxMsg{At: at, Mine: true, Text: "@缪张澍 orca t3code"}, "你: @缪张澍 orca t3code"},
+		{InboxMsg{At: at, Mine: true, Bot: true, Text: "你好！\n\n🤖 AI 代答"}, "AI 代答: 你好！"},
+		{InboxMsg{At: at, SenderName: "李四", Text: "评审定在周五"}, "李四: 评审定在周五"},
+	} {
+		if got, line := latestLine([]InboxMsg{{At: at.Add(-time.Hour), Text: "旧"}, c.m}); !got.Equal(at) || line != c.want {
+			t.Errorf("%+v: %v %q, want %q", c.m, got, line, c.want)
+		}
+	}
+	if at, line := latestLine(nil); !at.IsZero() || line != "" {
+		t.Fatal("nothing: nothing")
+	}
+}
+
+// A chat whose answers came before the list followed them catches up when the hub starts.
+func TestInboxLatestCatchUp(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	at := time.Now().Add(-time.Hour)
+	c := &InboxConv{ID: "fake:c1", Ext: "fake", Chat: "c1", Name: "我", Kind: "self", LastAt: at, Preview: "你: 你好", On: true}
+	if err := putInboxConv(h.store.db, c); err != nil {
+		t.Fatal(err)
+	}
+	h.store.addMsg(InboxMsg{ID: "out:r1", Conv: c.ID, At: at.Add(time.Minute), Mine: true, Ref: "r1", Text: "你好！\n\n🤖 AI 代答，仅供参考"})
+	again := newExtStore(h.store.db)
+	if got, _ := again.conv(c.ID); got.Preview != "AI 代答: 你好！" || !got.LastAt.Equal(at.Add(time.Minute)) {
+		t.Fatalf("caught up: %q at %v", got.Preview, got.LastAt)
+	}
+}
