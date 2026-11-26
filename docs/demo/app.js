@@ -760,7 +760,7 @@
     return s;
   }
   const isWorker = (name) => sup.workers.some((w) => w.name === name && !w.ended);
-  const byTopic = () => sup.worker_title === "topic"; // 自动化 → 设置: call workers by their session's title
+  const byTopic = () => sup.worker_title !== "name"; // 自动化 → 设置: call workers by their session's title (default)
   // A worker as its session is called (see title).
   const workerLabel = (w) => { const a = !w.ended && state.agents.find((x) => x.name === w.name); return a ? title(a) : w.name; };
   const routerPane = () => state.agents.find(isLocalRouter)?.pane_id;
@@ -778,7 +778,7 @@
   function title(v) {
     if (!v) return "";
     if (isLocalRouter(v)) return "Collie";
-    // Collie talks about its agents by name; the session's own title on request.
+    // By default call Collie's agents by their session's own title; worker name on request.
     if (isWorker(v.name)) return byTopic() && v.topic || v.name;
     return v.topic || (v.name && !autoName(v.name) ? v.name : base(tilde(v.cwd))) || v.pane_id;
   }
@@ -3820,7 +3820,7 @@
         <div class="set-grid">
           <label>聊天回复长度<input name="reply_chars" type="number" min="40" step="20" value="${s.reply_chars || 200}"><small>Collie 平时每条回复大约多少字（英文按词算）；你要详细时它会写长</small></label>
           <label>多久没进展算卡住<input name="stall_minutes" type="number" min="0" value="${s.stall_minutes}"><small>分钟；0 表示不检查</small></label>
-          <label>Collie 派出的会话显示<select name="worker_title" data-pick="compact" data-title="Collie 派出的会话显示"><option value="" ${s.worker_title ? "" : "selected"} data-sub="Collie 派活时起的名字">名字</option><option value="topic" ${s.worker_title === "topic" ? "selected" : ""} data-sub="agent 给会话起的标题，还没有时显示名字">标题</option></select></label>
+          <label>Collie 派出的会话显示<select name="worker_title" data-pick="compact" data-title="Collie 派出的会话显示"><option value="topic" ${s.worker_title !== "name" ? "selected" : ""} data-sub="agent 给会话起的标题，还没有时显示名字">标题</option><option value="name" ${s.worker_title === "name" ? "selected" : ""} data-sub="Collie 派活时起的名字">名字</option></select></label>
         </div>
         <label class="check"><input type="checkbox" name="bypass" ${s.ask_permissions ? "" : "checked"}> 跳过权限确认：Collie 和它派出的 agent 直接跑命令、改文件，不停下来问你（重启 Collie、新派的 agent 生效）</label>
         <label class="check"><input type="checkbox" name="paused" ${s.paused ? "checked" : ""}> 暂停投递：事件照收，先不交给 agent</label>

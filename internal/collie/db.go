@@ -93,6 +93,7 @@ func loadState(db *sql.DB) (*State, error) {
 	if v, ok := kv["settings"]; ok {
 		json.Unmarshal([]byte(v), &st.Settings)
 		st.Settings.migrateReply()
+		st.Settings.WorkerTitle = normalizeWorkerTitle(st.Settings.WorkerTitle)
 	}
 	if v, ok := kv["policies"]; ok {
 		json.Unmarshal([]byte(v), &st.Policies)

@@ -182,8 +182,8 @@ type Settings struct {
 	// Collie and its workers run with the agent's permission checks off
 	// (--dangerously-skip-permissions and the like) unless this is set.
 	AskPermissions bool `json:"ask_permissions,omitempty"`
-	// What the UI calls the sessions Collie started: "" their worker name,
-	// "topic" the title the agent gave its session.
+	// What the UI calls the sessions Collie started: "" or "topic" the title
+	// the agent gave its session (default), "name" their worker name.
 	WorkerTitle string `json:"worker_title,omitempty"`
 	// Extensions (extensions/README.md §4): the word that hands a message in
 	// an open conversation to its agent ("" for /ai), and the line under
@@ -192,7 +192,17 @@ type Settings struct {
 	ExtFooter  string `json:"ext_footer,omitempty"`
 }
 
-const workerTitleTopic = "topic"
+const (
+	workerTitleTopic = "topic"
+	workerTitleName  = "name"
+)
+
+func normalizeWorkerTitle(v string) string {
+	if v == workerTitleName {
+		return workerTitleName
+	}
+	return workerTitleTopic
+}
 
 type State struct {
 	Seq       int                `json:"seq"`
@@ -224,6 +234,7 @@ func defaultState() *State {
 		Settings: Settings{
 			RouterKind: "claude", WorkerKind: "claude", WorkerCwd: "~",
 			NotifyLevel: "quiet", StallMinutes: 12, ReplyChars: 200,
+			WorkerTitle: workerTitleTopic,
 		},
 	}
 }

@@ -117,7 +117,7 @@ func (s *Server) superState(ctx context.Context) superView {
 	wb := s.workbenchOn() // before sp.mu: an extension's setting may ask where Collie runs
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	v := superView{Router: routerView{Kind: sp.st.Settings.RouterKind, Status: "asleep"}, Paused: sp.st.Settings.Paused, WorkerTitle: sp.st.Settings.WorkerTitle, Workbench: wb}
+	v := superView{Router: routerView{Kind: sp.st.Settings.RouterKind, Status: "asleep"}, Paused: sp.st.Settings.Paused, WorkerTitle: normalizeWorkerTitle(sp.st.Settings.WorkerTitle), Workbench: wb}
 	if a, ok := live[routerName]; ok {
 		v.Router = routerView{Alive: true, Status: a.Status, PaneID: a.Pane, Kind: a.Kind}
 		if asked := sp.routerAskedAt; a.Status == "working" && !asked.IsZero() {
@@ -828,8 +828,10 @@ func (s *Server) superSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
+	st := sp.st.Settings
+	st.WorkerTitle = normalizeWorkerTitle(st.WorkerTitle)
 	writeJSON(w, 200, map[string]any{
-		"settings": sp.st.Settings, "policies": sp.st.Policies,
+		"settings": st, "policies": sp.st.Policies,
 		"hook_key": s.hookKey(), "router_dir": dir, "bin": bin,
 	})
 }
@@ -926,9 +928,7 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 		if ns.NotifyLevel != "normal" {
 			ns.NotifyLevel = "quiet"
 		}
-		if ns.WorkerTitle != workerTitleTopic {
-			ns.WorkerTitle = ""
-		}
+		ns.WorkerTitle = normalizeWorkerTitle(ns.WorkerTitle)
 		for _, p := range []*string{&ns.RouterModel, &ns.RouterEffort, &ns.WorkerModel, &ns.WorkerEffort} {
 			if *p = strings.TrimSpace(*p); !modelNameRe.MatchString(*p) {
 				*p = ""
