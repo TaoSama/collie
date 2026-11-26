@@ -195,7 +195,10 @@ func TestRtdLifecycleMultipartBudget(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if requests != 5 || s.ReplySentChunks("delivery") != 4 || s.IsMessageProcessed("delivery") {
-		t.Fatalf("requests %d, chunks %d", requests, s.ReplySentChunks("delivery"))
+	// 900 ms fits four 200 ms sends and cuts the fifth (five requests, four
+	// chunks); slow machines (-race under load) fit fewer. What must hold:
+	// the budget ends the reply early, and only the finished sends count.
+	if chunks := s.ReplySentChunks("delivery"); requests < 2 || requests > 5 || chunks != requests-1 || s.IsMessageProcessed("delivery") {
+		t.Fatalf("requests %d, chunks %d", requests, chunks)
 	}
 }
