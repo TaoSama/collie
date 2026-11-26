@@ -10,7 +10,7 @@ import (
 
 // fileIncoming commits the message, conversation and any resulting trigger
 // together. The scheduler and the inbox see the new state only after commit.
-func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trigger, *string, error) {
+func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trigger, error) {
 	sp, store := h.sp, h.store
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
@@ -26,32 +26,27 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 	if keep && in.Mine {
 		ours, err := h.ours(id, in.ID, in.Text, h.footerLocked())
 		if err != nil {
-			return InboxConv{}, nil, nil, fmt.Errorf("check sent messages: %w", err)
+			return InboxConv{}, nil, fmt.Errorf("check sent messages: %w", err)
 		}
 		keep = !ours // Collie's own answer is already shown as sent.
 	}
 
 	var text string
-	var directory *string
 	if keep {
 		if request, ok := in.triggerRequest(m, c, request, triggered); ok {
-			if status, ok := directoryAsk(m, in, request); ok && len(in.Files) == 0 {
-				directory = &status
-			} else {
-				var err error
-				text, err = h.requestText(m, c, in, request)
-				if err != nil {
-					return InboxConv{}, nil, nil, fmt.Errorf("read conversation context: %w", err)
-				}
-				c.AskMsg, c.AskAt, c.AskBy, c.Handed = in.ID, time.Now(), in.SenderName, in.At
-				c.Unread = 0
+			var err error
+			text, err = h.requestText(m, c, in, request)
+			if err != nil {
+				return InboxConv{}, nil, fmt.Errorf("read conversation context: %w", err)
 			}
+			c.AskMsg, c.AskAt, c.AskBy, c.Handed = in.ID, time.Now(), in.SenderName, in.At
+			c.Unread = 0
 		}
 	}
 
 	tx, err := store.db.Begin()
 	if err != nil {
-		return InboxConv{}, nil, nil, err
+		return InboxConv{}, nil, err
 	}
 	defer func() {
 		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
@@ -61,17 +56,17 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 	if keep {
 		added, err := putInboxMsg(tx, InboxMsg{ID: in.ID, Conv: id, At: in.At, Sender: in.Sender, SenderName: in.SenderName, Mine: in.fromYou(), Text: in.Text})
 		if err != nil {
-			return InboxConv{}, nil, nil, fmt.Errorf("save message: %w", err)
+			return InboxConv{}, nil, fmt.Errorf("save message: %w", err)
 		}
 		if !added {
-			return InboxConv{}, nil, nil, nil // already committed
+			return InboxConv{}, nil, nil // already committed
 		}
 		if err := trimInboxMsgs(tx, id); err != nil {
-			return InboxConv{}, nil, nil, fmt.Errorf("trim messages: %w", err)
+			return InboxConv{}, nil, fmt.Errorf("trim messages: %w", err)
 		}
 	}
 	if err := putInboxConv(tx, &c); err != nil {
-		return InboxConv{}, nil, nil, fmt.Errorf("save conversation: %w", err)
+		return InboxConv{}, nil, fmt.Errorf("save conversation: %w", err)
 	}
 
 	var t *Trigger
@@ -85,14 +80,14 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 		if t != nil {
 			h.prepareConvDeliveryLocked(c, t)
 			if err := sp.persistTriggerLocked(tx, t, th); err != nil {
-				return InboxConv{}, nil, nil, fmt.Errorf("save message trigger: %w", err)
+				return InboxConv{}, nil, fmt.Errorf("save message trigger: %w", err)
 			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return InboxConv{}, nil, nil, err
+		return InboxConv{}, nil, err
 	}
 	store.convs[id] = &c
 	sp.publishTriggerLocked(t, th)
-	return c, t, directory, nil
+	return c, t, nil
 }

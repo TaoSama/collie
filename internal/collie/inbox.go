@@ -116,12 +116,9 @@ func (in incomingMsg) fromYou() bool { return in.Mine || in.Owner }
 // incoming files one message: the conversation's line in the inbox always;
 // the message itself and maybe a trigger when the conversation is open.
 func (h *extHost) incoming(m *ExtManifest, in incomingMsg) error {
-	conv, t, directory, err := h.fileIncoming(m, in)
+	conv, t, err := h.fileIncoming(m, in)
 	if err != nil {
 		return err
-	}
-	if directory != nil {
-		h.answerDirectory(conv, in, *directory)
 	}
 	if t != nil {
 		go h.markWorking(conv, in.ID)

@@ -16,6 +16,8 @@ import (
 	"github.com/TaoSama/collie/internal/extproto"
 )
 
+const wechatExt = "wechat"
+
 // WeChat is in the built-in catalog, run by collie itself, off until you
 // turn it on.
 func TestCatalogHasWeChat(t *testing.T) {
@@ -58,46 +60,18 @@ func startWeChat(t *testing.T, h *extHost) {
 	login(t, startExt(t, h, wechatExt))
 }
 
-// The session list asked for on its own is answered by Collie at once,
-// as the answer to that message; anything more goes to the Router.
-func TestWeChatDirectoryQuickPath(t *testing.T) {
+// Asking for the session list is a request like any other: it goes to
+// the Router, and Collie sends nothing by itself.
+func TestWeChatSessionListGoesToRouter(t *testing.T) {
 	sp, h, dir := newExtTestHub(t)
-	now := time.Now()
-	sp.mu.Lock()
-	sp.st.Workers["fix-login"] = &Worker{Name: "fix-login", Kind: "claude", Status: "working", Cwd: "/w/collie", Task: "修登录\n细节", CreatedAt: now}
-	sp.st.Workers["docs"] = &Worker{Name: "docs", Kind: "codex", Status: "idle", Cwd: "/w/collie", Task: "写文档", CreatedAt: now.Add(-time.Hour)}
-	sp.st.Workers["old"] = &Worker{Name: "old", Kind: "codex", Status: "gone", Ended: true, Cwd: "/w/x", Task: "旧的", CreatedAt: now}
-	sp.mu.Unlock()
 	startWeChat(t, h)
-	feed(t, dir, wechatExt, fakeMsg{Chat: "u1", ChatName: "我", ID: "w1", Sender: "u1", SenderName: "我", Mine: true, Text: "查看会话列表"})
-	var sent []map[string]any
-	waitFor(t, "the list sent", func() bool { sent = sentLines(dir, wechatExt); return len(sent) == 1 })
-	text := fmt.Sprint(sent[0]["text"])
-	for _, want := range []string{"collie（", "1. [忙] fix-login：修登录", "2. [闲] docs：写文档"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the list lacks %q:\n%s", want, text)
-		}
+	for i, text := range []string{"查看会话列表", "有哪些空闲会话"} {
+		feed(t, dir, wechatExt, fakeMsg{Chat: "u1", ChatName: "我", ID: fmt.Sprintf("w%d", i), Sender: "u1", SenderName: "我", Mine: true, Text: text})
+		waitFor(t, text+" to the Router", func() bool { return len(extTriggers(sp, "ext:"+wechatExt)) == i+1 })
 	}
-	if strings.Contains(text, "old") || sent[0]["kind"] != extproto.KindAnswer {
-		t.Errorf("an ended worker listed, or not an answer: %v", sent[0])
-	}
-	if o := h.store.out(fmt.Sprint(sent[0]["ref"])); o == nil || o.ReplyTo != "w1" {
-		t.Fatalf("the list answers w1: %+v", o)
-	}
-	if n := len(extTriggers(sp, "ext:"+wechatExt)); n != 0 {
-		t.Fatalf("the list went to the Router too: %d triggers", n)
-	}
-
-	feed(t, dir, wechatExt, fakeMsg{Chat: "u1", ChatName: "我", ID: "w2", Sender: "u1", SenderName: "我", Mine: true, Text: "有哪些空闲会话"})
-	waitFor(t, "the idle list", func() bool { sent = sentLines(dir, wechatExt); return len(sent) == 2 })
-	if text := fmt.Sprint(sent[1]["text"]); strings.Contains(text, "fix-login") || !strings.Contains(text, "docs") {
-		t.Fatalf("idle only:\n%s", text)
-	}
-
-	feed(t, dir, wechatExt, fakeMsg{Chat: "u1", ChatName: "我", ID: "w3", Sender: "u1", SenderName: "我", Mine: true, Text: "列出会话并发送"})
-	waitFor(t, "a request to the Router", func() bool { return len(extTriggers(sp, "ext:"+wechatExt)) == 1 })
-	if len(sentLines(dir, wechatExt)) != 2 {
-		t.Fatal("a compound request was answered as the list")
+	time.Sleep(200 * time.Millisecond)
+	if sent := sentLines(dir, wechatExt); len(sent) != 0 {
+		t.Fatalf("Collie answered by itself: %v", sent)
 	}
 }
 

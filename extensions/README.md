@@ -244,7 +244,6 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 - **会话**：一个外部聊天对应一个线程 `ext:<id>:<chat_id>`。收件箱列出所有会话，**默认不处理**。你本人发的触发词在任何会话都生效；会话开关只管别人的消息：打开后（再加「任何人可唤起」）别人的触发词才算，也只有打开的会话保留消息记录。
 - **请求**：消息过了下面这些规则才成为 Trigger，所以默认是 `respond`（交给 Router 处理），不是 `candidate`；「来源策略」里给 `ext:<id>` 设了规则时按规则。
 - **触发**：有一个全局触发词（默认 `/ai`，在「接入」里改）。只有以触发词开头的消息才算请求；没打开「任何人可唤起」的会话只认你本人。清单里 `defaults.conversations` 为 `owner` 的扩展（微信），绑定人的会话不需要触发词。
-- **快捷指令**：微信里你单独发一句「查看会话列表」「有哪些空闲任务」这类话（判定见 `wechat.DirectoryQuery`，带别的意图就不算），Collie 不经过 Router，直接回会话列表（按目录和电脑分组，忙的排前面），作为这条消息的回复（`internal/collie/ext_directory.go`）。
 - **交给谁**：每个会话选 Collie（Router）或专属 agent（订阅该线程的 worker）。专属 agent 跑在扩展所在的电脑（接入里扩展的「运行在」）：扩展的专属设置优先于「设置」里的派活电脑。扩展在 hub 上时不起 agent（hub 不跑 agent），回一句说明请你把扩展改到一台电脑上。启动失败的说明不带尾标。
 - **回复**：默认原路返回。专属 agent 一轮的最后一条消息、Router 的 `collie reply --thread ext:…`，都会带上尾标，发回原会话。只有定时任务把发到设成某个会话，或者 `collie reply --to <id>`，才会发到别的渠道。
 - **尾标**：清单 `contributes.channel.no_footer` 为 `true` 的扩展（微信）不带尾标，其余用全局模板，可用 `{agent} {model} {effort} {elapsed} {machine} {worker} {ctx} {time} {by}`，留空时用默认模板。尾标也用来识别自己发出的消息，避免回环。

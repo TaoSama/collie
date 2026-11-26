@@ -1,10 +1,6 @@
 package wechat
 
-import (
-	"errors"
-	"regexp"
-	"strings"
-)
+import "errors"
 
 // DefaultMessageMaxChars is the longest text one WeChat message carries, in
 // UTF-16 units.
@@ -58,50 +54,4 @@ func lastNewline(u []uint16, from int) int {
 		}
 	}
 	return -1
-}
-
-const (
-	directoryNoun   = `(?:会话|任务|sessions?|tasks?|agents?)`
-	directoryStatus = `(?P<status>运行中(?:的)?|正在运行(?:的)?|活跃(?:的)?|空闲(?:的)?)?`
-	directoryScope  = `(?:(?:当前|现在)(?:的)?)?(?:(?:所有|全部)(?:的)?)?(?:都)?(?:有哪些)?`
-	// DirectoryActive and DirectoryIdle are the filters DirectoryQuery names.
-	DirectoryActive = "active"
-	DirectoryIdle   = "idle"
-)
-
-var (
-	directoryPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)^(?:请)?(?:帮我|给我)?(?:查看|查询|列出|看看|看一下|看下|查一下|查下|展示|显示)(?:我)?` + directoryScope + directoryStatus + directoryNoun + `(?:列表)?[？?。!！]?$`),
-		regexp.MustCompile(`(?i)^(?:(?:当前|现在))?(?:都)?有哪些` + directoryStatus + directoryNoun + `[？?。!！]?$`),
-		regexp.MustCompile(`(?i)^` + directoryScope + directoryStatus + directoryNoun + `列表[？?。!！]?$`),
-	}
-	lineBreaks = regexp.MustCompile(`[\r\n\x{2028}\x{2029}]`)
-	spaceTabs  = regexp.MustCompile(`[ \t]+`)
-)
-
-// DirectoryQuery recognizes a standalone request for the session list ("查看
-// 会话列表", "有哪些空闲任务"): ok, and status "" (all), "active" or "idle".
-// Any extra intent falls through to the model. Collie answers it; the
-// extension only forwards the text.
-func DirectoryQuery(text string) (status string, ok bool) {
-	if lineBreaks.MatchString(text) {
-		return "", false
-	}
-	normalized := spaceTabs.ReplaceAllString(strings.TrimSpace(text), "")
-	for _, pattern := range directoryPatterns {
-		m := pattern.FindStringSubmatch(normalized)
-		if m == nil {
-			continue
-		}
-		s := m[pattern.SubexpIndex("status")]
-		switch {
-		case s == "":
-			return "", true
-		case strings.HasPrefix(s, "空闲"):
-			return DirectoryIdle, true
-		default:
-			return DirectoryActive, true
-		}
-	}
-	return "", false
 }

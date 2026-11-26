@@ -34,8 +34,6 @@
 | Collie → 扩展 | `channel.interest` | 每 30 秒一次：哪些聊天有启用中的定时或待发结果，决定续期提醒 |
 | Collie → 扩展 | `connector.status` | `detail` 里有绑定人、阶段、连续错误、上次成功轮询、回复窗口剩余、剩余额度、待发回复 |
 
-「查看会话列表」这类快捷指令由 Collie 处理：本包导出 `DirectoryQuery(text) (status string, ok bool)`，status 为 `""`、`"active"` 或 `"idle"`；Collie 收到绑定人的这类消息时不交给 Router，直接用 `channel.send{kind:answer, reply_to}` 回会话列表（`internal/collie/ext_directory.go`）。
-
 超过 40 MiB 的文件不经过本扩展：Collie 发 24 小时有效的签名下载链接，`answer` 写在正文里，`result` 放在 `link`，本扩展按下载模式发「摘要 + 完整结果下载：链接」（`../README.md` 第 3.7 节）。
 
 ## 数据
@@ -120,7 +118,7 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 | D17 | runLoop | `gateway.ts` `runLoop` | `runloop.go`: `runLoop`、`pollBackoffMs`、`notifyOnce` |
 | E1 | Markdown 原样发送 | `client.ts` verbatim 路径 | `send.go`: `sendMarkdownReply`（只有 `wechat-verbatim-v2`） |
 | E2 | 旧版 digest 兼容 | `client.ts` | 不移植（见下） |
-| E3 | 查看会话列表 | `packages/wechat-text/index.js` `parseSessionDirectoryQuery` | `text.go`: `DirectoryQuery`（Collie 调用）；控制台链接删除 |
+| E3 | 查看会话列表、控制台链接 | `packages/wechat-text/index.js` | 都不移植（见下） |
 | F1 | 健康状态 | `runtime/health.ts` | `health.go`: `HealthTracker`、`SanitizeErrorType`；`bot.go`: `status`、`statusDetail` |
 | F2 | message_latency trace | `runtime/telemetry.ts` | `telemetry.go`: `traceEvent`、`traceSpan` |
 | F3 | 请求与通知诊断 | `runtime/request-diagnostics.ts`、`notification-diagnostics.ts` | `diagnostics.go`；`notify_diag.go` |
@@ -131,7 +129,7 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 ## 有意偏离
 
 - **Markdown 原样发送**：所有发送都走原来的 verbatim 路径，`markdownToWeChat` 和旧 digest 兼容（`legacyDigest`、`wechat-plain-v1`、引用清洗）不移植。分段仍切原文。
-- **「控制台链接」快捷指令删除**。「查看会话列表」只导出解析函数，由 Collie 回答。
+- **快捷指令都删除**：「控制台链接」不移植；「查看会话列表」这类话不再绕过模型，和别的消息一样交给 Collie 的 Router 回答。
 - **Controller / Leader 换成 Collie**：白名单只认登录时的 `ilink_user_id`；「交给引擎」是 `channel.receive`，答案经 `channel.send` 异步到达，冻结在扩展自己的数据目录（替代 `getFrozenReply`）；`ackEngineReply` 是 `channel.delivery` 事件；正在处理时来的新消息（steer）也直接 receive。因为答案是异步的，消息交给 Collie 后到答案到达之前（最长 `MaxEngineRequestMs`）这个聊天算「有回复待发」，结果投递会等它。
 - **同一 deliveryKey 内容不同**：原来由引擎判定，现在扩展记录交给 Collie 的每条消息的内容哈希（最多 1000 条），不同就回 `ConflictReply`。
 - **只有媒体的消息**：原来存成 Controller 的附件记录；现在存进 `pending-media.json`，和同一聊天的下一条文字一起 receive，超过回复窗口（23 小时）的不再带上。
@@ -153,12 +151,11 @@ go build ./... && go vet ./extensions/wechat/... && go test -race ./extensions/w
 4. 状态变为已登录，`detail` 里有绑定人；收件箱出现「你和 bot 的私聊」，开关默认打开。
 5. 登录前发给 bot 的旧消息不处理（基线）。
 6. 给 bot 发一句普通请求：Collie 收到（事件里来源 `ext:wechat`），回复不带尾标、Markdown 原样发回微信。
-7. 发「查看会话列表」：不经过 Router，直接回会话列表。
-8. 让 agent `collie reply --thread ext:wechat:… --file` 发一张图、一个小文件、一个超过 40 MiB 的文件：前两个是微信里的图片和文件，最后一个是下载链接，手机能打开下载，24 小时后链接失效。
-9. 进度：`--progress` 最多 3 条。
-10. 重启 Collie（或关掉再打开扩展）：不重新要求扫码，已回复的消息不再回复，没回复的继续。
-11. 在手机上退出 bot 或等登录过期：状态变为未登录（`-14`），重新扫码后游标和额度清空重来。
-12. 等回复窗口用完（或额度 10 条用完）：回复变成「等你在微信发一条消息后送达」，再发一条后补发。
+7. 让 agent `collie reply --thread ext:wechat:… --file` 发一张图、一个小文件、一个超过 40 MiB 的文件：前两个是微信里的图片和文件，最后一个是下载链接，手机能打开下载，24 小时后链接失效。
+8. 进度：`--progress` 最多 3 条。
+9. 重启 Collie（或关掉再打开扩展）：不重新要求扫码，已回复的消息不再回复，没回复的继续。
+10. 在手机上退出 bot 或等登录过期：状态变为未登录（`-14`），重新扫码后游标和额度清空重来。
+11. 等回复窗口用完（或额度 10 条用完）：回复变成「等你在微信发一条消息后送达」，再发一条后补发。
 
 ### 登录协议里哪些是推断的
 
