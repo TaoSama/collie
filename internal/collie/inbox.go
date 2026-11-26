@@ -339,10 +339,10 @@ func (h *extHost) startConvWorker(conv InboxConv, old *Worker, t *Trigger, text 
 		spec.Resume, spec.Task, spec.Machine = old.Name, "新的请求：\n"+text, old.Machine
 	}
 	if spec.Machine == "" {
-		spec.Machine = h.convMachine(conv.Ext)
+		spec.Machine = h.convMachine()
 	}
 	if spec.Machine == "" {
-		h.sendOut(conv.thread(), "没能启动 agent：设置里没有默认电脑（hub 不跑 agent），请在设置里选一台", extproto.KindProgress, runInfo{}, t.ID)
+		h.sendOut(conv.thread(), "没能启动 agent：设置里的派活电脑没有选（hub 不跑 agent），请在「设置」里选一台", extproto.KindProgress, runInfo{}, t.ID)
 		return
 	}
 	if conv.Anyone {
@@ -365,19 +365,13 @@ func (h *extHost) startConvWorker(conv InboxConv, old *Worker, t *Trigger, text 
 	h.store.update(conv.ID, func(c *InboxConv) { c.Worker = w.Name })
 }
 
-// convMachine is where a conversation's agent runs: the default computer
-// for workers, else the one Collie runs on, else the extension's own; never
-// the hub, which runs no agents.
-func (h *extHost) convMachine(ext string) string {
+// convMachine is where a conversation's agent runs: the computer set for
+// workers in 设置, and nothing guessed. "" (none set, or the hub, which runs
+// no agents) is an error the human fixes there.
+func (h *extHost) convMachine() string {
 	h.sp.mu.Lock()
-	set := h.sp.st.Settings
-	h.sp.mu.Unlock()
-	for _, m := range []string{set.WorkerMachine, set.RouterMachine, h.setting(ext).Machine} {
-		if m != "" {
-			return m
-		}
-	}
-	return ""
+	defer h.sp.mu.Unlock()
+	return h.sp.st.Settings.WorkerMachine
 }
 
 // convWorkerName: <ext>-<chat name>, in the letters worker names allow; a

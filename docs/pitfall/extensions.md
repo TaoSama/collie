@@ -21,7 +21,7 @@ codeload 的 tar 包是整个仓库（几十 MB），devbox 走 Corplink 代理�
 
 ## 会话的专属 agent 不能落到 hub
 
-`Spawn` 的 `Machine` 留空就是 hub 本机（`fleet.go` 的 `machine("")`），而 hub 不装 agent，于是回「has no codex installed」。Router 的 `collie spawn` 走 API，会填设置里的默认电脑；扩展会话自己起 agent 时要自己填：`convMachine` 依次取默认电脑、Collie 所在的电脑、扩展所在的电脑，都没有就报错，不落 hub。启动失败的说明用 progress 发，不带尾标，免得出现「默认 · 默认 · 0秒」。
+`Spawn` 的 `Machine` 留空就是 hub 本机（`fleet.go` 的 `machine("")`），而 hub 不装 agent，于是回「has no codex installed」。Router 的 `collie spawn` 走 API，会填设置里的默认电脑；扩展会话自己起 agent 时要自己填：`convMachine` 只读设置里的派活电脑（`worker_machine`），不推断、不兜底（不用 Collie 所在的电脑或扩展所在的电脑），没选就回一句说明，不落 hub。启动失败的说明用 progress 发，不带尾标，免得出现「默认 · 默认 · 0秒」。
 
 ## 同一个扩展只能跑一份
 
