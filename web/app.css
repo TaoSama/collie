@@ -2034,7 +2034,10 @@ select.picked { display: none; }
   font-size: var(--fs-small); color: var(--t-meta); background: var(--bg); border: var(--bw) solid var(--line); pointer-events: none;
 }
 .viewer[data-mode="screen"]:not(.typing):not(:has(> .jump:not([hidden]))) > .screen-hint { display: block; }
-@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) { .screen { padding: 8px 10px 44px; } } /* the last line clears the hint pill */
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  .screen { padding: 8px 10px 44px; } /* the last line clears the hint pill */
+  .viewer[data-wheel="1"] > .screen { padding: 8px 16px 8px 10px; }
+}
 /* xterm parks its input at the cursor, which Collie never places (herdr
    doesn't report it): keep it fixed in the corner so focusing or typing
    neither widens the scroll area nor jumps #screen back to the top */

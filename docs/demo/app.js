@@ -6242,10 +6242,11 @@
     if (want) v.dataset.term = want; else delete v.dataset.term;
     if (term) term.options.theme = termTheme();
   }
-  // The pane keeps its own width (herdr can't resize it for us), so a phone
-  // can't fit 120 columns legibly: there it shows the screen at a readable
-  // size and scrolls sideways, or, with 全览, the whole width at once. Only the
-  // width matters here, so a phone held sideways fits the whole screen.
+  // The pane keeps its own dimensions (herdr doesn't resize a pane's PTY for
+  // a viewer), so fit xterm's cell size to #screen by default — both width
+  // (all panes) and height (fullscreen agents) — so foldable/phone viewports
+  // never clip horizontally or vertically. On narrow screens where fitting
+  // shrinks below 11px, #term-fit lets the user zoom to 11px and pan sideways.
   const narrowScreen = matchMedia("(max-width: 760px)");
   function fitTerm() {
     if (!term || !size.cols) return;
@@ -6253,51 +6254,69 @@
     const cs = getComputedStyle(el);
     const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    const fitW = Math.floor(((el.clientWidth - padX) / size.cols / 0.602) * 2) / 2;
-    const overview = store.get("term-overview", false);
-    const maxFs = narrowScreen.matches && !overview ? Math.min(14, Math.max(fitW, 11)) : Math.max(4.5, Math.min(14, fitW));
-    let fs = maxFs;
-    // Fullscreen agents (screenWheel) own their scrollback: measure xterm's
-    // real cell height (font glyph ascent+descent × lineHeight) and fit all
-    // pane rows inside #screen vertically so no viewport clips the bottom row.
-    const fitVert = screenWheel && size.rows && (!narrowScreen.matches || overview) && el.clientHeight > padY + 40;
+    const availW = el.clientWidth - padX;
     const availH = el.clientHeight - padY;
+    if (availW <= 0) return;
+    const STEP = 0.25, MIN_FS = 3;
+    const maxCap = narrowScreen.matches || touchMQ.matches ? 18 : 14;
+    const quant = (v) => Math.floor(v / STEP) * STEP;
+    const fitW = Math.max(MIN_FS, Math.min(maxCap, quant(availW / size.cols / 0.602)));
+    const zoomed = narrowScreen.matches && store.get("term-zoom", false);
+    const maxFs = zoomed ? Math.min(maxCap, Math.max(fitW, 11)) : maxCap;
+    // Fullscreen agents (screenWheel) own their scrollback: measure xterm's
+    // real cell dimensions and fit all pane cols/rows inside #screen so no
+    // viewport clips horizontally or vertically.
+    const fitVert = !!(screenWheel && size.rows && !zoomed && availH > 40);
+    const measureColsW = () => {
+      const cellW = term._core?._renderService?.dimensions?.css?.cell?.width;
+      if (cellW > 0) return cellW * size.cols;
+      const rowsEl = el.querySelector(".xterm-rows");
+      return rowsEl ? rowsEl.getBoundingClientRect().width : 0;
+    };
     const measureRowsH = () => {
       const cellH = term._core?._renderService?.dimensions?.css?.cell?.height;
       if (cellH > 0) return cellH * size.rows;
       const rowsEl = el.querySelector(".xterm-rows");
       return rowsEl ? rowsEl.getBoundingClientRect().height : 0;
     };
+    const fits = () => {
+      if (measureColsW() > el.clientWidth - padX + 0.5 || el.scrollWidth > el.clientWidth) return false;
+      if (fitVert && (measureRowsH() > el.clientHeight - padY + 0.5 || el.scrollHeight > el.clientHeight)) return false;
+      return true;
+    };
+    let fs = zoomed ? maxFs : fitW;
     if (fitVert) {
-      const est = Math.floor(((availH / size.rows) / (term.options.lineHeight * 1.24)) * 2) / 2;
-      if (est >= 7) fs = Math.min(fs, est);
+      const estH = quant((availH / size.rows) / (term.options.lineHeight * 1.24));
+      fs = Math.max(MIN_FS, Math.min(fs, estH));
     }
     const prevFs = term.options.fontSize;
     if (term.options.fontSize !== fs) term.options.fontSize = fs;
-    if (fitVert) {
-      // Closed-loop exact fit: step up if we were conservative, then step down
-      // until the real measured terminal height fits inside availH with 0 clip.
-      for (let i = 0; i < 4 && fs + 0.5 <= maxFs; i++) {
-        const tryFs = fs + 0.5;
+    if (!zoomed) {
+      // Closed-loop exact fit against real measured cell width/height and
+      // #screen scroll bounds: step up if conservative, step down if wider
+      // fonts or pixel rounding overflow either axis.
+      for (let i = 0; i < 16 && fs + STEP <= maxFs; i++) {
+        const tryFs = +(fs + STEP).toFixed(2);
         term.options.fontSize = tryFs;
-        if (measureRowsH() <= availH && el.scrollHeight <= el.clientHeight) fs = tryFs;
+        if (fits()) fs = tryFs;
         else { term.options.fontSize = fs; break; }
       }
-      for (let i = 0; i < 10 && fs > 7; i++) {
-        if (measureRowsH() <= availH && el.scrollHeight <= el.clientHeight) break;
-        fs = Math.max(7, fs - 0.5);
+      for (let i = 0; i < 24 && fs > MIN_FS; i++) {
+        if (fits()) break;
+        fs = Math.max(MIN_FS, +(fs - STEP).toFixed(2));
         term.options.fontSize = fs;
       }
+      if (el.scrollLeft) el.scrollLeft = 0;
     }
     if (term.options.fontSize !== prevFs || fitVert) {
       if (was && !screenWheel) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; hideJump(); });
       else if (screenWheel) requestAnimationFrame(() => { if (el.scrollHeight <= el.clientHeight + 2) el.scrollTop = 0; updateScreenScrollbar(); });
     }
-    $("#term-fit").textContent = overview ? "放大" : "全览";
-    $("#term-fit").hidden = !narrowScreen.matches || fitW >= 11;
+    $("#term-fit").textContent = zoomed ? "全览" : "放大";
+    $("#term-fit").hidden = !narrowScreen.matches || (!zoomed && fs >= 11);
   }
-  addEventListener("resize", () => fitTerm());
-  $("#term-fit").addEventListener("click", () => { store.set("term-overview", !store.get("term-overview", false)); fitTerm(); });
+  addEventListener("resize", () => { if (curMode() === "screen") fitTerm(); });
+  $("#term-fit").addEventListener("click", () => { store.set("term-zoom", !store.get("term-zoom", false)); fitTerm(); });
   $("#term-kbd").addEventListener("click", () => term?.focus());
 
   const PANE_RETRY_START_MS = 1000, PANE_RETRY_MAX_MS = 5000;
