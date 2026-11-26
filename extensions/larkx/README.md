@@ -15,7 +15,8 @@
 - `pkg/`：适配层，随 collie 二进制打包，安装时和下载的文件放在同一个包目录（`extensions/README.md` 第 9 节）。
   - `bin/larkx`：找一个 ≥3.9 的 `python3` 启动 `adapter/main.py`。
   - `adapter/main.py`：协议和状态。只用标准库，所以 Collie 立刻能握手；依赖在后台装进 `data/deps-<锁文件 hash>/`（`deps.py`，`pip --require-hashes`）。
-  - `adapter/lark.py`：调用上游的扫码登录（`QrLogin`）、websocket 的地址、心跳和应答（`build_ws_url`、`heartbeat_loop`、`send_ack`）、消息解码（`decode_push_messages`）、网关（`_gateway_post`、`api`）和 proto（`wrap_packet`、`lark_all_pb2`）。收推送的循环是自己的，见下。凭据不写上游的文件，改由 `connector.secrets.*` 存取。
+  - `adapter/lark.py`：调用上游的扫码登录（`QrLogin`），将推送转成 Collie 消息，经网关（`_gateway_post`、`api`）发送帖子和表情。凭据由 `connector.secrets.*` 存取。
+  - `adapter/lark_ws.py`：维护 WebSocket 连接，解码并分派推送。使用上游的地址、心跳、应答（`build_ws_url`、`heartbeat_loop`、`send_ack`）和消息解码（`decode_push_messages`）。
   - `adapter/richtext.py`：Markdown 和飞书富文本互转。
   - `adapter/fake.py`：不联网的假飞书，测试用（`COLLIE_LARKX_FAKE=1`）。
   - `requirements.txt`：上游用到的包，带 hash 锁定（`uv pip compile requirements.in --generate-hashes --universal --python-version 3.9`）。

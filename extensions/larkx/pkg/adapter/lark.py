@@ -1,11 +1,6 @@
-"""Feishu through LarkAgentX at its pinned commit: its sign-in, websocket and
-proto are used as they are; only how credentials are kept (with the host,
-not in a file) and how a post is put together are this adapter's own.
-"""
-import asyncio
+"""Feishu sign-in, message normalization and sending through LarkAgentX."""
 import base64
 import collections
-import gzip
 import importlib
 import logging
 import os
@@ -15,10 +10,10 @@ import threading
 import time
 import types
 from concurrent.futures import ThreadPoolExecutor
-import zlib
 from pathlib import Path
 
 import richtext
+from lark_ws import PushStream
 
 log = logging.getLogger("larkx")
 
@@ -30,15 +25,10 @@ CHAT_P2P = 1
 CMD_PUT_MESSAGE = 5
 REQUEST_FRESH = 600  # seconds: an older message is history to Collie, never a request
 WORKING_REACTION = "OnIt"  # the reaction a request gets when Collie takes it: 「在做了」
-CMD_PUSH_MESSAGES = 6
-CMD_PUSH_SID = 6000  # only sids: the packets are pulled by them
-CMD_PUSH_DOC_FEED = 14004  # comments, replies and mentions in cloud documents
 DOC_FEED_NEWS = (1, 2, 5)  # PushDocFeedRequest.Status NEW, UPDATE, CREATE
 DOC_KINDS = {1: "在文档里@了你", 2: "评论了文档", 3: "回复了评论"}  # DocMessage.Type MENTION, COMMENT, REPLY
 DOC_CHAT = "doc:"  # a document's comments are a chat of their own
-BAD_FRAME_EVERY = 600
 MEDIA_MOST = 20 << 20
-UP_AFTER = 5  # seconds a websocket stays open before it counts as up
 NAME_TTL = 3600
 RECENT_MOST = 2000
 CREDENTIAL_FIELDS = ("cookies", "saved_at", "device_id", "app_key", "user_id", "csrf_token", "web_app_id")
@@ -144,10 +134,7 @@ class Feishu:
         self.recent = collections.OrderedDict()  # message id -> (root id, text)
         self.own_cids = collections.OrderedDict()  # what this adapter sent: its echo is not news
         self._mu = threading.Lock()
-        self._loop = None
-        self._task = None
-        self._bad_frames, self._bad_warned = 0, 0.0
-        self._pool = ThreadPoolExecutor(max_workers=4)  # handles pushes; outlives each connection's loop
+        self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self.doc_comments)
         self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
         self.self_mention = True  # @自己唤起: @-mentioning yourself is a request
@@ -199,116 +186,10 @@ class Feishu:
     # Receiving.
 
     def listen(self, on_message, on_link, stop):
-        """Keeps the websocket open until stop is set or Feishu signs the session out."""
-        wait = 2
-        while not stop.is_set() and self.client is not None:
-            loop = asyncio.new_event_loop()
-            started = time.time()
-            try:
-                task = loop.create_task(self._session(on_message))
-                with self._mu:
-                    self._loop, self._task = loop, task
-                loop.call_later(UP_AFTER, lambda: task.done() or on_link("up"))
-                loop.run_until_complete(task)
-                wait = 2
-            except asyncio.CancelledError:
-                return
-            except self.U.auth.AuthExpired as e:
-                on_link("expired", str(e))
-                return
-            except Exception as e:
-                log.warning("websocket: %s", e)
-                if time.time() - started < UP_AFTER:
-                    wait = min(wait * 2, 60)
-            finally:
-                with self._mu:
-                    if self._task is task:
-                        self._loop = self._task = None
-                loop.close()
-            on_link("down")
-            stop.wait(wait)
+        self._pushes.listen(on_message, on_link, stop)
 
     def stop(self):
-        with self._mu:
-            loop, task = self._loop, self._task
-        if loop and task:
-            loop.call_soon_threadsafe(task.cancel)
-
-    async def _session(self, on_message):
-        """One websocket connection: upstream's address, heartbeat and acks; the pushes are read here, so
-        compressed frames, sid-only pushes and document comments are not lost."""
-        import websockets
-
-        c = self.client
-        async with websockets.connect(c.build_ws_url()) as ws:
-            beat = asyncio.create_task(c.heartbeat_loop(ws))
-            try:
-                async for raw in ws:
-                    try:
-                        packet = self._packet(raw)
-                    except Exception as e:
-                        self._bad_frame(e)
-                        continue
-                    if packet is None:
-                        continue
-                    if packet.sid:
-                        await c.send_ack(ws, packet.sid)
-                    self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message, time.monotonic())
-            finally:
-                beat.cancel()
-
-    def _packet(self, raw):
-        """The frame's packet (lark improto.Packet), or None for a frame that carries none (JSON)."""
-        frame = self.U.P.Frame.FromString(raw)
-        enc = (frame.payloadEncoding or "").lower()
-        body = frame.payload
-        if enc == "json":
-            return None
-        if enc == "gzip" or (not enc and body[:2] == b"\x1f\x8b"):
-            body = gzip.decompress(body)
-        elif enc in ("deflate", "zlib"):
-            body = zlib.decompress(body)
-        elif enc and enc not in ("identity", "pb"):
-            raise ValueError("unknown payloadEncoding %r" % enc)
-        return self.U.L.improto.Packet.FromString(body)
-
-    def _bad_frame(self, err):
-        """Frames that can't be read: counted, said at most every ten minutes."""
-        self._bad_frames += 1
-        if time.time() - self._bad_warned >= BAD_FRAME_EVERY:
-            log.warning("%d websocket frame(s) could not be read, last: %r", self._bad_frames, err)
-            self._bad_frames, self._bad_warned = 0, time.time()
-
-    def _push(self, cmd, payload, packet, on_message, got=None):
-        """One pushed packet's messages to on_message, on a worker thread."""
-        try:
-            if cmd == CMD_PUSH_MESSAGES:
-                for msg in self._messages(payload):
-                    self._deliver(msg, on_message, got)
-            elif cmd == CMD_PUSH_SID:
-                sids = list(dict.fromkeys(x for x in [packet.sid] + [str(n) for n in packet.compactedSids] if x))
-                pulled = (self.client.api("improto.PullPacketsBySidsRequest", {"sids": sids}) or {}).get("packets") or {}
-                for p in pulled.values():
-                    if int(p.get("cmd") or 0) in (CMD_PUSH_MESSAGES, CMD_PUSH_DOC_FEED):
-                        self._push(int(p["cmd"]), p.get("payload") or b"", None, on_message, got)
-            elif cmd == CMD_PUSH_DOC_FEED:
-                for m in self.doc_comments(payload):
-                    on_message(m)
-        except Exception as e:
-            log.warning("push %s: %s", cmd, e)
-
-    def _messages(self, payload):
-        """A PushMessagesRequest's messages, decoded by upstream; a topic group's root opens its topic."""
-        U = self.U
-        frame = U.P.Frame(payload=U.P.Packet(cmd=CMD_PUSH_MESSAGES, payload=payload).SerializeToString())
-        out = []
-        for msg in U.decoders.decode_push_messages(frame.SerializeToString()):
-            if not msg.get("from_id"):
-                continue
-            if msg["scope"] == "chat" and msg.get("chat_type") == 2 and self.client.is_thread_chat(msg["chat_id"]):
-                msg["scope"], msg["anchor"] = U.decoders.resolve_scope(msg["msg_id"], msg["msg_type"], 2, "", "", thread_chat=True)
-            out.append(msg)
-        return out
+        self._pushes.stop()
 
     def doc_comments(self, payload):
         """A document feed push's new comments, replies and mentions as channel.receive messages."""

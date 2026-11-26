@@ -377,12 +377,12 @@ class Pushes(unittest.TestCase):
     def test_frames(self):
         import gzip
 
-        f = self.feishu()
+        stream = self.feishu()._pushes
         pkt = U.P.Packet(sid="s1", cmd=14004, payload=self.feed()).SerializeToString()
         for frame in (U.P.Frame(payload=pkt), U.P.Frame(payloadEncoding="gzip", payload=gzip.compress(pkt))):
-            p = f._packet(frame.SerializeToString())
+            p = stream._packet(frame.SerializeToString())
             self.assertEqual((p.sid, p.cmd), ("s1", 14004))
-        self.assertIsNone(f._packet(U.P.Frame(payloadEncoding="json", payload=b"{}").SerializeToString()))
+        self.assertIsNone(stream._packet(U.P.Frame(payloadEncoding="json", payload=b"{}").SerializeToString()))
 
     def test_sid_pull(self):
         f = self.feishu()
@@ -396,7 +396,7 @@ class Pushes(unittest.TestCase):
 
         f.client = Pull()
         got = []
-        f._push(6000, b"", U.L.improto.Packet(sid="s1", compactedSids=[7, 8]), got.append)
+        f._pushes._push(6000, b"", U.L.improto.Packet(sid="s1", compactedSids=[7, 8]), got.append)
         self.assertEqual(Pull.asked, ("improto.PullPacketsBySidsRequest", {"sids": ["s1", "7", "8"]}))
         self.assertEqual([m["id"] for m in got], ["doc:d1"])
 
@@ -433,14 +433,14 @@ class Session(unittest.TestCase):
                 c.build_ws_url = lambda: "ws://127.0.0.1:%d" % port
                 f = Pushes().feishu()
                 f.client = c
-                await f._session(got.append)
+                await f._pushes._session(got.append)
                 await asyncio.sleep(0.2)
                 return f
 
         f = asyncio.run(main())
         self.assertEqual(acks, ["s9"])
         self.assertEqual([m["id"] for m in got], ["doc:d1"])
-        self.assertEqual(f._bad_frames, 0, "a bad frame is counted, then said and reset")
+        self.assertEqual(f._pushes._bad_frames, 0, "a bad frame is counted, then said and reset")
 
 
 class Protocol(unittest.TestCase):
