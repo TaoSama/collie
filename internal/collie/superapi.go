@@ -841,6 +841,7 @@ func (s *Server) superSeen(w http.ResponseWriter, r *http.Request) {
 		URL  string `json:"url"`
 		Page string `json:"page"` // which page, so it can say it went to the background
 		Away bool   `json:"away"`
+		Idle int    `json:"idle"` // seconds since you last used it
 	}
 	if !decode(w, r, &body) {
 		return
@@ -848,7 +849,7 @@ func (s *Server) superSeen(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(body.URL, "http://") && !strings.HasPrefix(body.URL, "https://") || len(body.URL) > 200 {
 		body.URL = ""
 	}
-	s.sup.seenPage(clip(body.Page, 40), body.URL, body.Away)
+	s.sup.seenPage(clip(body.Page, 40), body.URL, body.Away, time.Duration(max(body.Idle, 0))*time.Second)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

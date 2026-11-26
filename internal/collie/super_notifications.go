@@ -85,17 +85,21 @@ func noticesText(ns []notice) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// seenPage: page is in front of you, or (away) has just gone to the
-// background. You stop looking when the last page in front of you leaves,
-// not a minute later: a phone put away gets its notifications at once.
-func (sp *Super) seenPage(page, url string, away bool) {
+// pageSeen is what a page in front of you last said: when, and when you
+// last used it.
+type pageSeen struct{ at, active time.Time }
+
+// seenPage: page is in front of you, used idle ago, or (away) has just gone
+// to the background. You stop looking when the last page in front of you
+// leaves, not a minute later: a phone put away gets its notifications at once.
+func (sp *Super) seenPage(page, url string, away bool, idle time.Duration) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if sp.seenPages == nil {
-		sp.seenPages = map[string]time.Time{}
+		sp.seenPages = map[string]pageSeen{}
 	}
-	for p, at := range sp.seenPages {
-		if time.Since(at) > lookingFor {
+	for p, s := range sp.seenPages {
+		if time.Since(s.at) > lookingFor {
 			delete(sp.seenPages, p)
 		}
 	}
@@ -103,18 +107,20 @@ func (sp *Super) seenPage(page, url string, away bool) {
 		sp.seenURL = url
 	}
 	if !away {
-		sp.seenAt = time.Now()
-		sp.seenPages[page] = sp.seenAt
+		now := time.Now()
+		sp.seenPages[page] = pageSeen{now, now.Add(-idle)}
+	} else if _, ok := sp.seenPages[page]; ok {
+		delete(sp.seenPages, page)
+	} else {
 		return
 	}
-	if _, ok := sp.seenPages[page]; !ok {
-		return
-	}
-	delete(sp.seenPages, page)
-	sp.seenAt = time.Time{}
-	for _, at := range sp.seenPages {
-		if at.After(sp.seenAt) {
-			sp.seenAt = at
+	sp.seenAt, sp.activeAt = time.Time{}, time.Time{}
+	for _, s := range sp.seenPages {
+		if s.at.After(sp.seenAt) {
+			sp.seenAt = s.at
+		}
+		if s.active.After(sp.activeAt) {
+			sp.activeAt = s.active
 		}
 	}
 }
@@ -122,12 +128,21 @@ func (sp *Super) seenPage(page, url string, away bool) {
 // lookingFor: a page in front of you says so every 30 seconds.
 const lookingFor = 75 * time.Second
 
+// idleAfter: a page in front of you nobody has used for this long is a
+// window left open on a desk; notifications go to your other devices.
+const idleAfter = 120 * time.Second
+
+// lookingLocked: a page of Collie is in front of you and you are using it.
+func (sp *Super) lookingLocked() bool {
+	return time.Since(sp.seenAt) < lookingFor && time.Since(sp.activeAt) < idleAfter
+}
+
 // notifyEvery paces notifications: what comes up in between goes out together.
 const notifyEvery = 20 * time.Second
 
 // sendNotifications paces outgoing notifications: messages are coalesced and
-// sent at most every 20 seconds, and not at all while you are looking at
-// Collie (you see them there).
+// sent at most every 20 seconds, and not at all while you are using Collie
+// (you see them there).
 func (sp *Super) sendNotifications() {
 	sp.mu.Lock()
 	if len(sp.notifyBuf) == 0 && !sp.push.dialogsDue() || time.Since(sp.notifyAt) < notifyEvery {
@@ -135,7 +150,7 @@ func (sp *Super) sendNotifications() {
 		return
 	}
 	url, toLark := sp.st.Settings.NotifyWebhook, sp.st.Settings.NotifyLark
-	looking := time.Since(sp.seenAt) < lookingFor
+	looking := sp.lookingLocked()
 	base := sp.linkBaseLocked()
 	subject := sp.pushSubjectLocked()
 	// A decision settled while it waited here (Collie answered, you did on

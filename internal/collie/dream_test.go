@@ -18,7 +18,7 @@ func TestFinishDreamSkillOptionsPendingDBAndLark(t *testing.T) {
 	sp.st.Settings.NotifyLark = true
 	sp.st.Settings.NotifyLevel = "quiet"
 	sp.seenAt = time.Now().Add(-5 * time.Minute)
-	sp.seenPage("", "http://hub:7788", false)
+	sp.seenPage("", "http://hub:7788", false, 0)
 	sp.seenAt = time.Now().Add(-5 * time.Minute)
 
 	at := time.Date(2026, 11, 24, 4, 5, 0, 0, time.Local)

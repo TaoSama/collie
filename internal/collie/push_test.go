@@ -207,7 +207,7 @@ func TestPushWorkerDialog(t *testing.T) {
 	sp.sendNotifications()
 
 	// Looking at a page: held back, then sent once that page goes to the background.
-	sp.seenPage("p1", "https://c.example", false)
+	sp.seenPage("p1", "https://c.example", false, 0)
 	sp.mu.Lock()
 	sp.addEntryReplyLocked("collie", mainThread, "要不要合并？", "", "", nil, []string{"合并", "再等等"}, false)
 	sp.mu.Unlock()
@@ -217,7 +217,7 @@ func TestPushWorkerDialog(t *testing.T) {
 	if got := ps.take(); len(got) != 0 {
 		t.Fatalf("pushed while you were looking: %+v", got)
 	}
-	sp.seenPage("p1", "", true)
+	sp.seenPage("p1", "", true, 0)
 	sp.mu.Lock()
 	sp.addEntryReplyLocked("collie", mainThread, "现在看一下部署？\n细节在下面", "", "", nil, nil, true)
 	sp.mu.Unlock()
@@ -232,19 +232,54 @@ func TestPushWorkerDialog(t *testing.T) {
 // Looking ends when the last page in front of you leaves.
 func TestSeenPagesAway(t *testing.T) {
 	sp := newRouterTestSuper(t, newFakeHerdr(t))
-	sp.seenPage("phone", "", false)
-	sp.seenPage("laptop", "", false)
-	sp.seenPage("phone", "", true)
+	sp.seenPage("phone", "", false, 0)
+	sp.seenPage("laptop", "", false, 0)
+	sp.seenPage("phone", "", true, 0)
 	if time.Since(sp.seenAt) > time.Second {
 		t.Fatal("the laptop is still in front of you")
 	}
-	sp.seenPage("laptop", "", true)
+	sp.seenPage("laptop", "", true, 0)
 	if !sp.seenAt.IsZero() {
 		t.Fatal("still looking with no page in front of you")
 	}
-	sp.seenPage("stranger", "", true) // never said it was here
+	sp.seenPage("stranger", "", true, 0) // never said it was here
 	if !sp.seenAt.IsZero() {
 		t.Fatal("an unknown page changed it")
+	}
+}
+
+// A page in front of you holds pushes back only while you use it: left idle
+// past idleAfter (a window open on a desk you walked away from), they go to
+// your phone as they do with no page in front.
+func TestPushIdlePage(t *testing.T) {
+	sp := newRouterTestSuper(t, newFakeHerdr(t))
+	ps := withPush(t, sp)
+	ask := func(text string) []pushNote {
+		sp.mu.Lock()
+		sp.addEntryReplyLocked("collie", mainThread, text, "", "", nil, nil, true)
+		sp.mu.Unlock()
+		sp.notifyAt = time.Time{}
+		sp.sendNotifications()
+		time.Sleep(50 * time.Millisecond)
+		return ps.take()
+	}
+	sp.seenPage("mac", "", false, 10*time.Second)
+	if got := ask("在用"); len(got) != 0 {
+		t.Fatalf("pushed while you were using the page: %+v", got)
+	}
+	sp.seenPage("mac", "", false, idleAfter+time.Second)
+	if got := ask("走开了"); len(got) != 1 {
+		t.Fatalf("idle page in front: %d pushes, want 1", len(got))
+	}
+	sp.seenPage("mac", "", false, 0) // back at the desk
+	sp.seenPage("phone", "", false, idleAfter+time.Minute)
+	if got := ask("又回来了"); len(got) != 0 {
+		t.Fatalf("pushed while one page in front was in use: %+v", got)
+	}
+	sp.seenPage("mac", "", true, 0)
+	sp.seenPage("phone", "", true, 0)
+	if got := ask("没有页面"); len(got) != 1 {
+		t.Fatalf("no page in front: %d pushes, want 1", len(got))
 	}
 }
 

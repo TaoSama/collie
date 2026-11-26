@@ -624,16 +624,27 @@
     else if (h) route();
   });
 
-  // Tell the hub a page of Collie is in front of you: it holds back
-  // notifications while you can see them here, and sends them as soon as
-  // the page goes to the background.
+  // Tell the hub a page of Collie is in front of you, and how long since you
+  // last used it: it holds back notifications while you are here, and sends
+  // them as soon as the page goes to the background or is left idle.
   const pageId = Math.random().toString(36).slice(2);
-  const seen = () => { if (!document.hidden && document.hasFocus()) api("/api/super/seen", { body: { url: location.origin, page: pageId } }).catch(() => {}); };
+  const SEEN_EVERY_MS = 30e3;
+  let usedAt = Date.now();
+  const seen = () => {
+    if (document.hidden || !document.hasFocus()) return;
+    const idle = Math.round((Date.now() - usedAt) / 1000);
+    api("/api/super/seen", { body: { url: location.origin, page: pageId, idle } }).catch(() => {});
+  };
   const away = () => api("/api/super/seen", { body: { page: pageId, away: true }, keepalive: true }).catch(() => {});
-  setInterval(seen, 30e3);
-  document.addEventListener("visibilitychange", () => { if (document.hidden) away(); else seen(); });
+  // Back after a while: say so now, not at the next beat.
+  const used = () => { const was = usedAt; usedAt = Date.now(); if (usedAt - was > SEEN_EVERY_MS) seen(); };
+  for (const ev of ["keydown", "pointerdown", "pointermove", "wheel", "touchstart", "scroll"]) addEventListener(ev, used, { capture: true, passive: true });
+  setInterval(seen, SEEN_EVERY_MS);
+  // Coming back to the page is using it.
+  const back = () => { usedAt = Date.now(); seen(); };
+  document.addEventListener("visibilitychange", () => { if (document.hidden) away(); else back(); });
   addEventListener("pagehide", away);
-  addEventListener("focus", seen);
+  addEventListener("focus", back);
 
   // Optimistic pin toggles before the hub's next stream frame lands: id -> { pinned, item }.
   const pinnedLocal = new Map();

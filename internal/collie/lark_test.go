@@ -31,7 +31,7 @@ func TestLarkNotify(t *testing.T) {
 	sp := &Super{st: &State{Settings: Settings{NotifyLark: true, NotifyLevel: "normal"}}}
 
 	// Looking at Collie: held back.
-	sp.seenPage("", "http://hub:7788", false)
+	sp.seenPage("", "http://hub:7788", false, 0)
 	sp.queueNotifyLocked(&Entry{Role: "collie", Text: "做完了"})
 	sp.sendNotifications()
 	if _, err := os.Stat(sent); err == nil {

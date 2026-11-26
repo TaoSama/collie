@@ -61,7 +61,8 @@ type Super struct {
 	notifyBuf      []notice
 	notifyAt       time.Time
 	seenAt         time.Time            // when a page of Collie was last open in front of you
-	seenPages      map[string]time.Time // page → when it last said so, until it goes to the background
+	activeAt       time.Time            // when you last typed, clicked or scrolled on a page in front of you
+	seenPages      map[string]pageSeen  // page → its last word, until it goes to the background
 	seenURL        string               // where that page was, for the link in a notification
 	push           *webPush             // the browsers notifications are pushed to
 	picked         map[string]Answer    // pane → the choice a page clicked on its dialog card
