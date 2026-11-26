@@ -447,17 +447,52 @@ class Pushes(unittest.TestCase):
 
     def test_doc_comment(self):
         f = self.feishu()
-        out = f.doc_comments(self.feed())
+        out = []
+
+        def received(m):
+            out.append(m)
+            return True
+
+        f._deliver_doc_comments(self.feed(), received)
         self.assertEqual(len(out), 1)
         m = out[0]
         self.assertEqual((m["id"], m["chat_id"], m["chat"], m["chat_kind"], m["sender_name"], m["owner"]),
                          ("doc:d1", "doc:f1", "周报", "doc", "甲", False))
         self.assertEqual(m["text"], "（评论了文档：https://example.feishu.cn/docx/abc）\n这里数字不对 `42`")
-        self.assertEqual(f.doc_comments(self.feed(status=2)), [], "an update repeating it is not news")
-        self.assertEqual(self.feishu().doc_comments(self.feed(status=3)), [])
+        f._deliver_doc_comments(self.feed(status=2), received)
+        self.feishu()._deliver_doc_comments(self.feed(status=3), received)
+        self.assertEqual(len(out), 1, "repeated comments and other feed updates are not news")
         with self.assertRaises(lark.NotSent):
             f.client = FakeClient(answer("1"))
             f.post("doc:f1", "收到")
+
+    def test_doc_comment_survives_hub_unavailable(self):
+        from main import Extension
+        from peer import Error
+
+        f = self.feishu()
+        ext = Extension()
+        attempts, after_first = [], []
+
+        def call(method, params):
+            self.assertEqual(method, "channel.receive")
+            mid = params["message"]["id"]
+            self.assertNotIn(mid, f.recent, "remember it only after the hub accepts it")
+            attempts.append(mid)
+            if len(attempts) == 1:
+                raise Error("hub_unavailable", "offline")
+
+        ext.peer = types.SimpleNamespace(call=call)
+
+        def listen(on_message, on_link, stop):
+            f._pushes._push(14004, self.feed(), None, on_message)
+            after_first.extend(attempts)
+            f._pushes._push(14004, self.feed(status=2), None, on_message)
+
+        ext.backend = types.SimpleNamespace(listen=listen)
+        ext._listen(types.SimpleNamespace(wait=lambda _: False))
+        self.assertEqual(after_first, ["doc:d1", "doc:d1"], "retry without a push replay")
+        self.assertEqual(attempts, after_first, "deduplicate after the hub accepts the comment")
 
     def test_frames(self):
         import gzip

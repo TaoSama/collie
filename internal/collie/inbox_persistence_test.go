@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,4 +208,132 @@ func extReceiveParams(t *testing.T, id string) json.RawMessage {
 		t.Fatal(err)
 	}
 	return body
+}
+
+func TestExtDedicatedTopicRespectsPolicy(t *testing.T) {
+	for _, policy := range []struct {
+		name, action, want string
+		allow              []string
+	}{
+		{"ignored", "ignore", "ignored", nil},
+		{"not allowed", "respond", "ignored", []string{"another sender"}},
+		{"allowed", "respond", "queued", []string{"you"}},
+	} {
+		for _, state := range []string{"absent", "ended", "running"} {
+			t.Run(policy.name+"/"+state, func(t *testing.T) {
+				sp, h, _ := newExtTestHub(t)
+				man := *h.manifest("fakew")
+				man.Defaults.Handler = handlerAgent
+				sp.mu.Lock()
+				sp.st.Policies = []Policy{{Source: "ext:fakew", Action: policy.action, Allow: policy.allow}}
+				if state != "absent" {
+					sp.st.Workers["dedicated"] = &Worker{Name: "dedicated", Conv: "fakew:c1#topic", Ended: state == "ended"}
+				}
+				sp.mu.Unlock()
+
+				_, trigger, err := h.fileIncoming(&man, incomingMsg{
+					Chat: "c1", ChatKind: chatGroup, Topic: "topic", ID: "m1",
+					Owner: true, Text: "/ai hello", At: time.Now(), Live: true,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if trigger == nil || trigger.Status != policy.want || trigger.WaitForConvWorker != (policy.want == "queued") {
+					t.Fatalf("trigger = %+v, want status %s", trigger, policy.want)
+				}
+			})
+		}
+	}
+}
+
+func TestExtPolicySaveReleasesSchedulerBeforeUpdatingExtensions(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cat["fakew"].Defaults.Machine = machineRouter
+
+	req := httptest.NewRequest("POST", "/api/super/settings",
+		strings.NewReader(`{"policies":[{"source":"ext:fakew","action":"ignore"}]}`))
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	t.Cleanup(func() { <-done })
+	go func() {
+		defer close(done)
+		sp.s.superSaveSettings(rec, req)
+	}()
+
+	// A status read owns the extension lock and needs the scheduler lock for
+	// the default machine. Wait for the save to publish while that read owns it.
+	waitFor(t, "the policy saved while an extension status read holds the extension lock", func() bool {
+		if !sp.mu.TryLock() {
+			return false
+		}
+		defer sp.mu.Unlock()
+		return slices.ContainsFunc(sp.st.Policies, func(p Policy) bool {
+			return p.Source == "ext:fakew" && p.Action == "ignore"
+		})
+	})
+	h.settingLocked("fakew")
+}
+
+func TestExtTopicSnapshotsFollowCommit(t *testing.T) {
+	for _, step := range []string{"commit", "duplicate", "rollback"} {
+		t.Run(step, func(t *testing.T) {
+			sp, h, _ := newExtTestHub(t)
+			man := h.manifest("fakew")
+			in := incomingMsg{Chat: "c1", ChatKind: chatGroup, Topic: "topic", ID: "m1",
+				Owner: true, SenderName: "original", Text: "/ai hello", At: time.Now(), Live: true}
+			if _, _, err := h.fileIncoming(man, in); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := h.store.conv("fakew:c1")
+			want := "original"
+			in.SenderName = "changed"
+			switch step {
+			case "commit":
+				in.ID, want = "m2", in.SenderName
+			case "rollback":
+				in.ID = "m2"
+				if _, err := sp.db.Exec(`CREATE TRIGGER reject_topic BEFORE INSERT ON triggers BEGIN SELECT RAISE(ABORT, 'trigger write failed'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := h.fileIncoming(man, in); (err != nil) != (step == "rollback") {
+				t.Fatalf("%s: unexpected write result: %v", step, err)
+			}
+			current, _ := h.store.conv("fakew:c1")
+			if got := current.askOf("topic").AskBy; got != want {
+				t.Errorf("current topic owner = %q, want %q", got, want)
+			}
+			if got := before.askOf("topic").AskBy; got != "original" {
+				t.Errorf("previous snapshot changed to %q", got)
+			}
+		})
+	}
+}
+
+func TestExtTopicSnapshotCanBeEncodedWhileReceiving(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	man := h.manifest("fakew")
+	in := incomingMsg{Chat: "c1", ChatKind: chatGroup, Topic: "topic", ID: "m1",
+		Owner: true, Text: "/ai hello", At: time.Now(), Live: true}
+	if _, _, err := h.fileIncoming(man, in); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := h.store.conv("fakew:c1")
+	done := make(chan struct{})
+	t.Cleanup(func() { <-done })
+	go func() {
+		defer close(done)
+		for range 100 {
+			if _, err := json.Marshal(snapshot); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	in.ID = "m2"
+	if _, _, err := h.fileIncoming(man, in); err != nil {
+		t.Fatal(err)
+	}
 }

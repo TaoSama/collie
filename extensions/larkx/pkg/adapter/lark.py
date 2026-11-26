@@ -193,7 +193,7 @@ class Feishu:
         self.recent = collections.OrderedDict()  # message id -> (root id, text)
         self.own_cids = collections.OrderedDict()  # what this adapter sent: its echo is not news
         self._mu = threading.Lock()
-        self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self.doc_comments, self.signed_out)
+        self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self._deliver_doc_comments, self.signed_out)
         self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.history = history.History(self)
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
@@ -262,20 +262,23 @@ class Feishu:
     def stop(self):
         self._pushes.stop()
 
-    def doc_comments(self, payload):
-        """A document feed push's new comments, replies and mentions as channel.receive messages."""
+    def _deliver_doc_comments(self, payload, on_message):
+        """Hands new document comments, replies and mentions to the hub."""
         from protobuf_to_dict import protobuf_to_dict
 
         L = self.U.L
         req = L.docs.PushDocFeedRequest.FromString(payload)
         if req.status not in DOC_FEED_NEWS:
-            return []
-        feed, out = req.docFeed, []
+            return
+        feed = req.docFeed
         for dm in sorted(req.docMessages.values(), key=lambda d: d.createTime):
             what = DOC_KINDS.get(dm.type)
             mid = DOC_CHAT + dm.id
-            # A feed update repeats what came before, and a sid pull may bring a push again.
-            if not what or not dm.id or not self._remember(mid, "", ""):
+            if not what or not dm.id:
+                continue
+            with self._mu:
+                seen = mid in self.recent
+            if seen:
                 continue
             body = (richtext.to_text(L, protobuf_to_dict(dm.richText)) if dm.HasField("richText") else "") or dm.content
             sender = str(dm.fromId)
@@ -288,8 +291,9 @@ class Feishu:
             if dm.createTime:
                 at = dm.createTime / (1000 if dm.createTime > 10 ** 12 else 1)
                 m["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
-            out.append(m)
-        return out
+            # Feed updates repeat earlier comments. Only remember those the hub accepted.
+            if on_message(m):
+                self._remember(mid, "", "")
 
     def _deliver(self, msg, on_message, got=None):
         try:

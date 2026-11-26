@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -138,10 +139,13 @@ func (c *InboxConv) setAsk(topic string, change func(*ConvAsk)) {
 		c.Worker, c.AskMsg, c.AskAt, c.AskBy = a.Worker, a.AskMsg, a.AskAt, a.AskBy
 		return
 	}
-	if c.Topics == nil {
-		c.Topics = map[string]*ConvAsk{}
+	// Readers keep snapshots of the old map, including during an incoming transaction.
+	topics := maps.Clone(c.Topics)
+	if topics == nil {
+		topics = map[string]*ConvAsk{}
 	}
-	c.Topics[topic] = &a
+	topics[topic] = &a
+	c.Topics = topics
 	for len(c.Topics) > topicsMost {
 		oldest := ""
 		for k, v := range c.Topics {

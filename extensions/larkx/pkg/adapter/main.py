@@ -25,6 +25,7 @@ RESTORE_RETRY = 60
 QR_RENEWALS = 3
 LOAD_WAIT = 40  # a sign-in started while the packages install waits this long (the host's is 50)
 SENT_KEEP = 7 * 86400
+DOC_RECEIVE_RETRY = 2  # seconds between handoffs while the hub is unavailable
 QR_HINTS = {"waiting": "用飞书 App 扫码登录", "scanned": "已扫码，请在手机上确认"}
 
 log = logging.getLogger("larkx")
@@ -329,7 +330,7 @@ class Extension:
 
     def _listen(self, stop):
         try:
-            self.backend.listen(self._received, self._link, stop)
+            self.backend.listen(lambda m: self._received(m, stop), self._link, stop)
         except Exception as e:
             log.error("listening stopped: %s", e)
             self._link("down")
@@ -342,11 +343,15 @@ class Extension:
                 self.link = state
         self.changed()
 
-    def _received(self, m):
-        try:
-            self.peer.call("channel.receive", {"contribution": ID, "message": m})
-        except peer.Error as e:
-            log.warning("handing over message %s: %s", m.get("id"), e.message)
+    def _received(self, m, stop):
+        while True:
+            try:
+                self.peer.call("channel.receive", {"contribution": ID, "message": m})
+                return True
+            except peer.Error as e:
+                log.warning("handing over message %s: %s", m.get("id"), e.message)
+                if e.code != "hub_unavailable" or m.get("chat_kind") != "doc" or stop.wait(DOC_RECEIVE_RETRY):
+                    return False
 
     def changed(self):
         self.peer.notify("connector.changed", {"contribution": ID, "scope": "status"})
