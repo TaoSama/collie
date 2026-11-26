@@ -14,19 +14,26 @@ import (
 // it is on: marked unread, archived in Collie, and the name you gave it.
 // The page keys them by computer, agent and session.
 
+type sessionArchive struct {
+	Name    string `json:"name,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
+	Surface string `json:"surface,omitempty"`
+}
+
 type sessionMark struct {
-	Unread         bool      `json:"unread,omitempty"`
-	Archived       bool      `json:"archived,omitempty"` // legacy Claude archive
-	CollieArchived bool      `json:"collie_archived,omitempty"`
-	Title          string    `json:"title,omitempty"`
-	At             time.Time `json:"at"`
+	Unread         bool            `json:"unread,omitempty"`
+	Archived       bool            `json:"archived,omitempty"` // legacy Claude archive
+	CollieArchived bool            `json:"collie_archived,omitempty"`
+	Archive        *sessionArchive `json:"archive,omitempty"`
+	Title          string          `json:"title,omitempty"`
+	At             time.Time       `json:"at"`
 }
 
 func (m *sessionMark) empty() bool {
 	return !m.Unread && !m.Archived && !m.CollieArchived && m.Title == ""
 }
 
-// maxMarks: the oldest go first beyond this many.
+// Keep all archived sessions so they can be restored. Other marks age out.
 const maxMarks = 2000
 
 var marks = struct {
@@ -52,12 +59,16 @@ func (s *Server) loadMarksLocked() {
 func (s *Server) saveMarks(next map[string]*sessionMark) error {
 	if len(next) > maxMarks {
 		keys := make([]string, 0, len(next))
-		for k := range next {
-			keys = append(keys, k)
+		for key, mark := range next {
+			if !mark.CollieArchived && !mark.Archived {
+				keys = append(keys, key)
+			}
 		}
-		sort.Slice(keys, func(i, j int) bool { return next[keys[i]].At.Before(next[keys[j]].At) })
-		for _, k := range keys[:len(keys)-maxMarks] {
-			delete(next, k)
+		if len(keys) > maxMarks {
+			sort.Slice(keys, func(i, j int) bool { return next[keys[i]].At.Before(next[keys[j]].At) })
+			for _, key := range keys[:len(keys)-maxMarks] {
+				delete(next, key)
+			}
 		}
 	}
 	if s.sup == nil {
@@ -83,11 +94,12 @@ func (s *Server) listMarks(w http.ResponseWriter, r *http.Request) {
 // out stays as it was.
 func (s *Server) setMark(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Key            string  `json:"key"`
-		Unread         *bool   `json:"unread"`
-		Archived       *bool   `json:"archived"`
-		CollieArchived *bool   `json:"collie_archived"`
-		Title          *string `json:"title"`
+		Key            string          `json:"key"`
+		Unread         *bool           `json:"unread"`
+		Archived       *bool           `json:"archived"`
+		CollieArchived *bool           `json:"collie_archived"`
+		Archive        *sessionArchive `json:"archive"`
+		Title          *string         `json:"title"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -112,6 +124,12 @@ func (s *Server) setMark(w http.ResponseWriter, r *http.Request) {
 	if body.CollieArchived != nil {
 		m.CollieArchived = *body.CollieArchived
 		m.Archived = false
+		if body.Archive != nil {
+			m.Archive = body.Archive
+		}
+		if !m.CollieArchived {
+			m.Archive = nil
+		}
 	}
 	if body.Title != nil {
 		m.Title = *body.Title

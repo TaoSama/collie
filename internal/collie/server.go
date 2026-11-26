@@ -119,6 +119,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("POST /api/external/{id}/reveal", wrap(s.revealExternal))
 	mux.Handle("POST /api/sessions/{id}/rename", wrap(s.renameSession))
 	mux.Handle("POST /api/sessions/{id}/archive", wrap(s.archiveSession))
+	mux.Handle("POST /api/sessions/{id}/unarchive", wrap(s.unarchiveSession))
 }
 
 // NodeRoutes is what a node serves to its hub through the tunnel.

@@ -3,18 +3,20 @@ package collie
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
 
-// The session menu renames a session through its agent. Collie's archive
-// lives on the hub (marks.go).
+// The session menu changes native session state on the agent's computer.
+// The hub also keeps a Collie archive entry (marks.go).
 
 // renameSession: POST /api/sessions/{id}/rename {kind, name}.
 func (s *Server) renameSession(w http.ResponseWriter, r *http.Request) {
@@ -48,33 +50,78 @@ func (s *Server) renameSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// archiveSession is retained for older Codex clients.
-// POST /api/sessions/{id}/archive {kind}.
 func (s *Server) archiveSession(w http.ResponseWriter, r *http.Request) {
+	s.setNativeArchive(w, r, true)
+}
+
+func (s *Server) unarchiveSession(w http.ResponseWriter, r *http.Request) {
+	s.setNativeArchive(w, r, false)
+}
+
+// POST /api/sessions/{id}/archive or /unarchive {kind, surface?, just_closed?}.
+func (s *Server) setNativeArchive(w http.ResponseWriter, r *http.Request, archived bool) {
 	var body struct {
-		Kind string `json:"kind"`
-		// Its program was just closed: Codex may hold the thread a moment more.
-		JustClosed bool `json:"just_closed"`
+		Kind       string `json:"kind"`
+		Surface    string `json:"surface"`
+		JustClosed bool   `json:"just_closed"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	id := r.PathValue("id")
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	var note string
 	var err error
 	switch externalKinds[body.Kind] {
 	case "codex":
-		err = s.codexArchive(r.Context(), id, body.JustClosed)
+		if archived {
+			err = s.codexArchive(ctx, id, body.JustClosed)
+		} else {
+			err = s.codexThread(ctx, "thread/unarchive", map[string]any{"threadId": id})
+		}
+		// An archived thread could have been restored in Codex already, or
+		// its original archive may only have succeeded in Collie.
+		if err != nil && s.codexArchiveMatches(ctx, id, archived) {
+			err = nil
+		}
+	case "agy":
+		err = s.agyArchive(ctx, id, archived)
+	case "claude":
+		note, err = s.claudeArchive(ctx, id, archived)
+		if note != "" && body.Surface == surfaceDesktop {
+			err = errors.New("找不到 Claude 桌面版的这条会话记录")
+		}
 	default:
-		writeJSON(w, 400, map[string]any{"error": "请刷新页面后再归档"})
+		writeJSON(w, 400, map[string]any{"error": "无法识别这个会话的 Agent"})
 		return
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			err = errors.New("等待电脑响应超时，请重试")
+		}
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return
 	}
 	forgetDesktopRows()
 	forgetArchived()
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "note": note})
+}
+
+func (s *Server) codexArchiveMatches(ctx context.Context, id string, archived bool) bool {
+	path := s.codexStateDB()
+	if path == "" {
+		return false
+	}
+	dsn := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&_pragma=busy_timeout(2000)"}
+	db, err := sql.Open("sqlite", dsn.String())
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	var value int
+	err = db.QueryRowContext(ctx, `SELECT archived FROM threads WHERE id = ?`, id).Scan(&value)
+	return err == nil && (value == 1 && archived || value == 0 && !archived)
 }
 
 // codexArchiveWait: a thread whose program was just closed may still be
@@ -167,24 +214,39 @@ func codexOnce(ctx context.Context, bin, method string, params any) (json.RawMes
 	return wait(2)
 }
 
-// agyAnnotate renames a conversation through the Antigravity app.
+var errAgyAppClosed = errors.New("Antigravity 桌面版没有打开")
+
+func agyConversationMissing(err error) bool {
+	var api *agyError
+	return errors.As(err, &api) && (api.Code == "not_found" || api.status == http.StatusNotFound || strings.HasSuffix(api.Message, " not found"))
+}
+
+// agyAnnotate changes a conversation through the Antigravity app.
 func (s *Server) agyAnnotate(ctx context.Context, conversation string, annotations map[string]any) error {
+	err := postAgyApp(ctx, agyConversations+"UpdateConversation", map[string]any{"conversationId": conversation, "annotations": annotations})
+	if agyConversationMissing(err) {
+		return errors.New("Antigravity 无法打开这个会话，没能改名")
+	}
+	if err != nil {
+		return fmt.Errorf("Antigravity 没能改名：%w", err)
+	}
+	forgetDesktopRows()
+	return nil
+}
+
+func postAgyApp(ctx context.Context, path string, body any) error {
 	ls := agyDesktopServer()
 	if ls == nil {
-		return errors.New("Antigravity 没有打开：打开它之后才能改这个会话")
+		return errAgyAppClosed
 	}
-	_, err := ls.post(ctx, agyConversations+"UpdateConversation", map[string]any{"conversationId": conversation, "annotations": annotations})
+	_, err := ls.post(ctx, path, body)
 	if err != nil {
 		var api *agyError
 		if !errors.As(err, &api) || api.authFailed() {
 			forgetAgyServer()
-		} else if api.Code == "not_found" || strings.HasSuffix(api.Message, "not found") {
-			return errors.New("Antigravity 无法打开这个会话，没能改名")
 		}
-		return fmt.Errorf("Antigravity 没有改成：%w", err)
 	}
-	forgetDesktopRows()
-	return nil
+	return err
 }
 
 // claudeRename adds the line Claude Code's /rename writes to the end of the

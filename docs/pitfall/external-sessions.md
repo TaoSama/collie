@@ -60,4 +60,8 @@ Codex 把修改时间满 7 天的 rollout 压成 `<名字>.jsonl.zst`，原文�
 
 只滤 App 的线程表不够：人在 Codex 里归档的会话，常常还开在 herdr 窗格里（接管过来的），或已经结束、留在 hub 的历史里。所以节点在 `/api/titles` 里给窗格会话标上 `archived`，并回答 hub 带来的历史会话里哪些已归档；侧栏把已归档、已经停下的窗格和历史行藏起来，正在跑或等确认的照常显示。取消归档后几秒内回来。Antigravity 的 App 行在 Go 里滤掉归档再数满上限，SQL 不加 `LIMIT`。
 
-Collie 菜单里的归档统一写到 hub 的 `session_marks`（`marks.go`），键包含电脑、Agent 和会话 ID，外部会话、herdr 窗格和历史共用。归档移到侧栏的「已归档」，在那里的会话菜单可取消归档。此操作会保留正在运行的会话。旧版 hub 的 `archived` 标记只对 Claude Code 生效，新操作写 `collie_archived`。在 Codex 或 Antigravity 自己归档的会话仍由相应应用管理。
+从 Collie 菜单归档，先把会话记在 hub 的 `session_marks`，再让会话所在的电脑同步。Codex 用 App Server 的 `thread/archive` 和 `thread/unarchive`。来自 herdr 的 Codex 会话归档前会关闭对应工作区，弹窗会先提示。Antigravity 优先走桌面服务 `UpdateConversationAnnotations`，合并更新归档字段。桌面服务找不到该会话或没有打开时，只有 CLI 自己的会话库有记录，才在持有该会话的 presence 锁时更新 CLI 的搜索头、会话注解和归档时间。改之前将原索引头及原注解写到当前电脑的 Collie 数据目录下的 `archive-backups/`，转录和会话数据库保持原样。
+
+macpro 上标题显示为「1」的会话在桌面索引中是一条来自 CLI 的摘要，桌面服务无法加载。实际会话库、对话记录和归档索引都在 CLI 目录中。Collie 可以打开对话，因为读正文时也检查 CLI 目录。
+
+Claude Code 命令行没有原生会话归档。Claude 桌面版的 Code 会话有独立索引，桌面版退出后可以通过它的本地会话记录切换归档，工作区照常保留。原生同步失败时，Collie 归档仍可用，页面会显示原因。侧栏的「已归档」保留恢复入口，即使会话因原生归档从 Agent 列表中消失。取消归档先恢复 Agent 侧，成功后清除 hub 标记。旧版的 hub `archived` 标记只对 Claude Code 生效。

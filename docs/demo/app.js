@@ -4131,7 +4131,7 @@
   // What the hub keeps about a session for you (marked unread, hidden, the
   // name you gave it), by computer, agent and session. A remote hub's tag is
   // spelled differently in the key so the request stays on this hub.
-  let marks = {}, sideByRow = new Map();
+  let marks = {}, marksVersion = 0, sideByRow = new Map();
   // Ids from another hub may carry its tag more than once; the key keeps one.
   const machineParts = (machine) => String(machine || "").split("!");
   const markKey = (machine, kind, session) => {
@@ -4140,13 +4140,18 @@
     return [m + (hub ? "~" + hub : ""), shortKind(kind), session].join("|");
   };
   async function loadMarks() {
-    try { marks = (await api("/api/marks")).marks || {}; } catch { return; }
+    const version = marksVersion;
+    let result;
+    try { result = await api("/api/marks"); } catch { return; }
+    if (version !== marksVersion) return;
+    marks = result.marks || {};
     renderSessions();
   }
   // Only Claude used the old hub archive field.
   const isCollieArchived = ({ kind, mark }) => !!(mark?.collie_archived || (kind === "claude" && mark?.archived));
   async function setMark(key, change) {
     marks = (await api("/api/marks", { body: { key, ...change } })).marks || {};
+    marksVersion++;
     renderSessions();
   }
   function sideRows() {
@@ -4176,7 +4181,7 @@
       const rank = RANK[v.status] ?? 3;
       const bucket = term ? "term" : v.status === "blocked" ? "attn" : v.status === "done" ? "done" : rank <= 1 ? "going" : "idle";
       return { id: a.pane_id, src: "pane", html: itemHTML(v, rowAttrs(a.pane_id, m)), bucket, kind: term ? "" : shortKind(a.kind), rank, t: 0, human: +new Date(a.human_at || 0), machine: a.machine || "", cwd: a.cwd,
-        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, live: true, archived: !!a.archived };
+        key, mark: m, session: a.session || "", name: term ? "" : title(a), term: term ? termName(a) : "", status: a.status, ws: a.workspace_id, live: true, archived: !!a.archived };
     };
     // Another app's session that is only open (kept alive in the background,
     // nothing running) is listed under 最近 by its time, its dot saying it is
@@ -4196,9 +4201,9 @@
     };
     const extRows = ext.filter((e) => !workerSessions.has(e.session)).map((e) => {
       const machine = machineOf(e), key = markKey(machine, e.kind, e.session), m = marks[key];
-      if (readOnlyHidden(e) && !isCollieArchived({ kind: e.kind, mark: m })) return null;
+      if (readOnlyHidden(e) && !isCollieArchived({ kind: shortKind(e.kind), mark: m })) return null;
       return rest({ id: e.id, src: "ext", html: extRow(e, key, m), kind: shortKind(e.kind), bucket: going(e) ? "going" : "recent", rank: going(e) ? RANK[e.status] ?? 3 : ENDED_RANK,
-        t: new Date(e.updated || e.started), human: +new Date(e.human_at || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, live: !!e.live });
+        t: new Date(e.updated || e.started), human: +new Date(e.human_at || e.started), machine, cwd: e.cwd, key, mark: m, session: e.session || "", name: m?.title || extName(e), status: e.status, surface: e.surface, live: !!e.live });
     }).filter(Boolean);
     const histRows = hist.filter((h) => !collieRan(h)).map((h) => {
       const machine = machineOf(h), key = markKey(machine, h.kind, h.session), m = marks[key];
@@ -4215,6 +4220,23 @@
       ...extRows.filter((r) => r.live || !histKeys.has(r.key)),
       ...histRows.filter((r) => !liveKeys.has(r.key)),
     ].filter((r) => !(r.archived && r.rank >= RANK.done));
+  }
+  // Native archives drop out of the agent's list. Keep enough of the saved
+  // entry to restore it even when the source computer is offline.
+  function missingArchiveRows(rows) {
+    const present = new Set(rows.map((r) => r.key));
+    return Object.entries(marks).flatMap(([key, mark]) => {
+      const [tag, kind, session] = key.split("|");
+      if (!session || present.has(key) || !isCollieArchived({ kind, mark })) return [];
+      const [local, hub] = tag.split("~"), machine = hub ? tagged(local, hub) : local;
+      const id = "archive:" + key, name = mark.title || mark.archive?.name || session;
+      const sub = [KIND_LABEL[kind] || kind, machine && machineName(machine)].filter(Boolean).join(" · ");
+      const html = `<li><button type="button" class="item ended" data-row="${esc(id)}" data-archive-menu title="${esc(name)}">
+        <span class="glyph">${sessionGlyph(kind)}</span>
+        <span class="body"><div class="name">${esc(name)}</div><div class="sub">${esc(sub)}</div></span></button></li>`;
+      return [{ id, key, mark, name, kind, machine, session, html, src: "archive", bucket: "recent", rank: ENDED_RANK,
+        t: new Date(mark.at), human: +new Date(mark.at), cwd: mark.archive?.cwd, surface: mark.archive?.surface }];
+    });
   }
   // [{ key, label, on, title, rows }], in the order they are listed.
   function sideGroups(rows) {
@@ -4256,8 +4278,10 @@
   function renderSessions() {
     const archiveView = sideView === "archive";
     const allRows = sideRows();
-    const hasArchived = allRows.some(isCollieArchived);
-    const all = allRows.filter((r) => isCollieArchived(r) === archiveView);
+    const archivedRows = allRows.filter(isCollieArchived);
+    const missing = missingArchiveRows(allRows);
+    const hasArchived = archivedRows.length || missing.length;
+    const all = archiveView ? [...archivedRows, ...missing] : allRows.filter((r) => !isCollieArchived(r));
     readOnOpen(all);
     sideByRow = new Map(all.filter((r) => r.kind || r.term).map((r) => [r.id, r]));
     const kindOf = (r) => r.bucket === "term" ? "term" : r.kind;
@@ -4492,7 +4516,7 @@
     ctxRow = row;
     const unread = !!row.mark?.unread;
     const items = row.term ? [["close", "关闭", false]] : [
-      ["rename", "重命名", !typesRename(row) && !row.session],
+      ["rename", "重命名", row.src === "archive" || (!typesRename(row) && !row.session)],
       [unread ? "read" : "unread", unread ? "标记为已读" : "标记为未读", !row.key],
       ["copy", "复制对话 ID", !row.session],
       ["archive", isCollieArchived(row) ? "取消归档" : "归档", !row.key],
@@ -4550,6 +4574,12 @@
   // events that close it again (and open the row); cancel them.
   sideBox.addEventListener("touchend", (e) => { if (hold?.fired) e.preventDefault(); }, { passive: false });
   sideBox.addEventListener("click", (e) => {
+    const button = e.target.closest("[data-archive-menu]");
+    const row = sideByRow.get(button?.dataset.row);
+    if (row && !hold?.fired) {
+      const pos = button.getBoundingClientRect();
+      openCtx(row, pos.left, pos.bottom);
+    }
     if (hold?.fired) { e.preventDefault(); e.stopPropagation(); }
     hold = null;
   }, true);
@@ -4590,14 +4620,43 @@
     }
     toast("已改名为「" + name + "」");
   }
+  const changingArchive = new Set();
   async function archiveRow(r, archived) {
+    if (changingArchive.has(r.key)) return;
+    const closeWorkspace = archived && r.kind === "codex" && r.src === "pane" && r.ws;
     if (archived && !await ask({
       title: `归档「${r.name}」？`,
-      text: "会话会移到侧栏的「已归档」，在那里可以恢复。",
+      text: closeWorkspace ? "会先关闭这个 Codex 工作区，再同步归档。你可以在侧栏「已归档」里恢复会话。"
+        : "Collie 会尝试同步归档。你可以在侧栏「已归档」里恢复。",
       ok: "归档",
     })) return;
-    await setMark(r.key, { collie_archived: archived });
-    toast(archived ? "已归档" : "已取消归档");
+    changingArchive.add(r.key);
+    try {
+      if (archived) await setMark(r.key, { collie_archived: true, archive: { name: r.name, cwd: r.cwd, surface: r.surface } });
+      const agent = AGENT_LABEL[r.kind] || r.kind;
+      let result;
+      try {
+        if (closeWorkspace) {
+          await api(`/api/workspaces/${encodeURIComponent(r.ws)}/close`, { body: {} });
+          state = { ...state, agents: state.agents.filter((a) => a.workspace_id !== r.ws), shells: state.shells.filter((a) => a.workspace_id !== r.ws) };
+          if (view === "pane" && current === r.id) goBack(true);
+        }
+        result = await api(`/api/sessions/${sessionPath(r)}/${archived ? "archive" : "unarchive"}`, { body: { kind: r.kind, surface: r.surface, just_closed: !!closeWorkspace } });
+      } catch (err) {
+        const action = archived ? "已在 Collie 归档，但" : "还在 Collie 的「已归档」中，";
+        const detail = [404, 405].includes(err.status) ? "这台电脑的 Collie 版本可能较旧" : err.status ? err.message : "连接不到这台电脑，请重试";
+        toast(`${action} ${agent} 那边没改成：${detail}`, "attn");
+        return;
+      }
+      if (!archived) await setMark(r.key, { collie_archived: false });
+      const done = archived ? "已归档" : "已取消归档";
+      if (result.note) toast(`已在 Collie ${archived ? "归档" : "取消归档"}。${result.note}`, "attn");
+      else toast(done);
+      loadExternal();
+      loadHistory();
+    } finally {
+      changingArchive.delete(r.key);
+    }
   }
   async function closeTerm(r) {
     if (!await ask({ title: `关闭终端「${r.term}」？`, text: "里面在跑的进程会被结束。", ok: "关闭", warn: true })) return;

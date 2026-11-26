@@ -679,12 +679,16 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       if (method === "POST") {
         const m = { ...marks[body.key] };
         for (const k of ["unread", "archived", "collie_archived", "title"]) if (body[k] !== undefined) m[k] = body[k];
-        if (body.collie_archived !== undefined) delete m.archived;
+        if (body.collie_archived !== undefined) {
+          delete m.archived;
+          if (!body.collie_archived) delete m.archive;
+          else if (body.archive) m.archive = body.archive;
+        }
         if (m.unread || m.archived || m.collie_archived || m.title) marks[body.key] = m; else delete marks[body.key];
       }
       return json({ marks });
     }
-    if (/^\/api\/sessions\/[^/]+\/(rename|archive)$/.test(p)) return json({ ok: true });
+    if (/^\/api\/sessions\/[^/]+\/(rename|archive|unarchive)$/.test(p)) return json({ ok: true });
     if (p === "/api/hubs") return json({ hubs: [] });
     if (p === "/api/version") return json({ version: "v0.2.41", latest: "v0.2.41", outdated: [] });
     if (p === "/api/local-app") return json({ url: "" });

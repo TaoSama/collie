@@ -335,6 +335,7 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 10px;
   padding: var(--row-py) var(--row-px); border-radius: calc(10px * var(--round)); text-decoration: none; transition: background .12s;
 }
+button[data-archive-menu] { width: 100%; border: 0; background: transparent; text-align: left; }
 .nav-item:hover, .item:hover { background: var(--bg-3); }
 .nav-item.active, .item.active { background: var(--sel-bg); box-shadow: var(--sel-ring); }
 .nav-ico { width: 26px; height: 26px; display: grid; place-items: center; border-radius: calc(8px * var(--round)); background: var(--bg); border: var(--bw) solid var(--line); color: var(--t-secondary); }
