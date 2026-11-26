@@ -393,8 +393,7 @@ func (sp *Super) dialogNotes(ctx context.Context, panes []string) []pushNote {
 		sig := ""
 		if screen, err := sp.s.herdr.ReadAsk(ctx, pane); err != nil {
 			log.Printf("push: reading %s's dialog: %v", pane, err)
-		} else if screenAsks(screen) {
-			a := parseApproval(screen)
+		} else if a, ok := visibleApproval(screen); ok {
 			choices, sig = choiceLabels(a), askSig(a)
 		}
 		if sp.push.repeat(pane, sig) {

@@ -927,9 +927,10 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 	summary := sp.lastAssistant(ctx, w)
 	var dialog *Approval
 	if blocked {
-		if screen, err := sp.s.herdr.ReadAsk(ctx, w.PaneID); err == nil && screenAsks(screen) {
-			a := parseApproval(screen)
-			dialog = &a
+		if screen, err := sp.s.herdr.ReadAsk(ctx, w.PaneID); err == nil {
+			if a, ok := visibleApproval(screen); ok {
+				dialog = &a
+			}
 		}
 	}
 	if w.Conv != "" && !blocked && sp.s.ext != nil {

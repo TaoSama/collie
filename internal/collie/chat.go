@@ -1294,11 +1294,11 @@ func (s *Server) paneAsk(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if !screenAsks(text) {
+	a, asking := visibleApproval(text)
+	if !asking {
 		writeJSON(w, 200, map[string]any{"asking": false})
 		return
 	}
-	a := parseApproval(text)
 	writeJSON(w, 200, map[string]any{"asking": true, "approval": a, "sig": askSig(a)})
 }
 

@@ -310,10 +310,10 @@ func (sp *Super) answerPane(ctx context.Context, pane, sig, by string, pick func
 	if err != nil {
 		return "", err
 	}
-	if !screenAsks(screen) {
+	a, asking := visibleApproval(screen)
+	if !asking {
 		return "", errNotAsking
 	}
-	a := parseApproval(screen)
 	if sig != "" && askSig(a) != sig {
 		return "", errNotAsking // another dialog took its place
 	}
