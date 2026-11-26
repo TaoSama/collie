@@ -2671,6 +2671,16 @@
   const AUTO_API = { inbox: "inbox", events: "triggers", timers: "timers", memory: "memory", hooks: "settings", settings: "settings" };
   const AUTO_PATH = { inbox: "/api/inbox", ext: "/api/ext", markets: "/api/ext-markets" };
   let autoData = {};
+  function autoSources(tab, sub) {
+    if (tab !== "hooks") return [AUTO_API[tab]];
+    if (sub.startsWith("ext/")) return ["ext", "inbox"];
+    if (sub === "reply") return ["ext"];
+    if (sub === "markets") return ["markets"];
+    if (sub === "webhooks") return ["settings"];
+    const list = ["settings", "ext", "inbox"];
+    if (!autoData.markets) list.push("markets");
+    return list;
+  }
   async function fetchAuto(src) {
     const r = await api(AUTO_PATH[src] || "/api/super/" + src);
     autoData[src] = r;
@@ -2689,7 +2699,7 @@
     memEditing = false;
     body._memSig = ""; body._sig = "";
     markTab("#auto-tabs", autoTab);
-    const src = AUTO_API[autoTab], have = autoData[src];
+    const sources = autoSources(autoTab, hooksSub()), have = autoData[sources[0]];
     if (autoTab === "memory" && have && memParked?.sig === memSig(have)) {
       body.replaceChildren(...memParked.nodes);
       body._memSig = memParked.sig;
@@ -2700,7 +2710,7 @@
     clearInterval(autoTimer);
     loadAuto(have ? null : restore);
     if (all) {
-      for (const k of new Set(Object.values(AUTO_API))) if (k !== src) fetchAuto(k).catch(() => {});
+      for (const k of new Set(Object.values(AUTO_API))) if (!sources.includes(k)) fetchAuto(k).catch(() => {});
       if (autoData.memory) (window.requestIdleCallback || setTimeout)(() => memHTML(autoData.memory));
     }
     if (autoTab === "inbox" || autoTab === "events" || autoTab === "hooks") autoTimer = setInterval(() => loadAuto(), autoTab === "hooks" ? 3000 : 4000);
@@ -2708,20 +2718,25 @@
   }
 
   async function loadAuto(restore = null) {
-    const tab = autoTab;
+    const tab = autoTab, sub = hooksSub();
+    const sources = autoSources(tab, sub);
+    // A sign-in can still be waiting for its extension even on another 接入 page.
+    if (tab === "hooks" && extLogin?.waiting && !sources.includes("ext")) sources.push("ext");
+    if (tab === "timers") sources.push("inbox");
+    const stillOpen = () => view === "auto" && autoTab === tab && hooksSub() === sub;
     try {
-      const [r] = await Promise.all([fetchAuto(AUTO_API[tab]),
-        tab === "hooks" ? fetchAuto("ext").catch(() => null) : null,
-        tab === "hooks" && (!autoData.markets || hooksSub() === "markets") ? fetchAuto("markets").catch(() => null) : null,
-        tab === "hooks" ? fetchAuto("inbox").catch(() => null) : null,
-        tab === "inbox" && inboxCur ? loadConv() : null,
-        tab === "timers" ? fetchAuto("inbox").catch(() => null) : null]);
-      if (view !== "auto" || autoTab !== tab) return;
+      const requests = sources.map((src, i) => {
+        const request = fetchAuto(src);
+        return i > 0 || (tab === "hooks" && src !== "settings") ? request.catch(() => autoData[src]) : request;
+      });
+      if (tab === "inbox" && inboxCur) requests.push(loadConv());
+      const [r] = await Promise.all(requests);
+      if (!stillOpen()) return;
       if (tab === "hooks") resumeLogin();
       drawAuto(r, restore);
       if (tab === "settings") api("/api/super/lark?fresh").then((l) => { autoData.lark = l; showLarkWho(); }).catch(() => {});
     } catch (err) {
-      if (view === "auto" && autoTab === tab) $("#auto-body").innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`;
+      if (stillOpen()) $("#auto-body").innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`;
     }
   }
   function showLarkWho() {
@@ -2774,7 +2789,12 @@
         if (sig !== body._sig) { body._sig = sig; $("#hooks-top").innerHTML = collieExt.hooksList(ext, autoData.inbox, autoData.markets); }
         if (whSig !== body._whSig) { body._whSig = whSig; $("#hooks-wh").innerHTML = `<h3 class="hooks-h">Webhook 与来源策略</h3>` + hooksHTML(r); }
       } else {
-        const sig = JSON.stringify([sub, r, autoData.ext, autoData.inbox, autoData.markets, extLogin]);
+        const data = id ? [ext, autoData.inbox, extLogin]
+          : sub === "reply" ? [ext?.trigger, ext?.default_trigger, ext?.footer, ext?.default_footer]
+          : sub === "markets" ? [autoData.markets]
+          : sub === "webhooks" ? [r]
+          : [ext, autoData.inbox, autoData.markets];
+        const sig = JSON.stringify([sub, data]);
         if (sig === body._sig && !newPage) { if (restore) restoreSimpleScroll(body, restore); return; }
         body._sig = sig;
         body.innerHTML = id ? collieExt.extPage((ext?.extensions || []).find((v) => v.manifest.id === id), ext, extLogin, autoData.inbox)
