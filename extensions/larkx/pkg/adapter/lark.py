@@ -298,12 +298,14 @@ class Feishu:
             out["thread"] = root or mid
         self._remember(mid, root, text, again=True)
         p2p = msg.get("chat_type") == CHAT_P2P
-        out["chat_kind"] = "self" if p2p and chat == self.self_chat else "dm" if p2p else "group"
         out["sender_name"] = self.user_name(sender, chat)
         info = self.chat_info(chat)
-        if p2p and not out["owner"]:
-            out["chat"] = out["sender_name"]
+        if p2p:
+            peer = self.peer(chat, "" if out["owner"] else sender)
+            out["chat_kind"] = "self" if peer is None or chat == self.self_chat else "dm"
+            out["chat"] = self.dm_name(chat, peer, out["sender_name"] if not out["owner"] else "")
         else:
+            out["chat_kind"] = "group"
             out["chat"] = info.get("name") or ""
         if "isRemind" in info:
             out["muted"] = not info["isRemind"]  # 免打扰 is isRemind off
@@ -345,7 +347,37 @@ class Feishu:
         got = self.names.get("feedcard:" + chat, look)
         return None if not got else got == "folded"
 
-    def user_name(self, uid, chat):
+    def peer(self, chat, known=""):
+        """The other person of a direct chat: their id and name, None for your chat with yourself, ("", "") not known."""
+        if known:
+            return known, ""
+        if chat == self.self_chat:
+            return None
+
+        def look():
+            r = self.client.api("chats.PullChatChattersRequest", {"chatId": chat, "needChatters": True, "limit": 10}) or {}
+            others = [(k, v) for k, v in (r.get("chatters") or {}).items() if k != self.me]
+            if not (r.get("chatters") or {}):
+                return ""
+            if not others:
+                return "self"
+            uid, c = others[0]
+            return "%s\t%s" % (uid, c.get("localizedName") or c.get("name") or "")
+
+        got = self.names.get("peer:" + chat, look) if self.client is not None else ""
+        if got == "self":
+            return None
+        uid, _, name = got.partition("\t")
+        return uid, name
+
+    def dm_name(self, chat, peer, sender_name=""):
+        """A direct chat's name as Feishu shows it: the other person, or you with （我）; their short id when unknown."""
+        if peer is None:
+            me = self.user_name(self.me, chat) or "我自己"
+            return me if me == "我自己" else "%s（我）" % me
+        uid, name = peer
+        name = sender_name or name or (self.user_name(uid, chat) if uid else "")
+        return name or "私聊 " + (uid or chat)[-6:]
         if not uid or self.client is None:
             return ""
         return self.names.get("user:" + uid, lambda: self.client.get_user_name(uid, chat or self.self_chat or "0"))

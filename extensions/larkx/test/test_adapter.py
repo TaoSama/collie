@@ -293,6 +293,34 @@ def at_rich(uid, name, text):
     return protobuf_to_dict(rt)
 
 
+class Names(unittest.TestCase):
+    """A direct chat is named as in Feishu: the other person, or you （我）; never 还不知道对方是谁."""
+
+    def feishu(self, chatters):
+        f = lark.Feishu(U, "feishu", lambda d: None)
+        f.me, f.self_chat = "u_me", ""
+        f.client = FakeClient(answer("1"))
+        f.client.api = lambda name, data: {"chatters": chatters}
+        f.user_name = lambda uid, chat: {"u_me": "陆文韬", "u_b": "乙"}.get(uid, "")
+        f.chat_info = lambda chat: {}
+        f.folded = lambda chat: None
+        return f
+
+    def msg(self, mid, sender, chat="d1"):
+        rt = protobuf_to_dict(richtext.build(U.L, "嗨"))
+        return {"msg_id": mid, "chat_id": chat, "from_id": sender, "msg_type": 4, "chat_type": 1, "content_data": {"richText": rt}}
+
+    def test_names(self):
+        f = self.feishu({"u_me": {"name": "陆文韬"}, "u_b": {"localizedName": "乙"}})
+        m = f.normalize(self.msg("1", "u_me"))
+        self.assertEqual((m["chat"], m["chat_kind"]), ("乙", "dm"), "your own message: the other person from the members")
+        self.assertEqual(f.normalize(self.msg("2", "u_b", "d2"))["chat"], "乙", "theirs: the sender")
+        m = self.feishu({"u_me": {"name": "陆文韬"}}).normalize(self.msg("3", "u_me", "d3"))
+        self.assertEqual((m["chat"], m["chat_kind"]), ("陆文韬（我）", "self"), "only you in it: your chat with yourself")
+        m = self.feishu({}).normalize(self.msg("4", "u_me", "6617623665812963591"))
+        self.assertEqual(m["chat"], "私聊 963591", "nothing known: a short id, never 还不知道对方是谁")
+
+
 class Mentions(unittest.TestCase):
     """@自己唤起 and 群话题各开对话."""
 
