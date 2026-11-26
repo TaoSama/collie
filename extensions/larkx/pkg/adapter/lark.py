@@ -28,6 +28,7 @@ QR_STATUS = {1: QR_WAITING, 2: QR_SCANNED, 3: QR_FAILED, 4: QR_FAILED, 5: QR_EXP
 MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM, MSG_CARD = 3, 4, 5, 6, 14
 CHAT_P2P = 1
 CMD_PUT_MESSAGE = 5
+WORKING_REACTION = "OnIt"  # the reaction a request gets when Collie takes it: 「在做了」
 CMD_PUSH_MESSAGES = 6
 CMD_PUSH_SID = 6000  # only sids: the packets are pulled by them
 CMD_PUSH_DOC_FEED = 14004  # comments, replies and mentions in cloud documents
@@ -438,6 +439,14 @@ class Feishu:
             while len(self.own_cids) > RECENT_MOST:
                 self.own_cids.popitem(last=False)
         return self._put(U.builders.wrap_packet(CMD_PUT_MESSAGE, req, U.ids.generate_long_request_id()))
+
+    def react(self, message_id, key=WORKING_REACTION):
+        """Puts a reaction on a message, as the signed-in person."""
+        if self.client is None:
+            raise NotSent("没有登录")
+        if str(message_id).startswith(DOC_CHAT):
+            return  # a document comment is not a message
+        self.client.api("reactions.PutReactionRequest", {"messageId": str(message_id), "reactionType": key})
 
     def _put(self, packet):
         import requests

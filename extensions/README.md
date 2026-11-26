@@ -101,6 +101,7 @@ COLLIE_HOME/ext/<id>/
 | `actions` | `connector.actions.do` | 用扩展的动作发消息（`send_action` 指定动作名） |
 | `send` | `channel.send` | 用通道发消息 |
 | `interest` | `channel.interest` | 接收「哪些会话在等结果」（微信续期提醒用） |
+| `working` | `channel.working` | Collie 接下一条请求时告诉扩展，扩展在原应用里标出「在处理」（飞书：表情回复） |
 
 两类扩展：
 
@@ -157,6 +158,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.archive.changes` | `{cursor?, limit?}` | `{batches:[{chat:{id,name,kind,updated_at,muted?}, messages:[{id,sender_id,sender_name,mine?,type,text,at,media?}]}], next, more}`。`next` 是下次的游标，`more` 表示还有 |
 | `connector.actions.do` | `{name, args, request_id}` | `{text, files?: [{path, mime?}], items?: […]}`。`files` 是扩展所在电脑上的本地路径，`items` 是结构化结果，Collie 原样转给调用方。**同一个 `request_id` 最多执行一次**；结果不明时不再执行，回错误 |
 | `channel.send` | `{ref, chat, text, footer?, kind, reply_to?, images?, files?, link?}`（`text` 以尾标 `footer` 结尾，想把尾标排成别的样子的扩展可以拆开） | `{message_id?}`，或 `{deferred:true, reason}`（暂时发不了，扩展自己排队，之后用 `channel.delivery` 报告）。**同一个 `ref` 最多发一次** |
+| `channel.working` | `{chat, message_id}` | `{}`。Collie 把这条消息当成请求接下了（Router 或专属 agent 开始处理）；扩展在原应用里标出来，失败只记日志 |
 | `channel.interest` | `{chats:[chat_id…]}` | `{}`。哪些会话有启用中的定时任务或待发结果；有 `interest` 能力的扩展据此决定要不要提醒续期。Collie 每 30 秒发一次 |
 
 `kind`：`answer`（回复一条消息）、`progress`（处理中的进度）、`result`（定时任务或后台任务的结果）、`push`（你明确要求推送）。

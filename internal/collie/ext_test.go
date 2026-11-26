@@ -475,23 +475,30 @@ func TestLarkxFake(t *testing.T) {
 		v := h.view("larkx")
 		return v.Status != nil && v.Status.State == extproto.StateOK
 	})
-	waitFor(t, "its chats in the inbox", func() bool { return len(h.store.list("larkx")) >= 2 })
-	if len(extTriggers(sp, "ext:larkx")) != 0 {
-		t.Fatal("a closed conversation never triggers")
+	waitFor(t, "its chats in the inbox", func() bool { return len(h.store.list("larkx")) >= 3 })
+	waitFor(t, "your own /ai, taken", func() bool { return len(extTriggers(sp, "ext:larkx")) == 1 })
+	if ts := extTriggers(sp, "ext:larkx"); ts[0].Ref != "m3" {
+		t.Fatalf("only your own /ai triggers, in any conversation: %+v", ts)
 	}
+	waitFor(t, "the request marked as being worked on", func() bool {
+		b, _ := os.ReadFile(filepath.Join(dir, "ext", "larkx", "data", "fake-reactions.jsonl"))
+		return strings.Contains(string(b), `"message_id": "m3", "key": "OnIt"`)
+	})
 	h.store.update("larkx:c_dm", func(c *InboxConv) { c.On = true; c.AskMsg = "m1"; c.AskAt = time.Now() })
 	o, err := h.sendOut("ext:larkx:c_dm", "改到 **三点**", extproto.KindAnswer, runInfo{Agent: "Codex"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "sent", func() bool { x := h.store.out(o.Ref); return x != nil && x.State == extproto.DeliverySent })
-	if x := h.store.out(o.Ref); x.MessageID != "m_sent_1" {
+	if x := h.store.out(o.Ref); !strings.HasPrefix(x.MessageID, "m_sent_") {
 		t.Fatalf("the message id: %+v", x)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "ext", "larkx", "data", "fake-posts.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	b = []byte(lines[len(lines)-1]) // before it, maybe the note that its agent can't start on the hub
 	var post struct {
 		Text, Footer string
 		ReplyTo      string `json:"reply_to"`
