@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/TaoSama/collie/internal/extproto"
@@ -149,8 +150,9 @@ func (x *extension) status() extproto.Status {
 	if creds == nil {
 		return st
 	}
-	st.Account = creds.UserID
-	detail := map[string]any{"绑定人": creds.UserID}
+	// iLink names people only by an id (o9cq…@im.wechat): no nickname to show.
+	st.Account, st.AccountID = accountName, creds.UserID
+	detail := map[string]any{"绑定人": shortUserID(creds.UserID)}
 	if g != nil {
 		x.loop.do(func() {
 			g.statusDetail(detail, health)
@@ -234,4 +236,20 @@ func serve(ctx context.Context, r io.Reader, w io.Writer, o options) int {
 		return 1
 	}
 	return 0
+}
+
+// accountName is the bound person as people see it: iLink gives no
+// nickname, only an id.
+const accountName = "你的微信"
+
+// shortUserID keeps an iLink user id's ends: o9cq80…dp5A@im.wechat.
+func shortUserID(id string) string {
+	local, domain, _ := strings.Cut(id, "@")
+	if r := []rune(local); len(r) > 12 {
+		local = string(r[:6]) + "…" + string(r[len(r)-4:])
+	}
+	if domain != "" {
+		return local + "@" + domain
+	}
+	return local
 }

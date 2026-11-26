@@ -281,7 +281,7 @@ func (x *extension) loginStep(ctx context.Context, step, secret string) (extprot
 		if err := x.bind(ctx, st.creds); err != nil {
 			return extproto.LoginStep{}, err
 		}
-		return extproto.LoginStep{Done: true, Account: st.creds.UserID}, nil
+		return extproto.LoginStep{Done: true, Account: accountName}, nil
 	}
 	return qrPrompt(p), nil
 }

@@ -516,10 +516,12 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { manifest: { manifest_version: 1, id: "wechat", label: "微信", name: "微信", version: "1.0.0", icon_url: "ext-icons/wechat.png", engines: { collie_protocol: 1 }, runtime: { builtin: "wechat" },
       description: "在微信里和 Collie 聊天：扫码绑定一个微信机器人，你私聊它的消息交给 Collie，回复发回微信。用的是腾讯官方接口（iLink），只处理你本人发的消息。",
       contributes: { connector: { id: "wechat", login: "qr", capabilities: ["status", "login", "receive", "send"] }, channel: { format: "markdown" } }, permissions: { network: ["*.weixin.qq.com"] } },
-      setting: { id: "wechat", enabled: false } },
+      setting: { id: "wechat", enabled: true, machine: "" }, proc: { state: "running", pid: 4343 },
+      status: { state: "ok", account: "你的微信", account_id: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", detail: { "绑定人": "o9cq80…8h9i@im.wechat", "剩余额度": 9, "回复窗口剩余": "22h41m" } } },
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", icon_url: "ext-icons/workbench.svg", runtime: { feature: "workbench" },
       description: "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。" }, setting: { id: "workbench", enabled: true } }] };
   const inboxConvs = [
+    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "你的微信", kind: "dm", last_at: ago(6), preview: "你: 部署好了吗", on: true, owner: true, handler: "collie" },
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
     { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", unread: 12, muted: true, on: false, handler: "agent" },

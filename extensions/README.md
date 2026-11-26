@@ -154,7 +154,7 @@ COLLIE_HOME/ext/<id>/
 | 方法 | 参数 | 应答 |
 | --- | --- | --- |
 | `ping` | `{}` | `{}` |
-| `connector.status` | `{}` | `{state: ok\|not_signed_in\|error, error?, account?, guide?: [行], last_sync?, detail?: {…}}`。`detail` 原样显示在接入页 |
+| `connector.status` | `{}` | `{state: ok\|not_signed_in\|error, error?, account?, account_id?, guide?: [行], last_sync?, detail?: {…}}`。`account` 是给人看的名字；只拿得到 id 的平台给一个友好的名字，id 放 `account_id`（接入页悬停显示）。`detail` 原样显示在接入页 |
 | `connector.login.step` | `{step?, secret?}`：`step` 空表示新开一次登录，否则是上次应答里的 `step`；`secret` 是用户粘贴的密钥（只在 `kind:"secret"` 之后的那一步出现） | 扫码：`{step, kind:"qr", url:<要编码成二维码的文字>, interval:<秒>, hint?, error?}`；要密钥：`{step, kind:"secret", label, hint?, error?}`（接入页弹一个密码框）；完成：`{done:true, account?}`。密钥由扩展自己用 `connector.secrets.save` 保存，Collie 不显示、不记日志、不存进 hub 的数据库 |
 | `connector.logout` | `{}` | `{}`，同时删掉自己存的登录态（`connector.secrets.delete`） |
 | `connector.archive.changes` | `{cursor?, limit?}` | `{batches:[{chat:{id,name,kind,updated_at,muted?}, messages:[{id,sender_id,sender_name,mine?,type,text,at,media?}]}], next, more}`。`next` 是下次的游标，`more` 表示还有 |

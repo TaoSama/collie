@@ -224,7 +224,7 @@ func TestHostProtocolEndToEnd(t *testing.T) {
 		t.Fatalf("scanned step = %+v", step)
 	}
 	step = call[extproto.LoginStep](t, h, extproto.MLoginStep, map[string]any{"contribution": "wechat", "step": step.Step})
-	if !step.Done || step.Account != "owner@im.wechat" {
+	if !step.Done || step.Account != accountName {
 		t.Fatalf("confirmed step = %+v", step)
 	}
 	h.mu.Lock()
@@ -246,7 +246,7 @@ func TestHostProtocolEndToEnd(t *testing.T) {
 	h.mu.Lock()
 	got := h.received[0]
 	h.mu.Unlock()
-	if got.Text != "总结一下" || got.ChatID != "owner@im.wechat" || got.Owner == nil || !*got.Owner {
+	if got.Text != "总结一下" || got.ChatID != "owner@im.wechat" || got.Chat != accountName || got.SenderName != "你" || got.Owner == nil || !*got.Owner {
 		t.Fatalf("received %+v", got)
 	}
 	answer := strings.Repeat("a", 3799) + "\n" + strings.Repeat("b", 10)
@@ -271,7 +271,8 @@ func TestHostProtocolEndToEnd(t *testing.T) {
 		t.Fatalf("repeated ref sent again: %+v, %d messages", again, len(f.texts()))
 	}
 	st := call[extproto.Status](t, h, extproto.MStatus, extproto.Contribution{Contribution: "wechat"})
-	if st.State != extproto.StateOK || st.Account != "owner@im.wechat" || st.Detail["剩余额度"] == nil {
+	// No nickname from iLink: a name for people, the id on hover.
+	if st.State != extproto.StateOK || st.Account != accountName || st.AccountID != "owner@im.wechat" || st.Detail["剩余额度"] == nil {
 		t.Fatalf("status after send = %+v", st)
 	}
 	// The login expires: status turns not_signed_in and Collie hears of it.

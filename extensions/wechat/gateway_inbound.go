@@ -191,7 +191,7 @@ func (g *Gateway) conflicts(m InboundMessage, text string) bool {
 // attachments. Collie takes each id once, so a failed call is retried.
 func (g *Gateway) forward(ctx context.Context, m InboundMessage, text string, media []DownloadedMedia) error {
 	owner := true
-	msg := extproto.Message{ID: m.DeliveryKey, Text: text, ChatID: m.ChatID, ChatKind: "dm", Sender: m.ChatID, Owner: &owner,
+	msg := extproto.Message{ID: m.DeliveryKey, Text: text, ChatID: m.ChatID, Chat: accountName, ChatKind: "dm", Sender: m.ChatID, SenderName: "你", Owner: &owner,
 		Quote: m.Quote, Unsupported: append(append([]string(nil), m.UnsupportedKinds...), m.IgnoredKinds...)}
 	if m.CreatedAtMs != nil {
 		msg.At = time.UnixMilli(*m.CreatedAtMs).UTC().Format(time.RFC3339Nano)

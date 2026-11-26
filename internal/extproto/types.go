@@ -74,11 +74,14 @@ type Contribution struct {
 
 // Status is connector.status's answer.
 type Status struct {
-	State    string   `json:"state"` // ok | not_signed_in | error
-	Error    string   `json:"error,omitempty"`
-	Account  string   `json:"account,omitempty"`
-	Guide    []string `json:"guide,omitempty"`
-	LastSync string   `json:"last_sync,omitempty"`
+	State   string `json:"state"` // ok | not_signed_in | error
+	Error   string `json:"error,omitempty"`
+	Account string `json:"account,omitempty"`
+	// AccountID: the account's id, when Account is a name for people
+	// (shown on hover).
+	AccountID string   `json:"account_id,omitempty"`
+	Guide     []string `json:"guide,omitempty"`
+	LastSync  string   `json:"last_sync,omitempty"`
 	// Extensions may add their own fields: the host shows Detail as is.
 	Detail map[string]any `json:"detail,omitempty"`
 }

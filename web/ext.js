@@ -37,7 +37,7 @@
     }
     const s = v.status;
     if (!s) return { key: "starting", dot: "starting", label: "启动中", text: "正在读取状态…", busy: true };
-    if (s.state === "ok") return { key: "on", dot: "online", label: "运行中", text: needsLogin(m) ? "已登录" + (s.account ? " " + s.account : "") : "运行中", ok: true };
+    if (s.state === "ok") return { key: "on", dot: "online", label: "运行中", text: needsLogin(m) ? "已登录" + (s.account ? " · " + s.account : "") : "运行中", title: s.account_id || "", ok: true };
     if (s.state === "not_signed_in") return { key: "login", dot: "blocked", label: "未登录", text: "未登录", login: true };
     // Just started, an extension may say "error" while it prepares (a first
     // start downloads what it needs): that is starting, not broken.
@@ -152,7 +152,7 @@
          <small class="muted ext-field-note">${ask ? "它只能在一台电脑上运行，先选好再开启。" : ""}换电脑会停掉原来那台上的；登录状态留在原来那台，新电脑上可能要重新登录。</small>`;
     return `${pageHead(esc(m.name), `<span class="muted">${esc(m.version)} · ${m.market ? "市场" : m.local ? "本地" : "内置"}</span>`, extIcon(m, st, true))}
       <div class="card ext-card" data-ext="${esc(m.id)}"><div class="form">
-        <div class="ext-status"><span class="dot ${esc(st.dot)}"></span><div><b>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${primary}</div>
+        <div class="ext-status"><span class="dot ${esc(st.dot)}"></span><div><b${st.title ? ` title="${esc(st.title)}"` : ""}>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${primary}</div>
         ${loginPanel(m, qr)}
         ${machine}
       </div></div>
@@ -223,7 +223,7 @@
       .map(([k, l, lg]) => `<button type="button" data-inbox-filter="${esc(k)}" class="${(filter || "all") === k ? "on" : ""}">${lg || ""}${esc(l)}</button>`).join("");
     const row = (c) => `<li class="row inbox-row ${c.id === cur ? "sel" : ""}" data-conv="${esc(c.id)}">
         <span class="dot ${c.on ? "idle" : "asleep"}" title="${c.on ? "处理中" : "不处理"}"></span>
-        <div><div class="meta"><b>${esc(c.name || c.chat)}</b><span class="inbox-src">${logo(c.ext)}${esc(c.label)} · ${ico(KIND_ICON[c.kind])}${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread${c.muted ? " muted" : ""}"${c.muted ? ' title="在原应用里设了免打扰"' : ""}>${c.muted ? ico("bell-off") : ""}${c.unread}</span>` : ""}</div>
+        <div><div class="meta"><b${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</b><span class="inbox-src">${logo(c.ext)}${esc(c.label)} · ${ico(KIND_ICON[c.kind])}${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread${c.muted ? " muted" : ""}"${c.muted ? ' title="在原应用里设了免打扰"' : ""}>${c.muted ? ico("bell-off") : ""}${c.unread}</span>` : ""}</div>
           <div class="text">${esc(c.preview || "")}</div>${c.on ? outLine(c.out) : ""}</div>
         <span class="right">${when(c.last_at)}</span></li>`;
     const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;
@@ -249,7 +249,7 @@
         <div class="msg ${m.ref ? "assistant" : ""}">${m.ref ? md(m.text) : esc(m.text)}</div></li>`;
     };
     return `<div class="card conv-card">
-      <div class="card-h"><span>${esc(c.name || c.chat)}</span><button type="button" class="icon-btn conv-close" data-conv-close title="返回">×</button></div>
+      <div class="card-h"><span${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</span><button type="button" class="icon-btn conv-close" data-conv-close title="返回">×</button></div>
       <div class="form">
         <div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button><span><b>处理这个会话</b>${c.on ? "" : `<small class="muted">打开后，以 ${esc(trigger || "/ai")} 开头的消息交给 agent，并开始保存这个会话的消息</small>`}</span></div>
         ${c.on ? `<div class="conv-rule"><span class="tm-lab">谁能唤起</span>${seg("anyone", !!c.anyone, [[false, "只有我"], [true, "任何人"]])}</div>

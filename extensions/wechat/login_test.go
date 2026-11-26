@@ -105,3 +105,16 @@ func TestDeliveryReasonsAreSentences(t *testing.T) {
 		}
 	}
 }
+
+// iLink ids are long and opaque: the status shows their ends.
+func TestShortUserID(t *testing.T) {
+	for in, want := range map[string]string{
+		"o9cq801iLqBC8KH69MTGk3ISdp5A@im.wechat": "o9cq80…dp5A@im.wechat",
+		"owner@im.wechat":                        "owner@im.wechat",
+		"abcdefghijklmnop":                       "abcdef…mnop",
+	} {
+		if got := shortUserID(in); got != want {
+			t.Errorf("shortUserID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
