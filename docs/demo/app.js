@@ -790,8 +790,7 @@
     $("#nav-queue").hidden = !sup.queued;
     $("#nav-queue").textContent = sup.queued;
     $("#nav-collie").classList.toggle("active", view === "collie");
-    $("#nav-auto").classList.toggle("active", view === "auto" && !inboxSrc());
-    renderSrcNav();
+    $("#nav-auto").classList.toggle("active", view === "auto");
     $("#nav-devices").classList.toggle("active", view === "devices");
     $("#nav-prefs").classList.toggle("active", view === "prefs");
     $("#nav-wb").classList.toggle("active", view === "wb");
@@ -1045,7 +1044,7 @@
       let dest = "#/collie";
       if (!booted && !h) {
         const last = store.get("last", "#/collie");
-        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto(\/hooks\/[\w%./-]+|\/inbox\/[a-z0-9-]+)?|devices|prefs|wb(\/[a-z0-9-]+)?)$/.test(last) && (wbOn() || !last.startsWith("#/wb"));
+        const ok = last.startsWith("#/p/") ? !!find(decodeURIComponent(last.slice(4))) : /^#\/(collie|auto(\/hooks\/[\w%./-]+)?|devices|prefs|wb(\/[a-z0-9-]+)?)$/.test(last) && (wbOn() || !last.startsWith("#/wb"));
         if (ok) dest = last;
       }
       replaceHash(dest);
@@ -3006,14 +3005,10 @@
   if (autoTab === "threads") { autoTab = "events"; eventsSub = "threads"; store.set("autoTab", autoTab); }
   let autoTimer;
   // 收件箱: the open conversation, its messages, the filter; 接入: a sign-in.
-  let inboxCur = "", inboxDetail = null, inboxFilter = store.get("inboxFilter", "all"), extLogin = null;
+  let inboxCur = "", inboxDetail = null, extLogin = null;
   // 收件箱's source list: the sources folded shut (kept), and on a phone whether the list is open.
-  let inboxFold = store.get("inboxFold", []), inboxNavOpen = false;
-  // A source's own page (#/auto/inbox/<id>, 飞书 or 微信 in the sidebar), and
-  // the filter each such page was left at (kept).
-  const inboxSrc = () => view === "auto" && current?.startsWith("inbox/") ? current.slice(6) : "";
-  let srcFilters = store.get("inboxSrcFilters", {});
-  const inboxNow = () => { const s = inboxSrc(); return s ? srcFilters[s] || s : inboxFilter; };
+  // 收件箱's channel (飞书, 微信 …, or 已交给 AI) and each channel's filter, kept.
+  let inboxChannel = store.get("inboxChannel", ""), inboxSubs = store.get("inboxSubs", {});
   // A chat's picture that won't load leaves the icon under it.
   document.addEventListener("error", (e) => { if (e.target.classList?.contains("inbox-pic")) e.target.remove(); }, true);
   collieExt.init({ esc, when, md: (t) => md(t), workerHref: (n) => { const p = paneOf(n); return p ? `#/p/${encodeURIComponent(p)}` : ""; } });
@@ -3049,47 +3044,10 @@
     return r;
   }
 
-  // The page's head: 自动化 with its tabs, or a source's own logo and name
-  // with how its chats stand.
-  const AUTO_HEAD = { name: "自动化", meta: "Always-on：事件进来，Collie 决定谁去做" };
-  const srcLine = (s) => [s.unread ? `${s.unread} 个未读` : "都读过了", s.at ? `${s.at} 个@我` : "", `${s.total} 个会话`].filter(Boolean).join(" · ");
-  function syncAutoHead() {
-    const src = inboxSrc(), v = $("#v-auto");
-    const s = src ? collieExt.sourceSummary(autoData.inbox).find((x) => x.id === src) : null;
-    v.classList.toggle("src-page", !!src);
-    const name = v.querySelector(".d-name"), meta = v.querySelector(".d-meta");
-    const head = src ? `${s?.logo || ""}<span>${esc(s?.label || collieExt.label("ext:" + src) || src)}</span>` : esc(AUTO_HEAD.name);
-    if (name.innerHTML !== head) name.innerHTML = head;
-    meta.textContent = src ? (s ? srcLine(s) : "") : AUTO_HEAD.meta;
-  }
-  // 飞书, 微信 in the sidebar, under 自动化: one tap to a source's chats,
-  // with its unread chats (amber when one @s you).
-  function renderSrcNav() {
-    const box = $("#nav-srcs");
-    if (!box) return;
-    const cur = inboxSrc();
-    const html = collieExt.sourceSummary(autoData.inbox).map((s) => `<a class="nav-item nav-src${cur === s.id ? " active" : ""}" href="#/auto/inbox/${encodeURIComponent(s.id)}">
-        <span class="nav-ico">${s.logo || ico("message-circle")}</span>
-        <span class="body"><div class="name">${esc(s.label)}</div><div class="sub">${esc(srcLine(s))}</div></span>
-        ${s.unread ? `<span class="count-pill${s.at ? " at" : ""}" title="${s.unread} 个会话未读${s.at ? `，${s.at} 个@我` : ""}">${s.unread}</span>` : ""}</a>`).join("");
-    if (box._html !== html) { box.innerHTML = html; box._html = html; }
-  }
-  // The sidebar's counts: drawn from the launch snapshot, fetched once the
-  // page is up, then kept fresh while 收件箱 isn't open (it fetches on its own).
-  function refreshSrcNav() {
-    renderSrcNav();
-    (collieExt.known() ? Promise.resolve() : fetchAuto("ext")).then(() => fetchAuto("inbox")).then(renderSrcNav).catch(() => {});
-  }
-  setInterval(() => {
-    if (booted && !document.hidden && !(view === "auto" && autoTab === "inbox")) refreshSrcNav();
-  }, 30000);
-
   // all: the page was just opened, so the other tabs' data is fetched too.
   function openAuto(restore = null, all = false) {
     const body = $("#auto-body");
     if (hooksSub() && autoTab !== "hooks") { autoTab = "hooks"; store.set("autoTab", autoTab); }
-    if (inboxSrc()) autoTab = "inbox"; // a source's page is 收件箱 narrowed to it
-    syncAutoHead();
     // The memory tab's nodes are kept while another tab is open: parsing
     // them again is the slowest part of a switch.
     if (body._memSig && !memEditing) memParked = { sig: body._memSig, nodes: [...body.childNodes] };
@@ -3165,15 +3123,19 @@
     } else if (tab === "inbox") {
       // The list and the open chat redraw apart: a new message elsewhere
       // leaves the chat you are reading as it is.
-      const sig = JSON.stringify([r, inboxCur, inboxNow(), inboxSrc(), inboxFold, inboxNavOpen]), dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger]);
+      const sig = JSON.stringify([r, inboxCur, inboxChannel, inboxSubs]), dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger]);
       // The chat lists newest first: at the top it stays there to show what
       // arrives; scrolled down, it keeps the message you are reading in place.
       const msgs = body.querySelector(".conv-msgs"), stick = msgs && msgs.scrollTop < 40;
       const below = msgs ? msgs.scrollHeight - msgs.scrollTop : 0;
       if (sig !== body._sig) {
         body._sig = sig; body._dsig = dsig;
-        body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxNow(), { fold: inboxFold, navOpen: inboxNavOpen, src: inboxSrc() });
-        syncAutoHead(); renderSrcNav();
+        body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxChannel, inboxSubs[inboxChannel]);
+        // On a phone the channels and the filters slide sideways: the chosen ones in view.
+        for (const on of body.querySelectorAll(".inbox-chs .on, .inbox-chips .on")) {
+          const row = on.parentElement;
+          if (row.scrollWidth > row.clientWidth) row.scrollLeft = Math.max(0, on.offsetLeft - row.offsetLeft - 8);
+        }
       } else if (dsig !== body._dsig && $("#inbox-detail")) {
         body._dsig = dsig;
         $("#inbox-detail").innerHTML = collieExt.detailHTML(inboxCur, inboxDetail, r?.trigger);
@@ -3853,19 +3815,13 @@
     const b = e.target.closest("button");
     if (!b) return;
     if (b.dataset.eventsSub) { eventsSub = b.dataset.eventsSub; store.set("eventsSub", eventsSub); drawAuto(autoData.triggers); return; }
-    if (b.dataset.inboxFilter) {
-      if (inboxSrc()) { srcFilters = { ...srcFilters, [inboxSrc()]: b.dataset.inboxFilter }; store.set("inboxSrcFilters", srcFilters); }
-      else { inboxFilter = b.dataset.inboxFilter; store.set("inboxFilter", inboxFilter); }
-      inboxNavOpen = false; drawAuto(autoData.inbox); return;
+    if (b.dataset.inboxChannel != null) { inboxChannel = b.dataset.inboxChannel; store.set("inboxChannel", inboxChannel); drawAuto(autoData.inbox); return; }
+    if (b.dataset.inboxSub != null) {
+      if (!inboxChannel) { inboxChannel = collieExt.inboxPlace(autoData.inbox, "").ch?.id || ""; store.set("inboxChannel", inboxChannel); }
+      inboxSubs = { ...inboxSubs, [inboxChannel]: b.dataset.inboxSub }; store.set("inboxSubs", inboxSubs); drawAuto(autoData.inbox); return;
     }
-    if (b.dataset.inboxFold) {
-      const id = b.dataset.inboxFold;
-      inboxFold = inboxFold.includes(id) ? inboxFold.filter((x) => x !== id) : [...inboxFold, id];
-      store.set("inboxFold", inboxFold); drawAuto(autoData.inbox); return;
-    }
-    if (b.hasAttribute("data-inbox-nav-toggle")) { inboxNavOpen = !inboxNavOpen; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-inbox-read-all")) {
-      const r = autoData.inbox, ids = collieExt.inboxShown(r, inboxNow()).filter((c) => c.unread > 0);
+      const r = autoData.inbox, ids = collieExt.inboxShown(r, inboxChannel, inboxSubs[inboxChannel]).filter((c) => c.unread > 0);
       const back = [...new Set(ids.filter((c) => r?.read_back?.[c.ext]).map((c) => c.label))];
       if (back.length && !(await ask({ title: `把 ${ids.length} 个会话标为已读？`, text: `${back.join("、")}里也会标为已读（接入里开着「同步为已读」）。`, ok: "全部已读" }))) return;
       busy(b);
@@ -9108,7 +9064,6 @@
     }
     route();
     booted = true;
-    refreshSrcNav();
   }
   // The installed app (index.html links the manifest; the demo doesn't).
   let swRegistered = false;

@@ -2242,35 +2242,32 @@ select.picked { display: none; }
 .ext-out.attn { color: var(--attn); }
 .ext-out.bad { color: var(--danger); }
 .events-seg { margin-bottom: 12px; }
-/* 收件箱's filters: chips with their counts, sliding sideways on a phone; 全部已读 at the end. */
-/* 收件箱's source list: 全部, each source (one with filters of its own opens
-   into them and folds), 已交给 AI, each with how many chats it lists. */
-.inbox-nav { padding: 6px; }
-.inbox-nav ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
-.inbox-nav-src > ul { margin: 1px 0 4px; }
-.inbox-nav-i, .inbox-nav-toggle { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 8px; border: 0; border-radius: calc(8px * var(--round)); background: transparent; color: var(--t-secondary); font-size: var(--fs-meta); text-align: left; transition: background .12s, color .12s; }
-.inbox-nav-i:hover, .inbox-nav-toggle:hover { background: var(--bg-2); color: var(--fg); }
-/* The chosen filter: its icon and words in the same blue, on a light wash of it. */
-.inbox-nav-i.on, .inbox-chip.on { background: color-mix(in srgb, var(--info) 11%, var(--bg)); color: var(--info); font-weight: var(--fw-medium); }
-.inbox-nav-i.on > svg, .inbox-chip.on > svg { color: var(--info); }
-.inbox-nav-i.src { color: var(--fg); font-weight: var(--fw-medium); }
-.inbox-nav-i.sub { padding-left: 26px; height: 32px; }
-.inbox-nav-i.sub > svg { width: 15px; height: 15px; }
-.inbox-nav-i > svg, .inbox-nav-toggle > svg { width: 16px; height: 16px; color: var(--t-icon); flex: none; }
-.inbox-nav-i > .src-logo { width: 16px; height: 16px; flex: none; }
-.inbox-nav-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 收件箱: the channels down the side (飞书, 微信 …, then 已交给 AI apart),
+   each with its unread chats; the chosen one blue, icon and words, on a
+   light wash. Inside a channel, its filters as chips above its chats. */
+.inbox-chs { display: grid; gap: 2px; align-content: start; padding: 6px; border: var(--bw) solid var(--line); border-radius: calc(14px * var(--round)); background: var(--bg); }
+.inbox-ch { display: flex; align-items: center; gap: 9px; width: 100%; height: 38px; padding: 0 10px; border: 0; border-radius: calc(9px * var(--round)); background: transparent; color: var(--fg); font-size: var(--fs-body); text-align: left; transition: background .12s, color .12s; }
+.inbox-ch:hover { background: var(--bg-2); }
+.inbox-ch > .src-logo { width: 18px; height: 18px; flex: none; border-radius: calc(5px * var(--round)); }
+.inbox-ch > svg { width: 17px; height: 17px; color: var(--t-icon); flex: none; }
+.inbox-ch-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-ch-n { flex: none; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--info); color: var(--on-info); font-size: var(--fs-tiny); font-weight: var(--fw-strong); line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
+.inbox-ch-n.attn { background: var(--attn); color: var(--on-attn); }
+.inbox-ch-n.plain { background: var(--bg-3); color: var(--t-secondary); }
+.inbox-ch.on, .inbox-chip.on { background: color-mix(in srgb, var(--info) 11%, var(--bg)); color: var(--info); font-weight: var(--fw-medium); }
+.inbox-ch.on > svg, .inbox-chip.on > svg { color: var(--info); }
+.inbox-ch:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--fg) 14%, transparent); }
+.inbox-chs-sep { height: var(--bw); margin: 5px 8px; background: var(--line); }
+.inbox-col { display: grid; gap: 10px; min-width: 0; }
+.inbox-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; min-height: 34px; }
+.inbox-head > .inbox-chips { flex: 1 1 auto; flex-wrap: wrap; }
+.inbox-head > .inbox-read-all { margin-left: auto; }
+.inbox-head > .inbox-chips { min-width: 0; margin: 0; }
+.inbox-head-t { flex: 1; display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; font-weight: var(--fw-strong); font-size: var(--fs-meta); padding-left: 4px; }
+.inbox-head-t .muted { font-weight: var(--fw-normal); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .inbox-nav-n { flex: none; min-width: 20px; padding: 0 6px; border-radius: 999px; color: var(--t-meta); font-size: var(--fs-small); line-height: 20px; text-align: center; font-variant-numeric: tabular-nums; }
 .inbox-nav-n.info { background: var(--info); color: var(--on-info); font-size: var(--fs-tiny); font-weight: var(--fw-strong); }
 .inbox-nav-n.attn { background: var(--attn); color: var(--on-attn); font-size: var(--fs-tiny); font-weight: var(--fw-strong); }
-.inbox-nav-chev { flex: none; width: 12px; color: var(--t-icon); font-size: var(--fs-lead); line-height: 1; text-align: center; transition: transform .15s; }
-.inbox-nav-src.open > .inbox-nav-i .inbox-nav-chev, .inbox-nav.open .inbox-nav-toggle .inbox-nav-chev { transform: rotate(90deg); }
-.inbox-nav-i:focus-visible, .inbox-nav-toggle:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--fg) 14%, transparent); }
-.inbox-nav-top { display: none; align-items: center; gap: 4px; }
-.inbox-nav-toggle { flex: 1; min-width: 0; color: var(--fg); font-weight: var(--fw-medium); }
-.inbox-nav-toggle > .src-logo { width: 16px; height: 16px; flex: none; }
-.inbox-list-h { gap: 10px; padding-top: 8px; padding-bottom: 8px; }
-.inbox-list-t { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.inbox-list-t .muted { font-weight: var(--fw-normal); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .inbox-read-all { flex: none; }
 .inbox-read-all > svg { width: 15px; height: 15px; }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
@@ -2278,7 +2275,7 @@ select.picked { display: none; }
   .inbox-read-all > span { display: none; } /* the icon, its title says it */
 }
 .inbox-at { margin-right: 4px; color: var(--attn); font-weight: var(--fw-medium); }
-.inbox-split { display: grid; grid-template-columns: minmax(150px, 184px) minmax(240px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.inbox-split { display: grid; grid-template-columns: minmax(140px, 176px) minmax(260px, 400px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .inbox-split .card { margin-bottom: 0; }
 .inbox-row { cursor: pointer; }
 .inbox-row:hover { background: var(--bg-2); }
@@ -2324,14 +2321,14 @@ select.picked { display: none; }
 .conv-close { display: none; }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
   .inbox-split { grid-template-columns: 1fr; gap: 10px; }
-  .inbox-split.has-cur :is(.inbox-list, .inbox-nav), .inbox-split:not(.has-cur) .inbox-detail { display: none; }
-  /* The source list folds into one line above the chats; open, it shows in full. */
-  .inbox-nav-top { display: flex; }
-  .inbox-list-h { display: none; } /* the folded source list says the same */
-  .inbox-nav:not(.open) .inbox-nav-list { display: none; }
-  .inbox-nav.open .inbox-nav-top { margin-bottom: 4px; padding-bottom: 4px; border-bottom: var(--bw) solid var(--line); }
-  .inbox-nav-i { height: 40px; }
-  .inbox-nav-i.sub { height: 38px; }
+  .inbox-split.has-cur :is(.inbox-col, .inbox-chs), .inbox-split:not(.has-cur) .inbox-detail { display: none; }
+  /* First the channel, then its filter: the channels as a row of tabs on top. */
+  .inbox-chs { display: flex; gap: 4px; padding: 4px; overflow-x: auto; scrollbar-width: none; }
+  .inbox-chs::-webkit-scrollbar { display: none; }
+  .inbox-ch { width: auto; flex: none; height: 36px; }
+  .inbox-chs-sep { width: var(--bw); height: auto; margin: 6px 2px; flex: none; }
+  .inbox-head { flex-wrap: nowrap; }
+  .inbox-head > .inbox-chips { flex: 1; flex-wrap: nowrap; }
   .conv-close { display: inline-flex; }
   .ext-qr { flex-direction: column; align-items: flex-start; }
 }
@@ -2658,32 +2655,13 @@ select.picked { display: none; }
 }
 .hooks-h { margin: 22px 0 10px; font-size: var(--fs-card-h); font-weight: var(--fw-card-h); }
 
-/* A source's own page (飞书 in the sidebar): its filters as a row of chips
-   above its chats, sliding sideways on a phone; the list and the open chat. */
-.inbox-chips { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.inbox-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .inbox-chips::-webkit-scrollbar { display: none; }
 .inbox-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 10px; flex: none; border: var(--bw) solid var(--line-2); border-radius: 999px; background: var(--bg); color: var(--t-secondary); font-size: var(--btn-fs); white-space: nowrap; transition: background .12s, border-color .12s, color .12s; }
 .inbox-chip > svg { width: 15px; height: 15px; color: var(--t-icon); }
 .inbox-chip:hover { border-color: var(--fg-4); color: var(--fg); }
 .inbox-chip.on { border-color: color-mix(in srgb, var(--info) 35%, var(--bg)); }
 .inbox-chip:focus-visible { outline: none; box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--fg) 10%, transparent); }
-.inbox-split.src { grid-template-columns: minmax(260px, 400px) minmax(0, 1fr); }
-.inbox-split.src.has-cur { grid-template-columns: min(34%, 360px) minmax(0, 1fr); }
-@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
-  .inbox-split.src, .inbox-split.src.has-cur { grid-template-columns: minmax(0, 1fr); }
-  .inbox-list-h.src { display: flex; }
-}
-/* 飞书, 微信 in the sidebar: one tap to their chats. */
-.nav-item.nav-src .nav-ico { background: var(--logo-bg); overflow: hidden; }
-.nav-item.nav-src .nav-ico > img { width: 82%; height: 82%; object-fit: contain; filter: none; }
-.nav-src .count-pill.at { background: var(--attn); color: var(--on-attn); }
-#v-auto.src-page #auto-tabs { display: none; }
-#v-auto .d-name { display: flex; align-items: center; gap: 8px; }
-#v-auto .d-name > .src-logo { width: 20px; height: 20px; border-radius: 6px; }
-#nav-srcs { display: contents; }
-@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
-  .inbox-chips:has(+ .inbox-split.has-cur) { display: none; }
-}
 
 /* demo only */
 .demo-badge { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 999; font: 500 12px/1 var(--sans); padding: 7px 10px; border-radius: 999px; background: var(--fg); color: var(--bg); text-decoration: none; opacity: .85; }

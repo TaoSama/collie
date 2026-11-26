@@ -1,6 +1,6 @@
 /* Give an open conversation room for columns and long message text. */
 .auto-body:has(> .inbox-split.has-cur) { padding-inline: max(16px, calc((100% - 1180px) / 2)); }
-.inbox-split.has-cur { grid-template-columns: min(20%, 164px) min(29%, 300px) minmax(0, 1fr); }
+.inbox-split.has-cur { grid-template-columns: min(17%, 156px) min(32%, 340px) minmax(0, 1fr); }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
   .inbox-split.has-cur { grid-template-columns: minmax(0, 1fr); }
 }
