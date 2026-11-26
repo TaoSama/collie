@@ -18,7 +18,7 @@ func (h *extHost) prepareConvDeliveryLocked(c InboxConv, topic string, t *Trigge
 	if t.Action == "candidate" && !h.sp.st.hasPolicy(t.Source) {
 		t.Action = "respond"
 	}
-	if c.Handler != handlerAgent {
+	if t.Status == "ignored" || c.Handler != handlerAgent {
 		return
 	}
 	w := h.sp.convWorkerLocked(c, topic)

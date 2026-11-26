@@ -915,7 +915,6 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	sp := s.sup
 	sp.mu.Lock()
-	defer sp.mu.Unlock()
 	if body.Settings != nil {
 		ns := *body.Settings
 		if _, ok := kinds[ns.RouterKind]; !ok {
@@ -976,11 +975,14 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sp.st.Policies = valid
-		if s.ext != nil {
-			s.ext.pushSettings() // an ignored source has its requests no longer marked 在做了
-		}
 	}
 	sp.changed()
+	settings, policies := sp.st.Settings, sp.st.Policies
+	sp.mu.Unlock()
+
+	if body.Policies != nil && s.ext != nil {
+		s.ext.pushSettings() // an ignored source has its requests no longer marked 在做了
+	}
 	if body.Settings != nil {
 		go func() { // ROUTER.md quotes some settings (reply length, where workers go)
 			if err := sp.writeRouterFiles(); err != nil {
@@ -988,7 +990,7 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	}
-	writeJSON(w, 200, map[string]any{"settings": sp.st.Settings, "policies": sp.st.Policies})
+	writeJSON(w, 200, map[string]any{"settings": settings, "policies": policies})
 }
 
 func (s *Server) superRestartRouter(w http.ResponseWriter, r *http.Request) {

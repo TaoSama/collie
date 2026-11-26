@@ -18,12 +18,12 @@ UP_AFTER = 5  # seconds a websocket stays open before it counts as up
 
 
 class PushStream:
-    def __init__(self, U, mu, get_client, deliver, doc_comments, signed_out=lambda: True):
+    def __init__(self, U, mu, get_client, deliver, deliver_doc_comments, signed_out=lambda: True):
         self.U = U
         self._mu = mu
         self._get_client = get_client
         self._deliver = deliver
-        self._doc_comments = doc_comments
+        self._deliver_doc_comments = deliver_doc_comments
         self._signed_out = signed_out  # Feishu confirms the session is gone (not just unreachable)
         self._loop = None
         self._task = None
@@ -87,7 +87,11 @@ class PushStream:
                         continue
                     if packet.sid:
                         await c.send_ack(ws, packet.sid)
-                    self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message, time.monotonic())
+                    work = self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message, time.monotonic())
+                    # SID-only packets can also contain comments. Keep one of these
+                    # handoffs in flight while the hub is unavailable.
+                    if packet.cmd in (CMD_PUSH_DOC_FEED, CMD_PUSH_SID):
+                        await asyncio.wrap_future(work)
             finally:
                 beat.cancel()
 
@@ -126,8 +130,7 @@ class PushStream:
                     if int(p.get("cmd") or 0) in (CMD_PUSH_MESSAGES, CMD_PUSH_DOC_FEED):
                         self._push(int(p["cmd"]), p.get("payload") or b"", None, on_message, got)
             elif cmd == CMD_PUSH_DOC_FEED:
-                for m in self._doc_comments(payload):
-                    on_message(m)
+                self._deliver_doc_comments(payload, on_message)
         except Exception as e:
             log.warning("push %s: %s", cmd, e)
 
