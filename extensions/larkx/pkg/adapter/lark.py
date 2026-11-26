@@ -149,6 +149,8 @@ class Feishu:
         self._pool = ThreadPoolExecutor(max_workers=4)  # handles pushes; outlives each connection's loop
         self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
+        self.self_mention = True  # @自己唤起: @-mentioning yourself is a request
+        self.group_topics = True  # 群话题各开对话: each group topic is a conversation of its own
         self.marked = collections.OrderedDict()  # message ids already marked as being worked on
 
     # Signing in.
@@ -362,7 +364,10 @@ class Feishu:
         out = {"id": mid, "chat_id": chat, "sender": sender, "owner": bool(self.me) and sender == self.me}
         data = msg.get("content_data") or {}
         if mtype in (richtext.MSG_POST, MSG_TEXT):
-            text = richtext.to_text(self.U.L, data.get("richText") or {}) or data.get("text", "")
+            rich = data.get("richText") or {}
+            if self._self_mention(sender, rich):
+                out["mention"] = True
+            text = richtext.to_text(self.U.L, rich, drop_at=self.me if out.get("mention") else "").strip() or data.get("text", "")
             if data.get("title"):
                 text = "**%s**\n%s" % (data["title"], text)
         elif mtype in (MSG_IMAGE, MSG_FILE):
@@ -382,8 +387,9 @@ class Feishu:
             quoted = self.recent.get(str(msg.get("parent_id") or ""))
         if quoted:
             out["quote"] = quoted[1]
-        if msg.get("anchor"):
-            out["thread"] = str(msg["anchor"])
+        if self.group_topics and msg.get("chat_type") != CHAT_P2P:
+            # A group topic is a conversation of its own: the one it is in, or the one its answer opens under it.
+            out["thread"] = root or mid
         self._remember(mid, root, text, again=True)
         p2p = msg.get("chat_type") == CHAT_P2P
         out["chat_kind"] = "self" if p2p and chat == self.self_chat else "dm" if p2p else "group"
@@ -488,9 +494,14 @@ class Feishu:
         if msg.get("msg_type") not in (richtext.MSG_POST, MSG_TEXT):
             return
         data = msg.get("content_data") or {}
-        text = richtext.to_text(self.U.L, data.get("richText") or {}) or data.get("text", "")
-        if is_request(text, self.trigger):
+        rich = data.get("richText") or {}
+        text = richtext.to_text(self.U.L, rich) or data.get("text", "")
+        if is_request(text, self.trigger) or self._self_mention(self.me, rich):
             self.mark_working(str(msg["msg_id"]), got)
+
+    def _self_mention(self, sender, rich):
+        """Your own message @-mentioning yourself is a request too (the switch @自己唤起)."""
+        return self.self_mention and bool(self.me) and sender == self.me and self.me in richtext.at_users(self.U.L, rich)
 
     def mark_working(self, message_id, got=None):
         """The 在做了 reaction, once a message, off the caller's thread; times logged."""

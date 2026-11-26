@@ -175,7 +175,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.secrets.load` | `{contribution}` | `{data?}`：上次存的 base64 |
 | `connector.secrets.save` | `{contribution, data}` | `{}`。在扩展所在的电脑上写 `secrets.json`，不经过 hub |
 | `connector.secrets.delete` | `{contribution}` | `{}` |
-| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, folded?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。`folded`：在原应用的会话列表里被折叠了，收件箱不列出它。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
+| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, folded?, mention?, thread?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。`folded`：在原应用的会话列表里被折叠了，收件箱不列出它。`mention`：本人在消息里真的 @ 了自己（扩展已经把这个 @ 从 `text` 里去掉），和触发词一样算请求。`thread`：群里自成一段对话的话题；有它时，这条请求进 `ext:<id>:<chat_id>#<thread>` 线程，有自己的专属 agent，回复挂在这个话题的请求下。私聊不带。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
 | 事件 `connector.changed` | `{contribution, scope: inbox\|chats\|status\|outbox}` | 有新消息或状态变了；有 `archive` 能力时 Collie 收到就去拉。最多每 3 秒一次 |
 | 事件 `channel.delivery` | `{contribution, ref, state: sent\|deferred\|uncertain\|failed\|expired, message_id?, reason?}` | 一次发送最后怎样了。`uncertain` 表示可能已发出，**不会再重发** |
 

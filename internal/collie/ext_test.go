@@ -857,3 +857,50 @@ func TestInboxHidden(t *testing.T) {
 		t.Fatal("x-hide belongs to a boolean")
 	}
 }
+
+// @-mentioning yourself is a request like the trigger word (someone else
+// @-ing you is not), and a group topic is a conversation of its own: its
+// trigger has its thread, and its answer goes under its own request.
+func TestMentionAndTopics(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	m := h.manifest("fake")
+	msg := func(id, sender string, owner, mention bool, kind, topic string) incomingMsg {
+		return incomingMsg{Chat: "g1", ChatName: "群", ChatKind: kind, ID: id, Sender: sender, SenderName: sender,
+			Mine: owner, Owner: owner, Mention: mention, Topic: topic, Text: "看下", At: time.Now(), Live: true}
+	}
+	for _, in := range []incomingMsg{
+		msg("1", "me", true, true, "group", "1"),
+		msg("2", "u2", false, true, "group", "2"),
+		msg("3", "me", true, false, "group", "3"),
+		msg("4", "me", true, true, "group", "1"),
+	} {
+		if err := h.incoming(m, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := extTriggers(sp, "ext:fake")
+	if len(ts) != 2 || ts[0].Ref != "1" || ts[1].Ref != "4" || ts[0].Thread != "ext:fake:g1#1" || ts[1].Thread != ts[0].Thread {
+		t.Fatalf("your @ only, in topic 1's thread: %+v", ts)
+	}
+	if err := h.incoming(m, msg("5", "me", true, true, "group", "5")); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := h.store.conv("fake:g1")
+	if c.askOf("1").AskMsg != "4" || c.askOf("5").AskMsg != "5" || c.AskMsg != "" {
+		t.Fatalf("each topic its own request: %+v", c.Topics)
+	}
+	o, err := h.sendOut("ext:fake:g1#1", "好", extproto.KindAnswer, runInfo{}, "")
+	if err != nil || o.ReplyTo != "4" {
+		t.Fatalf("topic 1's answer goes under its request: %+v %v", o, err)
+	}
+	if _, conv, _ := channelOf("ext:fake:g1#1"); conv != "fake:g1" || topicOf("ext:fake:g1#1") != "1" || topicOf("ext:fake:g1") != "" {
+		t.Fatal("a topic's thread names its chat")
+	}
+	// A direct chat is one conversation: a topic it reports is ignored.
+	if err := h.incoming(m, incomingMsg{Chat: "d1", ChatKind: "dm", ID: "6", Sender: "me", Mine: true, Owner: true, Mention: true, Topic: "6", Text: "x", At: time.Now(), Live: true}); err != nil {
+		t.Fatal(err)
+	}
+	if ts := extTriggers(sp, "ext:fake"); ts[len(ts)-1].Thread != "ext:fake:d1" {
+		t.Fatalf("direct chat: %+v", ts[len(ts)-1])
+	}
+}

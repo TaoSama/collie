@@ -248,6 +248,69 @@ class Normalize(unittest.TestCase):
         self.assertEqual(m["text"], "[卡片] 分析中", "a card shows its title, not its JSON")
 
 
+def at_rich(uid, name, text):
+    """A received rich text: an @ (a real AT element) and then text."""
+    rt = U.L.entities.RichText()
+    para = rt.elements.dictionary["1"]
+    para.tag, para.property = richtext.TAG_P, E.ParagraphProperty().SerializeToString()
+    at = rt.elements.dictionary["2"]
+    at.tag, at.property = richtext.TAG_AT, E.AtProperty(userId=uid, content="@" + name).SerializeToString()
+    tx = rt.elements.dictionary["3"]
+    tx.tag, tx.property = richtext.TAG_TEXT, E.TextProperty(content=text).SerializeToString()
+    para.childIds.extend(["2", "3"])
+    rt.elementIds.append("1")
+    return protobuf_to_dict(rt)
+
+
+class Mentions(unittest.TestCase):
+    """@自己唤起 and 群话题各开对话."""
+
+    def feishu(self):
+        f = lark.Feishu(U, "feishu", lambda d: None)
+        f.me, f.self_chat = "u_me", "c_self"
+        f.user_name = lambda uid, chat: ""
+        f.chat_info = lambda chat: {"name": "群", "isRemind": True}
+        f.folded = lambda chat: False
+        return f
+
+    def msg(self, mid, sender, rich, chat_type=2, root="0"):
+        return {"msg_id": mid, "chat_id": "c_g", "from_id": sender, "msg_type": 4, "chat_type": chat_type,
+                "content_data": {"richText": rich}, "root_id": root}
+
+    def test_self_mention(self):
+        f = self.feishu()
+        self.assertEqual(richtext.at_users(U.L, at_rich("u_me", "我", " 总结一下")), {"u_me"})
+        m = f.normalize(self.msg("1", "u_me", at_rich("u_me", "我", " 总结一下")))
+        self.assertEqual((m.get("mention"), m["text"]), (True, "总结一下"), "the @ taken out")
+        m = f.normalize(self.msg("2", "u_a", at_rich("u_me", "我", " 看看")))
+        self.assertFalse(m.get("mention"), "someone else @-ing you is no request")
+        self.assertEqual(m["text"], "@我 看看")
+        m = f.normalize(self.msg("3", "u_me", at_rich("u_b", "乙", " 你看")))
+        self.assertFalse(m.get("mention"), "@-ing someone else")
+        f.self_mention = False
+        self.assertFalse(f.normalize(self.msg("4", "u_me", at_rich("u_me", "我", " x"))).get("mention"))
+
+    def test_self_mention_marked_at_once(self):
+        import threading
+
+        f = self.feishu()
+        f.client, f.trigger = FakeClient(answer("1")), "/ai"
+        asked, done = [], threading.Event()
+        f.client.api = lambda name, data: (asked.append(data["messageId"]), done.set())
+        f._deliver(self.msg("9", "u_me", at_rich("u_me", "我", " 看下")), lambda m: None)
+        self.assertTrue(done.wait(2))
+        self.assertEqual(asked, ["9"])
+
+    def test_topics(self):
+        f = self.feishu()
+        rich = protobuf_to_dict(richtext.build(U.L, "/ai 你好"))
+        self.assertEqual(f.normalize(self.msg("1", "u_me", rich))["thread"], "1", "outside a topic: its own")
+        self.assertEqual(f.normalize(self.msg("2", "u_me", rich, root="77"))["thread"], "77", "in a topic: the topic")
+        self.assertNotIn("thread", f.normalize(self.msg("3", "u_me", rich, chat_type=1)), "a direct chat is one conversation")
+        f.group_topics = False
+        self.assertNotIn("thread", f.normalize(self.msg("4", "u_me", rich)))
+
+
 class Pushes(unittest.TestCase):
     def feishu(self):
         f = lark.Feishu(U, "feishu", lambda d: None)

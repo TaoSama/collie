@@ -11,7 +11,7 @@ import (
 	"github.com/TaoSama/collie/internal/extproto"
 )
 
-func (h *extHost) prepareConvDeliveryLocked(c InboxConv, t *Trigger) {
+func (h *extHost) prepareConvDeliveryLocked(c InboxConv, topic string, t *Trigger) {
 	// A chat message only becomes a trigger once it passed the extension's
 	// rules (your trigger word, or the bot's own chat): it is a request, not
 	// a maybe. A rule you set for the source in 来源策略 still wins.
@@ -21,7 +21,7 @@ func (h *extHost) prepareConvDeliveryLocked(c InboxConv, t *Trigger) {
 	if c.Handler != handlerAgent {
 		return
 	}
-	w := h.sp.convWorkerLocked(c)
+	w := h.sp.convWorkerLocked(c, topic)
 	if w == nil || w.Ended {
 		t.Status = "queued"
 		if t.Action == "candidate" {
@@ -31,15 +31,16 @@ func (h *extHost) prepareConvDeliveryLocked(c InboxConv, t *Trigger) {
 	t.WaitForConvWorker = t.Status == "queued"
 }
 
-func (sp *Super) convWorkerLocked(c InboxConv) *Worker {
-	w := sp.st.Workers[c.Worker]
+func (sp *Super) convWorkerLocked(c InboxConv, topic string) *Worker {
+	w := sp.st.Workers[c.askOf(topic).Worker]
 	if w != nil && !w.Ended {
 		return w
 	}
 	// After a restart the associated worker may have been saved before the
 	// inbox conversation's Worker field was updated.
+	key := c.convKey(topic)
 	for _, candidate := range sp.st.Workers {
-		if candidate.Conv == c.ID && !candidate.Ended {
+		if candidate.Conv == key && !candidate.Ended {
 			return candidate
 		}
 	}
@@ -57,17 +58,19 @@ func (sp *Super) routeExtensionLocked(t *Trigger, live map[string]liveAgent, awa
 	}
 	h := sp.s.ext
 	_, id, _ := channelOf(t.Thread)
+	topic := topicOf(t.Thread)
 	c, ok := h.store.conv(id)
 	if !ok {
 		return false
 	}
-	w := sp.convWorkerLocked(c)
+	key := c.convKey(topic)
+	w := sp.convWorkerLocked(c, topic)
 	if w != nil && !w.Ended {
 		if _, present := live[w.Name]; present {
 			t.Targets = []string{w.Name}
 			return true
 		}
-		_, starting := h.starting.Load(id)
+		_, starting := h.starting.Load(key)
 		if starting || away[w.Machine] || w.Status != "starting" {
 			return false
 		}
@@ -76,25 +79,26 @@ func (sp *Super) routeExtensionLocked(t *Trigger, live map[string]liveAgent, awa
 		sp.changed()
 	}
 	if !paused {
-		if _, starting := h.starting.LoadOrStore(id, struct{}{}); !starting {
+		if _, starting := h.starting.LoadOrStore(key, struct{}{}); !starting {
 			var previous Worker
 			if w != nil {
 				previous = *w
 			}
-			go h.startConvWorker(c, previous, t)
+			go h.startConvWorker(c, topic, previous, t)
 		}
 	}
 	return false
 }
 
-func (h *extHost) startConvWorker(conv InboxConv, old Worker, t *Trigger) {
-	defer h.starting.Delete(conv.ID)
+func (h *extHost) startConvWorker(conv InboxConv, topic string, old Worker, t *Trigger) {
+	key := conv.convKey(topic)
+	defer h.starting.Delete(key)
 	spec := SpawnSpec{
-		Thread:    conv.thread(),
-		Name:      convWorkerName(conv),
+		Thread:    conv.threadOf(topic),
+		Name:      convWorkerName(conv, topic),
 		By:        "collie",
 		Subscribe: true,
-		Conv:      conv.ID,
+		Conv:      key,
 	}
 	if old.Session != "" {
 		spec.Resume, spec.Machine = old.Name, old.Machine
@@ -134,7 +138,7 @@ func (h *extHost) startConvWorker(conv InboxConv, old Worker, t *Trigger) {
 		h.failConvStart(conv, t, err.Error())
 		return
 	}
-	h.store.update(conv.ID, func(c *InboxConv) { c.Worker = w.Name })
+	h.store.update(conv.ID, func(c *InboxConv) { c.setAsk(topic, func(a *ConvAsk) { a.Worker = w.Name }) })
 }
 
 // The first queued request also carries the worker's instructions. Saving
@@ -172,7 +176,7 @@ func (h *extHost) failConvStart(conv InboxConv, t *Trigger, reason string) {
 	}
 	sp.mu.Unlock()
 	if failed {
-		if _, err := h.sendOut(conv.thread(), "没能启动 agent："+reason, extproto.KindProgress, runInfo{}, t.ID); err != nil {
+		if _, err := h.sendOut(t.Thread, "没能启动 agent："+reason, extproto.KindProgress, runInfo{}, t.ID); err != nil {
 			log.Printf("ext: report dedicated agent startup failure in %s: %v", conv.ID, err)
 		}
 	}
@@ -188,13 +192,16 @@ func (h *extHost) convMachine(ext string) string {
 
 // convWorkerName: <ext>-<chat name>, in the letters worker names allow; a
 // name with none of them (Chinese) gets a short hash of the chat instead.
-func convWorkerName(c InboxConv) string {
+func convWorkerName(c InboxConv, topic string) string {
 	n := cleanWorkerName(c.Name)
 	if r := []rune(n); len(r) > 16 {
 		n = strings.Trim(string(r[:16]), "-")
 	}
 	if n == "" {
 		n = sha256Hex([]byte(c.ID))[:6]
+	}
+	if topic != "" {
+		n += "-" + sha256Hex([]byte(topic))[:4] // a topic's own agent
 	}
 	return c.Ext + "-" + n
 }

@@ -228,7 +228,8 @@ const (
 	capSend     = "send"
 	capInterest = "interest"
 	capWorking  = "working"
-	chatSelf    = "self" // a chat kind: your chat with yourself
+	chatSelf    = "self"  // a chat kind: your chat with yourself
+	chatGroup   = "group" // a chat kind: a group
 )
 
 // featureWorkbench: the 工作台, an extension turned on in 接入.

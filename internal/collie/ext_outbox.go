@@ -104,12 +104,13 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 	if !ok {
 		return nil, fmt.Errorf("no conversation %s", convID)
 	}
+	ask := conv.askOf(topicOf(thread)) // a group topic answers its own request
 	if text = strings.TrimSpace(text); text == "" {
 		text = "（这一轮没有文字回复）"
 	}
 	vars := map[string]string{
 		"agent": ri.Agent, "model": ri.Model, "effort": ri.Effort, "machine": ri.Machine, "worker": ri.Worker,
-		"ctx": ri.Ctx, "time": time.Now().Format("15:04"), "by": conv.AskBy, "elapsed": "—",
+		"ctx": ri.Ctx, "time": time.Now().Format("15:04"), "by": ask.AskBy, "elapsed": "—",
 	}
 	for k, v := range vars {
 		if v == "" {
@@ -119,8 +120,8 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 			}
 		}
 	}
-	if !conv.AskAt.IsZero() {
-		vars["elapsed"] = elapsedText(time.Since(conv.AskAt))
+	if !ask.AskAt.IsZero() {
+		vars["elapsed"] = elapsedText(time.Since(ask.AskAt))
 	}
 	ref, err := newRef()
 	if err != nil {
@@ -156,7 +157,7 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 	}
 	o.Text, o.Footer = full, footer
 	if kind == extproto.KindAnswer || kind == extproto.KindProgress {
-		o.ReplyTo = conv.AskMsg
+		o.ReplyTo = ask.AskMsg
 	}
 	h.store.putOut(o)
 	h.store.addMsg(InboxMsg{ID: "out:" + o.Ref, Conv: convID, At: o.At, Mine: true, Text: full, Ref: o.Ref})

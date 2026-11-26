@@ -35,10 +35,12 @@ const (
 type incomingMsg struct {
 	Chat, ChatName, ChatKind string
 	ID, Sender, SenderName   string
-	Mine                     bool  // sent by the signed-in account
-	Muted                    *bool // the chat is muted in the chat app (nil: not known)
-	Folded                   *bool // folded away in the chat app's list (nil: not known)
-	Owner                    bool  // sent by the person the bot is bound to
+	Mine                     bool   // sent by the signed-in account
+	Muted                    *bool  // the chat is muted in the chat app (nil: not known)
+	Folded                   *bool  // folded away in the chat app's list (nil: not known)
+	Owner                    bool   // sent by the person the bot is bound to
+	Mention                  bool   // you @-mentioned yourself: a request like the trigger word
+	Topic                    string // a group topic that is a conversation of its own ("" none)
 	Text, Quote              string
 	At                       time.Time
 	Live                     bool // not history being caught up
@@ -47,8 +49,12 @@ type incomingMsg struct {
 }
 
 // extThreadPrefix starts the thread of every extension conversation:
-// ext:<extension id>:<chat id>.
-const extThreadPrefix = "ext:"
+// ext:<extension id>:<chat id>, and ext:<extension id>:<chat id>#<topic>
+// for a group topic that is a conversation of its own.
+const (
+	extThreadPrefix = "ext:"
+	extTopicSep     = "#"
+)
 
 func convID(ext, chat string) string { return ext + ":" + chat }
 
@@ -58,8 +64,18 @@ func channelOf(thread string) (ext, conv string, ok bool) {
 	if !found {
 		return "", "", false
 	}
+	rest, _, _ = strings.Cut(rest, extTopicSep)
 	ext, _, ok = strings.Cut(rest, ":")
 	return ext, rest, ok && ext != ""
+}
+
+// topicOf is the group topic of a thread, "" for the chat as a whole.
+func topicOf(thread string) string {
+	if _, _, ok := channelOf(thread); !ok {
+		return ""
+	}
+	_, topic, _ := strings.Cut(thread, extTopicSep)
+	return topic
 }
 
 func parseAt(s string) time.Time {
@@ -94,7 +110,7 @@ func (h *extHost) received(r *extRun, m extproto.Message) error {
 		at = time.Now()
 	}
 	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, Folded: m.Folded, ID: m.ID, Sender: m.Sender,
-		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Text: m.Text, Quote: m.Quote, At: at, Live: true,
+		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Mention: m.Mention, Topic: m.Thread, Text: m.Text, Quote: m.Quote, At: at, Live: true,
 		Unsupported: m.Unsupported}
 	for _, b := range append(append([]extproto.Blob(nil), m.Images...), m.Files...) {
 		p, err := saveBlob(b)
@@ -353,16 +369,22 @@ func (h *extHost) housekeep() {
 	h.trimStaged(time.Now())
 	h.store.expireStale(time.Now().Add(-outboxGiveUp))
 	for _, c := range h.store.list("") {
-		if c.Worker == "" {
-			continue
+		asks := []ConvAsk{c.askOf("")}
+		for _, a := range c.Topics {
+			asks = append(asks, *a)
 		}
-		h.sp.mu.Lock()
-		w := h.sp.st.Workers[c.Worker]
-		idle := w != nil && !w.Ended && (w.Status == "idle" || w.Status == "done") && time.Since(c.AskAt) > convWorkerIdle
-		h.sp.mu.Unlock()
-		if idle {
-			if err := h.s.stopWorker(context.Background(), w.Name); err != nil {
-				log.Printf("ext: stop idle %s: %v", w.Name, err)
+		for _, a := range asks {
+			if a.Worker == "" {
+				continue
+			}
+			h.sp.mu.Lock()
+			w := h.sp.st.Workers[a.Worker]
+			idle := w != nil && !w.Ended && (w.Status == "idle" || w.Status == "done") && time.Since(a.AskAt) > convWorkerIdle
+			h.sp.mu.Unlock()
+			if idle {
+				if err := h.s.stopWorker(context.Background(), w.Name); err != nil {
+					log.Printf("ext: stop idle %s: %v", w.Name, err)
+				}
 			}
 		}
 	}

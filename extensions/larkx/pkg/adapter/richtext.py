@@ -191,8 +191,25 @@ def build(L, markdown, footer=""):
 PLACEHOLDERS = {TAG_IMG: "[图片]", TAG_EMOTION: "[表情]", TAG_MEDIA: "[视频]", TAG_DOCS: "[文档]"}
 
 
-def to_text(L, rich):
-    """A received rich text (as protobuf_to_dict gives it) as Markdown-ish text: quotes keep >, code keeps ```."""
+def at_users(L, rich):
+    """The user ids a received rich text really @-mentions (AT elements, not typed text)."""
+    E = L.entities.RichTextElement
+    out = set()
+    for el in ((rich.get("elements") or {}).get("dictionary") or {}).values():
+        if el.get("tag") == TAG_AT:
+            p = E.AtProperty()
+            try:
+                p.ParseFromString(el.get("property") or b"")
+            except Exception:
+                continue
+            if p.userId:
+                out.add(p.userId)
+    return out
+
+
+def to_text(L, rich, drop_at=""):
+    """A received rich text (as protobuf_to_dict gives it) as Markdown-ish text: quotes keep >, code keeps ```.
+    drop_at: an @ of this user id is left out."""
     E = L.entities.RichTextElement
     els = (rich.get("elements") or {}).get("dictionary") or {}
 
@@ -217,7 +234,10 @@ def to_text(L, rich):
             shown = a.textContent or a.content or a.href
             return shown if not a.href or shown == a.href else "[%s](%s)" % (shown, a.href)
         if t == TAG_AT:
-            return prop(E.AtProperty, el).content or "@"
+            at = prop(E.AtProperty, el)
+            if drop_at and at.userId == drop_at:
+                return ""  # the @ that made it a request
+            return at.content or "@"
         if t == TAG_P:
             return kids + "\n"
         if t == TAG_QUOTE:

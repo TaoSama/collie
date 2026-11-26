@@ -82,7 +82,10 @@ class Extension:
         ext = p.get("extension") or {}
         self.version = ext.get("version", "")
         self.data = ext.get("data_dir") or os.environ.get("COLLIE_EXTENSION_DATA", ".")
-        self.region = (p.get("config") or {}).get("region") or "feishu"
+        cfg = p.get("config") or {}
+        self.region = cfg.get("region") or "feishu"
+        self.self_mention = cfg.get("self_mention", True) is not False
+        self.group_topics = cfg.get("group_topics", True) is not False
         self.sent = self._read_sent()
         threading.Thread(target=self.start, daemon=True).start()
         return {"protocol": PROTOCOL, "id": ID, "version": self.version}
@@ -230,6 +233,7 @@ class Extension:
             self.changed()
             return
         backend.trigger = self.trigger
+        backend.self_mention, backend.group_topics = self.self_mention, self.group_topics
         with self.mu:
             self.backend = backend
         self.loaded.set()

@@ -177,16 +177,19 @@ type Blob struct {
 
 // Message is what channel.receive hands to the host.
 type Message struct {
-	ID          string   `json:"id"` // the chat app's id: delivered again, it is taken once
-	Text        string   `json:"text"`
-	ChatID      string   `json:"chat_id,omitempty"`
-	Chat        string   `json:"chat,omitempty"`      // display name
-	ChatKind    string   `json:"chat_kind,omitempty"` // dm | group | self | doc (a document's comments)
-	Sender      string   `json:"sender,omitempty"`
-	SenderName  string   `json:"sender_name,omitempty"`
-	Owner       *bool    `json:"owner,omitempty"`  // sent by the signed-in person
-	Muted       *bool    `json:"muted,omitempty"`  // the chat is muted in the chat app (nil: not known)
-	Folded      *bool    `json:"folded,omitempty"` // folded away in the chat app's list (nil: not known)
+	ID         string `json:"id"` // the chat app's id: delivered again, it is taken once
+	Text       string `json:"text"`
+	ChatID     string `json:"chat_id,omitempty"`
+	Chat       string `json:"chat,omitempty"`      // display name
+	ChatKind   string `json:"chat_kind,omitempty"` // dm | group | self | doc (a document's comments)
+	Sender     string `json:"sender,omitempty"`
+	SenderName string `json:"sender_name,omitempty"`
+	Owner      *bool  `json:"owner,omitempty"`  // sent by the signed-in person
+	Muted      *bool  `json:"muted,omitempty"`  // the chat is muted in the chat app (nil: not known)
+	Folded     *bool  `json:"folded,omitempty"` // folded away in the chat app's list (nil: not known)
+	// Mention: the signed-in person @-mentioned themselves (the @ already
+	// taken out of Text): a request like the trigger word.
+	Mention     bool     `json:"mention,omitempty"`
 	At          string   `json:"at,omitempty"`
 	Quote       string   `json:"quote,omitempty"`
 	Forward     string   `json:"forward,omitempty"`

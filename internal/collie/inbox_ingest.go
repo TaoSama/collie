@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,14 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 	// The switch is about other people's messages: your own trigger word
 	// works in any conversation.
 	request, triggered := afterTrigger(in.Text, triggerWord(sp.st.Settings.ExtTrigger))
+	if !triggered && in.Mention && in.fromYou() {
+		// You @-mentioned yourself: the extension took the @ out already.
+		request, triggered = strings.TrimSpace(in.Text), true
+	}
+	topic := ""
+	if c.Kind == chatGroup {
+		topic = in.Topic // a group topic with its own agent; a direct chat is one conversation
+	}
 	keep := c.On || (in.fromYou() && triggered)
 	if keep && in.Mine {
 		ours, err := h.ours(id, in.ID, in.Text, h.footerLocked())
@@ -39,7 +48,8 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 			if err != nil {
 				return InboxConv{}, nil, fmt.Errorf("read conversation context: %w", err)
 			}
-			c.AskMsg, c.AskAt, c.AskBy, c.Handed = in.ID, time.Now(), in.SenderName, in.At
+			c.setAsk(topic, func(a *ConvAsk) { a.AskMsg, a.AskAt, a.AskBy = in.ID, time.Now(), in.SenderName })
+			c.Handed = in.At
 			c.Unread = 0
 		}
 	}
@@ -76,9 +86,9 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 		if in.fromYou() {
 			from = "you"
 		}
-		t, th = sp.prepareTriggerLocked("ext:"+c.Ext, c.thread(), from, text, "ext:"+c.ID+":"+in.ID, "", in.ID)
+		t, th = sp.prepareTriggerLocked("ext:"+c.Ext, c.threadOf(topic), from, text, "ext:"+c.ID+":"+in.ID, "", in.ID)
 		if t != nil {
-			h.prepareConvDeliveryLocked(c, t)
+			h.prepareConvDeliveryLocked(c, topic, t)
 			if err := sp.persistTriggerLocked(tx, t, th); err != nil {
 				return InboxConv{}, nil, fmt.Errorf("save message trigger: %w", err)
 			}

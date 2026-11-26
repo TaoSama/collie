@@ -46,11 +46,75 @@ type InboxConv struct {
 	AskMsg string    `json:"ask_msg,omitempty"`
 	AskAt  time.Time `json:"ask_at,omitempty"`
 	AskBy  string    `json:"ask_by,omitempty"`
+	// Topics: a group's topics that are conversations of their own (the
+	// Feishu switch 群话题各开对话), each with its request and agent.
+	Topics map[string]*ConvAsk `json:"topics,omitempty"`
 	// The messages handed over so far (the next request carries what came after).
 	Handed time.Time `json:"handed,omitempty"`
 }
 
 func (c *InboxConv) thread() string { return extThreadPrefix + c.ID }
+
+// threadOf is a topic's thread ("" the chat's own).
+func (c *InboxConv) threadOf(topic string) string {
+	if topic == "" {
+		return c.thread()
+	}
+	return c.thread() + extTopicSep + topic
+}
+
+// convKey names a conversation with its own agent: the chat, or a topic of it.
+func (c *InboxConv) convKey(topic string) string {
+	if topic == "" {
+		return c.ID
+	}
+	return c.ID + extTopicSep + topic
+}
+
+// ConvAsk is the request being answered in a conversation and its agent.
+type ConvAsk struct {
+	Worker string    `json:"worker,omitempty"`
+	AskMsg string    `json:"ask_msg,omitempty"`
+	AskAt  time.Time `json:"ask_at,omitempty"`
+	AskBy  string    `json:"ask_by,omitempty"`
+}
+
+// topicsMost bounds the group topics a chat remembers, newest kept.
+const topicsMost = 50
+
+// askOf: the chat's own request and agent, or a topic's.
+func (c *InboxConv) askOf(topic string) ConvAsk {
+	if topic == "" {
+		return ConvAsk{Worker: c.Worker, AskMsg: c.AskMsg, AskAt: c.AskAt, AskBy: c.AskBy}
+	}
+	if a := c.Topics[topic]; a != nil {
+		return *a
+	}
+	return ConvAsk{}
+}
+
+// setAsk changes the chat's own request and agent, or a topic's.
+func (c *InboxConv) setAsk(topic string, change func(*ConvAsk)) {
+	a := c.askOf(topic)
+	change(&a)
+	if topic == "" {
+		c.Worker, c.AskMsg, c.AskAt, c.AskBy = a.Worker, a.AskMsg, a.AskAt, a.AskBy
+		return
+	}
+	if c.Topics == nil {
+		c.Topics = map[string]*ConvAsk{}
+	}
+	c.Topics[topic] = &a
+	for len(c.Topics) > topicsMost {
+		oldest := ""
+		for k, v := range c.Topics {
+			if oldest == "" || v.AskAt.Before(c.Topics[oldest].AskAt) {
+				oldest = k
+			}
+		}
+		delete(c.Topics, oldest)
+	}
+}
 
 // InboxMsg is one message of an open conversation.
 type InboxMsg struct {
