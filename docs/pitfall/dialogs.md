@@ -2,7 +2,7 @@
 
 ## agent 回复里的编号列表不是对话框
 
-agent 答完一轮，回复末尾常是「1. … 2. …」的编号列表，或者引用了别的 worker 卡住时的弹窗，下面紧跟着空的输入框。`screenAsks` 以前只看菜单在不在屏幕底部，会把它们当成对话框，于是投递确认以为 agent 在等确认、推送发出假通知。现在的判定（`internal/collie/fleet.go` 的 `screenAsks`）：
+agent 答完一轮，回复末尾常是「1. … 2. …」的编号列表，或者引用了别的 worker 卡住时的弹窗，下面紧跟着空的输入框。`screenAsks` 以前只看菜单在不在屏幕底部，会把它们当成对话框，于是投递确认以为 agent 在等确认、推送发出假通知。现在的判定（`internal/collie/herdr_dialogs.go` 的 `screenAsks`）：
 
 - 菜单下方有空输入提示符（`❯`、`›`、`>` 独占一行）或输入框页脚（`? for shortcuts`、`shift+tab to cycle`）：不是对话框。
 - 编号必须从下往上逐个减一；中间断号就是另一段文字。折行只算在 1 号以后的选项里。
@@ -31,7 +31,7 @@ Codex（0.172 实测）在一轮执行中调用 `request_user_input` 时，问�
 
 herdr 此时报 `blocked`，屏幕上却没有选项，所以卡片只剩 ↑ ↓ Esc 确认，`collie answer` 也认不出对话框。按 `shift+left` 才会展开成带光标的编号菜单（`› 1. Red` … `enter submit ⌃] skip ⇧→ main prompt`），之后就是普通菜单。
 
-- 读对话框一律用 `Herdr.ReadAsk`（`internal/collie/fleet.go`），不要直接 `Read(…, "detection", …)`：它认出折叠的问题就按一次 `shift+left`，等展开后再返回屏幕。同一窗格 3 秒内只按一次。
+- 读对话框一律用 `Herdr.ReadAsk`（`internal/collie/herdr_dialogs.go`），不要直接 `Read(…, "detection", …)`：它认出折叠的问题就按一次 `shift+left`，等展开后再返回屏幕。同一窗格 3 秒内只按一次。
 - 展开后别按 `shift+right` 想把它收回去：实测一次，问题按当时选中的选项（Red）作答了。
 
 样本：`internal/collie/testdata/codex-question-*.txt`，测试 `TestCodexQueuedQuestion`。

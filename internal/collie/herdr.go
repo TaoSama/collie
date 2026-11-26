@@ -241,6 +241,14 @@ func (h *Herdr) SendKeys(ctx context.Context, paneID string, keys ...string) err
 	return h.Call(ctx, herdrPaneSendKeys, map[string]any{"pane_id": paneID, "keys": keys}, nil)
 }
 
+// Type types a line at a pane's prompt and presses enter.
+func (h *Herdr) Type(ctx context.Context, pane, text string) error {
+	if err := h.SendText(ctx, pane, text); err != nil {
+		return err
+	}
+	return h.SendKeys(ctx, pane, "enter")
+}
+
 func (h *Herdr) Read(ctx context.Context, paneID, source, format string, lines int) (ReadResult, error) {
 	p := map[string]any{"pane_id": paneID, "source": source, "format": format, "strip_ansi": format != "ansi"}
 	if lines > 0 {
