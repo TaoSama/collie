@@ -1092,7 +1092,7 @@
       if (!narrow()) $("#input").focus({ preventScroll: true });
     }
     syncFile();
-    if (hdrStatus.openId) { hdrStatus.openId = ""; renderHeaderStatus(); }
+    if (hdrStatus.openId || hdrStatus.pinnedId) closeHeaderStatus();
     maybeRefreshHeaderStatus();
   }
   addEventListener("popstate", route);
@@ -1863,15 +1863,37 @@
 
   // ───────────────────────────── generic header status slots (extensions)
   const HDR_STATUS_EVERY_MS = 60e3;
+  const HDR_HOVER_OPEN_MS = 150;
+  const HDR_HOVER_CLOSE_MS = 180;
   const hdrStatus = {
     slots: [],
     openId: "",
+    pinnedId: "",
     folded: !!store.get("hs.folded", false),
     loading: false,
     model: "",
     at: 0,
     inflight: null,
+    openTimer: 0,
+    closeTimer: 0,
   };
+  const canHoverHeaderStatus = () => matchMedia("(hover: hover) and (pointer: fine)").matches && !narrow();
+  function clearHeaderStatusTimers() {
+    clearTimeout(hdrStatus.openTimer); hdrStatus.openTimer = 0;
+    clearTimeout(hdrStatus.closeTimer); hdrStatus.closeTimer = 0;
+  }
+  function closeHeaderStatus({ restoreFocus = false } = {}) {
+    clearHeaderStatusTimers();
+    const prev = hdrStatus.openId;
+    if (!prev && !hdrStatus.pinnedId) return;
+    hdrStatus.openId = "";
+    hdrStatus.pinnedId = "";
+    renderHeaderStatus();
+    if (restoreFocus && prev) {
+      const btn = $(`.view:not([hidden]) [data-hs-toggle="${CSS.escape(prev)}"]`);
+      btn?.focus({ preventScroll: true });
+    }
+  }
   function activeHeaderModel() {
     if (view === "collie") return lastRouterModel || lastRouter?.model || "";
     if (view === "pane") {
@@ -1888,6 +1910,7 @@
     if (!window.collieHeaderStatus) return;
     const html = window.collieHeaderStatus.render(hdrStatus.slots, {
       openId: hdrStatus.openId,
+      pinnedId: hdrStatus.pinnedId,
       folded: hdrStatus.folded,
       loading: hdrStatus.loading,
       when,
@@ -1911,7 +1934,10 @@
     const p = api(url).then((r) => {
       hdrStatus.slots = Array.isArray(r?.slots) ? r.slots : [];
       hdrStatus.at = Date.now();
-      if (hdrStatus.openId && !hdrStatus.slots.some((s) => s.id === hdrStatus.openId)) hdrStatus.openId = "";
+      if (hdrStatus.openId && !hdrStatus.slots.some((s) => s.id === hdrStatus.openId)) {
+        hdrStatus.openId = "";
+        hdrStatus.pinnedId = "";
+      }
     }).catch(() => {}).finally(() => {
       hdrStatus.loading = false;
       if (hdrStatus.inflight === p) hdrStatus.inflight = null;
@@ -1928,7 +1954,61 @@
       fetchHeaderStatus({ fresh: force });
     }
   }
+  // Desktop hover preview (150ms open delay, stays open while pointer is inside
+  // the panel, click pins it open); keyboard focus-visible also opens cleanly.
+  document.addEventListener("pointerover", (e) => {
+    if (e.pointerType !== "mouse" || !canHoverHeaderStatus()) return;
+    const wrap = e.target.closest(".hs-wrap");
+    if (!wrap) return;
+    clearTimeout(hdrStatus.closeTimer); hdrStatus.closeTimer = 0;
+    const tog = e.target.closest("[data-hs-toggle]");
+    if (!tog || hdrStatus.pinnedId) return;
+    const id = tog.dataset.hsToggle;
+    if (hdrStatus.openId === id || hdrStatus.openTimer) return;
+    hdrStatus.openTimer = setTimeout(() => {
+      hdrStatus.openTimer = 0;
+      if (!canHoverHeaderStatus() || hdrStatus.pinnedId) return;
+      if (!taskPanel.hidden) toggleTaskPanel(false);
+      hdrStatus.openId = id;
+      renderHeaderStatus();
+    }, HDR_HOVER_OPEN_MS);
+  });
+  document.addEventListener("pointerout", (e) => {
+    if (e.pointerType !== "mouse" || !canHoverHeaderStatus()) return;
+    const wrap = e.target.closest(".hs-wrap");
+    if (!wrap || (e.relatedTarget && wrap.contains(e.relatedTarget))) return;
+    clearTimeout(hdrStatus.openTimer); hdrStatus.openTimer = 0;
+    if (!hdrStatus.openId || hdrStatus.pinnedId) return;
+    hdrStatus.closeTimer = setTimeout(() => {
+      hdrStatus.closeTimer = 0;
+      if (hdrStatus.pinnedId) return;
+      hdrStatus.openId = "";
+      renderHeaderStatus();
+    }, HDR_HOVER_CLOSE_MS);
+  });
+  document.addEventListener("focusin", (e) => {
+    const tog = e.target.closest?.("[data-hs-toggle]");
+    if (!tog || hdrStatus.pinnedId) return;
+    let focusVisible = false;
+    try { focusVisible = tog.matches(":focus-visible"); } catch {}
+    if (!focusVisible) return;
+    clearHeaderStatusTimers();
+    if (!taskPanel.hidden) toggleTaskPanel(false);
+    hdrStatus.openId = tog.dataset.hsToggle;
+    renderHeaderStatus();
+  });
+  document.addEventListener("focusout", (e) => {
+    const wrap = e.target.closest?.(".hs-wrap");
+    if (!wrap || hdrStatus.pinnedId) return;
+    if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
+    if (!hdrStatus.openId) return;
+    clearHeaderStatusTimers();
+    hdrStatus.openId = "";
+    renderHeaderStatus();
+  });
   document.addEventListener("click", (e) => {
+    const closeBtn = e.target.closest("[data-hs-close]");
+    if (closeBtn) { e.stopPropagation(); closeHeaderStatus({ restoreFocus: true }); return; }
     const refBtn = e.target.closest("[data-hs-refresh]");
     if (refBtn) { e.stopPropagation(); fetchHeaderStatus({ fresh: true }); return; }
     const foldBtn = e.target.closest("[data-hs-fold]");
@@ -1942,21 +2022,37 @@
     const tog = e.target.closest("[data-hs-toggle]");
     if (tog) {
       e.stopPropagation();
+      clearHeaderStatusTimers();
       const id = tog.dataset.hsToggle;
       if (!taskPanel.hidden) toggleTaskPanel(false);
-      hdrStatus.openId = hdrStatus.openId === id ? "" : id;
+      if (hdrStatus.pinnedId === id) {
+        hdrStatus.pinnedId = "";
+        hdrStatus.openId = "";
+      } else {
+        hdrStatus.pinnedId = id;
+        hdrStatus.openId = id;
+      }
       renderHeaderStatus();
       return;
     }
-    if (hdrStatus.openId && !e.target.closest(".hs-wrap")) {
-      hdrStatus.openId = "";
-      renderHeaderStatus();
+    if ((hdrStatus.openId || hdrStatus.pinnedId) && !e.target.closest(".hs-wrap")) {
+      closeHeaderStatus();
     }
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && hdrStatus.openId && !composing(e)) {
-      hdrStatus.openId = "";
-      renderHeaderStatus();
+    if (e.key === "ArrowDown" && !composing(e)) {
+      const tog = document.activeElement?.closest?.("[data-hs-toggle]");
+      if (tog) {
+        e.preventDefault();
+        clearHeaderStatusTimers();
+        hdrStatus.openId = hdrStatus.pinnedId = tog.dataset.hsToggle;
+        renderHeaderStatus();
+        return;
+      }
+    }
+    if (e.key === "Escape" && (hdrStatus.openId || hdrStatus.pinnedId) && !composing(e)) {
+      const inPanel = !!document.activeElement?.closest?.(".hs-wrap");
+      closeHeaderStatus({ restoreFocus: inPanel });
     }
   });
   document.addEventListener("visibilitychange", () => {

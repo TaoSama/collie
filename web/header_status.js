@@ -54,6 +54,7 @@
     const title = st?.title || slot.label || slot.name || slot.id;
     const when = opts.when || ((t) => String(t || ""));
     const refreshIcon = opts.refreshIcon || '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>';
+    const closeIcon = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>';
     const errText = st?.error || slot.error || "";
     const updated = st?.updated_at ? when(st.updated_at) : "";
     const secs = (st?.sections || []).map(renderSection).join("");
@@ -63,13 +64,13 @@
     const empty = !secs && !fallbackItems && !errText
       ? `<div class="hs-empty">${slot.state === "starting" ? "正在启动扩展…" : "暂无状态数据"}</div>`
       : "";
-    return `<div class="hs-panel" role="dialog" aria-label="${esc(title)}"${opts.open ? "" : " hidden"}>`
+    return `<div class="hs-scrim" data-hs-close${opts.open ? "" : " hidden"}></div>`
+      + `<div class="hs-panel${opts.pinned ? " is-pinned" : ""}" role="dialog" aria-label="${esc(title)}"${opts.open ? "" : " hidden"}>`
       + `<div class="hs-ph">`
-      + `<span class="hs-ph-t">${slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : ""}<b>${esc(title)}</b></span>`
-      + `<span class="hs-ph-r">${updated ? `<span class="hs-ph-at">${esc(updated)}</span>` : ""}<button type="button" class="icon-btn hs-ref${opts.loading ? " spinning" : ""}" data-hs-refresh="${esc(slot.id)}" aria-label="刷新" title="刷新">${refreshIcon}</button></span>`
+      + `<span class="hs-ph-t">${slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : ""}<b>${esc(title)}</b>${opts.pinned ? `<span class="hs-pin-tag">已固定</span>` : ""}</span>`
+      + `<span class="hs-ph-r">${updated ? `<span class="hs-ph-at">${esc(updated)}</span>` : ""}<button type="button" class="icon-btn hs-ref${opts.loading ? " spinning" : ""}" data-hs-refresh="${esc(slot.id)}" aria-label="刷新" title="刷新">${refreshIcon}</button><button type="button" class="icon-btn hs-close" data-hs-close aria-label="关闭" title="关闭">${closeIcon}</button></span>`
       + `</div>`
-      + (errText ? `<div class="hs-err">${esc(errText)}</div>` : "")
-      + secs + fallbackItems + empty
+      + `<div class="hs-body">${errText ? `<div class="hs-err">${esc(errText)}</div>` : ""}${secs}${fallbackItems}${empty}</div>`
       + `</div>`;
   }
 
@@ -81,6 +82,7 @@
     const tone = st?.tone || (hasErr ? "warn" : "");
     const compact = compactFallback(slot);
     const open = opts.openId === slot.id;
+    const pinned = opts.pinnedId === slot.id;
     const folded = !!opts.folded;
     let desktopMain = "";
     if (items.length) {
@@ -97,13 +99,13 @@
       ? `${itemText(items[0])} · ${itemText(items[1])}`
       : items[0] ? itemText(items[0]) : title;
     const mobileText = folded ? firstVal : compact;
-    return `<div class="hs-wrap${open ? " is-open" : ""}${folded ? " is-folded" : ""}" data-hs-id="${esc(slot.id)}">`
+    return `<div class="hs-wrap${open ? " is-open" : ""}${pinned ? " is-pinned" : ""}${folded ? " is-folded" : ""}" data-hs-id="${esc(slot.id)}">`
       + `<button type="button" class="hs-trigger${toneCls(tone)}" data-hs-toggle="${esc(slot.id)}" aria-expanded="${open}" aria-haspopup="dialog" title="${esc(title)}">`
       + `<span class="hs-desktop">${desktopMain}</span>`
       + `<span class="hs-mobile">${slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : ""}<span class="hs-mobile-t">${esc(mobileText)}</span>${chev}</span>`
       + `</button>`
       + `<button type="button" class="hs-fold-btn" data-hs-fold aria-label="${folded ? "展开状态栏" : "收起状态栏"}" title="${folded ? "展开状态栏" : "收起状态栏"}">${folded ? "展开" : "收起"}</button>`
-      + renderPanel(slot, { open, loading: !!opts.loading, when: opts.when, refreshIcon: opts.refreshIcon })
+      + renderPanel(slot, { open, pinned, loading: !!opts.loading, when: opts.when, refreshIcon: opts.refreshIcon })
       + `</div>`;
   }
 

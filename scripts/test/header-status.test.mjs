@@ -77,3 +77,11 @@ test("starting and error states render clear fallbacks", () => {
   const failed = hs.render([{ id: "e", name: "E", state: "error", error: "timeout" }]);
   assert.match(failed, /timeout/);
 });
+
+test("pinned state renders pin badge, scrim, and close button", () => {
+  const html = hs.render([{ id: "p", name: "P", state: "ok", status: { items: [{ label: "A", value: "1" }] } }], { openId: "p", pinnedId: "p" });
+  assert.match(html, /is-pinned/);
+  assert.match(html, /已固定/);
+  assert.match(html, /data-hs-close/);
+  assert.match(html, /hs-scrim/);
+});
