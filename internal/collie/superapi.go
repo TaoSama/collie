@@ -200,17 +200,16 @@ func (s *Server) superEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	ch, done := s.sup.subscribe()
 	defer done()
-	var last string
+	var last []byte
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	beat := time.Now()
 	for {
-		b, _ := json.Marshal(s.superState(r.Context()))
-		if string(b) != last {
-			last = string(b)
-			if sse.send("super", b) != nil {
-				return
-			}
+		sent, err := sse.sendChangedJSON("super", s.superState(r.Context()), &last)
+		if err != nil {
+			return
+		}
+		if sent {
 			beat = time.Now()
 		} else if time.Since(beat) > 15*time.Second {
 			sse.comment()

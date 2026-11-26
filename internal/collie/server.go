@@ -392,7 +392,7 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 		defer done()
 		ch = c
 	}
-	var lastState, lastSuper string
+	var lastState, lastSuper []byte
 	listsChanged, stopLists := s.herdr.listsUpdates()
 	defer stopLists()
 	tick := time.NewTicker(1 * time.Second)
@@ -403,20 +403,12 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 		// Collie's chat first: it is quick, and a message just sent should
 		// show before the slower look across every computer's sessions.
 		if s.sup != nil {
-			b, _ := json.Marshal(s.superState(r.Context()))
-			if string(b) != lastSuper {
-				lastSuper = string(b)
-				if sse.send("super", b) != nil {
-					return
-				}
-			}
-		}
-		b, _ := json.Marshal(s.state(r.Context()))
-		if string(b) != lastState {
-			lastState = string(b)
-			if sse.send("state", b) != nil {
+			if _, err := sse.sendChangedJSON("super", s.superState(r.Context()), &lastSuper); err != nil {
 				return
 			}
+		}
+		if _, err := sse.sendChangedJSON("state", s.state(r.Context()), &lastState); err != nil {
+			return
 		}
 		select {
 		case <-r.Context().Done():
@@ -1038,6 +1030,22 @@ func (s *sseWriter) send(event string, data []byte) error {
 	}
 	s.f.Flush()
 	return nil
+}
+
+func (s *sseWriter) sendChangedJSON(event string, value any, last *[]byte) (bool, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		// An encoding failure is an empty frame after previously valid data.
+		data = nil
+	}
+	if bytes.Equal(data, *last) {
+		return false, nil
+	}
+	if err := s.send(event, data); err != nil {
+		return false, err
+	}
+	*last = data
+	return true, nil
 }
 
 func (s *sseWriter) comment() { fmt.Fprint(s.w, ": ping\n\n"); s.f.Flush() }

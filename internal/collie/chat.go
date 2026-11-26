@@ -1116,8 +1116,8 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 	cache := map[string]*transcript{}
 	var (
 		tr                *transcript
-		lastLive, lastLog string
-		lastMeta          string
+		lastLive          []byte
+		lastLog, lastMeta string
 		lastAsk           *Approval
 		beat              = time.Now()
 		ms                msgSync
@@ -1235,11 +1235,11 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		cancel()
-		if b, _ := json.Marshal(live); string(b) != lastLive {
-			lastLive = string(b)
-			if sse.send("live", b) != nil {
-				return
-			}
+		sent, err := sse.sendChangedJSON("live", live, &lastLive)
+		if err != nil {
+			return
+		}
+		if sent {
 			beat = time.Now()
 		}
 
