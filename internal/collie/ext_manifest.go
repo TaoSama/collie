@@ -234,6 +234,9 @@ func validHide(rule string) bool {
 func (m *ExtManifest) programConfig(cfg map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range cfg {
+		if m.Runtime.Builtin == "wechat" && k == wechatConversationNameKey {
+			continue
+		}
 		if m.Configuration == nil || !m.Configuration.Properties[k].collies() {
 			out[k] = v
 		}

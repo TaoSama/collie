@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TaoSama/collie/internal/extproto"
+	"github.com/TaoSama/collie/web"
 )
 
 const wechatExt = "wechat"
@@ -38,6 +39,98 @@ func TestCatalogHasWeChat(t *testing.T) {
 	if h.setting(wechatExt).Enabled {
 		t.Fatal("wechat is on before you turn it on")
 	}
+}
+
+func TestWeChatConversationDisplayName(t *testing.T) {
+	sp, h, dir := newExtTestHub(t)
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	for _, m := range cat {
+		if m.ID == wechatExt {
+			h.cat[m.ID] = m
+		}
+	}
+	h.mu.Unlock()
+	chat := "owner@im.wechat"
+	id := convID(wechatExt, chat)
+	seed := incomingMsg{Chat: chat, ChatName: chat, ChatKind: "dm", ID: "old", Owner: true, At: time.Now()}
+	if err := h.incoming(h.manifest(wechatExt), seed); err != nil {
+		t.Fatal(err)
+	}
+	other := incomingMsg{Chat: "another-chat", ChatName: "原始名称", ID: "other", At: time.Now()}
+	if err := h.incoming(h.manifest("fakew"), other); err != nil {
+		t.Fatal(err)
+	}
+
+	h.s.token = "test"
+	h.s.web = web.FS
+	mux := http.NewServeMux()
+	h.s.extRoutes(mux)
+	request := func(method, path, body string, out any) {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer test")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body)
+		}
+		if out != nil {
+			if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	convPath := "/api/inbox/conv?id=" + url.QueryEscape(id)
+	checkName := func(want string) {
+		t.Helper()
+		check := func(c InboxConv) {
+			t.Helper()
+			if c.Name != want || c.Chat != chat || c.thread() != "ext:wechat:"+chat {
+				t.Fatalf("want name %q and original chat/thread, got %+v", want, c)
+			}
+		}
+		var list struct{ Convs []convView }
+		request("GET", "/api/inbox", "", &list)
+		names := map[string]InboxConv{}
+		for _, c := range list.Convs {
+			names[c.ID] = c.InboxConv
+		}
+		check(names[id])
+		if c := names["fakew:another-chat"]; c.Name != other.ChatName {
+			t.Fatalf("unexpected change to another extension: %+v", c)
+		}
+		var detail struct{ Conv InboxConv }
+		request("GET", convPath, "", &detail)
+		check(detail.Conv)
+		request("POST", "/api/inbox/conv", `{"id":"`+id+`","seen":true}`, &detail)
+		check(detail.Conv)
+	}
+	checkName("微信ClawBot")
+	var saved struct{ Setting ExtSetting }
+	request("POST", "/api/ext/wechat", `{"config":{"conversation_name":"  我的微信助手  "}}`, &saved)
+	if cfg := h.manifest(wechatExt).programConfig(saved.Setting.Config); len(cfg) != 0 {
+		t.Fatalf("display name leaked into the runtime config: %v", cfg)
+	}
+	checkName("我的微信助手")
+	if got := newExtHost(h.s, sp, dir).displayConversation(InboxConv{Ext: wechatExt}).Name; got != "我的微信助手" {
+		t.Fatalf("display name after reopening the database = %q", got)
+	}
+	seed.ID, seed.ChatName, seed.Live = "new", "你的微信", true
+	seed.Text = "你好"
+	if err := h.incoming(h.manifest(wechatExt), seed); err != nil {
+		t.Fatal(err)
+	}
+	checkName("我的微信助手")
+	ts := extTriggers(sp, "ext:wechat")
+	if len(ts) != 1 || ts[0].Thread != "ext:wechat:"+chat {
+		t.Fatalf("new message did not use the original thread: %+v", ts)
+	}
+	request("POST", "/api/ext/wechat", `{"config":{"conversation_name":"  "}}`, &saved)
+	checkName("微信ClawBot")
 }
 
 // startWeChat runs the fake extension under the id wechat, signed in.

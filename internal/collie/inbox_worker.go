@@ -150,7 +150,7 @@ func (h *extHost) saveConvBrief(c InboxConv, t *Trigger) (string, error) {
 	if m != nil {
 		label = extLabel(m)
 	}
-	prefix := convBrief(label, c) + "\n\n请求：\n"
+	prefix := convBrief(label, h.displayConversation(c)) + "\n\n请求：\n"
 	sp := h.sp
 	sp.mu.Lock()
 	defer sp.mu.Unlock()

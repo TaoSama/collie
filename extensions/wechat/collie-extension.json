@@ -13,6 +13,17 @@
     "connector": {"id": "wechat", "login": "qr", "capabilities": ["status", "login", "receive", "send", "interest"]},
     "channel": {"format": "markdown", "max_text": 3800, "kinds": ["answer", "progress", "result", "push"], "no_footer": true}
   },
+  "configuration": {
+    "type": "object",
+    "properties": {
+      "conversation_name": {
+        "type": "string",
+        "title": "会话显示名",
+        "default": "微信ClawBot",
+        "description": "显示在 Collie 的微信会话中。留空恢复默认。"
+      }
+    }
+  },
   "permissions": {"network": ["*.weixin.qq.com"]},
   "defaults": {"machine": "hub", "handler": "collie", "conversations": "owner"}
 }

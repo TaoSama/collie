@@ -158,7 +158,7 @@ func (h *extHost) pinLocked(x ExtSetting) ExtSetting {
 }
 
 // configure turns an extension on or off, moves it, or changes its config.
-// Any change restarts its program.
+// Changes to program settings restart it.
 func (h *extHost) configure(id string, change func(*ExtSetting)) (ExtSetting, error) {
 	return h.configureWithRestart(id, false, change)
 }
@@ -181,6 +181,9 @@ func (h *extHost) configureWithRestart(id string, restart bool, change func(*Ext
 		return before, fmt.Errorf("先选它运行在哪台电脑：它只能在一台电脑上运行")
 	}
 	x.Config = m.configWithDefaults(x.Config)
+	if m.Runtime.Builtin == "wechat" {
+		x.Config[wechatConversationNameKey] = m.wechatConversationName(x.Config)
+	}
 	h.sets[id] = x
 	h.saveSetsLocked()
 	old := h.runs[id]

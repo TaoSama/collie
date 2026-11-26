@@ -17,8 +17,10 @@
 
 1. 扩展调用 `get_bot_qrcode?bot_type=3`，回 `{step:"qr", kind:"qr", url:<qrcode_img_content>, interval:2}`，界面把 url 画成二维码。
 2. 之后每次 `connector.login.step{step:"qr"}` 长轮询 `get_qrcode_status`：`wait`、`scaned`（提示在手机上确认）、`scaned_but_redirect`（换到跳转的 host 继续轮询）、`expired`（自动换新码，最多 3 次）、`need_verifycode`（回 `kind:"secret"`，下一次 `{step:"code", secret:"<手机上的数字>"}`）、`confirmed`。
-3. 确认后凭证（token、bot_id、user_id、base_url）经 `connector.secrets.save` 交给 Collie 保存，回 `{done:true, account:"你的微信"}`。iLink 只给 id（`o9cq…@im.wechat`），没有昵称和头像的接口，所以状态的 `account` 和会话名都是「你的微信」，id 放在 `account_id`（接入页悬停可见），`detail` 的「绑定人」是缩短的 id。
+3. 确认后凭证（token、bot_id、user_id、base_url）经 `connector.secrets.save` 交给 Collie 保存，回 `{done:true, account:"你的微信"}`。登录返回的绑定人 id 放在 `account_id`（接入页悬停可见），`detail` 的「绑定人」显示缩短的 id。
 4. 新登录指纹（账号 + token）和上次不同时，游标、context token、去重键、outbox、额度全部清空，先排空历史（基线），之后的消息才处理。
+
+扫码确认和消息轮询都只提供 bot 或用户的标识，`getconfig` 提供输入状态凭据。Collie 无法读取微信端的会话备注，默认显示「微信ClawBot」，可在「接入 › 微信」修改「会话显示名」。
 
 `getupdates` 回 `errcode -14` 视为登录过期：状态变为 `not_signed_in`，发 `connector.changed{scope:"status"}`，需要重新扫码。轮询失败按 1 秒到 60 秒指数退避，成功后清零。
 

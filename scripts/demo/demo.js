@@ -517,13 +517,14 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       proc: { state: "running", pid: 4242 }, status: { state: "ok", account: "Alex" } },
     { manifest: { manifest_version: 1, id: "wechat", label: "微信", name: "微信", version: "1.0.0", icon_url: "ext-icons/wechat.png", engines: { collie_protocol: 1 }, runtime: { builtin: "wechat" },
       description: "在微信里和 Collie 聊天：扫码绑定一个微信机器人，你私聊它的消息交给 Collie，回复发回微信。用的是腾讯官方接口（iLink），只处理你本人发的消息。",
-      contributes: { connector: { id: "wechat", login: "qr", capabilities: ["status", "login", "receive", "send"] }, channel: { format: "markdown" } }, permissions: { network: ["*.weixin.qq.com"] } },
+      contributes: { connector: { id: "wechat", login: "qr", capabilities: ["status", "login", "receive", "send"] }, channel: { format: "markdown" } }, permissions: { network: ["*.weixin.qq.com"] },
+      configuration: { type: "object", properties: { conversation_name: { type: "string", title: "会话显示名", default: "微信ClawBot", description: "显示在 Collie 的微信会话中。留空恢复默认。" } } } },
       setting: { id: "wechat", enabled: true, machine: "" }, proc: { state: "running", pid: 4343 },
       status: { state: "ok", account: "你的微信", account_id: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", detail: { "绑定人": "o9cq80…8h9i@im.wechat", "剩余额度": 9, "回复窗口剩余": "22h41m" } } },
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", icon_url: "ext-icons/workbench.svg", runtime: { feature: "workbench" },
       description: "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。" }, setting: { id: "workbench", enabled: true } }] };
   const inboxConvs = [
-    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "你的微信", kind: "dm", last_at: ago(6), preview: "你: 部署好了吗", on: true, owner: true, handler: "collie" },
+    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "微信ClawBot", kind: "dm", last_at: ago(6), preview: "你: 部署好了吗", on: true, owner: true, handler: "collie" },
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
     { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(12), preview: "赵六: @你 今晚的灰度帮忙盯一下", unread: 4, at_me: true, on: false, handler: "agent" },
@@ -622,6 +623,11 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if ((m = p.match(/^\/api\/ext\/([^/]+)$/)) && method === "POST") {
       const v = extData.extensions.find((x) => x.manifest.id === m[1]);
       if (v) Object.assign(v.setting, body.enabled != null ? { enabled: body.enabled } : {}, body.machine != null ? { machine: body.machine } : {});
+      if (v?.manifest.id === "wechat" && body.config) {
+        const name = body.config.conversation_name?.trim() || v.manifest.configuration.properties.conversation_name.default;
+        v.setting.config = { conversation_name: name };
+        for (const c of inboxConvs) if (c.ext === "wechat") c.name = name;
+      }
       return json({ setting: v?.setting, view: v });
     }
     if (/^\/api\/ext\/[^/]+\/login$/.test(p)) return json({ step: { done: true } });

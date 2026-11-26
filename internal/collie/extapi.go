@@ -227,7 +227,7 @@ func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 	hides := map[string][]string{}
 	readBack := map[string]bool{} // extensions that mark what you read here read in the app too
 	for _, c := range convs {
-		v := convView{InboxConv: c, Label: c.Ext}
+		v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext}
 		if m := s.ext.manifest(c.Ext); m != nil {
 			v.Label = extLabel(m)
 			if _, ok := hides[c.Ext]; !ok {
@@ -284,7 +284,7 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 	for _, o := range s.ext.store.outs(`conv = ?`, id) {
 		outs[o.Ref] = o
 	}
-	writeJSON(w, 200, map[string]any{"conv": c, "msgs": s.ext.store.msgs(id, time.Time{}), "outbox": outs})
+	writeJSON(w, 200, map[string]any{"conv": s.ext.displayConversation(c), "msgs": s.ext.store.msgs(id, time.Time{}), "outbox": outs})
 }
 
 func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +323,7 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 	if body.On != nil && !*body.On {
 		s.ext.store.dropMsgs(c.ID) // a closed chat keeps only its preview (§7)
 	}
-	writeJSON(w, 200, map[string]any{"conv": c})
+	writeJSON(w, 200, map[string]any{"conv": s.ext.displayConversation(c)})
 }
 
 // inboxRead marks conversations read (收件箱's 全部已读): in Collie, and in

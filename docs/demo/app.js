@@ -2932,6 +2932,7 @@
   const AUTO_PATH = { inbox: "/api/inbox", ext: "/api/ext", markets: "/api/ext-markets" };
   let autoData = {};
   function autoSources(tab, sub) {
+    if (tab === "events") return ["triggers", "inbox"];
     if (tab !== "hooks") return [AUTO_API[tab]];
     if (sub.startsWith("ext/")) return ["ext", "inbox"];
     if (sub === "reply") return ["ext"];
@@ -3019,7 +3020,7 @@
       else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
     };
     if (tab === "events") {
-      const sig = JSON.stringify([r, eventsSub]);
+      const sig = JSON.stringify([r, eventsSub, (autoData.inbox?.convs || []).filter((c) => c.ext === "wechat").map((c) => [c.id, c.name])]);
       if (sig === body._sig) { if (restore) restoreSimpleScroll(body, restore); return; }
       body._sig = sig;
       const seg = `<div class="seg events-seg">${[["events", "事件"], ["threads", "线程"]].map(([k, l]) => `<button type="button" data-events-sub="${k}" class="${eventsSub === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
@@ -3209,7 +3210,7 @@
     return `<p class="panel-intro">你的消息、外部事件、扩展会话里唤起的请求、定时器，以及派出的 agent 完成或卡住，都会进这里。先按来源策略过滤；订阅了线程的 agent 直接收到，其余交给 Collie 判断。对方正忙时事件会先攒着，空闲后一次送过去。</p>
       <div class="card"><ul class="rows">${ts.length ? ts.map((t) => `<li class="row">
         <span class="badge ${esc(t.status === "queued" ? "queued" : t.status === "ignored" ? "ignored" : t.status === "failed" ? "failed" : t.action === "candidate" ? "candidate" : "")}">${esc({ queued: "排队", delivered: "已投递", ignored: "已忽略", failed: "未送达" }[t.status] || t.status)}</span>
-        <div><div class="meta"><b>#${esc(t.id)}</b><span class="src">${sourceMark(t.source)}${esc(SOURCE_LABEL[t.source] || collieExt.label(t.source) || t.source)}</span><span>${esc(t.thread)}</span>${t.from ? `<span>from ${esc(t.from === ROUTER ? "Collie" : t.from)}</span>` : ""}${t.targets?.length ? `<span>→ ${esc(t.targets.map((x) => x === ROUTER ? "Collie" : x).join(", "))}</span>` : ""}${t.action === "candidate" ? "<span>candidate</span>" : ""}</div>
+        <div><div class="meta"><b>#${esc(t.id)}</b><span class="src">${sourceMark(t.source)}${esc(SOURCE_LABEL[t.source] || collieExt.label(t.source) || t.source)}</span><span>${esc(wechatThreadName(t.thread))}</span>${t.from ? `<span>from ${esc(t.from === ROUTER ? "Collie" : t.from)}</span>` : ""}${t.targets?.length ? `<span>→ ${esc(t.targets.map((x) => x === ROUTER ? "Collie" : x).join(", "))}</span>` : ""}${t.action === "candidate" ? "<span>candidate</span>" : ""}</div>
         <div class="text">${esc(t.text)}</div></div>
         <span class="right">${when(t.at)}</span></li>`).join("") : `<li class="empty-row with-ico">${ico("inbox")}<div>还没有事件</div></li>`}</ul></div>`;
   }
@@ -3219,7 +3220,7 @@
     return `<p class="panel-intro">同一个对话、Issue/PR 或群聊话题里的连续事件构成一条线程。Collie 派出的 agent 订阅线程后，后续事件直达它，不再经过 Collie。chat:main 始终由 Collie 自己处理。</p>
       <div class="card"><ul class="rows">${ths.length ? ths.map((th) => `<li class="row">
         <span class="badge">${counts[th.id] ?? th.triggers?.length ?? 0}</span>
-        <div><div class="meta"><b>${esc(th.id)}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Collie</span>"}</div></div>
+        <div><div class="meta"><b>${esc(wechatThreadName(th.id))}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Collie</span>"}</div></div>
         <span class="right">${when(th.last_at)}</span></li>`).join("") : `<li class="empty-row with-ico">${ico("messages-square")}<div>还没有线程</div></li>`}</ul></div>`;
   }
 
@@ -3642,6 +3643,7 @@
     const c = (autoData.inbox?.convs || []).find((x) => "ext:" + x.id === thread);
     return c ? `${c.label} · ${c.name || c.chat}` : thread.replace(/^ext:/, "");
   };
+  const wechatThreadName = (thread) => thread?.startsWith("ext:wechat:") ? convName(thread) : thread;
   async function loadConv() {
     const id = inboxCur;
     try {
@@ -3660,7 +3662,7 @@
     try {
       await api("/api/ext/" + encodeURIComponent(id), { body });
       if (done) toast(done);
-      await fetchAuto("ext");
+      await Promise.all([fetchAuto("ext"), fetchAuto("inbox").catch(() => {})]);
       fetchHeaderStatus({ fresh: true });
       if (view === "auto" && autoTab === "hooks") drawAuto(autoData.settings);
       return true;
@@ -3793,7 +3795,7 @@
         } else config[el.dataset.extConfig] = el.value;
       });
       busy(b);
-      if (!(await extConfigure(id, { config }, "已保存，扩展会重启"))) form?.classList.add("dirty");
+      if (!(await extConfigure(id, { config }, "已保存"))) form?.classList.add("dirty");
       busy(b, false);
     }
   });

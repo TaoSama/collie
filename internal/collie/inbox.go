@@ -81,6 +81,30 @@ func topicOf(thread string) string {
 	return topic
 }
 
+const wechatConversationNameKey = "conversation_name"
+
+func (m *ExtManifest) wechatConversationName(cfg map[string]any) string {
+	if name, _ := cfg[wechatConversationNameKey].(string); strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name)
+	}
+	prop, _ := m.Configuration.propertyOK(wechatConversationNameKey)
+	name, _ := prop.Default.(string)
+	return name
+}
+
+// Conversation names use the current setting even for messages received
+// before it was added.
+func (h *extHost) displayConversation(c InboxConv) InboxConv {
+	if c.Ext == "wechat" {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if m := h.cat[c.Ext]; m != nil && m.Runtime.Builtin == "wechat" {
+			c.Name = m.wechatConversationName(h.sets[c.Ext].Config)
+		}
+	}
+	return c
+}
+
 func parseAt(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
