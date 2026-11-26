@@ -3,10 +3,10 @@ package collie
 import (
 	"database/sql"
 	"encoding/json"
-	"net/http/httptest"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -74,24 +74,8 @@ func TestLocateExternalAgyFindsUniqueNewWorkspaceLog(t *testing.T) {
 			}
 			s := &Server{home: home}
 			s.locateExternal(process, &proc{})
-			if tc.wantSession != "" {
-				process.ID, process.PID, process.CanTakeOver = "agy-test", 999999, true
-				externalCache.Lock()
-				previousList, previousAt := externalCache.list, externalCache.at
-				externalCache.list, externalCache.at = []*External{process}, time.Now()
-				externalCache.Unlock()
-				t.Cleanup(func() {
-					externalCache.Lock()
-					externalCache.list, externalCache.at = previousList, previousAt
-					externalCache.Unlock()
-				})
-				req := httptest.NewRequest("POST", "/", strings.NewReader("invalid body"))
-				req.SetPathValue("id", process.ID)
-				w := httptest.NewRecorder()
-				s.takeOverExternal(w, req)
-				if w.Code != 409 {
-					t.Errorf("heuristic match takeover status = %d, want 409", w.Code)
-				}
+			if process.agyCandidate != (tc.wantSession != "") {
+				t.Errorf("candidate = %t, want %t", process.agyCandidate, tc.wantSession != "")
 			}
 			wantPath := ""
 			if tc.wantSession != "" {
@@ -99,6 +83,40 @@ func TestLocateExternalAgyFindsUniqueNewWorkspaceLog(t *testing.T) {
 			}
 			if process.Session != tc.wantSession || process.path != wantPath {
 				t.Fatalf("got session %q path %q, want %q at %q", process.Session, process.path, tc.wantSession, wantPath)
+			}
+		})
+	}
+}
+
+func TestSameExternalAgyChecksProcessAndSession(t *testing.T) {
+	home := t.TempDir()
+	s := &Server{home: home}
+	logPath := filepath.Join(s.agyCLIHome(), "brain", externalFirstID, agyTranscriptRelPath)
+	must(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
+	must(t, err)
+	t.Cleanup(func() { must(t, f.Close()) })
+
+	pid := os.Getpid()
+	start := time.Date(2026, time.November, 27, 2, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	ps := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = -p ]; then\n  printf '%%s\\n' '%s'\nelse\n  printf '%%s\\n' '%s 1 pts/1 00:01 agy'\nfi\n",
+		start.Format("Mon Jan _2 15:04:05 2006"), strconv.Itoa(pid))
+	must(t, os.WriteFile(filepath.Join(dir, "ps"), []byte(ps), 0o700))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		name, session string
+		started       time.Time
+		want          bool
+	}{
+		{"same process", externalFirstID, start, true},
+		{"reused pid", externalFirstID, start.Add(-time.Second), false},
+		{"changed session", externalOtherID, start, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &External{PID: pid, Session: tc.session, agyStarted: tc.started}
+			if got := s.sameExternalAgy(t.Context(), e); got != tc.want {
+				t.Fatalf("sameExternalAgy = %t, want %t", got, tc.want)
 			}
 		})
 	}

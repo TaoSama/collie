@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -139,6 +140,15 @@ func TestAgyDualTranscriptStaysIdle(t *testing.T) {
 }
 
 func TestPaneEarlierRejectsReplacedTranscript(t *testing.T) {
+	for _, rewrite := range []bool{false, true} {
+		t.Run("in_place="+strconv.FormatBool(rewrite), func(t *testing.T) {
+			paneEarlierRejectsReplacement(t, rewrite)
+		})
+	}
+}
+
+func paneEarlierRejectsReplacement(t *testing.T, rewrite bool) {
+	t.Helper()
 	s, f, pane := chatServer(t, 0, "claude")
 	s.home = t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(s.home, ".claude"))
@@ -168,13 +178,28 @@ func TestPaneEarlierRejectsReplacedTranscript(t *testing.T) {
 	if w.Code != 200 || body.Generation != first.Generation {
 		t.Fatalf("page = %d %s", w.Code, w.Body)
 	}
-	must(t, os.Rename(logPath, logPath+".old"))
+	appendFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o600)
+	must(t, err)
+	_, err = appendFile.WriteString(log)
+	closeErr := appendFile.Close()
+	must(t, err)
+	must(t, closeErr)
+	if got := page(first.Generation).Code; got != 200 {
+		t.Fatalf("page after append = %d, want 200", got)
+	}
+
+	if rewrite {
+		// WriteFile truncates the existing file without replacing its inode.
+		log = strings.Replace(log, "same", "new", 1)
+	} else {
+		must(t, os.Rename(logPath, logPath+".old"))
+	}
 	must(t, os.WriteFile(logPath, []byte(log), 0o600))
 	if got := page(first.Generation).Code; got != 409 {
 		t.Fatalf("stale page status = %d, want 409", got)
 	}
 	if !tr.update() {
-		t.Fatal("replacing the log with the same messages did not mark it changed")
+		t.Fatal("replacing the log did not mark it changed")
 	}
 	if next := sync.patch(tr); next == nil || next.Generation == first.Generation || next.From != next.Base {
 		t.Fatalf("replacement patch = %+v", next)
