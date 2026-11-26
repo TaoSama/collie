@@ -49,6 +49,7 @@ class Extension:
         self.loaded = threading.Event()
         self.sent = {}
         self.trigger = ""
+        self.ignored = False
 
     # Host -> extension.
 
@@ -70,9 +71,9 @@ class Extension:
         if method == "channel.working":
             return self.working(params)
         if method == "channel.settings":
-            self.trigger = params.get("trigger") or ""
+            self.trigger, self.ignored = params.get("trigger") or "", bool(params.get("ignored"))
             if self.backend is not None:
-                self.backend.trigger = self.trigger
+                self.backend.trigger, self.backend.ignored = self.trigger, self.ignored
             return {}
         raise peer.Error("unknown_method", method)
 
@@ -232,7 +233,7 @@ class Extension:
             self.loaded.set()
             self.changed()
             return
-        backend.trigger = self.trigger
+        backend.trigger, backend.ignored = self.trigger, self.ignored
         backend.self_mention, backend.group_topics = self.self_mention, self.group_topics
         with self.mu:
             self.backend = backend

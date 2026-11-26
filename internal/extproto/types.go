@@ -280,6 +280,9 @@ const MChannelSettings = "channel.settings"
 type ChannelSettings struct {
 	Contribution string `json:"contribution,omitempty"`
 	Trigger      string `json:"trigger"`
+	// Ignored: 来源策略 ignores this extension's requests, so none is taken
+	// and none may be marked as being worked on.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // MChannelInterest tells the extension which chats wait for results.

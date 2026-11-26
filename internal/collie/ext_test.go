@@ -904,3 +904,34 @@ func TestMentionAndTopics(t *testing.T) {
 		t.Fatalf("direct chat: %+v", ts[len(ts)-1])
 	}
 }
+
+// 来源策略 ignoring an extension: its requests are not taken, so none is
+// marked as being worked on, and the extension is told so.
+func TestExtRequestsIgnored(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	if h.requestsIgnored("fake") {
+		t.Fatal("taken by default")
+	}
+	sp.mu.Lock()
+	sp.st.Policies = []Policy{{Source: "ext:fake", Action: "ignore"}}
+	sp.mu.Unlock()
+	if !h.requestsIgnored("fake") {
+		t.Fatal("an ignored source")
+	}
+	sp.mu.Lock()
+	sp.st.Policies = []Policy{{Source: "ext:*", Action: "respond", Allow: []string{"u2"}}}
+	sp.mu.Unlock()
+	if !h.requestsIgnored("fake") {
+		t.Fatal("allowed others only: yours are dropped")
+	}
+	sp.mu.Lock()
+	sp.st.Policies = []Policy{{Source: "ext:fake", Action: "ignore"}}
+	sp.mu.Unlock()
+	in := incomingMsg{Chat: "c1", ChatKind: "dm", ID: "1", Sender: "me", Mine: true, Owner: true, Text: "/ai 看下", At: time.Now(), Live: true}
+	if err := h.incoming(h.manifest("fake"), in); err != nil {
+		t.Fatal(err)
+	}
+	if ts := extTriggers(sp, "ext:fake"); len(ts) != 1 || ts[0].Status != "ignored" {
+		t.Fatalf("ignored: %+v", ts)
+	}
+}

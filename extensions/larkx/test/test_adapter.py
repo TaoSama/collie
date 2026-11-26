@@ -185,7 +185,8 @@ class Post(unittest.TestCase):
 
         f.client.api = api
         rt = protobuf_to_dict(richtext.build(U.L, "/ai 今天有什么会"))
-        msg = {"msg_id": "9", "chat_id": "c", "from_id": "u_me", "msg_type": 4, "chat_type": 1, "content_data": {"richText": rt}}
+        msg = {"msg_id": "9", "chat_id": "c", "from_id": "u_me", "msg_type": 4, "chat_type": 1, "content_data": {"richText": rt},
+               "create_time": int(time.time())}
         got = time.monotonic()
         f._deliver(dict(msg), lambda m: None, got)
         self.assertTrue(done.wait(2))
@@ -197,6 +198,36 @@ class Post(unittest.TestCase):
         f._deliver(dict(msg, msg_id="10", from_id="u_other"), lambda m: None, got)
         time.sleep(0.05)
         self.assertEqual(len(asked), 1, "someone else's /ai waits for Collie's decision")
+
+    def test_marked_only_when_taken(self):
+        """Marked 在做了 only where Collie will take the request: as strict as the hub."""
+        import time
+
+        f = self.feishu(answer("1"))
+        f.me, f.trigger = "u_me", "/ai"
+        asked = []
+        f.client.api = lambda name, data: asked.append(data["messageId"])
+        f.react = lambda mid: asked.append(mid)
+        now = int(time.time())
+
+        def msg(mid, text, **kw):
+            rt = protobuf_to_dict(richtext.build(U.L, text))
+            m = {"msg_id": mid, "chat_id": "c", "from_id": "u_me", "msg_type": 4, "chat_type": 1,
+                 "content_data": {"richText": rt}, "create_time": now}
+            m.update(kw)
+            return m
+
+        f._quick(msg("1", "/ai 好"), None)
+        f._quick(msg("2", "/ai 旧的", create_time=now - 3600), None)  # history
+        f.own_cids["c-ours"] = True
+        f._quick(msg("3", "/ai 回声", cid="c-ours"), None)  # this adapter's own post
+        post = msg("4", "/ai 帖子", msg_type=2)
+        post["content_data"]["title"] = "标题"  # Collie reads "**标题**\n/ai …": no request
+        f._quick(post, None)
+        f.ignored = True
+        f._quick(msg("5", "/ai 被忽略"), None)
+        time.sleep(0.1)
+        self.assertEqual(asked, ["1"])
 
     def test_reply_in_topic(self):
         f = self.feishu(answer("7002"))
@@ -292,12 +323,13 @@ class Mentions(unittest.TestCase):
 
     def test_self_mention_marked_at_once(self):
         import threading
+        import time
 
         f = self.feishu()
         f.client, f.trigger = FakeClient(answer("1")), "/ai"
         asked, done = [], threading.Event()
         f.client.api = lambda name, data: (asked.append(data["messageId"]), done.set())
-        f._deliver(self.msg("9", "u_me", at_rich("u_me", "我", " 看下")), lambda m: None)
+        f._deliver(dict(self.msg("9", "u_me", at_rich("u_me", "我", " 看下")), create_time=int(time.time())), lambda m: None)
         self.assertTrue(done.wait(2))
         self.assertEqual(asked, ["9"])
 

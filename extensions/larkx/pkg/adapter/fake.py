@@ -23,6 +23,7 @@ class Fake:
         self.posts = []
         self.wake = threading.Event()
         self.trigger = ""
+        self.ignored = False
         self.marked = set()
 
     def restore(self, saved):
@@ -62,7 +63,7 @@ class Fake:
             {"id": "m3", "chat_id": "c_self", "chat": ACCOUNT, "chat_kind": "self", "sender": ME,
              "sender_name": ACCOUNT, "owner": True, "text": "/ai 今天有什么会", "at": now},
         ):
-            if m["owner"] and lark.is_request(m["text"], self.trigger):
+            if m["owner"] and not self.ignored and lark.is_request(m["text"], self.trigger):
                 self.mark_working(m["id"])
             on_message(m)
         while not stop.is_set() and self.signed_in:

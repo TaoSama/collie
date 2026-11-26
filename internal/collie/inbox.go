@@ -136,10 +136,19 @@ func (h *extHost) incoming(m *ExtManifest, in incomingMsg) error {
 	if err != nil {
 		return err
 	}
-	if t != nil {
-		go h.markWorking(conv, in.ID)
+	if t != nil && t.Status != "ignored" {
+		go h.markWorking(conv, in.ID) // 来源策略 may ignore it: then nobody works on it
 	}
 	return nil
+}
+
+// requestsIgnored: 来源策略 drops your requests from this extension, as the
+// trigger it would make would be (prepareTriggerLocked).
+func (h *extHost) requestsIgnored(ext string) bool {
+	h.sp.mu.Lock()
+	defer h.sp.mu.Unlock()
+	pol := h.sp.st.policyFor("ext:" + ext)
+	return pol.Action == "ignore" || len(pol.Allow) > 0 && !contains(pol.Allow, "you")
 }
 
 func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) InboxConv {

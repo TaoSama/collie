@@ -394,7 +394,7 @@ func (r *extRun) sendSettings(ctx context.Context) {
 	if !r.man.has(capWorking) || !r.running() {
 		return
 	}
-	args := extproto.ChannelSettings{Contribution: r.man.Contributes.Connector.ID, Trigger: r.h.trigger()}
+	args := extproto.ChannelSettings{Contribution: r.man.Contributes.Connector.ID, Trigger: r.h.trigger(), Ignored: r.h.requestsIgnored(r.man.ID)}
 	if err := r.call(ctx, extproto.MChannelSettings, args, nil); err != nil {
 		log.Printf("ext %s: settings: %v", r.man.ID, err)
 	}

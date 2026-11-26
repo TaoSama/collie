@@ -28,6 +28,7 @@ QR_STATUS = {1: QR_WAITING, 2: QR_SCANNED, 3: QR_FAILED, 4: QR_FAILED, 5: QR_EXP
 MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM, MSG_CARD = 3, 4, 5, 6, 14
 CHAT_P2P = 1
 CMD_PUT_MESSAGE = 5
+REQUEST_FRESH = 600  # seconds: an older message is history to Collie, never a request
 WORKING_REACTION = "OnIt"  # the reaction a request gets when Collie takes it: 「在做了」
 CMD_PUSH_MESSAGES = 6
 CMD_PUSH_SID = 6000  # only sids: the packets are pulled by them
@@ -150,6 +151,7 @@ class Feishu:
         self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
         self.self_mention = True  # @自己唤起: @-mentioning yourself is a request
+        self.ignored = False  # 来源策略 ignores this extension: nothing gets marked
         self.group_topics = True  # 群话题各开对话: each group topic is a conversation of its own
         self.marked = collections.OrderedDict()  # message ids already marked as being worked on
 
@@ -364,12 +366,9 @@ class Feishu:
         out = {"id": mid, "chat_id": chat, "sender": sender, "owner": bool(self.me) and sender == self.me}
         data = msg.get("content_data") or {}
         if mtype in (richtext.MSG_POST, MSG_TEXT):
-            rich = data.get("richText") or {}
-            if self._self_mention(sender, rich):
+            text, mention = self._written(sender, data)
+            if mention:
                 out["mention"] = True
-            text = richtext.to_text(self.U.L, rich, drop_at=self.me if out.get("mention") else "").strip() or data.get("text", "")
-            if data.get("title"):
-                text = "**%s**\n%s" % (data["title"], text)
         elif mtype in (MSG_IMAGE, MSG_FILE):
             text = ""
             blob = self._download(msg)
@@ -493,11 +492,25 @@ class Feishu:
             return
         if msg.get("msg_type") not in (richtext.MSG_POST, MSG_TEXT):
             return
-        data = msg.get("content_data") or {}
-        rich = data.get("richText") or {}
-        text = richtext.to_text(self.U.L, rich) or data.get("text", "")
-        if is_request(text, self.trigger) or self._self_mention(self.me, rich):
+        with self._mu:
+            echo = bool(msg.get("cid")) and msg["cid"] in self.own_cids
+        at = int(msg.get("create_time") or 0)
+        at = at / 1000 if at > 10 ** 12 else at
+        # Only what Collie will take: not ignored by 来源策略, not this adapter's own post, not history.
+        if self.ignored or echo or not at or time.time() - at > REQUEST_FRESH:
+            return
+        text, mention = self._written(self.me, msg.get("content_data") or {})
+        if mention or is_request(text, self.trigger):
             self.mark_working(str(msg["msg_id"]), got)
+
+    def _written(self, sender, data):
+        """A text or post message's text as Collie gets it, and whether it @-mentions you as a request (the @ then taken out)."""
+        rich = data.get("richText") or {}
+        mention = self._self_mention(sender, rich)
+        text = richtext.to_text(self.U.L, rich, drop_at=self.me if mention else "").strip() or data.get("text", "")
+        if data.get("title"):
+            text = "**%s**\n%s" % (data["title"], text)
+        return text, mention
 
     def _self_mention(self, sender, rich):
         """Your own message @-mentioning yourself is a request too (the switch @自己唤起)."""

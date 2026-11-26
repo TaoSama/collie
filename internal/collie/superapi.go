@@ -1008,6 +1008,9 @@ func (s *Server) superSaveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sp.st.Policies = valid
+		if s.ext != nil {
+			s.ext.pushSettings() // an ignored source has its requests no longer marked 在做了
+		}
 	}
 	sp.changed()
 	if body.Settings != nil {
