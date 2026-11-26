@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")/.."
 out=docs/demo
 rm -rf "$out" && mkdir -p "$out"
-cp -R web/vendor web/fonts web/imgedit.js web/threads.js web/tasks.js web/machines.js web/ext.js web/workbench.js web/markdown.js web/highlight.js web/app.css web/skins.css web/icon.svg web/icon-512.png "$out/"
+cp -R web/vendor web/fonts web/imgedit.js web/threads.js web/tasks.js web/machines.js web/ext.js web/workbench.js web/wheel.js web/markdown.js web/highlight.js web/app.css web/skins.css web/icon.svg web/icon-512.png "$out/"
 cp web/media.css web/workbench.css "$out/"
 cp scripts/demo/demo.js scripts/demo/demo-qr.png scripts/demo/bench-pagination.html "$out/"
 # Extension icons with their licenses, which the hub hands out from the manifests (extensions/*/icon.*).

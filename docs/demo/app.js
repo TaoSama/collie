@@ -5012,6 +5012,7 @@
   let pendingScreen = null;
   let screenFresh = true;
   let screenWheel = false; // the frame says: hand the wheel to the program (paneWheel)
+  const wheelUp = window.collieWheel.tracker(); // how far that turned the program's view up
 
   // A plain shell has no conversation to show, so it opens on the screen.
   const isShell = () => { const v = find(current); return !!v && !v.is_agent; };
@@ -5111,8 +5112,8 @@
       const n = Math.trunc(rest / lineH());
       if (!n) return;
       rest -= n * lineH();
-      const at = `;${Math.ceil((size.cols || 2) / 2)};${Math.ceil((size.rows || 2) / 2)}M`;
-      sendText(`\x1b[<${n < 0 ? 64 : 65}${at}`.repeat(Math.abs(n)));
+      wheelUp.scrolled(current, n, size.cols, size.rows);
+      sendText(window.collieWheel.report(n, size.cols, size.rows));
     };
     el.addEventListener("wheel", (e) => {
       if (!on() || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY) || !atEdge(e.deltaY)) return;
@@ -5191,9 +5192,15 @@
       else drawLog(f.text, pendingRestore);
       pendingRestore = null;
     });
-    stream.addEventListener("gone", () => { $("#gone").hidden = false; closeStream(); });
+    stream.addEventListener("gone", () => { $("#gone").hidden = false; wheelUp.forget(); closeStream(); });
   }
-  function closeStream() { stream?.close(); stream = null; term?.blur(); }
+  function closeStream() {
+    stream?.close(); stream = null; term?.blur();
+    // Leaving the screen: an agent scrolled up from here goes back to the
+    // bottom, after whatever is still on its way to it.
+    const home = wheelUp.home();
+    if (home) sendChain = sendChain.then(() => postPane(home.pane, "text", { text: home.text })).catch((e) => toast(e.message));
+  }
 
   function drawScreen(f, restore = null) {
     if (!term) return;

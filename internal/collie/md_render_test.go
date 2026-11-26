@@ -336,6 +336,7 @@ function loadApp(expose, extra = {}) {
   vm.runInContext(fs.readFileSync(path.join(root, "web/threads.js"), "utf8"), ctx, { filename: "web/threads.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/machines.js"), "utf8"), ctx, { filename: "web/machines.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/ext.js"), "utf8"), ctx, { filename: "web/ext.js" });
+  vm.runInContext(fs.readFileSync(path.join(root, "web/wheel.js"), "utf8"), ctx, { filename: "web/wheel.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/workbench.js"), "utf8"), ctx, { filename: "web/workbench.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/markdown.js"), "utf8"), ctx, { filename: "web/markdown.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/highlight.js"), "utf8"), ctx, { filename: "web/highlight.js" });
