@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 )
@@ -105,11 +104,9 @@ func TestCodexAppRowsKeepOldThreads(t *testing.T) {
 }
 
 func TestClaudeDesktopRowsKeepOldSessions(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("the Claude desktop app's index is read on macOS")
-	}
 	home := t.TempDir()
-	dir := filepath.Join(home, "Library", "Application Support", "Claude", "claude-code-sessions", "a", "b")
+	app := filepath.Join(home, "Library", "Application Support", "Claude")
+	dir := filepath.Join(app, "claude-code-sessions", "a", "b")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +119,22 @@ func TestClaudeDesktopRowsKeepOldSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rows := (&Server{home: home}).claudeDesktopRows()
+	claude := filepath.Join(home, ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	project := filepath.Join(claude, "projects", "test-project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(project, "c1.jsonl")
+	if err := os.WriteFile(transcript, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows := (&Server{home: home}).claudeDesktopRows([]string{app})
 	if len(rows) != desktopMax || rows[0].session != "c1" {
 		t.Fatalf("got %d rows starting %+v, want the %d newest unarchived ones however old", len(rows), rows, desktopMax)
+	}
+	if rows[0].path != transcript || rows[0].format != "claude" {
+		t.Fatalf("newest transcript = %q (%s), want %q (claude)", rows[0].path, rows[0].format, transcript)
 	}
 }
 

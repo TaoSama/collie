@@ -86,7 +86,7 @@ func (s *Server) desktopRows() ([]desktopRow, bool) {
 		return desktopCache.rows, desktopCache.app
 	}
 	var rows []desktopRow
-	rows = append(rows, s.claudeDesktopRows()...)
+	rows = append(rows, s.claudeDesktopRows(s.claudeDesktopDirs())...)
 	rows = append(rows, s.codexAppRows()...)
 	rows = append(rows, s.agyDesktopRows()...)
 	desktopCache.at, desktopCache.rows, desktopCache.app = time.Now(), rows, s.codexAppUp()
@@ -288,11 +288,11 @@ var claudeDesktopFiles = struct {
 	v   claudeDesktopJSON
 }{}}
 
-func (s *Server) claudeDesktopRows() []desktopRow {
+func (s *Server) claudeDesktopRows(dirs []string) []desktopRow {
 	var rows []desktopRow
 	claudeDesktopFiles.Lock()
 	defer claudeDesktopFiles.Unlock()
-	for _, dir := range s.claudeDesktopDirs() {
+	for _, dir := range dirs {
 		files, _ := filepath.Glob(filepath.Join(dir, "claude-code-sessions", "*", "*", "local_*.json"))
 		for _, f := range files {
 			fi, err := os.Stat(f)
@@ -321,11 +321,15 @@ func (s *Server) claudeDesktopRows() []desktopRow {
 				local = v.CliSessionID
 			}
 			d := desktopRow{id: "cd-" + local, kind: "claude", app: appClaude, surface: surfaceDesktop, session: v.CliSessionID, title: v.Title, cwd: v.Cwd, created: time.UnixMilli(v.Created), updated: last}
-			d.path, d.format = s.findTranscript("claude", "id", v.CliSessionID, "", "")
 			rows = append(rows, d)
 		}
 	}
-	return newestRows(rows)
+	rows = newestRows(rows)
+	for i := range rows {
+		d := &rows[i]
+		d.path, d.format = s.findTranscript(d.kind, "id", d.session, "", "")
+	}
+	return rows
 }
 
 func newestRows(rows []desktopRow) []desktopRow {
