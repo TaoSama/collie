@@ -643,7 +643,7 @@ func TestExtMarket(t *testing.T) {
 	if err != nil || m.Market == nil || m.Market.Commit != "abc123" || len(m.Market.Files) != 2 {
 		t.Fatalf("install: %+v %v", m, err)
 	}
-	if err := h.setConfigSecrets(m, map[string]any{"key": "s3cret"}, nil); err != nil {
+	if _, err := h.setConfigSecrets(m, map[string]any{"key": "s3cret"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	h.configure("tool", func(x *ExtSetting) { x.Config = map[string]any{"key": "s3cret"} })
@@ -1007,5 +1007,80 @@ func TestInboxHiddenEndToEnd(t *testing.T) {
 	got = list()
 	if got["严肃 Agent 交流群"] || !got["手机任务自建 harness 二期 - [需求同步群]"] || got["闪退 - [缺陷同步群]"] || got["[Genesis-M][beta][2115872568] 【应用使用问题/豆包/其他功能类/】 我在新闻界面调出豆包，让..."] {
 		t.Fatalf("switched off: shown again: %v", got)
+	}
+}
+
+// Header status slot extension: valid with only status + header_status,
+// hidden while disabled, served via /api/ext/header-status while enabled,
+// and restarted when an x-secret config field changes.
+func TestExtHeaderStatus(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	m := &ExtManifest{ManifestVersion: 1, ID: "hdr", Name: "Header Meter", Label: "Meter", Version: "1.0.0"}
+	m.Engines.CollieProtocol = extproto.Protocol
+	m.Runtime.Builtin = "fake"
+	m.Contributes.Connector.ID = "hdr"
+	m.Contributes.Connector.Capabilities = []string{"status", "header_status"}
+	m.Configuration = &ExtConfig{Type: "object", Properties: map[string]ExtConfigProp{
+		"mode": {Type: "string", Default: "header"},
+		"key":  {Type: "string", Title: "Key", Secret: true},
+	}}
+	if err := m.validate(); err != nil {
+		t.Fatalf("header_status manifest should validate: %v", err)
+	}
+	h.mu.Lock()
+	h.cat["hdr"] = m
+	h.mu.Unlock()
+	t.Cleanup(func() { h.configure("hdr", func(x *ExtSetting) { x.Enabled = false }) })
+
+	fetch := func(query string) []headerStatusSlot {
+		rec := httptest.NewRecorder()
+		h.s.extHeaderStatus(rec, httptest.NewRequest("GET", "/api/ext/header-status"+query, nil))
+		if rec.Code != 200 {
+			t.Fatalf("GET /api/ext/header-status%s: status %d %s", query, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Slots []headerStatusSlot `json:"slots"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Slots
+	}
+
+	// Off by default: nothing shown in the header.
+	if slots := fetch(""); len(slots) != 0 {
+		t.Fatalf("disabled extension must not appear: %+v", slots)
+	}
+
+	startExt(t, h, "hdr")
+	slots := fetch("?model=claude-opus-5-5&fresh=1")
+	if len(slots) != 1 || slots[0].ID != "hdr" || slots[0].State != "ok" || slots[0].Status == nil {
+		t.Fatalf("enabled header status: %+v", slots)
+	}
+	if slots[0].Status.Compact != "Fake 75%" || slots[0].Status.Subline != "model=claude-opus-5-5 fresh" {
+		t.Fatalf("unexpected header status payload: %+v", slots[0].Status)
+	}
+
+	// Updating an x-secret config field restarts the extension with the new value.
+	changed, err := h.setConfigSecrets(m, map[string]any{"key": "abc12345"}, nil)
+	if err != nil || !changed {
+		t.Fatalf("setConfigSecrets: changed=%v err=%v", changed, err)
+	}
+	if _, err := h.configureWithRestart("hdr", changed, func(x *ExtSetting) {
+		x.Config = map[string]any{"mode": "header"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "restarted header status sees secret", func() bool {
+		ss := fetch("?model=test")
+		return len(ss) == 1 && ss[0].Status != nil && strings.Contains(ss[0].Status.Subline, "secret-len=8")
+	})
+
+	// Turn off again: disappears immediately.
+	if _, err := h.configure("hdr", func(x *ExtSetting) { x.Enabled = false }); err != nil {
+		t.Fatal(err)
+	}
+	if slots := fetch(""); len(slots) != 0 {
+		t.Fatalf("disabled again: %+v", slots)
 	}
 }

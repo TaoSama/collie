@@ -31,10 +31,10 @@ func (h *extHost) configSecrets(id string) map[string]string {
 }
 
 // setConfigSecrets saves the x-secret fields given ("" leaves one as it is)
-// and clears the ones named in clear.
-func (h *extHost) setConfigSecrets(m *ExtManifest, set map[string]any, clear []string) error {
+// and clears the ones named in clear, reporting whether any value changed.
+func (h *extHost) setConfigSecrets(m *ExtManifest, set map[string]any, clear []string) (bool, error) {
 	if m.Configuration == nil {
-		return nil
+		return false, nil
 	}
 	cur := h.configSecrets(m.ID)
 	changed := false
@@ -42,18 +42,20 @@ func (h *extHost) setConfigSecrets(m *ExtManifest, set map[string]any, clear []s
 		if !p.Secret {
 			continue
 		}
-		if v, ok := set[k].(string); ok && v != "" {
+		if v, ok := set[k].(string); ok && v != "" && cur[k] != v {
 			cur[k], changed = v, true
 		}
 		if slices.Contains(clear, k) {
-			delete(cur, k)
-			changed = true
+			if _, ok := cur[k]; ok {
+				delete(cur, k)
+				changed = true
+			}
 		}
 	}
 	if !changed {
-		return nil
+		return false, nil
 	}
-	return writePrivate(h.configSecretsFile(m.ID), cur)
+	return true, writePrivate(h.configSecretsFile(m.ID), cur)
 }
 
 // extConfigSecret is an x-secret config value of an extension that is on.

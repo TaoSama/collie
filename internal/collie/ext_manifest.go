@@ -252,16 +252,17 @@ func (m *ExtManifest) hides(cfg map[string]any) []string {
 
 // Connector capabilities (extensions/README.md §2).
 const (
-	capStatus   = "status"
-	capLogin    = "login"
-	capArchive  = "archive"
-	capReceive  = "receive"
-	capActions  = "actions"
-	capSend     = "send"
-	capInterest = "interest"
-	capWorking  = "working"
-	chatSelf    = "self"  // a chat kind: your chat with yourself
-	chatGroup   = "group" // a chat kind: a group
+	capStatus       = "status"
+	capLogin        = "login"
+	capArchive      = "archive"
+	capReceive      = "receive"
+	capActions      = "actions"
+	capHeaderStatus = "header_status"
+	capSend         = "send"
+	capInterest     = "interest"
+	capWorking      = "working"
+	chatSelf        = "self"  // a chat kind: your chat with yourself
+	chatGroup       = "group" // a chat kind: a group
 )
 
 // featureWorkbench: the 工作台, an extension turned on in 接入.
@@ -310,8 +311,8 @@ func (m *ExtManifest) validate() error {
 		return fmt.Errorf("contributes.connector.id is required")
 	case !m.has(capStatus):
 		return fmt.Errorf("the connector must have the status capability")
-	case !m.has(capArchive) && !m.has(capReceive) && len(m.Contributes.Connector.Actions) == 0:
-		return fmt.Errorf("the connector needs archive or receive, or actions of its own")
+	case !m.has(capArchive) && !m.has(capReceive) && len(m.Contributes.Connector.Actions) == 0 && !m.has(capHeaderStatus):
+		return fmt.Errorf("the connector needs archive, receive, actions, or header_status")
 	case (m.has(capArchive) || m.has(capReceive)) && !m.has(capActions) && !m.has(capSend):
 		return fmt.Errorf("a connector that receives needs actions or send to answer")
 	case (m.has(capArchive) || m.has(capReceive)) && !m.has(capSend) && m.Contributes.Connector.SendAction == "":

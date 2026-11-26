@@ -1092,6 +1092,8 @@
       if (!narrow()) $("#input").focus({ preventScroll: true });
     }
     syncFile();
+    if (hdrStatus.openId) { hdrStatus.openId = ""; renderHeaderStatus(); }
+    maybeRefreshHeaderStatus();
   }
   addEventListener("popstate", route);
   addEventListener("hashchange", route);
@@ -1192,7 +1194,7 @@
   addEventListener("resize", () => { if (booted && !view && !narrow()) route(); });
 
   // ───────────────────────────── Collie (super-agent) view
-  let superSig = "", lastRouter = null;
+  let superSig = "", lastRouter = null, lastRouterModel = "";
   // Which model Collie itself runs with, next to its status.
   async function renderRouterModel(r) {
     const el = $("#router-model");
@@ -1207,11 +1209,13 @@
       effort ||= info.default_effort || "";
     }
     if (el._key !== key) return;
+    lastRouterModel = model || "";
     const parts = [];
     if (model) parts.push(esc(modelName(model)) + (r.model ? "" : "（默认）"));
     if (effort) parts.push("思考 " + esc(EFFORT_LABEL[effort] || effort) + (r.effort ? "" : "（默认）"));
     el.innerHTML = parts.join(" · ") + (r.pending ? ` <button type="button" class="pending" data-act="router-restart" title="Collie 的模型设置改过了，点这里重启 Collie">重启后生效</button>` : "");
     el.title = `Collie 自己用的模型${model ? "：" + model : ""}${effort ? "，思考强度 " + effort : ""}（自动化 → 设置 → Collie 自己）`;
+    if (view === "collie") maybeRefreshHeaderStatus();
   }
   // A worker's comings and goings: its spawn line shows where it stands, and
   // a dialog waiting on the human shows as a card below. Reports and errors stay.
@@ -1856,6 +1860,111 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !taskPanel.hidden && !composing(e)) toggleTaskPanel(false);
   });
+
+  // ───────────────────────────── generic header status slots (extensions)
+  const HDR_STATUS_EVERY_MS = 60e3;
+  const hdrStatus = {
+    slots: [],
+    openId: "",
+    folded: !!store.get("hs.folded", false),
+    loading: false,
+    model: "",
+    at: 0,
+    inflight: null,
+  };
+  function activeHeaderModel() {
+    if (view === "collie") return lastRouterModel || lastRouter?.model || "";
+    if (view === "pane") {
+      const v = find(current);
+      return v?.model || $("#p-model")?.value || "";
+    }
+    if (view === "ext") {
+      const e = (ext || []).find((x) => x.id === extCur);
+      return e?.model || "";
+    }
+    return "";
+  }
+  function renderHeaderStatus() {
+    if (!window.collieHeaderStatus) return;
+    const html = window.collieHeaderStatus.render(hdrStatus.slots, {
+      openId: hdrStatus.openId,
+      folded: hdrStatus.folded,
+      loading: hdrStatus.loading,
+      when,
+      refreshIcon: ico("refresh-cw"),
+    });
+    $$("[data-hdr-slots]").forEach((el) => {
+      if (el._html !== html) el.innerHTML = el._html = html;
+      el.hidden = !html;
+    });
+  }
+  async function fetchHeaderStatus({ fresh = false } = {}) {
+    if (hdrStatus.inflight && !fresh) return hdrStatus.inflight;
+    const model = activeHeaderModel();
+    hdrStatus.model = model;
+    hdrStatus.loading = true;
+    if (hdrStatus.openId) renderHeaderStatus();
+    const qs = new URLSearchParams();
+    if (model) qs.set("model", model);
+    if (fresh) qs.set("fresh", "1");
+    const url = "/api/ext/header-status" + (qs.toString() ? "?" + qs.toString() : "");
+    const p = api(url).then((r) => {
+      hdrStatus.slots = Array.isArray(r?.slots) ? r.slots : [];
+      hdrStatus.at = Date.now();
+      if (hdrStatus.openId && !hdrStatus.slots.some((s) => s.id === hdrStatus.openId)) hdrStatus.openId = "";
+    }).catch(() => {}).finally(() => {
+      hdrStatus.loading = false;
+      if (hdrStatus.inflight === p) hdrStatus.inflight = null;
+      renderHeaderStatus();
+    });
+    hdrStatus.inflight = p;
+    return p;
+  }
+  function maybeRefreshHeaderStatus(force = false) {
+    if (!booted) return;
+    if (view !== "collie" && view !== "pane" && view !== "ext") return;
+    const model = activeHeaderModel();
+    if (force || !hdrStatus.at || model !== hdrStatus.model || Date.now() - hdrStatus.at >= HDR_STATUS_EVERY_MS) {
+      fetchHeaderStatus({ fresh: force });
+    }
+  }
+  document.addEventListener("click", (e) => {
+    const refBtn = e.target.closest("[data-hs-refresh]");
+    if (refBtn) { e.stopPropagation(); fetchHeaderStatus({ fresh: true }); return; }
+    const foldBtn = e.target.closest("[data-hs-fold]");
+    if (foldBtn) {
+      e.stopPropagation();
+      hdrStatus.folded = !hdrStatus.folded;
+      store.set("hs.folded", hdrStatus.folded);
+      renderHeaderStatus();
+      return;
+    }
+    const tog = e.target.closest("[data-hs-toggle]");
+    if (tog) {
+      e.stopPropagation();
+      const id = tog.dataset.hsToggle;
+      if (!taskPanel.hidden) toggleTaskPanel(false);
+      hdrStatus.openId = hdrStatus.openId === id ? "" : id;
+      renderHeaderStatus();
+      return;
+    }
+    if (hdrStatus.openId && !e.target.closest(".hs-wrap")) {
+      hdrStatus.openId = "";
+      renderHeaderStatus();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && hdrStatus.openId && !composing(e)) {
+      hdrStatus.openId = "";
+      renderHeaderStatus();
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") maybeRefreshHeaderStatus();
+  });
+  setInterval(() => {
+    if (document.visibilityState === "visible") maybeRefreshHeaderStatus();
+  }, HDR_STATUS_EVERY_MS);
 
   // Quick-reply buttons under a Collie message still waiting on you.
   function replyOptsIn(allEntries) {
@@ -3449,6 +3558,7 @@
       await api("/api/ext/" + encodeURIComponent(id), { body });
       if (done) toast(done);
       await fetchAuto("ext");
+      fetchHeaderStatus({ fresh: true });
       if (view === "auto" && autoTab === "hooks") drawAuto(autoData.settings);
       return true;
     } catch (err) { toast(err.message, "attn"); return false; }
@@ -3517,6 +3627,7 @@
       try { await api("/api/ext-markets/install", { body: { repo: market, id: b.dataset.marketInstall } }); toast("已安装，打开它就能用"); }
       catch (err) { toast(err.message, "attn"); }
       await Promise.all([fetchAuto("markets"), fetchAuto("ext")]).catch(() => {});
+      fetchHeaderStatus({ fresh: true });
       drawAuto(autoData.settings); return;
     }
     const card = b.closest("[data-ext]");
@@ -3543,6 +3654,7 @@
       try { await api(`/api/ext/${encodeURIComponent(id)}/uninstall`, { body: { purge: purge === "删除数据" } }); toast("已卸载"); }
       catch (err) { toast(err.message, "attn"); }
       await Promise.all([fetchAuto("markets"), fetchAuto("ext")]).catch(() => {});
+      fetchHeaderStatus({ fresh: true });
       drawAuto(autoData.settings);
     } else if (b.hasAttribute("data-ext-writes")) {
       extConfigure(id, { no_writes: b.getAttribute("aria-checked") === "true" }, "已保存");
@@ -3560,7 +3672,13 @@
       const form = b.closest(".ext-config");
       form?.classList.remove("dirty");
       const config = {};
-      card.querySelectorAll("[data-ext-config]").forEach((el) => { config[el.dataset.extConfig] = el.type === "checkbox" ? el.checked : el.value; });
+      card.querySelectorAll("[data-ext-config]").forEach((el) => {
+        if (el.type === "checkbox") config[el.dataset.extConfig] = el.checked;
+        else if (el.dataset.extType === "integer") {
+          const n = Number(el.value);
+          if (el.value !== "" && Number.isInteger(n)) config[el.dataset.extConfig] = n;
+        } else config[el.dataset.extConfig] = el.value;
+      });
       busy(b);
       if (!(await extConfigure(id, { config }, "已保存，扩展会重启"))) form?.classList.add("dirty");
       busy(b, false);
@@ -4999,6 +5117,7 @@
     if (dcx._html !== dcxHTML) { dcx.innerHTML = dcx._html = dcxHTML; dcx.title = dcx.textContent; }
     dcx.classList.toggle("warn", pct >= CTX_WARN_PCT);
     renderSessionChips(v);
+    if (view === "pane") maybeRefreshHeaderStatus();
     // The pane may have shown up before the page knew what it is (a fresh
     // terminal): once it does, switch to the view that fits.
     if (view === "pane" && $("#viewer").dataset.mode && $("#viewer").dataset.mode !== curMode()) { closeStream(); resetChat(); resetScreen(); openStream(); }
@@ -7351,7 +7470,7 @@
   // Esc closes what is on top: a file beside it, a list or a dialog goes first.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !runOpen || composing(e) || $("#app").classList.contains("has-file")) return;
-    if (pendingOpen || !$("#task-panel").hidden || document.querySelector("dialog[open]")) return;
+    if (pendingOpen || !$("#task-panel").hidden || hdrStatus.openId || document.querySelector("dialog[open]")) return;
     dismissRun();
   });
   let runDragW = 0;
@@ -8238,6 +8357,7 @@
     }
     connect();
     loadExternal();
+    fetchHeaderStatus();
     clearInterval(extTimer);
     loadHistory();
     // The hub answers the list from its own copy, so this is cheap.

@@ -31,6 +31,7 @@ func fakeExtMain(args []string) int {
 		mu       sync.Mutex
 		data     string
 		mode     string
+		secret   string
 		signedIn bool
 		peer     *extproto.Peer
 		seen     = map[string]bool{}
@@ -87,6 +88,7 @@ func fakeExtMain(args []string) int {
 			json.Unmarshal(raw, &p)
 			data, _ = p.Extension.DataDir, 0
 			mode, _ = p.Config["mode"].(string)
+			secret, _ = p.Config["key"].(string)
 			go func() {
 				var s extproto.Secrets
 				if peer.Call(context.Background(), extproto.MSecretsLoad, nil, &s) == nil && s.Data != "" {
@@ -187,6 +189,27 @@ func fakeExtMain(args []string) int {
 				return extproto.SendResult{Deferred: true, Reason: "window_expired"}, nil
 			}
 			return extproto.SendResult{MessageID: "w-" + p.Ref}, nil
+		case extproto.MHeaderStatus:
+			var p extproto.HeaderStatusParams
+			json.Unmarshal(raw, &p)
+			pct := 75.0
+			sub := "model=" + p.Model
+			if p.Fresh {
+				sub += " fresh"
+			}
+			if secret != "" {
+				sub += " secret-len=" + fmt.Sprint(len(secret))
+			}
+			return extproto.HeaderStatus{
+				Title:   "Fake",
+				Compact: "Fake 75%",
+				Subline: sub,
+				Items:   []extproto.HeaderStatusItem{{Label: "Quota", Value: "75%", Percent: &pct, Tone: "ok"}},
+				Sections: []extproto.HeaderStatusSection{{
+					Title: "Details",
+					Rows:  []extproto.HeaderStatusRow{{Label: "Primary", Value: "75%", Tone: "ok"}},
+				}},
+			}, nil
 		case extproto.MLogout:
 			peer.Call(ctx, extproto.MSecretsDelete, nil, nil)
 			mu.Lock()

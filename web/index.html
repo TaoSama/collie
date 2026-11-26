@@ -126,6 +126,7 @@
           <div class="d-name">Collie <span class="kind" id="router-kind"></span><span class="router-where" id="router-where" hidden></span></div>
           <div class="d-meta"><span class="status" id="router-status"></span><span class="muted" id="router-model"></span><span class="muted" id="router-queue"></span><span class="muted ctx" id="router-ctx"></span></div>
         </div>
+        <div class="hdr-slots" id="collie-hdr-slots" data-hdr-slots hidden></div>
         <button type="button" class="icon-btn" id="super-search-btn" aria-label="搜索对话" aria-expanded="false" aria-controls="super-search" title="搜索对话">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.2 4.2"/></svg>
         </button>
@@ -258,6 +259,7 @@
           <div class="d-name"><span id="x-name"></span><span class="kind" id="x-kind"></span><span class="tag" id="x-tag">只读</span></div>
           <div class="d-meta"><span class="status" id="x-status"></span><span class="muted mono" id="x-cwd"></span></div>
         </div>
+        <div class="hdr-slots" id="ext-hdr-slots" data-hdr-slots hidden></div>
       </header>
       <div class="viewer chatbg">
         <div class="thread" id="x-thread"></div>
@@ -300,6 +302,7 @@
           <div class="d-name"><span id="d-name"></span><span class="kind" id="d-kind"></span><span class="tag" id="d-worker" hidden></span></div>
           <div class="d-meta"><span class="status" id="d-status"></span><span id="pane-reconnect" role="status"></span><span class="muted mono" id="d-cwd"></span><span class="muted ctx" id="d-ctx"></span></div>
         </div>
+        <div class="hdr-slots" id="detail-hdr-slots" data-hdr-slots hidden></div>
         <div class="seg" id="mode-seg">
           <button data-mode="chat">对话</button>
           <button data-mode="screen">屏幕</button>
@@ -715,6 +718,7 @@
 <script src="/tasks.js"></script>
 <script src="/machines.js"></script>
 <script src="/ext.js"></script>
+<script src="/header_status.js"></script>
 <script src="/wheel.js"></script>
 <script src="/workbench.js"></script>
 <script src="/markdown.js"></script>

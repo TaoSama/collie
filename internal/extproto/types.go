@@ -28,6 +28,7 @@ const (
 	MLogout         = "connector.logout"
 	MArchiveChanges = "connector.archive.changes"
 	MActionsDo      = "connector.actions.do"
+	MHeaderStatus   = "connector.header_status"
 	MChannelSend    = "channel.send"
 )
 
@@ -264,7 +265,57 @@ const (
 // Changed is the connector.changed event.
 type Changed struct {
 	Contribution string `json:"contribution,omitempty"`
-	Scope        string `json:"scope"` // inbox | chats | status | outbox
+	Scope        string `json:"scope"` // inbox | chats | status | outbox | header_status
+}
+
+// HeaderStatusParams asks a header_status-capable extension for its current
+// session-header summary. Model is the active session's model id when known;
+// Fresh asks the extension to bypass any short-lived cache.
+type HeaderStatusParams struct {
+	Contribution string `json:"contribution,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Fresh        bool   `json:"fresh,omitempty"`
+}
+
+// HeaderStatus is connector.header_status's answer: compact items for the
+// session header bar and optional structured sections for its detail popover.
+type HeaderStatus struct {
+	Title     string                `json:"title,omitempty"`
+	Compact   string                `json:"compact,omitempty"`
+	Subline   string                `json:"subline,omitempty"`
+	Tone      string                `json:"tone,omitempty"` // "" | ok | warn | danger | muted
+	UpdatedAt string                `json:"updated_at,omitempty"`
+	Error     string                `json:"error,omitempty"`
+	Items     []HeaderStatusItem    `json:"items,omitempty"`
+	Sections  []HeaderStatusSection `json:"sections,omitempty"`
+}
+
+// HeaderStatusItem is one compact metric shown in the header bar or a detail row.
+type HeaderStatusItem struct {
+	Label   string   `json:"label,omitempty"`
+	Value   string   `json:"value,omitempty"`
+	Sub     string   `json:"sub,omitempty"`
+	Percent *float64 `json:"percent,omitempty"` // 0..100 when a mini bar should be drawn
+	Tone    string   `json:"tone,omitempty"`    // "" | ok | warn | danger | muted
+	Tooltip string   `json:"tooltip,omitempty"`
+}
+
+// HeaderStatusSection is one group of detail rows inside the header status popover.
+type HeaderStatusSection struct {
+	Title string            `json:"title,omitempty"`
+	Meta  string            `json:"meta,omitempty"`
+	Rows  []HeaderStatusRow `json:"rows,omitempty"`
+}
+
+// HeaderStatusRow is one row inside a HeaderStatusSection.
+type HeaderStatusRow struct {
+	Label   string             `json:"label"`
+	Badge   string             `json:"badge,omitempty"`
+	Value   string             `json:"value,omitempty"`
+	Detail  string             `json:"detail,omitempty"`
+	Tone    string             `json:"tone,omitempty"`
+	Current bool               `json:"current,omitempty"`
+	Meters  []HeaderStatusItem `json:"meters,omitempty"`
 }
 
 // MChannelWorking marks a message Collie took as a request: the chat app

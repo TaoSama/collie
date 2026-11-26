@@ -104,11 +104,13 @@ COLLIE_HOME/ext/<id>/
 | `send` | `channel.send` | 用通道发消息 |
 | `interest` | `channel.interest` | 接收「哪些会话在等结果」（微信续期提醒用） |
 | `working` | `channel.working` | Collie 接下一条请求时告诉扩展，扩展在原应用里标出「在处理」（飞书：表情回复） |
+| `header_status` | `connector.header_status` | 在会话页顶部标题栏右侧槽位显示结构化状态与明细弹层 |
 
-两类扩展：
+三类扩展：
 
 - **聊天型**：收消息用 `archive` 或 `receive`，回复用 `actions`（`send_action` 指定动作名）或 `send`，各选其一。
 - **动作型**：不收发聊天，只给 agent 一组可调用的动作（搜索、查看、下载……），常见做法是转给用户自己机器上已经在跑的本地服务。能力写 `status`、`actions`（需要登录再加 `login`），在 `contributes.connector.actions` 里列出动作。
+- **标题栏状态型**：不收发聊天，只向会话页顶部标题栏的通用状态槽提供结构化状态摘要与展开明细。能力写 `status`、`header_status`（也可同时提供只读 `actions`）。
 
 `contributes.connector.send_action` 给出 `actions` 方式下发消息的动作名，参数约定见第 4 节。
 
@@ -159,6 +161,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.logout` | `{}` | `{}`，同时删掉自己存的登录态（`connector.secrets.delete`） |
 | `connector.archive.changes` | `{cursor?, limit?}` | `{batches:[{chat:{id,name,kind,updated_at,muted?}, messages:[{id,sender_id,sender_name,mine?,type,text,at,media?}]}], next, more}`。`next` 是下次的游标，`more` 表示还有 |
 | `connector.actions.do` | `{name, args, request_id}` | `{text, files?: [{path, mime?}], items?: […]}`。`files` 是扩展所在电脑上的本地路径，`items` 是结构化结果，Collie 原样转给调用方。**同一个 `request_id` 最多执行一次**；结果不明时不再执行，回错误 |
+| `connector.header_status` | `{model?, fresh?}` | `{title?, compact?, subline?, tone?, updated_at?, error?, items?: [{label?, value?, sub?, percent?, tone?, tooltip?}], sections?: [{title?, meta?, rows?: [{label, badge?, value?, detail?, tone?, current?, meters?: […]}]}]}`。用于渲染会话页顶部标题栏的通用状态槽与点击展开的详情弹层；所有字段均为纯文本/数值，由 Collie 按设计系统渲染 |
 | `channel.send` | `{ref, chat, text, footer?, kind, reply_to?, images?, files?, link?}`（`text` 以尾标 `footer` 结尾，想把尾标排成别的样子的扩展可以拆开；超过 40 MiB 的文件不放进 `images/files`，改发下载链接，见 3.7） | `{message_id?}`，或 `{deferred:true, reason}`（暂时发不了，扩展自己排队，之后用 `channel.delivery` 报告）。**同一个 `ref` 最多发一次** |
 | `channel.working` | `{chat, message_id}` | `{}`。Collie 把这条消息当成请求接下了（Router 或专属 agent 开始处理）；扩展在原应用里标出来，失败只记日志 |
 | `channel.settings` | `{trigger, ignored?}` | `{}`。有 `working` 能力的扩展会收到当前的触发词（启动时一次，改了再发）。你本人发的、以触发词开头的消息一定会被接下，扩展可以不等 Collie 就先标出来；同一条消息只标一次。先标时要和 Collie 一样严：只标本人的、10 分钟内的新消息，`ignored` 为 true（来源策略不接这个扩展的请求）时一条也不标 |

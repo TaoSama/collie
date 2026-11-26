@@ -160,6 +160,10 @@ func (h *extHost) pinLocked(x ExtSetting) ExtSetting {
 // configure turns an extension on or off, moves it, or changes its config.
 // Any change restarts its program.
 func (h *extHost) configure(id string, change func(*ExtSetting)) (ExtSetting, error) {
+	return h.configureWithRestart(id, false, change)
+}
+
+func (h *extHost) configureWithRestart(id string, restart bool, change func(*ExtSetting)) (ExtSetting, error) {
 	h.cfgMu.Lock()
 	defer h.cfgMu.Unlock()
 	h.mu.Lock()
@@ -180,7 +184,7 @@ func (h *extHost) configure(id string, change func(*ExtSetting)) (ExtSetting, er
 	h.sets[id] = x
 	h.saveSetsLocked()
 	old := h.runs[id]
-	if old != nil && (!x.Enabled || x.Machine != before.Machine || !sameJSON(m.programConfig(x.Config), m.programConfig(before.Config))) {
+	if old != nil && (!x.Enabled || x.Machine != before.Machine || restart || !sameJSON(m.programConfig(x.Config), m.programConfig(before.Config))) {
 		delete(h.runs, id)
 	} else {
 		old = nil
@@ -450,7 +454,7 @@ func (r *extRun) event(name string, params json.RawMessage) {
 		if c.Scope == "status" || c.Scope == "" {
 			go r.refreshStatus(context.Background())
 		}
-		if c.Scope != "status" {
+		if c.Scope != "status" && c.Scope != "header_status" {
 			r.signalPull()
 		}
 	case extproto.EDelivery:
@@ -589,4 +593,88 @@ func (h *extHost) Call(ctx context.Context, id, method string, params any) (json
 		return nil, err
 	}
 	return out, nil
+}
+
+const extHeaderStatusWait = 8 * time.Second
+
+// headerStatusSlot is one enabled header_status extension's current reading
+// for the session header bar.
+type headerStatusSlot struct {
+	ID      string                 `json:"id"`
+	Name    string                 `json:"name"`
+	Label   string                 `json:"label,omitempty"`
+	IconURL string                 `json:"icon_url,omitempty"`
+	State   string                 `json:"state"` // ok | starting | error
+	Error   string                 `json:"error,omitempty"`
+	Status  *extproto.HeaderStatus `json:"status,omitempty"`
+}
+
+func (h *extHost) headerStatuses(ctx context.Context, model string, fresh bool) []headerStatusSlot {
+	type target struct {
+		man *ExtManifest
+		run *extRun
+	}
+	h.mu.Lock()
+	var ids []string
+	for id, m := range h.cat {
+		if m.has(capHeaderStatus) && h.settingLocked(id).Enabled {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	targets := make([]target, 0, len(ids))
+	for _, id := range ids {
+		targets = append(targets, target{man: h.cat[id], run: h.runs[id]})
+	}
+	h.mu.Unlock()
+
+	slots := make([]headerStatusSlot, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		slot := headerStatusSlot{
+			ID:      t.man.ID,
+			Name:    t.man.Name,
+			Label:   extLabel(t.man),
+			IconURL: t.man.IconURL,
+			State:   "starting",
+		}
+		if t.run == nil {
+			slots[i] = slot
+			continue
+		}
+		t.run.mu.Lock()
+		proc, dialErr := t.run.proc, t.run.dialErr
+		t.run.mu.Unlock()
+		if proc.State != extRunning {
+			if dialErr != "" {
+				slot.State, slot.Error = "error", dialErr
+			} else if proc.State == extFailed {
+				slot.State, slot.Error = "error", proc.Error
+			}
+			slots[i] = slot
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, tgt target, base headerStatusSlot) {
+			defer wg.Done()
+			cctx, cancel := context.WithTimeout(ctx, extHeaderStatusWait)
+			defer cancel()
+			var hs extproto.HeaderStatus
+			err := tgt.run.call(cctx, extproto.MHeaderStatus, extproto.HeaderStatusParams{
+				Contribution: tgt.man.Contributes.Connector.ID,
+				Model:        model,
+				Fresh:        fresh,
+			}, &hs)
+			if err != nil {
+				base.State = "error"
+				base.Error = err.Error()
+			} else {
+				base.State = "ok"
+				base.Status = &hs
+			}
+			slots[idx] = base
+		}(i, t, slot)
+	}
+	wg.Wait()
+	return slots
 }

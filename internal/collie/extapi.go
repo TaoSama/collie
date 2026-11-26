@@ -26,6 +26,7 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 		})))
 	}
 	api("GET /api/ext", s.extList)
+	api("GET /api/ext/header-status", s.extHeaderStatus)
 	api("POST /api/ext/settings", s.extSaveSettings)
 	api("POST /api/ext/{id}", s.extConfigure)
 	api("POST /api/ext/{id}/login", s.extLogin)
@@ -73,6 +74,13 @@ func (s *Server) extList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) extHeaderStatus(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	fresh := q.Get("fresh") == "1" || (q.Has("fresh") && q.Get("fresh") == "")
+	slots := s.ext.headerStatuses(r.Context(), strings.TrimSpace(q.Get("model")), fresh)
+	writeJSON(w, 200, map[string]any{"slots": slots})
+}
+
 func (s *Server) extSaveSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Trigger *string `json:"trigger"`
@@ -117,13 +125,16 @@ func (s *Server) extConfigure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	secretsChanged := false
 	if m := s.ext.manifest(id); m != nil && (body.Config != nil || body.ClearSecrets != nil) {
-		if err := s.ext.setConfigSecrets(m, body.Config, body.ClearSecrets); err != nil {
+		var err error
+		secretsChanged, err = s.ext.setConfigSecrets(m, body.Config, body.ClearSecrets)
+		if err != nil {
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
 	}
-	set, err := s.ext.configure(id, func(x *ExtSetting) {
+	set, err := s.ext.configureWithRestart(id, secretsChanged, func(x *ExtSetting) {
 		if body.Enabled != nil {
 			x.Enabled = *body.Enabled
 		}

@@ -83,6 +83,7 @@
       }
       if (p.type === "boolean") return `<label class="check"><input type="checkbox" class="switch" role="switch" data-ext-config="${esc(k)}" ${val ? "checked" : ""}><span>${esc(p.title)}${p.description ? `<small>${esc(p.description)}</small>` : ""}</span></label>`;
       if (p.enum) return `<label class="ext-field">${esc(p.title)}<select data-ext-config="${esc(k)}" data-pick="compact">${p.enum.map((e, i) => `<option value="${esc(e)}" ${e === val ? "selected" : ""}>${esc(p["x-labels"]?.[i] || e)}</option>`).join("")}</select>${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
+      if (p.type === "integer") return `<label>${esc(p.title)}<input type="number" step="1" data-ext-config="${esc(k)}" data-ext-type="integer" value="${esc(val ?? "")}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
       return `<label>${esc(p.title)}<input data-ext-config="${esc(k)}" value="${esc(val ?? "")}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
     });
   }
@@ -124,6 +125,7 @@
       const m = v.manifest, st = stateOf(v);
       const n = convs.filter((c) => c.ext === m.id), on = n.filter((c) => c.on).length;
       const sub = [m.market ? "市场" : m.local ? "本地" : "内置", n.length ? `${n.length} 个会话${on ? `，${on} 个处理中` : ""}` : "",
+        (m.contributes?.connector?.capabilities || []).includes("header_status") ? "标题栏状态" : "",
         (m.contributes?.connector?.actions || []).length ? `${m.contributes.connector.actions.length} 个动作` : ""].filter(Boolean).join(" · ");
       return `<a class="row ext-row" href="#/auto/hooks/ext/${encodeURIComponent(m.id)}">${extIcon(m, st)}
         <div><div class="meta"><b>${esc(m.name)}</b></div><div class="text">${esc(sub)}</div></div>

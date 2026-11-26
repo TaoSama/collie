@@ -611,6 +611,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     }
     if (p === "/api/super/lark") return json({ ready: true, who: "Alex" });
     if (p === "/api/super/triggers") return json({ triggers, threads });
+    if (p === "/api/ext/header-status") return json({ slots: [] });
     if (p === "/api/ext/settings") { Object.assign(extData, { trigger: body.trigger ?? extData.trigger, footer: body.footer ?? extData.footer }); return json({ trigger: extData.trigger, footer: extData.footer }); }
     if (p === "/api/ext") return json(extData);
     if (p === "/api/ext-markets") return json({ markets: [{ repo: "owner/collie-extensions", name: "我的扩展", commit: "4f2c9a1d", has_token: true, installed: { notes: "1.0.0" },
