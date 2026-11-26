@@ -1893,7 +1893,6 @@
     slots: [],
     openId: "",
     pinnedId: "",
-    folded: !!store.get("hs.folded", false),
     secState: {},
     expandedFolds: {},
     loading: false,
@@ -1944,7 +1943,6 @@
     const html = window.collieHeaderStatus.render(hdrStatus.slots, {
       openId: hdrStatus.openId,
       pinnedId: hdrStatus.pinnedId,
-      folded: hdrStatus.folded,
       secState: hdrStatus.secState,
       expandedFolds: hdrStatus.expandedFolds,
       icons: HS_ICONS,
@@ -2062,14 +2060,6 @@
     if (closeBtn) { e.stopPropagation(); closeHeaderStatus({ restoreFocus: true }); return; }
     const refBtn = e.target.closest("[data-hs-refresh]");
     if (refBtn) { e.stopPropagation(); fetchHeaderStatus({ fresh: true }); return; }
-    const foldBtn = e.target.closest("[data-hs-fold]");
-    if (foldBtn) {
-      e.stopPropagation();
-      hdrStatus.folded = !hdrStatus.folded;
-      store.set("hs.folded", hdrStatus.folded);
-      renderHeaderStatus();
-      return;
-    }
     const secBtn = e.target.closest("[data-hs-sec]");
     if (secBtn) {
       e.stopPropagation();

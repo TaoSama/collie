@@ -52,11 +52,11 @@ test("renders desktop items, mini bars, subline, and popover sections safely", (
   assert.match(html, /hs-warn/);
   assert.match(html, /Reset 23:40/);
   assert.match(html, /aria-expanded="true"/);
-  assert.match(html, /data-hs-fold/);
+  assert.doesNotMatch(html, /data-hs-fold=/);
   assert.match(html, /刚刚/);
 });
 
-test("folded mobile mode uses shortest item summary and toggles label", () => {
+test("mobile summary always stays expanded without a collapse toggle", () => {
   const html = hs.render([{
     id: "m",
     name: "M",
@@ -65,10 +65,10 @@ test("folded mobile mode uses shortest item summary and toggles label", () => {
       compact: "Pool 2/2 · 5H 62% · 7D 30%",
       items: [{ label: "5H", value: "62%", percent: 62 }],
     },
-  }], { folded: true });
-  assert.match(html, /is-folded/);
-  assert.match(html, /hs-mobile-t">5H 62%</);
-  assert.match(html, />展开</);
+  }]);
+  assert.doesNotMatch(html, /is-folded/);
+  assert.doesNotMatch(html, /hs-fold-btn/);
+  assert.match(html, /hs-mobile-t">Pool 2\/2 · 5H 62% · 7D 30%</);
 });
 
 test("starting and error states render clear fallbacks", () => {

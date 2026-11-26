@@ -2424,9 +2424,9 @@ select.picked { display: none; }
   transition: background .12s, color .12s;
 }
 .hs-trigger:hover, .hs-wrap.is-open .hs-trigger { background: var(--bg-2); color: var(--fg); }
-.hs-trigger:focus-visible, .hs-fold-btn:focus-visible, .hs-chip:focus-visible, .hs-row.is-action:focus-visible { outline: 2px solid var(--fg-3); outline-offset: 2px; }
+.hs-trigger:focus-visible, .hs-chip:focus-visible, .hs-row.is-action:focus-visible { outline: 2px solid var(--fg-3); outline-offset: 2px; }
 .hs-desktop { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; max-width: 100%; }
-.hs-mobile, .hs-fold-btn { display: none; }
+.hs-mobile { display: none; }
 .hs-line { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; font-size: var(--fs-small); line-height: 1.3; white-space: nowrap; overflow: hidden; }
 .hs-sep { color: var(--t-meta); opacity: .45; flex: none; }
 .hs-item { display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap; }
@@ -2605,15 +2605,6 @@ select.picked { display: none; }
   .hs-trigger.hs-danger .hs-mobile-t { color: var(--danger); }
   .hs-mobile .hs-chev { width: 14px; height: 14px; flex: none; color: var(--t-icon); transition: transform .15s; }
   .hs-wrap.is-open .hs-mobile .hs-chev { transform: rotate(180deg); }
-  .hs-fold-btn {
-    display: inline-flex; align-items: center; justify-content: center; flex: none; min-height: 36px; padding: 0 8px;
-    border: 0; border-radius: calc(8px * var(--round)); background: transparent;
-    color: var(--t-meta); font-size: var(--fs-small); white-space: nowrap; cursor: pointer;
-    transition: background .12s, color .12s;
-  }
-  .hs-fold-btn:hover { background: var(--bg-2); color: var(--fg); }
-  .hs-wrap.is-folded { justify-content: space-between; }
-  .hs-wrap.is-folded .hs-trigger { flex: 0 1 auto; }
   /* Mobile bottom drawer: scrollable, easy to dismiss, clear of the composer. */
   .hs-scrim:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 40; background: var(--scrim); }
   .hs-panel::before { display: none; }
@@ -2635,7 +2626,7 @@ select.picked { display: none; }
   .hs-row-top { flex-wrap: wrap; row-gap: 4px; }
 }
 @media (pointer: coarse) {
-  .hs-trigger, .hs-fold-btn, .hs-sec-h.is-toggle, .hs-fold-row { min-height: 40px; }
+  .hs-trigger, .hs-sec-h.is-toggle, .hs-fold-row { min-height: 40px; }
   .hs-chip { min-height: 30px; padding: 4px 10px; }
   .hs-ref, .hs-close { width: 40px; height: 40px; }
 }

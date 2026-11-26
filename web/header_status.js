@@ -163,7 +163,6 @@
     const compact = compactFallback(slot);
     const open = opts.openId === slot.id;
     const pinned = opts.pinnedId === slot.id;
-    const folded = !!opts.folded;
     let desktopMain = "";
     if (items.length) {
       desktopMain = `<span class="hs-line">${items.map((it) => renderItem(it, false, opts)).join(`<span class="hs-sep" aria-hidden="true">·</span>`)}</span>`
@@ -173,19 +172,13 @@
     } else {
       desktopMain = `<span class="hs-line"><span class="hs-lab">${esc(title)}</span><span class="hs-val hs-warn">${esc(st?.error || slot.error || "暂不可用")}</span></span>`;
     }
-    const itemText = (it) => [it.label, it.value].filter(Boolean).join(" ");
-    const firstVal = items.length >= 2 && items[0].percent == null && items[1].percent != null
-      ? `${itemText(items[0])} · ${itemText(items[1])}`
-      : items[0] ? itemText(items[0]) : title;
-    const mobileText = folded ? firstVal : compact;
     const mobileIco = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
       || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
-    return `<div class="hs-wrap${open ? " is-open" : ""}${pinned ? " is-pinned" : ""}${folded ? " is-folded" : ""}" data-hs-id="${esc(slot.id)}">`
+    return `<div class="hs-wrap${open ? " is-open" : ""}${pinned ? " is-pinned" : ""}" data-hs-id="${esc(slot.id)}">`
       + `<button type="button" class="hs-trigger${toneCls(tone)}" data-hs-toggle="${esc(slot.id)}" aria-expanded="${open}" aria-haspopup="dialog" title="${esc(title)}">`
       + `<span class="hs-desktop">${desktopMain}</span>`
-      + `<span class="hs-mobile">${mobileIco}<span class="hs-mobile-t">${esc(mobileText)}</span>${CHEV_SVG}</span>`
+      + `<span class="hs-mobile">${mobileIco}<span class="hs-mobile-t">${esc(compact)}</span>${CHEV_SVG}</span>`
       + `</button>`
-      + `<button type="button" class="hs-fold-btn" data-hs-fold aria-label="${folded ? "展开状态栏" : "收起状态栏"}" title="${folded ? "展开状态栏" : "收起状态栏"}">${folded ? "展开" : "收起"}</button>`
       + renderPanel(slot, {
         open,
         pinned,
