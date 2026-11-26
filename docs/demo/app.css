@@ -2243,7 +2243,7 @@ select.picked { display: none; }
 .events-seg { margin-bottom: 12px; }
 /* 收件箱's filters: chips with their counts, sliding sideways on a phone; 全部已读 at the end. */
 /* 收件箱's source list: 全部, each source (one with filters of its own opens
-   into them and folds), 处理中, each with how many chats it lists. */
+   into them and folds), 已交给 AI, each with how many chats it lists. */
 .inbox-nav { padding: 6px; }
 .inbox-nav ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
 .inbox-nav-src > ul { margin: 1px 0 4px; }

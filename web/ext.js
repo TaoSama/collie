@@ -7,6 +7,7 @@
   let md = (s) => esc(s);
   let workerHref = () => "";
 
+  const AI_HANDLED_LABEL = "已交给 AI";
   const PROC = { installing: "安装中", starting: "启动中", running: "运行中", error: "出错", stopped: "已停止" };
   const OUT = {
     pending: ["发送中", ""], sent: ["已发出", "ok"], deferred: ["暂缓，稍后送达", "attn"],
@@ -124,7 +125,7 @@
     const row = (v) => {
       const m = v.manifest, st = stateOf(v);
       const n = convs.filter((c) => c.ext === m.id), on = n.filter((c) => c.on).length;
-      const sub = [m.market ? "市场" : m.local ? "本地" : "内置", n.length ? `${n.length} 个会话${on ? `，${on} 个处理中` : ""}` : "",
+      const sub = [m.market ? "市场" : m.local ? "本地" : "内置", n.length ? `${n.length} 个会话${on ? `，${on} 个${AI_HANDLED_LABEL}` : ""}` : "",
         (m.contributes?.connector?.capabilities || []).includes("header_status") ? "标题栏状态" : "",
         (m.contributes?.connector?.actions || []).length ? `${m.contributes.connector.actions.length} 个动作` : ""].filter(Boolean).join(" · ");
       return `<a class="row ext-row" href="#/auto/hooks/ext/${encodeURIComponent(m.id)}">${extIcon(m, st)}
@@ -167,7 +168,7 @@
       </div></div>
       ${m.configuration ? `<div class="card" data-ext="${esc(m.id)}"><div class="card-h">${cardTitle("settings-2", "设置")}</div><div class="form ext-config">${configGrid(v)}<div class="form-actions"><span class="ext-dirty muted">有改动，保存后生效</span><button class="btn small" data-ext-save>保存设置</button></div></div></div>` : ""}
       <div data-ext="${esc(m.id)}">${actionsHTML(v)}</div>
-      ${m.contributes?.connector?.capabilities?.some((c) => c === "archive" || c === "receive") ? `<div class="card"><div class="rows"><a class="row ext-row" href="#/auto" data-auto-tab="inbox">${symTile("inbox")}<div><div class="meta"><b>会话</b></div><div class="text">${convs.length} 个会话${convs.filter((c) => c.on).length ? `，${convs.filter((c) => c.on).length} 个处理中` : ""}，在收件箱里打开要处理的</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a></div></div>` : ""}
+      ${m.contributes?.connector?.capabilities?.some((c) => c === "archive" || c === "receive") ? `<div class="card"><div class="rows"><a class="row ext-row" href="#/auto" data-auto-tab="inbox">${symTile("inbox")}<div><div class="meta"><b>会话</b></div><div class="text">${convs.length} 个会话${convs.filter((c) => c.on).length ? `，${convs.filter((c) => c.on).length} 个${AI_HANDLED_LABEL}` : ""}，在收件箱里打开要处理的</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a></div></div>` : ""}
       <div class="card"><div class="card-h">${cardTitle("info", "说明")}</div><div class="form">
         <p class="ext-desc">${esc(m.description)}</p>
         ${m.warning ? `<p class="ext-warn">${esc(m.warning)}</p>` : ""}
@@ -254,7 +255,7 @@
   // the open chat beside that. A source whose chats are of more than one
   // kind (飞书: direct chats and groups) opens into filters of its own.
   const atMe = (c) => c.at_me && c.unread > 0;
-  const TOP = [["all", "全部", () => true], ["on", "处理中", (c) => c.on]];
+  const TOP = [["all", "全部", () => true], ["on", AI_HANDLED_LABEL, (c) => c.on]];
   const SUBS = [
     ["", "全部", () => true],
     ["unread", "未读", (c) => c.unread > 0],
@@ -297,7 +298,7 @@
   }
 
   // The source list: 全部, each source (one with filters opens and folds),
-  // 处理中. On a phone it folds into one line above the chats.
+  // 已交给 AI. On a phone it folds into one line above the chats.
   function navHTML(r, filter, ui) {
     const convs = listed(r), f = parseFilter(r, filter);
     const count = (n, tone = "") => `<span class="inbox-nav-n${tone && n ? " " + tone : ""}">${n}</span>`;
@@ -310,7 +311,7 @@
     };
     return `<nav class="card inbox-nav${ui.navOpen ? " open" : ""}" aria-label="筛选会话">
         <div class="inbox-nav-top"><button type="button" class="inbox-nav-toggle" data-inbox-nav-toggle aria-expanded="${!!ui.navOpen}">${(f.src && logo(f.src.id)) || ico(f.key === "on" ? "zap" : "inbox")}<span class="inbox-nav-l">${esc(filterLabel(r, filter))}</span>${count(inboxShown(r, filter).length)}<span class="inbox-nav-chev" aria-hidden="true">›</span></button>${ui.readAll || ""}</div>
-        <ul class="inbox-nav-list">${item("all", "全部", convs.length, ico("inbox"))}${sources(convs).map(src).join("")}${item("on", "处理中", convs.filter((c) => c.on).length, ico("zap"))}</ul>
+        <ul class="inbox-nav-list">${item("all", "全部", convs.length, ico("inbox"))}${sources(convs).map(src).join("")}${item("on", AI_HANDLED_LABEL, convs.filter((c) => c.on).length, ico("zap"))}</ul>
       </nav>`;
   }
 
@@ -330,7 +331,7 @@
       return `<li class="row inbox-row${n ? " unread" : ""}${c.id === cur ? " sel" : ""}" data-conv="${esc(c.id)}">
         ${avatar(c, `${c.label} · ${kind}`)}
         <div class="inbox-main">
-          <div class="inbox-l1"><b class="inbox-name"${name !== c.chat ? ` title="${esc(name)}"` : ""}>${esc(name)}</b>${c.muted ? `<span class="inbox-mute" title="在原应用里设了免打扰">${ico("bell-off")}</span>` : ""}${c.on ? `<span class="pill plain info inbox-on">处理中</span>` : ""}<time class="inbox-time" datetime="${esc(c.last_at || "")}" title="${esc(when(c.last_at))}">${esc(shortTime(c.last_at))}</time></div>
+          <div class="inbox-l1"><b class="inbox-name"${name !== c.chat ? ` title="${esc(name)}"` : ""}>${esc(name)}</b>${c.muted ? `<span class="inbox-mute" title="在原应用里设了免打扰">${ico("bell-off")}</span>` : ""}${c.on ? `<span class="pill plain info inbox-on">${AI_HANDLED_LABEL}</span>` : ""}<time class="inbox-time" datetime="${esc(c.last_at || "")}" title="${esc(when(c.last_at))}">${esc(shortTime(c.last_at))}</time></div>
           <div class="inbox-l2"><span class="inbox-prev">${atMe(c) ? `<span class="inbox-at">[有人@我]</span>` : ""}${esc(preview)}</span>${n ? `<span class="inbox-unread${c.muted ? " muted" : ""}" title="${n} 条未读${c.muted ? "（免打扰）" : ""}">${unreadText(n)}</span>` : ""}</div>
           ${c.on ? outLine(c.out) : ""}
         </div></li>`;
