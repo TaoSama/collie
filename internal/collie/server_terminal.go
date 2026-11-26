@@ -108,9 +108,15 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	var woke time.Time
 	wake, unsubscribe := s.wakes.subscribe(id)
 	defer unsubscribe()
+	if mode != "log" {
+		s.resizer.enterStream(id)
+		defer s.resizer.leaveStream(id)
+	}
 	var lastText string
 	var lastSentLines []string
 	var lastSize Rect
+	var lastSentSize Rect
+	var wasResized bool
 	var wheel bool
 	var kind string // the pane's agent, "" for a shell
 	var sizeAt time.Time
@@ -129,11 +135,18 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 		if mode == "log" {
 			res, err = s.herdr.Read(ctx, id, "recent_unwrapped", "text", 600)
 		} else {
-			// Refresh pane dimensions/metadata on the first frame, and while
-			// idle — never mid-scroll, where two extra RPCs add tail latency.
-			if sizeAt.IsZero() || (!active && time.Since(sizeAt) > 3*time.Second) {
-				if sz, e := s.herdr.PaneSize(ctx, id); e == nil {
-					lastSize = sz
+			rsz, resized := s.resizer.size(id)
+			if resized {
+				lastSize = rsz
+			}
+			// Refresh pane dimensions/metadata on the first frame, after a
+			// resize lease ends, and while idle — never mid-scroll, where two
+			// extra RPCs add tail latency.
+			if sizeAt.IsZero() || (wasResized && !resized) || (!active && time.Since(sizeAt) > 3*time.Second) {
+				if !resized {
+					if sz, e := s.herdr.PaneSize(ctx, id); e == nil {
+						lastSize = sz
+					}
 				}
 				if p, e := s.herdr.Pane(ctx, id); e == nil {
 					wheel = paneWheel(p)
@@ -144,6 +157,7 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				}
 				sizeAt = time.Now()
 			}
+			wasResized = resized
 			// Estimate total history lines asynchronously when idle so the
 			// screen scrollbar reflects real transcript proportion from frame 0.
 			if wheel && s.home != "" && !active && time.Since(histAt) > 4*time.Second && histBusy.CompareAndSwap(false, true) {
@@ -170,8 +184,13 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			if res.Text != lastText {
+			if res.Text != lastText || lastSize != lastSentSize {
+				sizeChanged := lastSize != lastSentSize
 				lastText = res.Text
+				lastSentSize = lastSize
+				if sizeChanged {
+					lastSentLines = nil
+				}
 				text, cursor := res.Text, false
 				if mode != "log" {
 					text, cursor = markScreenCursor(text, lastSize.Height, kind)
@@ -439,6 +458,7 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.resizer.touch(id)
 	s.wakes.wake(id)
 	resp := map[string]any{"ok": true}
 	if body.Wait {
@@ -467,8 +487,11 @@ func (s *Server) waitForScreenFrame(parent context.Context, id string, meta pane
 			return nil
 		}
 		if res.Text != meta.lastText {
+			if rsz, ok := s.resizer.size(id); ok {
+				meta.size = rsz
+			}
 			if !hasMeta || meta.size.Width == 0 {
-				if sz, e := s.herdr.PaneSize(ctx, id); e == nil {
+				if sz, e := s.paneDisplaySize(ctx, id); e == nil {
 					meta.size = sz
 				}
 				if p, e := s.herdr.Pane(ctx, id); e == nil {
@@ -561,6 +584,7 @@ func (s *Server) submitPane(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.resizer.touch(id)
 	s.wakes.wake(id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -583,6 +607,7 @@ func (s *Server) sendKeys(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.resizer.touch(r.PathValue("id"))
 	s.wakes.wake(r.PathValue("id"))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

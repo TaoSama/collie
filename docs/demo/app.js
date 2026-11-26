@@ -5892,7 +5892,7 @@
     $("#screen").addEventListener("touchmove", (e) => e.stopPropagation(), { capture: true, passive: true });
     forwardScroll();
     term.open($("#screen"));
-    term.onData(typeIntoPane);
+    term.onData((d) => { noteScreenActivity(); typeIntoPane(d); });
     term.onSelectionChange(() => {
       if (!term.hasSelection() && pendingScreen && curMode() === "screen") {
         const p = pendingScreen;
@@ -5903,18 +5903,26 @@
     // The terminal is the input: tap or click it and type. (A drag that
     // selected text, or scrolled the screen sideways, isn't a tap.)
     $("#screen").addEventListener("click", () => { if (!term.hasSelection()) term.focus(); });
+    for (const ev of ["pointerdown", "touchstart", "wheel", "keydown"]) {
+      $("#screen").addEventListener(ev, noteScreenActivity, { passive: true });
+    }
     term.textarea?.setAttribute("enterkeyhint", "enter");
-    term.textarea?.addEventListener("focus", () => $("#viewer").classList.add("typing"));
+    term.textarea?.addEventListener("focus", () => { $("#viewer").classList.add("typing"); noteScreenActivity(); });
     term.textarea?.addEventListener("blur", () => $("#viewer").classList.remove("typing"));
     addEventListener("collie:theme", () => {
       term.options.theme = termTheme();
       term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
       fitTerm();
+      scheduleScreenResize();
     });
     if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(() => { if (curMode() === "screen") fitTerm(); }).observe($("#screen"));
+      new ResizeObserver(() => {
+        if (curMode() === "screen") { fitTerm(); scheduleScreenResize(); }
+      }).observe($("#screen"));
     }
-    document.fonts?.ready?.then(() => { if (curMode() === "screen") fitTerm(); });
+    document.fonts?.ready?.then(() => {
+      if (curMode() === "screen") { fitTerm(); scheduleScreenResize(); }
+    });
   }
   function updateScreenScrollbar() {
     const sbEl = $("#screen-sb"), thumb = $("#screen-sb-thumb");
@@ -6243,31 +6251,141 @@
     if (want) v.dataset.term = want; else delete v.dataset.term;
     if (term) term.options.theme = termTheme();
   }
-  // The pane keeps its own dimensions (herdr doesn't resize a pane's PTY for
-  // a viewer), so fit xterm's cell size to #screen by default — both width
-  // (all panes) and height (fullscreen agents) — so foldable/phone viewports
-  // never clip horizontally or vertically. On narrow screens where fitting
-  // shrinks below 11px, #term-fit lets the user zoom to 11px and pan sideways.
+  // On narrow screens, ask herdr (via POST /api/panes/{id}/resize) to reflow
+  // the pane's PTY to whatever columns fit at a readable 12–13px font size, and
+  // restore the original geometry on leave, background, wide resize, or idle.
+  // If a pane stays wider than fits (e.g. demo or older node), keep readable
+  // text with sideways scroll and offer #term-fit (全览/放大).
   const narrowScreen = matchMedia("(max-width: 760px)");
-  function fitTerm() {
-    if (!term || !size.cols) return;
-    const el = $("#screen"), was = screenNearBottom();
+  const SCREEN_RESIZE_DEBOUNCE_MS = 120;
+  const SCREEN_RESIZE_IDLE_MS = 120_000;
+  const screenResize = {
+    pane: "", cols: 0, rows: 0, width: 0, height: 0,
+    idleTimer: null, debounceTimer: null, idleReleased: false,
+  };
+  const readableTermFs = (availW) => (availW < 500 ? 12 : 13);
+  function screenAvailBox() {
+    const el = $("#screen");
+    if (!el) return null;
     const cs = getComputedStyle(el);
     const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    const availW = el.clientWidth - padX;
-    const availH = el.clientHeight - padY;
-    if (availW <= 0) return;
-    const STEP = 0.25, MIN_FS = 3;
-    const maxCap = narrowScreen.matches || touchMQ.matches ? 18 : 14;
-    const quant = (v) => Math.floor(v / STEP) * STEP;
-    const fitW = Math.max(MIN_FS, Math.min(maxCap, quant(availW / size.cols / 0.602)));
-    const zoomed = narrowScreen.matches && store.get("term-zoom", false);
-    const maxFs = zoomed ? Math.min(maxCap, Math.max(fitW, 11)) : maxCap;
+    return { el, padX, padY, availW: el.clientWidth - padX, availH: el.clientHeight - padY };
+  }
+  function screenCellSize(fs) {
+    const curFs = term?.options?.fontSize || 13;
+    const cell = term?._core?._renderService?.dimensions?.css?.cell;
+    const scale = curFs > 0 ? fs / curFs : 1;
+    const w = cell?.width > 0 ? cell.width * scale : fs * 0.602;
+    const h = cell?.height > 0 ? cell.height * scale : fs * (term?.options?.lineHeight || 1.15) * 1.24;
+    return { w, h };
+  }
+  function computeScreenResizeTarget() {
+    if (!term || view !== "pane" || !current || curMode() !== "screen") return null;
+    if (document.hidden || !narrowScreen.matches || store.get("term-overview", false)) return null;
+    const box = screenAvailBox();
+    if (!box || box.availW <= 40 || box.availH <= 40) return null;
+    const targetFs = readableTermFs(box.availW);
+    const cell = screenCellSize(targetFs);
+    const cols = Math.max(30, Math.min(200, Math.floor((box.availW - 2) / cell.w)));
+    let rows = Math.max(16, Math.min(120, Math.floor((box.availH - 2) / cell.h)));
+    // Virtual keyboard shrinks viewport height without changing width: keep the
+    // existing row count so fullscreen TUIs do not redraw and drop history.
+    const kbOpen = document.documentElement.classList.contains("kb-open") || !!$("#viewer")?.classList.contains("typing");
+    const sameWidth = screenResize.pane === current && screenResize.rows > 0 && Math.abs(box.availW - screenResize.width) < 12;
+    if (sameWidth && (kbOpen || (box.availH < screenResize.height - 80 && rows < screenResize.rows))) {
+      rows = screenResize.rows;
+    }
+    return { cols, rows, availW: box.availW, availH: box.availH, targetFs };
+  }
+  function armScreenResizeIdle() {
+    clearTimeout(screenResize.idleTimer);
+    screenResize.idleTimer = null;
+    if (!screenResize.pane) return;
+    screenResize.idleTimer = setTimeout(() => {
+      screenResize.idleReleased = true;
+      restoreScreenSize();
+    }, SCREEN_RESIZE_IDLE_MS);
+  }
+  function noteScreenActivity() {
+    if (screenResize.pane) {
+      armScreenResizeIdle();
+      return;
+    }
+    if (screenResize.idleReleased && view === "pane" && current && curMode() === "screen" && narrowScreen.matches && !document.hidden) {
+      screenResize.idleReleased = false;
+      scheduleScreenResize(0);
+    }
+  }
+  function restoreScreenSize(keepalive = false, clearIdle = false) {
+    clearTimeout(screenResize.debounceTimer);
+    screenResize.debounceTimer = null;
+    clearTimeout(screenResize.idleTimer);
+    screenResize.idleTimer = null;
+    if (clearIdle) screenResize.idleReleased = false;
+    const pane = screenResize.pane;
+    screenResize.pane = "";
+    screenResize.cols = screenResize.rows = screenResize.width = screenResize.height = 0;
+    if (!pane) return;
+    postPane(pane, "resize", { restore: true }, { keepalive, timeoutMs: 3000 }).catch(() => {});
+  }
+  function applyScreenResize() {
+    screenResize.debounceTimer = null;
+    const t = computeScreenResizeTarget();
+    if (!t) {
+      if (screenResize.pane) restoreScreenSize();
+      return;
+    }
+    const pane = current;
+    if (screenResize.pane === pane && screenResize.cols === t.cols && screenResize.rows === t.rows) {
+      screenResize.width = t.availW;
+      screenResize.height = Math.max(screenResize.height, t.availH);
+      return;
+    }
+    if (screenResize.pane && screenResize.pane !== pane) restoreScreenSize();
+    screenResize.pane = pane;
+    screenResize.cols = t.cols;
+    screenResize.rows = t.rows;
+    screenResize.width = t.availW;
+    screenResize.height = t.availH;
+    screenResize.idleReleased = false;
+    armScreenResizeIdle();
+    postPane(pane, "resize", { cols: t.cols, rows: t.rows }, { timeoutMs: 4000 }).catch(() => {
+      if (screenResize.pane === pane) {
+        clearTimeout(screenResize.idleTimer);
+        screenResize.idleTimer = null;
+        screenResize.pane = "";
+        screenResize.cols = screenResize.rows = screenResize.width = screenResize.height = 0;
+      }
+    });
+  }
+  function scheduleScreenResize(delay = SCREEN_RESIZE_DEBOUNCE_MS, force = false) {
+    clearTimeout(screenResize.debounceTimer);
+    screenResize.debounceTimer = null;
+    if (force) screenResize.idleReleased = false;
+    if (view !== "pane" || !current || curMode() !== "screen" || document.hidden || !narrowScreen.matches || store.get("term-overview", false)) {
+      if (screenResize.pane) restoreScreenSize();
+      return;
+    }
+    if (screenResize.idleReleased) return;
+    if (delay <= 0) { applyScreenResize(); return; }
+    screenResize.debounceTimer = setTimeout(applyScreenResize, delay);
+  }
+  function fitTerm() {
+    if (!term || !size.cols) return;
+    const box = screenAvailBox();
+    if (!box || box.availW <= 0) return;
+    const { el, padX, padY, availW, availH } = box;
+    const was = screenNearBottom();
+    const fitW = Math.floor((availW / size.cols / 0.602) * 2) / 2;
+    const overview = store.get("term-overview", false);
+    const minRead = narrowScreen.matches ? readableTermFs(availW) : 11;
+    const maxFs = narrowScreen.matches && !overview ? Math.min(14, Math.max(fitW, minRead)) : Math.max(4.5, Math.min(14, fitW));
+    let fs = maxFs;
     // Fullscreen agents (screenWheel) own their scrollback: measure xterm's
-    // real cell dimensions and fit all pane cols/rows inside #screen so no
-    // viewport clips horizontally or vertically.
-    const fitVert = !!(screenWheel && size.rows && !zoomed && availH > 40);
+    // real cell height (font glyph ascent+descent × lineHeight) and fit all
+    // pane rows inside #screen vertically so no viewport clips the bottom row.
+    const fitVert = !!(screenWheel && size.rows && (!narrowScreen.matches || overview) && availH > 40);
     const measureColsW = () => {
       const cellW = term._core?._renderService?.dimensions?.css?.cell?.width;
       if (cellW > 0) return cellW * size.cols;
@@ -6280,44 +6398,50 @@
       const rowsEl = el.querySelector(".xterm-rows");
       return rowsEl ? rowsEl.getBoundingClientRect().height : 0;
     };
-    const fits = () => {
-      if (measureColsW() > el.clientWidth - padX + 0.5 || el.scrollWidth > el.clientWidth) return false;
-      if (fitVert && (measureRowsH() > el.clientHeight - padY + 0.5 || el.scrollHeight > el.clientHeight)) return false;
-      return true;
-    };
-    let fs = zoomed ? maxFs : fitW;
     if (fitVert) {
-      const estH = quant((availH / size.rows) / (term.options.lineHeight * 1.24));
-      fs = Math.max(MIN_FS, Math.min(fs, estH));
+      const est = Math.floor(((availH / size.rows) / (term.options.lineHeight * 1.24)) * 2) / 2;
+      if (est >= 7) fs = Math.min(fs, est);
     }
     const prevFs = term.options.fontSize;
     if (term.options.fontSize !== fs) term.options.fontSize = fs;
-    if (!zoomed) {
-      // Closed-loop exact fit against real measured cell width/height and
-      // #screen scroll bounds: step up if conservative, step down if wider
-      // fonts or pixel rounding overflow either axis.
-      for (let i = 0; i < 16 && fs + STEP <= maxFs; i++) {
-        const tryFs = +(fs + STEP).toFixed(2);
-        term.options.fontSize = tryFs;
-        if (fits()) fs = tryFs;
-        else { term.options.fontSize = fs; break; }
-      }
-      for (let i = 0; i < 24 && fs > MIN_FS; i++) {
-        if (fits()) break;
-        fs = Math.max(MIN_FS, +(fs - STEP).toFixed(2));
+    if (narrowScreen.matches && !overview && fitW >= minRead) {
+      // Keep reflowed narrow panes inside availW even when real glyph width is
+      // slightly wider than 0.602em, without shrinking below readable size.
+      for (let i = 0; i < 6 && fs > minRead; i++) {
+        if (measureColsW() <= availW + 0.5 && el.scrollWidth <= el.clientWidth) break;
+        fs = Math.max(minRead, fs - 0.5);
         term.options.fontSize = fs;
       }
-      if (el.scrollLeft) el.scrollLeft = 0;
+    }
+    if (fitVert) {
+      // Closed-loop exact fit: step up if we were conservative, then step down
+      // until the real measured terminal height fits inside availH with 0 clip.
+      for (let i = 0; i < 4 && fs + 0.5 <= maxFs; i++) {
+        const tryFs = fs + 0.5;
+        term.options.fontSize = tryFs;
+        if (measureRowsH() <= availH && el.scrollHeight <= el.clientHeight) fs = tryFs;
+        else { term.options.fontSize = fs; break; }
+      }
+      for (let i = 0; i < 10 && fs > 7; i++) {
+        if (measureRowsH() <= availH && el.scrollHeight <= el.clientHeight) break;
+        fs = Math.max(7, fs - 0.5);
+        term.options.fontSize = fs;
+      }
     }
     if (term.options.fontSize !== prevFs || fitVert) {
       if (was && !screenWheel) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; hideJump(); });
       else if (screenWheel) requestAnimationFrame(() => { if (el.scrollHeight <= el.clientHeight + 2) el.scrollTop = 0; updateScreenScrollbar(); });
     }
-    $("#term-fit").textContent = zoomed ? "全览" : "放大";
-    $("#term-fit").hidden = !narrowScreen.matches || (!zoomed && fs >= 11);
+    $("#term-fit").textContent = overview ? "放大" : "全览";
+    $("#term-fit").hidden = !narrowScreen.matches || fitW >= 11;
   }
-  addEventListener("resize", () => { if (curMode() === "screen") fitTerm(); });
-  $("#term-fit").addEventListener("click", () => { store.set("term-zoom", !store.get("term-zoom", false)); fitTerm(); });
+  addEventListener("resize", () => { if (curMode() === "screen") { fitTerm(); scheduleScreenResize(); } });
+  addEventListener("pagehide", () => restoreScreenSize(true));
+  $("#term-fit").addEventListener("click", () => {
+    store.set("term-overview", !store.get("term-overview", false));
+    fitTerm();
+    scheduleScreenResize(0);
+  });
   $("#term-kbd").addEventListener("click", () => term?.focus());
 
   const PANE_RETRY_START_MS = 1000, PANE_RETRY_MAX_MS = 5000;
@@ -6367,7 +6491,14 @@
   }
   addEventListener("online", () => stream?.retryNow());
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) stream?.retryNow();
+    if (document.hidden) {
+      if (typeof restoreScreenSize === "function") restoreScreenSize(true);
+    } else {
+      stream?.retryNow();
+      if (typeof scheduleScreenResize === "function" && view === "pane" && current && curMode() === "screen") {
+        scheduleScreenResize(0, true);
+      }
+    }
   });
 
   function openStream(restore = null) {
@@ -6375,7 +6506,10 @@
     applyMode();
     const m = curMode();
     if (m === "chat") return openChat(id, restore);
-    if (m === "screen") ensureTerm();
+    if (m === "screen") {
+      ensureTerm();
+      if (typeof scheduleScreenResize === "function") scheduleScreenResize(0, true);
+    }
     let pendingRestore = restore && !restore.atBottom ? restore : null;
     const part = m === "screen" ? "stream?mode=screen&diff=1" : "stream?mode=" + m;
     openPaneStream(() => {
@@ -6402,6 +6536,7 @@
     });
   }
   function closeStream() {
+    if (typeof restoreScreenSize === "function") restoreScreenSize(false, true);
     stream?.close(); stream = null; setPaneRetry(false); term?.blur();
     resetEarlier($("#thread"), null);
     if (typeof cancelScreenScrollTimers === "function") cancelScreenScrollTimers();
@@ -6601,7 +6736,10 @@
     const d = directOf(id);
     if (d) {
       try {
-        const res = await fetch(directURL(d, id, kind), { method: "POST", body: JSON.stringify(body), signal: signal || AbortSignal.timeout(DIRECT_TIMEOUT_MS) });
+        const res = await fetch(directURL(d, id, kind), {
+          method: "POST", body: JSON.stringify(body), keepalive: !!opts.keepalive,
+          signal: signal || AbortSignal.timeout(DIRECT_TIMEOUT_MS),
+        });
         const data = await res.json().catch(() => ({}));
         if (res.ok) return data;
         if (res.status !== 401) throw new Error(data.error || res.statusText);
@@ -6612,7 +6750,7 @@
       }
       dropDirect(id);
     }
-    return api(paneURL(id, kind), { body, signal });
+    return api(paneURL(id, kind), { body, signal, keepalive: !!opts.keepalive });
   }
 
   // ───────────────────────────── one agent: conversation

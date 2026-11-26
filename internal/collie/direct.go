@@ -78,7 +78,7 @@ func directRoute(method, path string, q url.Values) bool {
 	switch rest[i+1:] {
 	case "stream":
 		return method == "GET"
-	case "text", "keys":
+	case "text", "keys", "resize":
 		return method == "POST"
 	}
 	return false

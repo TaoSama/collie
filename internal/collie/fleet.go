@@ -30,6 +30,7 @@ type Machine struct {
 	Since  time.Time `json:"since,omitempty"`
 
 	conn   *herdrConn
+	socket string                                      // local only: herdr API socket path
 	ext    func(ctx context.Context) (net.Conn, error) // remote only: an extension's stream (ext_proc.go)
 	client *http.Client                                // remote only: the node's own API, through the tunnel
 	snap   *listSnap                                   // remote only: the lists the node last sent (node_watch.go)
@@ -77,7 +78,7 @@ type Herdr struct {
 
 func newHerdr(socket, hostname, home string) *Herdr {
 	return &Herdr{
-		local:    &Machine{ID: "", Name: hostname, OS: runtime.GOOS + "/" + runtime.GOARCH, Home: home, Local: true, conn: &herdrConn{dial: unixDialer(socket)}},
+		local:    &Machine{ID: "", Name: hostname, OS: runtime.GOOS + "/" + runtime.GOARCH, Home: home, Local: true, socket: socket, conn: &herdrConn{dial: unixDialer(socket)}},
 		remote:   map[string]*Machine{},
 		names:    map[string]string{},
 		named:    map[string]string{},

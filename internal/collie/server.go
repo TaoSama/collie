@@ -38,6 +38,7 @@ type Server struct {
 	sysmon  *sysMonitor  // this computer's load and tokens; nil in tests
 	wakes   paneWake     // streams to nudge when input reaches a pane
 	screens screenMetaCache
+	resizer paneResizer  // temporary PTY resizes for narrow screen-mode viewers
 	direct  directTokens // node only: tokens for a browser on this computer
 
 	wbDomain string  // hub only: modules kept by the hub open at <proxy host>.<wbDomain> (-wb-domain)
@@ -94,6 +95,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle(paneSubmitRoute, wrap(s.submitPane))
 	mux.Handle("POST /api/panes/{id}/text", wrap(s.sendText))
 	mux.Handle("POST /api/panes/{id}/keys", wrap(s.sendKeys))
+	mux.Handle("POST /api/panes/{id}/resize", wrap(s.resizePane))
 	mux.Handle("POST /api/panes/{id}/model", wrap(s.switchModel))
 	mux.Handle("POST /api/panes/{id}/close", wrap(s.closePane))
 	mux.Handle("POST /api/workspaces/{id}/close", wrap(s.closeWorkspace))
