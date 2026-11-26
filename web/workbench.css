@@ -1,7 +1,16 @@
 /* ─── workbench (workbench.js): its own grouped navigation, cards, embedded pages ─── */
+.wb-home { display: none; }
+#wb-name { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: visible; }
+.wb-crumb { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; margin: -3px 0 -3px -7px; border-radius: calc(8px * var(--round)); color: var(--t-secondary); font-weight: var(--fw-medium); text-decoration: none; flex: none; }
+.wb-crumb:hover { background: var(--bg-3); color: var(--fg); }
+.wb-crumb > svg { width: 15px; height: 15px; color: var(--t-icon); }
+.wb-crumb:hover > svg { color: currentColor; }
+.wb-sep { color: var(--fg-4); font-weight: var(--fw-normal); flex: none; user-select: none; }
+.wb-cur { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-acts { display: flex; align-items: center; gap: 4px; flex: none; }
 .wb { display: flex; flex: 1; min-height: 0; }
-.wb-nav { width: 200px; flex: none; overflow: auto; padding: 8px; border-right: var(--bw) solid var(--line); scrollbar-width: thin; }
+.wb-nav { width: 200px; flex: none; overflow: auto; padding: 0 8px 8px; border-right: var(--bw) solid var(--line); scrollbar-width: thin; }
+.wb-nav-home { position: sticky; top: 0; z-index: 1; margin: 0 -8px; padding: 8px 8px 6px; background: var(--bg); border-bottom: var(--bw) solid var(--line); }
 .wb-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; border-radius: calc(8px * var(--round)); background: transparent; color: var(--fg); font-size: var(--fs-item); text-align: left; text-decoration: none; }
 .wb-item > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-item:hover { background: var(--bg-3); }
@@ -43,6 +52,11 @@
 #wb-edit .sheet-foot .spacer { flex: 1; }
 #wb-edit .sheet-foot .danger { color: var(--danger); }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  #v-wb.wb-on-page .d-head > .back, #v-wb.wb-on-page .wb-crumb, #v-wb.wb-on-page .wb-sep { display: none; }
+  #v-wb.wb-on-page .wb-home { position: relative; display: inline-flex; align-items: center; gap: 2px; height: 36px; padding: 0 6px 0 2px; margin: 0 4px 0 -6px; border: 0; border-radius: calc(8px * var(--round)); background: transparent; color: var(--t-secondary); font-size: var(--fs-meta); font-weight: var(--fw-medium); text-decoration: none; white-space: nowrap; flex: none; }
+  #v-wb.wb-on-page .wb-home::after { content: ""; position: absolute; inset: -4px; }
+  #v-wb.wb-on-page .wb-home:active { background: var(--bg-3); color: var(--fg); }
+  #v-wb.wb-on-page .wb-home > svg { width: 16px; height: 16px; }
   .wb-nav { display: none; }
   .wb-sec { padding: 12px 16px 0; }
   .wb-cards { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }

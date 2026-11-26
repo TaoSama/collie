@@ -72,7 +72,7 @@
     const linkAttr = (m) => (m.kind === "link" ? ` data-wb-link="${esc(m.url)}"` : "");
 
     function navHTML() {
-      return `<a class="wb-item ${cur ? "" : "on"}" href="#/wb"><span class="wb-ico">${window.collieIcons?.svg("layout-dashboard") || "▦"}</span><span>概览</span></a>` +
+      return `<div class="wb-nav-home"><a class="wb-item ${cur ? "" : "on"}" href="#/wb"><span class="wb-ico">${window.collieIcons?.svg("layout-dashboard") || "▦"}</span><span>工作台首页</span></a></div>` +
         arrange(cfg).map((g) => `<div class="wb-group">${esc(g.title)}</div>` + g.modules.map((m) =>
           `<a class="wb-item ${cur === m.id ? "on" : ""}" href="${href(m)}"${linkAttr(m)} title="${esc(m.title)}"><span class="wb-ico">${icon(m)}</span><span>${esc(m.title)}</span>${m.share !== "off" ? `<span class="wb-dot" title="给 Agent：${SHARE[m.share]}"></span>` : ""}${m.kind === "web" && m.embed !== "iframe" ? '<span class="wb-out">↗</span>' : ""}</a>`).join("")).join("") +
         `<button type="button" class="wb-item wb-add" data-wb-add><span class="wb-ico">＋</span><span>添加网页</span></button>`;
@@ -124,10 +124,12 @@
     }
 
     function headHTML(m) {
-      $("#wb-name").textContent = m ? m.title : "工作台";
+      $("#wb-name").innerHTML = m
+        ? `<a class="wb-crumb" href="#/wb" title="回到工作台首页">${window.collieIcons?.svg("layout-dashboard") || ""}<span>工作台</span></a><span class="wb-sep" aria-hidden="true">/</span><span class="wb-cur">${esc(m.title)}</span>`
+        : "工作台";
       $("#wb-meta").textContent = m ? [host(m.url), m.embed === "iframe" ? "嵌入" : "新标签打开", ...(m.hub_login ? ["hub 保管登录"] : []), "给 Agent：" + SHARE[m.share]].join(" · ") : "把你关心的网页和页面放在这里，选哪些交给 Agent";
       $("#wb-acts").innerHTML = m ? `
-        <button type="button" class="icon-btn" data-wb-open title="新标签打开"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
+        <button type="button" class="icon-btn" data-wb-open title="在新标签页打开">${window.collieIcons?.svg("maximize-2") || ""}</button>
         ${m.embed === "iframe" ? '<button type="button" class="icon-btn" data-wb-reload title="刷新"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>' : ""}
         ${m.feed ? '<button type="button" class="icon-btn" data-wb-send title="把它现在的数据发给 Collie"><svg viewBox="0 0 24 24"><path d="M12 3l2.2 6.8H21l-5.5 4 2.1 6.7L12 16.4l-5.6 4.1 2.1-6.7L3 9.8h6.8z"/></svg></button>' : ""}
         <button type="button" class="icon-btn" data-wb-edit="${esc(m.id)}" title="设置"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>`
