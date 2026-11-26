@@ -34,7 +34,8 @@ DOC_KINDS = {1: "在文档里@了你", 2: "评论了文档", 3: "回复了评论
 DOC_CHAT = "doc:"  # a document's comments are a chat of their own
 MEDIA_MOST = 20 << 20
 CHAT_TOPICS = 3  # Chat.ChatMode THREAD_V2: a topic group, whose unread count is new topics
-READ_BATCH = 100  # chats a PullChatsByIdsRequest
+READ_BATCH = 100
+HISTORY_FIELDS = ("id", "chat_id", "sender", "text", "preview", "sender_name", "owner", "at", "view")  # a history.recent entry  # chats a PullChatsByIdsRequest
 AT_ALL = "all"  # the user id of an @所有人
 # A picture by its key on Feishu's CDN, 180 px: groups give only a key (and a plain-http origin).
 FEISHU_PICTURE = "https://s1-imfile.feishucdn.com/static-resource/v1/%s~?image_size=180x180&cut_type=&quality=&format=image&sticker_format=.webp"
@@ -383,6 +384,8 @@ class Feishu:
             out["folded"] = folded
         if at := history.message_at(msg):
             out["at"] = at
+        if (msg.get("position") or 0) < 0:
+            self.history.saw_topic_reply(chat, {k: out[k] for k in HISTORY_FIELDS if k in out})
         return out
 
     def _remember(self, mid, root, text, again=False):

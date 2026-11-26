@@ -2379,15 +2379,35 @@ select.picked { display: none; }
 .conv-card .form { gap: 12px; }
 .conv-rule { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--fs-meta); }
 .conv-rule small { display: block; margin-top: 2px; font-weight: var(--fw-normal); }
-.conv-msgs { list-style: none; margin: 0; padding: 4px 16px 12px; max-height: 60vh; overflow: auto; border-top: var(--bw) solid var(--line); }
-.conv-msg { padding: 8px 0; border-bottom: var(--bw) solid var(--line); }
-.conv-msg:last-child { border-bottom: 0; }
-.conv-msg .meta { display: flex; gap: 8px; align-items: baseline; font-size: var(--fs-meta); color: var(--t-meta); }
-.conv-msg .meta b { color: var(--fg); }
+.conv-msgs { list-style: none; margin: 0; padding: 4px 16px 16px; max-height: 60vh; overflow: auto; border-top: var(--bw) solid var(--line); }
+/* A chat's messages: others on the left with their initial, yours and
+   Collie's answers on the right; bubbles for words, cards and pictures bare;
+   a day line between days; system notices in the middle. */
+.conv-msg { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: start; padding-top: 3px; }
+.conv-msg.head { padding-top: 12px; }
+.conv-msg.me { grid-template-columns: minmax(0, 1fr); justify-items: end; }
+.conv-ava { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-size: var(--fs-small); font-weight: var(--fw-strong); color: var(--t-secondary); }
+.conv-msg.head .conv-ava { background: var(--bg-3); }
+.conv-body { display: grid; gap: 3px; min-width: 0; max-width: min(560px, 100%); justify-items: start; }
+.conv-msg.me .conv-body { justify-items: end; }
+.conv-msg .meta { display: flex; gap: 8px; align-items: baseline; padding: 0 4px; font-size: var(--fs-small); color: var(--t-meta); }
+.conv-msg .meta b { color: var(--t-secondary); font-weight: var(--fw-medium); }
+.conv-msg .meta time { font-variant-numeric: tabular-nums; }
 .conv-msg.bot .meta b { display: inline-flex; align-items: center; gap: 4px; color: var(--info); }
 .conv-msg.bot .meta b > svg { width: 13px; height: 13px; }
-.conv-msg .msg { margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-meta); }
+.conv-msg .msg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-body); line-height: calc(var(--lh-ui) + .1); }
 .conv-msg .msg.assistant { white-space: normal; }
+.conv-bubble { max-width: 100%; padding: 8px 12px; border-radius: calc(14px * var(--round)); background: var(--bg-2); color: var(--fg); }
+.conv-msg.them.head .conv-bubble { border-top-left-radius: calc(4px * var(--round)); }
+.conv-msg.me .conv-bubble { background: color-mix(in srgb, var(--info) 10%, var(--bg)); }
+.conv-msg.me.head .conv-bubble { border-top-right-radius: calc(4px * var(--round)); }
+.conv-bubble.bare { padding: 0; background: transparent !important; width: 100%; }
+.conv-bubble.assistant > :first-child { margin-top: 0; }
+.conv-bubble.assistant > :last-child { margin-bottom: 0; }
+.conv-day { display: flex; justify-content: center; padding: 14px 0 2px; }
+.conv-day > span { padding: 2px 10px; border-radius: 999px; background: var(--bg-2); color: var(--t-meta); font-size: var(--fs-tiny); }
+.conv-sys { display: flex; justify-content: center; padding: 10px 24px 2px; text-align: center; }
+.conv-sys .im-system { font-size: var(--fs-small); }
 .conv-close { display: none; }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
   .inbox-split { grid-template-columns: 1fr; gap: 10px; }

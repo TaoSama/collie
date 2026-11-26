@@ -23,6 +23,13 @@ class History:
         self.lock = threading.Lock()
         self.cache = collections.OrderedDict()
         self.active = {}
+        # Replies inside a topic (position < 0) live in the topic, not in the chat's
+        # own positions: the ones pushed since this run, by chat, newest last.
+        self.topic_replies = {}
+
+    def saw_topic_reply(self, chat, message):
+        with self.lock:
+            self.topic_replies.setdefault(chat, collections.deque(maxlen=RECENT_COUNT)).append(message)
 
     def invalidate(self, chat):
         with self.lock:
@@ -78,6 +85,11 @@ class History:
                                  sender_name="" if is_system else adapter.user_name(sender, chat),
                                  owner=not is_system and bool(adapter.me) and sender == adapter.me,
                                  at=message_at(msg), view=view))
+        with self.lock:
+            replies = list(self.topic_replies.get(chat, ()))
+        ids = {m["id"] for m in messages}
+        messages += [m for m in replies if m["id"] not in ids]
+        messages.sort(key=lambda m: m["at"])
         return messages[-RECENT_COUNT:]
 
     def media(self, chat, mid, key):

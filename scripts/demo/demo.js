@@ -529,6 +529,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
     { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(12), preview: "赵六: @你 今晚的灰度帮忙盯一下", unread: 4, at_me: true, on: false, handler: "agent" },
     { id: "larkx:oc_6", ext: "larkx", chat: "oc_6", label: "飞书", name: "王小明", kind: "dm", last_at: ago(60 * 26), preview: "王小明: 好的，周一见", on: false, handler: "agent" },
+    { id: "larkx:oc_7", ext: "larkx", chat: "oc_7", label: "飞书", name: "数据库值班群", kind: "group", last_at: ago(8), preview: "飞书日历: [日历] 发布复盘", unread: 2, on: false, handler: "agent" },
     { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", unread: 12, muted: true, on: false, handler: "agent" },
     { id: "larkx:oc_4", ext: "larkx", chat: "oc_4", label: "飞书", name: "登录页改版 - [需求同步群]", kind: "group", last_at: ago(30), preview: "Meego: 状态变更为开发中", unread: 3, on: false, handler: "agent", hidden: true },
   ];
@@ -537,6 +538,18 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { id: "m2", conv: "larkx:oc_1", at: ago(4), sender_name: "张三", mine: true, text: "/ai 帮我总结今天的讨论" },
     { id: "out:o1", conv: "larkx:oc_1", at: ago(3), mine: true, ref: "o1", text: "今天定了三件事：\n\n1. 周五评审\n2. 接口先冻结\n3. 张三负责发布说明\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 58秒" },
   ] };
+  inboxMsgs["larkx:oc_7"] = [
+    {"id": "d1", "conv": "larkx:oc_7", "at": ago(1560), "sender_name": "", "mine": false, "text": "值班同学加入了会话", "view": {"kind": "system", "nodes": [{"kind": "text", "text": "值班同学加入了会话"}]}},
+    {"id": "d2", "conv": "larkx:oc_7", "at": ago(1500), "sender_name": "王五", "mine": false, "text": "昨晚 23:10 数据库连接池告警，我先看下监控"},
+    {"id": "d3", "conv": "larkx:oc_7", "at": ago(1498), "sender_name": "值班助手", "mine": false, "text": "[卡片] 数据库告警已恢复", "view": {"kind": "card", "title": "数据库告警已恢复", "subtitle": "生产环境 · API 服务", "tone": "blue", "url": "", "nodes": [{"kind": "markdown", "text": "**连接池已恢复**\n错误率已回落，值班同学可继续观察。"}, {"kind": "columns", "children": [{"kind": "group", "children": [{"kind": "markdown", "text": "**错误率**\n0.08%"}]}, {"kind": "group", "children": [{"kind": "markdown", "text": "**影响范围**\n华东一区"}]}]}, {"kind": "fields", "children": [{"kind": "field", "children": [{"kind": "markdown", "text": "**负责人**\n数据库值班"}], "tone": "short"}, {"kind": "field", "children": [{"kind": "text", "text": "状态 · 已恢复"}], "tone": "short"}]}, {"kind": "rule"}, {"kind": "actions", "children": [{"kind": "button", "text": "查看监控", "url": "https://example.com/monitor", "tone": "primary"}, {"kind": "button", "text": "确认恢复"}]}]}},
+    {"id": "d4", "conv": "larkx:oc_7", "at": ago(1440), "sender_name": "李四", "mine": false, "text": "复盘记录", "view": {"kind": "post", "title": "复盘记录", "nodes": [{"kind": "paragraph", "children": [{"kind": "text", "text": "复盘要点", "tone": "bold"}]}, {"kind": "quote", "children": [{"kind": "paragraph", "children": [{"kind": "text", "text": "恢复时间已更新。"}]}]}, {"kind": "paragraph", "children": [{"kind": "link", "text": "记录", "url": "https://example.com/review"}]}]}},
+    {"id": "d5", "conv": "larkx:oc_7", "at": ago(50), "sender_name": "李四", "mine": false, "text": "[文件] 复盘摘要.txt", "view": {"kind": "media", "nodes": [{"kind": "file", "text": "复盘摘要.txt", "key": "file_example", "tone": "18"}]}},
+    {"id": "d6", "conv": "larkx:oc_7", "at": ago(49), "sender_name": "李四", "mine": false, "text": "[图片]", "view": {"kind": "media", "nodes": [{"kind": "image", "key": "img_v3_example"}]}},
+    {"id": "d7", "conv": "larkx:oc_7", "at": ago(20), "sender_name": "", "mine": true, "text": "/ai 帮我总结一下这次告警"},
+    { id: "out:o7", conv: "larkx:oc_7", at: ago(18), mine: true, ref: "o7", text: "这次告警是连接池耗尽，22:40 扩容后已恢复，错误率回到 0.08%。\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 41秒" },
+    {"id": "d9", "conv": "larkx:oc_7", "at": ago(8), "sender_name": "飞书日历", "mine": false, "text": "[日历] 发布复盘 · 11-27 15:00", "view": {"kind": "calendar", "title": "发布复盘", "start": "2026-11-27T15:00:00+08:00", "end": "2026-11-27T15:30:00+08:00", "all_day": false, "url": "", "nodes": [{"kind": "note", "text": "线上会议"}]}},
+  ];
+
 
   // ───────────────────────────── the API
   const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -659,7 +672,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     }
     if (p === "/api/inbox/conv") {
       const c = inboxConvs.find((x) => x.id === q.get("id"));
-      return json({ conv: c, msgs: c?.on ? inboxMsgs[c.id] || [] : [], outbox: {} });
+      return json({ conv: c, msgs: inboxMsgs[c.id] || [], outbox: {} });
     }
     if (p === "/api/super/timers") {
       if (method === "POST") timers.push({ id: "tm" + (++seq), spec: body.spec, text: body.text, target: body.target, enabled: true, next_run: later(60), owner: "you" });

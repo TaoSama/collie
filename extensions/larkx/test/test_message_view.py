@@ -80,5 +80,31 @@ class MessageViewTest(unittest.TestCase):
         self.assertEqual(len(f.client.calls), 4)
 
 
+    def test_topic_reply_joins_the_window(self):
+        """A reply inside a topic isn't at a position of the chat: the latest one pushed still shows, in time order."""
+        class Client:
+            def api(self, method, params):
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"123": {"lastVisibleMessagePosition": 2}}}
+                return {"messages": {str(p): {"id": "m%d" % p, "chatId": "123", "type": 4, "fromId": "u_a",
+                                              "content": U.L.entities.TextContent(richText=richtext.build(U.L, "主消息")).SerializeToString(),
+                                              "createTime": 1795700000 + p} for p in params["positions"]}}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client, f.me = Client(), "u_me"
+        f.user_name = lambda uid, chat: "甲"
+        f.chat_info = lambda chat: {"name": "群"}
+        f.folded = lambda chat: None
+        f.group_picture = lambda info: ""
+        reply = {"msg_id": "r1", "chat_id": "123", "from_id": "u_b", "msg_type": 4, "chat_type": 2, "position": -3,
+                 "root_id": "m1", "create_time": 1795710000, "content_data": {"richText": protobuf_to_dict(richtext.build(U.L, "话题里的回复"))}}
+        f.normalize(reply)
+        rows = f.history.recent("123")
+        self.assertEqual([r["id"] for r in rows], ["m1", "m2", "r1"], "the topic reply is the latest")
+        self.assertEqual(rows[-1]["text"], "话题里的回复")
+        f.normalize(dict(reply, msg_id="m3", position=3, create_time=1795720000))
+        self.assertEqual([r["id"] for r in f.history.recent("123")], ["m1", "m2", "r1"], "a message of the chat's own stream comes from its positions")
+
+
 if __name__ == "__main__":
     unittest.main()

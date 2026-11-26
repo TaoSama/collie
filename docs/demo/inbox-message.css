@@ -5,7 +5,8 @@
   .inbox-split.has-cur { grid-template-columns: minmax(0, 1fr); }
 }
 .inbox-detail, .conv-card { min-width: 0; }
-.conv-msg .msg.im-rich { white-space: normal; font-size: var(--fs-body); line-height: var(--lh-msg); }
+.conv-msg .msg.im-rich { white-space: normal; font-size: var(--fs-body); line-height: calc(var(--lh-ui) + .15); }
+.conv-bubble.bare .im-image { border: var(--bw) solid var(--line); }
 .im-content { min-width: 0; overflow-wrap: anywhere; }
 .im-card {
   border: var(--bw) solid var(--line);
