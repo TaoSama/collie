@@ -85,8 +85,10 @@ func TestServiceWorkerStamp(t *testing.T) {
 	if err := json.Unmarshal([]byte(m[1]), &shell); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(shell, "/markdown.js") {
-		t.Error("Markdown renderer is missing from the offline shell")
+	for _, p := range []string{"/markdown.js", "/highlight.js"} {
+		if !slices.Contains(shell, p) {
+			t.Errorf("%s is missing from the offline shell", p)
+		}
 	}
 	// One missing file fails the whole install, leaving the app uncached.
 	for _, p := range shell {
