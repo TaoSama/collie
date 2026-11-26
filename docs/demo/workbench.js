@@ -72,7 +72,7 @@
     const linkAttr = (m) => (m.kind === "link" ? ` data-wb-link="${esc(m.url)}"` : "");
 
     function navHTML() {
-      return `<a class="wb-item ${cur ? "" : "on"}" href="#/wb"><span class="wb-ico">▦</span><span>概览</span></a>` +
+      return `<a class="wb-item ${cur ? "" : "on"}" href="#/wb"><span class="wb-ico">${window.collieIcons?.svg("layout-dashboard") || "▦"}</span><span>概览</span></a>` +
         arrange(cfg).map((g) => `<div class="wb-group">${esc(g.title)}</div>` + g.modules.map((m) =>
           `<a class="wb-item ${cur === m.id ? "on" : ""}" href="${href(m)}"${linkAttr(m)} title="${esc(m.title)}"><span class="wb-ico">${icon(m)}</span><span>${esc(m.title)}</span>${m.share !== "off" ? `<span class="wb-dot" title="给 Agent：${SHARE[m.share]}"></span>` : ""}${m.kind === "web" && m.embed !== "iframe" ? '<span class="wb-out">↗</span>' : ""}</a>`).join("")).join("") +
         `<button type="button" class="wb-item wb-add" data-wb-add><span class="wb-ico">＋</span><span>添加网页</span></button>`;

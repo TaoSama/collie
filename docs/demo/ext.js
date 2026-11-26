@@ -13,6 +13,11 @@
     uncertain: ["可能已发出，为避免重复没有重发，去原应用确认", "bad"], failed: ["没发出", "bad"], expired: ["已过期，没发出", "bad"],
   };
   const KIND = { dm: "私聊", group: "群", self: "和自己", doc: "文档评论" };
+  const KIND_ICON = { dm: "user", group: "users", self: "user", doc: "file-text" };
+  const { svg: ico, title: cardTitle } = window.collieIcons;
+  // A line icon on the same tile as an extension's logo, for the rows
+  // beside them that lead somewhere else.
+  const symTile = (name) => `<span class="ext-icon sym" aria-hidden="true">${ico(name)}</span>`;
 
   function init(h) { esc = h.esc; when = h.when; md = h.md; workerHref = h.workerHref; }
 
@@ -58,7 +63,7 @@
     const acts = v.manifest.contributes?.connector?.actions || [];
     if (!acts.length) return "";
     const writes = acts.some((a) => !a.readonly);
-    return `<div class="card"><div class="card-h">给 agent 的动作</div><div class="form">
+    return `<div class="card"><div class="card-h">${cardTitle("zap", "给 agent 的动作")}</div><div class="form">
       <p class="ext-desc">agent 用 <code>collie ext do ${esc(v.manifest.id)} &lt;动作&gt;</code> 调用。</p>
       <ul class="ext-actions">${acts.map((a) => `<li><code>${esc(a.name)}</code>${a.readonly ? "" : ` <span class="tag attn">会改动</span>`}${a.untrusted ? ` <span class="tag">第三方内容</span>` : ""}${a.slow ? ` <span class="tag">慢</span>` : ""} <span class="muted">${esc(a.description)}</span></li>`).join("")}</ul>
       ${writes ? `<div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!v.setting.no_writes}" aria-label="允许会改动的动作" data-ext-writes></button><span>允许会改动的动作</span></div>` : ""}</div></div>`;
@@ -72,10 +77,20 @@
         const isSet = (v.secrets || []).includes(k);
         return `<label>${esc(p.title || k)}<input type="password" autocomplete="off" data-ext-config="${esc(k)}" placeholder="${isSet ? "已设置，留空不改" : "未设置"}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
       }
-      if (p.type === "boolean") return `<label class="check"><input type="checkbox" data-ext-config="${esc(k)}" ${val ? "checked" : ""}><span>${esc(p.title)}${p.description ? `<small>${esc(p.description)}</small>` : ""}</span></label>`;
+      if (p.type === "boolean") return `<label class="check"><input type="checkbox" class="switch" role="switch" data-ext-config="${esc(k)}" ${val ? "checked" : ""}><span>${esc(p.title)}${p.description ? `<small>${esc(p.description)}</small>` : ""}</span></label>`;
       if (p.enum) return `<label>${esc(p.title)}<select data-ext-config="${esc(k)}" data-pick="compact">${p.enum.map((e, i) => `<option value="${esc(e)}" ${e === val ? "selected" : ""}>${esc(p["x-labels"]?.[i] || e)}</option>`).join("")}</select>${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
       return `<label>${esc(p.title)}<input data-ext-config="${esc(k)}" value="${esc(val ?? "")}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
-    }).join("");
+    });
+  }
+  // The choices first, then the switches, and those that leave chats out
+  // of the 收件箱 (x-hide) under a heading of their own.
+  function configGrid(v) {
+    const props = Object.entries(v.manifest.configuration?.properties || {});
+    const fields = configFields(v), hides = props.map(([, p]) => p.type === "boolean" && !!p["x-hide"]);
+    const pick = (f) => fields.filter((_, i) => f(props[i][1], hides[i])).join("");
+    const hidden = pick((_, h) => h);
+    return `<div class="set-grid">${pick((p) => p.type !== "boolean")}${pick((p, h) => p.type === "boolean" && !h)}</div>`
+      + (hidden ? `<div class="set-sub">收件箱里不显示</div><div class="set-grid">${hidden}</div>` : "");
   }
 
   function detailLine(s) {
@@ -110,13 +125,13 @@
         <div><div class="meta"><b>${esc(m.name)}</b></div><div class="text">${esc(sub)}</div></div>
         <span class="right ext-row-state"><span class="ext-st"><span class="ext-st-l"><span class="dot ${esc(st.dot)}"></span>${esc(st.label)}</span>${v.setting.enabled && !declarative(m) ? `<span class="ext-st-on">${esc(machineName(ms, v.setting.machine))}</span>` : ""}</span><span class="chev" aria-hidden="true">›</span></span></a>`;
     };
-    const nav = (href, title, sub) => `<a class="row ext-row" href="${href}"><span class="ext-icon ghost" aria-hidden="true"></span><div><div class="meta"><b>${title}</b></div><div class="text">${esc(sub)}</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a>`;
+    const nav = (href, title, sub, icon) => `<a class="row ext-row" href="${href}">${symTile(icon)}<div><div class="meta"><b>${title}</b></div><div class="text">${esc(sub)}</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a>`;
     const updates = (markets?.markets || []).reduce((n, mk) => n + (mk.index || []).filter((e) => mk.installed?.[e.id] && mk.installed[e.id] !== e.version).length, 0);
     return `<p class="panel-intro">接上飞书、微信，就能在那边和 Collie 对话；有的扩展还能让 agent 多做些事。扩展默认都关着，点进去开启、登录后才生效。</p>
       <div class="card"><div class="card-h">扩展</div><div class="rows">${list.map(row).join("") || `<div class="empty-row">没有可用的扩展</div>`}</div></div>
       <div class="card"><div class="rows">
-        ${nav("#/auto/hooks/reply", "唤起与回复", `触发词 ${r?.trigger || r?.default_trigger || "/ai"} · 回复尾标`)}
-        ${nav("#/auto/hooks/markets", "扩展市场", `${(markets?.markets || []).length} 个市场${updates ? ` · ${updates} 个可更新` : ""}`)}
+        ${nav("#/auto/hooks/reply", "唤起与回复", `触发词 ${r?.trigger || r?.default_trigger || "/ai"} · 回复尾标`, "message-square-reply")}
+        ${nav("#/auto/hooks/markets", "扩展市场", `${(markets?.markets || []).length} 个市场${updates ? ` · ${updates} 个可更新` : ""}`, "store")}
       </div></div>`;
   }
 
@@ -141,17 +156,17 @@
         ${loginPanel(m, qr)}
         ${machine}
       </div></div>
-      ${m.configuration ? `<div class="card" data-ext="${esc(m.id)}"><div class="card-h">设置</div><div class="form"><div class="set-grid">${configFields(v)}</div><div class="form-actions"><button class="btn small" data-ext-save>保存设置</button></div></div></div>` : ""}
+      ${m.configuration ? `<div class="card" data-ext="${esc(m.id)}"><div class="card-h">${cardTitle("settings-2", "设置")}</div><div class="form ext-config">${configGrid(v)}<div class="form-actions"><span class="ext-dirty muted">有改动，保存后生效</span><button class="btn small" data-ext-save>保存设置</button></div></div></div>` : ""}
       <div data-ext="${esc(m.id)}">${actionsHTML(v)}</div>
-      ${m.contributes?.connector?.capabilities?.some((c) => c === "archive" || c === "receive") ? `<div class="card"><div class="rows"><a class="row ext-row" href="#/auto" data-auto-tab="inbox"><span class="ext-icon ghost" aria-hidden="true"></span><div><div class="meta"><b>会话</b></div><div class="text">${convs.length} 个会话${convs.filter((c) => c.on).length ? `，${convs.filter((c) => c.on).length} 个处理中` : ""}，在收件箱里打开要处理的</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a></div></div>` : ""}
-      <div class="card"><div class="card-h">说明</div><div class="form">
+      ${m.contributes?.connector?.capabilities?.some((c) => c === "archive" || c === "receive") ? `<div class="card"><div class="rows"><a class="row ext-row" href="#/auto" data-auto-tab="inbox">${symTile("inbox")}<div><div class="meta"><b>会话</b></div><div class="text">${convs.length} 个会话${convs.filter((c) => c.on).length ? `，${convs.filter((c) => c.on).length} 个处理中` : ""}，在收件箱里打开要处理的</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a></div></div>` : ""}
+      <div class="card"><div class="card-h">${cardTitle("info", "说明")}</div><div class="form">
         <p class="ext-desc">${esc(m.description)}</p>
         ${m.warning ? `<p class="ext-warn">${esc(m.warning)}</p>` : ""}
         ${m.market ? `<p class="ext-desc">从市场 ${esc(m.market.repo)}（${m.market.package ? esc(m.market.package.replace(/^release:/, "Release ")) : esc((m.market.commit || "").slice(0, 7))}）安装</p>` : ""}
         ${m.local ? `<p class="ext-warn">从本地目录（${esc(m.id)}/pkg/${esc(m.version)}）加载，Collie 不检查它的内容，请确认来源可信。</p>` : ""}
         ${(m.permissions?.network || []).length ? `<p class="ext-desc">会连接这些网站：${esc(m.permissions.network.join("、"))}</p>` : ""}
       </div></div>
-      ${v.proc?.logs?.length ? `<div class="card"><details class="ext-logs"><summary class="card-h">最近日志</summary><pre>${esc(v.proc.logs.join("\n"))}</pre></details></div>` : ""}
+      ${v.proc?.logs?.length ? `<div class="card"><details class="ext-logs"><summary class="card-h">${cardTitle("scroll-text", "最近日志")}</summary><pre>${esc(v.proc.logs.join("\n"))}</pre></details></div>` : ""}
       <div class="card" data-ext="${esc(m.id)}"><div class="form ext-danger">
         ${on && st.ok && needsLogin(m) ? `<button type="button" class="link-danger" data-ext-logout>退出登录</button>` : ""}
         ${on ? `<button type="button" class="link-danger" data-ext-disable>关闭扩展</button>` : `<button type="button" class="btn small" data-ext-enable>开启</button>`}
@@ -179,11 +194,11 @@
       const have = m.installed?.[e.id];
       const act = !have ? `<button class="btn small" data-market-install="${esc(e.id)}">安装</button>`
         : have !== e.version ? `<button class="btn small primary" data-market-install="${esc(e.id)}">更新到 ${esc(e.version)}</button>` : `<span class="muted">已安装</span>`;
-      return `<li class="row"><span></span><div><div class="meta"><b>${esc(e.name || e.id)}</b><span class="mono">${esc(e.id)} ${esc(e.version)}</span>${have && have !== e.version ? `<span>已装 ${esc(have)}</span>` : ""}</div><div class="text">${esc(e.description || "")}</div></div><span class="right">${act}</span></li>`;
+      return `<li class="row market-entry">${symTile("package")}<div><div class="meta"><b>${esc(e.name || e.id)}</b><span class="mono">${esc(e.id)} ${esc(e.version)}</span>${have && have !== e.version ? `<span>已装 ${esc(have)}</span>` : ""}</div><div class="text">${esc(e.description || "")}</div></div><span class="right">${act}</span></li>`;
     };
-    return `${pageHead("扩展市场")}<div class="card"><div class="card-h">市场<button class="btn small" data-market-refresh>刷新</button></div>
+    return `${pageHead("扩展市场")}<div class="card"><div class="card-h">${cardTitle("store", "市场")}<button class="btn small" data-market-refresh>刷新</button></div>
       <div class="form"><p class="ext-desc">飞书、微信和工作台是自带的，其他扩展从市场安装。市场就是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。私有仓库要填一个能读取它的 token，只存在 hub 上，填完不再显示。</p></div>
-      ${ms.map((m) => `<div class="market" data-market="${esc(m.repo)}"><div class="market-h"><b>${esc(m.name || m.repo)}</b><span class="muted mono">${esc(m.repo)}${m.ref ? "@" + esc(m.ref) : ""}${m.commit ? " · " + esc(m.commit.slice(0, 7)) : ""}${m.has_token ? " · 有 token" : ""}</span><button class="btn small ghost" data-market-remove>移除</button></div>
+      ${ms.map((m) => `<div class="market" data-market="${esc(m.repo)}"><div class="market-h">${ico("folder-git-2")}<b>${esc(m.name || m.repo)}</b><span class="muted mono">${esc(m.repo)}${m.ref ? "@" + esc(m.ref) : ""}${m.commit ? " · " + esc(m.commit.slice(0, 7)) : ""}${m.has_token ? " · 有 token" : ""}</span><button class="btn small ghost" data-market-remove>移除</button></div>
         ${m.error ? `<p class="ext-warn">${esc(m.error)}</p>` : ""}
         <ul class="rows">${(m.index || []).map((e) => entry(m, e)).join("") || `<li class="empty-row">这个市场里还没有扩展</li>`}</ul></div>`).join("")}
       <form class="form" id="market-form"><div class="set-grid">
@@ -204,15 +219,15 @@
     const convs = (r?.convs || []).filter((c) => !c.hidden); // folded, or switched off in 接入
     const shown = convs.filter((c) => filter === "on" ? c.on : filter && filter !== "all" ? c.ext === filter : true);
     const exts = [...new Set(convs.map((c) => c.ext))];
-    const chips = [["all", "全部"], ["on", `处理中 ${convs.filter((c) => c.on).length}`], ...exts.map((x) => [x, convs.find((c) => c.ext === x)?.label || x])]
-      .map(([k, l]) => `<button type="button" data-inbox-filter="${esc(k)}" class="${(filter || "all") === k ? "on" : ""}">${esc(l)}</button>`).join("");
+    const chips = [["all", "全部"], ["on", `处理中 ${convs.filter((c) => c.on).length}`], ...exts.map((x) => [x, convs.find((c) => c.ext === x)?.label || x, logo(x)])]
+      .map(([k, l, lg]) => `<button type="button" data-inbox-filter="${esc(k)}" class="${(filter || "all") === k ? "on" : ""}">${lg || ""}${esc(l)}</button>`).join("");
     const row = (c) => `<li class="row inbox-row ${c.id === cur ? "sel" : ""}" data-conv="${esc(c.id)}">
         <span class="dot ${c.on ? "idle" : "asleep"}" title="${c.on ? "处理中" : "不处理"}"></span>
-        <div><div class="meta"><b>${esc(c.name || c.chat)}</b><span>${esc(c.label)} · ${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread${c.muted ? " muted" : ""}"${c.muted ? ' title="在原应用里设了免打扰"' : ""}>${c.unread}</span>` : ""}</div>
+        <div><div class="meta"><b>${esc(c.name || c.chat)}</b><span class="inbox-src">${logo(c.ext)}${esc(c.label)} · ${ico(KIND_ICON[c.kind])}${esc(KIND[c.kind] || c.kind || "")}</span>${c.unread ? `<span class="inbox-unread${c.muted ? " muted" : ""}"${c.muted ? ' title="在原应用里设了免打扰"' : ""}>${c.muted ? ico("bell-off") : ""}${c.unread}</span>` : ""}</div>
           <div class="text">${esc(c.preview || "")}</div>${c.on ? outLine(c.out) : ""}</div>
         <span class="right">${when(c.last_at)}</span></li>`;
     const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;
-    if (!convs.length) return intro + `<div class="card"><div class="empty-row">还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div>`;
+    if (!convs.length) return intro + `<div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
     return intro + `<div class="seg inbox-filter">${chips}</div>
       <div class="inbox-split ${cur ? "has-cur" : ""}">
         <div class="card inbox-list"><ul class="rows">${shown.map(row).join("") || `<li class="empty-row">没有</li>`}</ul></div>
@@ -220,7 +235,7 @@
       </div>`;
   }
 
-  const detailHTML = (cur, detail, trigger) => cur ? convHTML(detail, trigger) : `<div class="card"><div class="empty-row">选一个会话</div></div>`;
+  const detailHTML = (cur, detail, trigger) => cur ? convHTML(detail, trigger) : `<div class="card"><div class="empty-row with-ico">${ico("messages-square")}<div>选一个会话</div></div></div>`;
 
   function convHTML(d, trigger) {
     if (!d) return `<div class="card"><div class="empty-row">正在读取…</div></div>`;
@@ -250,13 +265,16 @@
     return (r?.convs || []).filter((c) => c.on).map((c) => `<option value="ext:${esc(c.id)}" data-sub="${esc(c.label)}">${esc(c.label)} · ${esc(c.name || c.chat)}</option>`).join("");
   }
 
-  // Short names of extensions, from what the pages fetched (manifest label).
-  const labels = {};
+  // Short names and logos of extensions, from what the pages fetched (manifest label).
+  const labels = {}, icons = {};
   function learn(r) {
-    for (const v of r?.extensions || []) labels[v.manifest.id] = v.manifest.label || v.manifest.name;
+    for (const v of r?.extensions || []) { labels[v.manifest.id] = v.manifest.label || v.manifest.name; icons[v.manifest.id] = v.manifest.icon_url || ""; }
     for (const c of r?.convs || []) labels[c.ext] = c.label;
   }
   const label = (source) => source?.startsWith("ext:") ? labels[source.slice(4)] || source.slice(4) : "";
+  // A small logo beside an extension's name, once its list has been read.
+  function logo(id) { const u = icons[id]; return u ? `<img class="src-logo" src="${esc(u)}" alt="">` : ""; }
+  const known = () => Object.keys(icons).length > 0;
 
-  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, convHTML, detailHTML, timerChannels, label, learn, stateOf };
+  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, convHTML, detailHTML, timerChannels, label, logo, known, learn, stateOf };
 })();

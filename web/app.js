@@ -83,6 +83,10 @@
   // implementation detail. "done" just means a turn ended: it is idle.
   const COLLIE_STATUS = { asleep: "休眠中", starting: "正在唤醒", working: "在想…", blocked: "等你确认", failed: "出错了", dreaming: "在做梦…" };
   const SOURCE_LABEL = { worker: "派出的 agent", chat: "对话", timer: "定时", system: "Collie" };
+  const SOURCE_ICON = { worker: "bot", chat: "message-circle", timer: "alarm-clock", system: "bot" };
+  const { svg: ico, title: cardTitle } = collieIcons;
+  // Where an event came from: an extension's logo, or a line icon (a webhook by default).
+  const sourceMark = (s) => (s?.startsWith("ext:") && collieExt.logo(s.slice(4))) || ico(SOURCE_ICON[s] || "webhook");
   const collieStatus = (s) => COLLIE_STATUS[s] || "空闲";
   const collieDot = (s) => (s === "done" || s === "unknown" ? "idle" : s === "dreaming" ? "starting" : s || "asleep");
   // A session's Claude, Codex or Antigravity mark carries a </> badge when it
@@ -2713,6 +2717,9 @@
       if (autoData.memory) (window.requestIdleCallback || setTimeout)(() => memHTML(autoData.memory));
     }
     if (autoTab === "inbox" || autoTab === "events" || autoTab === "hooks") autoTimer = setInterval(() => loadAuto(), autoTab === "hooks" ? 3000 : 4000);
+    // The logos the 收件箱 and 事件 show come with the extension list, read once.
+    const logoTab = () => view === "auto" && (autoTab === "inbox" || autoTab === "events");
+    if (logoTab() && !collieExt.known()) fetchAuto("ext").then(() => { if (logoTab()) { $("#auto-body")._sig = ""; loadAuto(); } }).catch(() => {});
     if (autoTab === "memory") autoTimer = setInterval(() => { if (!memEditing) loadAuto(); }, 5000);
   }
 
@@ -2732,6 +2739,8 @@
       const [r] = await Promise.all(requests);
       if (!stillOpen()) return;
       if (tab === "hooks") resumeLogin();
+      // Settings changed and not yet saved are not redrawn under the hand.
+      if (tab === "hooks" && $("#auto-body .ext-config.dirty")) return;
       drawAuto(r, restore);
       if (tab === "settings") api("/api/super/lark?fresh").then((l) => { autoData.lark = l; showLarkWho(); }).catch(() => {});
     } catch (err) {
@@ -2753,6 +2762,9 @@
       else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
     };
     if (tab === "events") {
+      const sig = JSON.stringify([r, eventsSub]);
+      if (sig === body._sig) { if (restore) restoreSimpleScroll(body, restore); return; }
+      body._sig = sig;
       const seg = `<div class="seg events-seg">${[["events", "事件"], ["threads", "线程"]].map(([k, l]) => `<button type="button" data-events-sub="${k}" class="${eventsSub === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
       body.innerHTML = seg + (eventsSub === "threads" ? threadsHTML(r.threads || [], r.counts || {}) : inboxHTML(r.triggers || []));
       applyAfter();
@@ -2930,9 +2942,9 @@
     return `<p class="panel-intro">你的消息、外部事件、扩展会话里唤起的请求、定时器，以及派出的 agent 完成或卡住，都会进这里。先按来源策略过滤；订阅了线程的 agent 直接收到，其余交给 Collie 判断。对方正忙时事件会先攒着，空闲后一次送过去。</p>
       <div class="card"><ul class="rows">${ts.length ? ts.map((t) => `<li class="row">
         <span class="badge ${esc(t.status === "queued" ? "queued" : t.status === "ignored" ? "ignored" : t.status === "failed" ? "failed" : t.action === "candidate" ? "candidate" : "")}">${esc({ queued: "排队", delivered: "已投递", ignored: "已忽略", failed: "未送达" }[t.status] || t.status)}</span>
-        <div><div class="meta"><b>#${esc(t.id)}</b><span>${esc(SOURCE_LABEL[t.source] || collieExt.label(t.source) || t.source)}</span><span>${esc(t.thread)}</span>${t.from ? `<span>from ${esc(t.from === ROUTER ? "Collie" : t.from)}</span>` : ""}${t.targets?.length ? `<span>→ ${esc(t.targets.map((x) => x === ROUTER ? "Collie" : x).join(", "))}</span>` : ""}${t.action === "candidate" ? "<span>candidate</span>" : ""}</div>
+        <div><div class="meta"><b>#${esc(t.id)}</b><span class="src">${sourceMark(t.source)}${esc(SOURCE_LABEL[t.source] || collieExt.label(t.source) || t.source)}</span><span>${esc(t.thread)}</span>${t.from ? `<span>from ${esc(t.from === ROUTER ? "Collie" : t.from)}</span>` : ""}${t.targets?.length ? `<span>→ ${esc(t.targets.map((x) => x === ROUTER ? "Collie" : x).join(", "))}</span>` : ""}${t.action === "candidate" ? "<span>candidate</span>" : ""}</div>
         <div class="text">${esc(t.text)}</div></div>
-        <span class="right">${when(t.at)}</span></li>`).join("") : `<li class="empty-row">还没有事件</li>`}</ul></div>`;
+        <span class="right">${when(t.at)}</span></li>`).join("") : `<li class="empty-row with-ico">${ico("inbox")}<div>还没有事件</div></li>`}</ul></div>`;
   }
 
   // counts are each thread's total events from the DB; th.triggers holds only the latest.
@@ -2941,7 +2953,7 @@
       <div class="card"><ul class="rows">${ths.length ? ths.map((th) => `<li class="row">
         <span class="badge">${counts[th.id] ?? th.triggers?.length ?? 0}</span>
         <div><div class="meta"><b>${esc(th.id)}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Collie</span>"}</div></div>
-        <span class="right">${when(th.last_at)}</span></li>`).join("") : `<li class="empty-row">还没有线程</li>`}</ul></div>`;
+        <span class="right">${when(th.last_at)}</span></li>`).join("") : `<li class="empty-row with-ico">${ico("messages-square")}<div>还没有线程</div></li>`}</ul></div>`;
   }
 
   // ───────────────────────────── timers: picked, not typed
@@ -3023,7 +3035,7 @@
         <div class="text">${esc(t.text)}</div></div>
         <button class="btn ghost small" data-del-timer="${esc(t.id)}">删除</button></li>`;
     return `<p class="panel-intro">到点会给 Collie（或某个 agent）发一条消息：每天的例行检查、过一会儿的跟进提醒。Collie 自己也会设定时来跟进。</p>
-      <div class="card"><div class="card-h">新建定时</div>
+      <div class="card"><div class="card-h">${cardTitle("alarm-clock", "新建定时")}</div>
         <form class="form tm-form" id="timer-form" data-mode="weekdays">
           <div class="tm-field">
             <span class="tm-lab">什么时候</span>
@@ -3043,7 +3055,7 @@
             <button class="btn primary small">添加</button>
           </div>
         </form></div>
-      <div class="card"><ul class="rows">${active.length ? active.map(timerRow).join("") : `<li class="empty-row">${ended.length ? "没有启用中的定时" : "还没有定时"}</li>`}</ul></div>
+      <div class="card"><ul class="rows">${active.length ? active.map(timerRow).join("") : `<li class="empty-row with-ico">${ico("alarm-clock")}<div>${ended.length ? "没有启用中的定时" : "还没有定时"}</div></li>`}</ul></div>
       ${ended.length ? `<details class="mem-done" data-ended-timers><summary class="mem-h">已结束<span class="muted">${ended.length} 个</span></summary>
         <div class="card"><ul class="rows">${ended.map(timerRow).join("")}</ul></div></details>` : ""}`;
   }
@@ -3072,12 +3084,12 @@
     const base = location.origin + "/hooks/";
     const url = (src) => `${base}${src}?key=${r.hook_key}`;
     return `<p class="panel-intro">把外部事件接进来。Webhook 立即返回 202，过滤和路由在「事件」里异步完成。未经请求的事件默认是 <b>candidate</b>：只有 Collie 的记忆或你的规则覆盖到时才会行动，否则保持安静。</p>
-      <div class="card"><div class="card-h">Webhook 地址</div><div class="form">
+      <div class="card"><div class="card-h">${cardTitle("webhook", "Webhook 地址")}</div><div class="form">
         <label>GitHub <small>Settings → Webhooks，Content type 选 application/json</small><div class="code"><span>${esc(url("github"))}</span><button class="icon-btn" data-copy="${esc(url("github"))}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></label>
         <label>飞书 / Lark <small>事件订阅的请求地址，已支持 url_verification</small><div class="code"><span>${esc(url("feishu"))}</span><button class="icon-btn" data-copy="${esc(url("feishu"))}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></label>
         <label>通用 <small>POST JSON：{"text","thread","from","id"}，source 名可自取</small><div class="code"><span>curl -X POST '${esc(url("ci"))}' -H 'Content-Type: application/json' -d '{"thread":"build-42","text":"nightly build failed"}'</span></div></label>
       </div></div>
-      <div class="card"><div class="card-h">来源策略（快路径）<button class="btn small" id="add-policy">添加</button></div>
+      <div class="card"><div class="card-h">${cardTitle("shield-check", "来源策略（快路径）")}<button class="btn small" id="add-policy">添加</button></div>
         <div id="policies">${(r.policies || []).map(policyRow).join("")}</div>
         <div class="form"><div class="form-actions"><button class="btn primary small" id="save-policies">保存策略</button></div></div></div>`;
   }
@@ -3234,7 +3246,7 @@
     setTimeout(() => bindSettings($("#settings-form")));
     return `<form class="settings" id="settings-form">
       <section class="card set-sec">
-        <header><h4>Collie 自己</h4><p>只负责理解、分派和回复，轻量快速的模型就够。它在 <code>${esc(tilde(r.router_dir))}</code> 里工作：ROUTER.md 是操作手册，memory/ 是长期记忆。</p></header>
+        <header><h4>${ico("bot")}Collie 自己</h4><p>只负责理解、分派和回复，轻量快速的模型就够。它在 <code>${esc(tilde(r.router_dir))}</code> 里工作：ROUTER.md 是操作手册，memory/ 是长期记忆。</p></header>
         <div class="set-grid four">
           <label>Agent<select name="router_kind" data-title="Collie 自己用的 agent">${kindOpts(s.router_kind)}</select></label>
           ${modelPick("router", s.router_model, s.router_effort, s.router_alias)}
@@ -3246,7 +3258,7 @@
       </section>
 
       <section class="card set-sec">
-        <header><h4>派活默认</h4><p>Collie 派 agent 干活时默认这样启动；你说「用 Codex…」「在 Mac 上…」时它会自己换。</p></header>
+        <header><h4>${ico("send")}派活默认</h4><p>Collie 派 agent 干活时默认这样启动；你说「用 Codex…」「在 Mac 上…」时它会自己换。</p></header>
         <div class="set-grid four">
           <label>Agent<select name="worker_kind" data-title="派活默认用">${kindOpts(s.worker_kind)}</select></label>
           ${modelPick("worker", s.worker_model, s.worker_effort, s.worker_alias)}
@@ -3258,7 +3270,7 @@
       </section>
 
       <section class="card set-sec">
-        <header><h4>记忆与会话</h4><p>Collie 的对话变长后会换新会话，要记住的事通过 memory/ 交接；每晚回顾当天的对话，整理记忆。</p></header>
+        <header><h4>${ico("brain")}记忆与会话</h4><p>Collie 的对话变长后会换新会话，要记住的事通过 memory/ 交接；每晚回顾当天的对话，整理记忆。</p></header>
         <div class="set-grid">
           <label>上下文用到多少时换新会话<select name="rotate_pct" data-pick="compact" data-title="上下文用到多少时换新会话">${[50, 60, 70, 80, -1].map((p) => `<option value="${p}" ${(s.rotate_pct || 60) === p ? "selected" : ""}>${p < 0 ? "从不" : p + "%"}</option>`).join("")}</select><small>窗口大小按 agent 自己的设置算</small></label>
           <label>每晚做梦<select name="dream_at" data-pick="compact" data-title="每晚做梦">${["02:00", "04:00", "06:00", "off"].map((t) => `<option value="${t}" ${(s.dream_at || "04:00") === t ? "selected" : ""}>${t === "off" ? "不做" : t}</option>`).join("")}</select><small>当天没有新对话就跳过</small></label>
@@ -3266,7 +3278,7 @@
       </section>
 
       <section class="card set-sec">
-        <header><h4>通知</h4></header>
+        <header><h4>${ico("bell")}通知</h4></header>
         <div class="set-grid">
           <label class="check span3"><input type="checkbox" name="notify_lark" ${s.notify_lark ? "checked" : ""}><span>用 hub 上的 lark-cli 发飞书消息给你<small id="lark-who" class="muted">· 正在看 hub 上的 lark-cli…</small></span></label>
           <label>Webhook<input name="notify_webhook" value="${esc(s.notify_webhook || "")}" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" autocorrect="off" autocapitalize="off" spellcheck="false"><small>飞书 / Lark 机器人或 Slack</small></label>
@@ -3383,7 +3395,8 @@
       if (done) toast(done);
       await fetchAuto("ext");
       if (view === "auto" && autoTab === "hooks") drawAuto(autoData.settings);
-    } catch (err) { toast(err.message, "attn"); }
+      return true;
+    } catch (err) { toast(err.message, "attn"); return false; }
   }
   // The 接入 page open: "" the list, ext/<id>, reply, markets or webhooks.
   const hooksSub = () => (current && current.startsWith("hooks/") ? current.slice(6) : "");
@@ -3488,10 +3501,17 @@
       if (!(await ask({ title: "退出登录？", text: "之后要重新扫码。", ok: "退出登录" }))) return;
       api(`/api/ext/${encodeURIComponent(id)}/logout`, { body: {} }).then(() => toast("已退出登录")).catch((err) => toast(err.message, "attn")).then(loadAuto);
     } else if (b.hasAttribute("data-ext-save")) {
+      const form = b.closest(".ext-config");
+      form?.classList.remove("dirty");
       const config = {};
       card.querySelectorAll("[data-ext-config]").forEach((el) => { config[el.dataset.extConfig] = el.type === "checkbox" ? el.checked : el.value; });
-      extConfigure(id, { config }, "已保存，扩展会重启");
+      if (!(await extConfigure(id, { config }, "已保存，扩展会重启"))) form?.classList.add("dirty");
     }
+  });
+  // A setting changed and not yet saved: the save button says so, and the
+  // page is not redrawn under it.
+  $("#auto-body").addEventListener("input", (e) => {
+    if (e.target.closest("[data-ext-config]")) e.target.closest(".ext-config")?.classList.add("dirty");
   });
   $("#auto-body").addEventListener("change", (e) => {
     const sel = e.target.closest("[data-ext-machine]");
@@ -4329,20 +4349,20 @@
       : "页面在后台时，agent 需要你确认或完成任务会弹通知";
     const mac = /Mac|iPhone|iPad/.test(navigator.platform);
     $("#prefs-body").innerHTML = `<div class="prefs">
-      <div class="card"><div class="card-h">外观</div>
+      <div class="card"><div class="card-h">${cardTitle("palette", "外观")}</div>
         ${row("主题", "跟随系统时，设备切到深色模式这里也跟着变", seg("theme", prefs.theme(), [["system", '<span class="theme-swatch system"></span>跟随系统'], ["light", '<span class="theme-swatch light"></span>浅色'], ["dark", '<span class="theme-swatch dark"></span>深色']]))}
         ${row("皮肤", "整套界面的配色和形状，浅色和深色都有", seg("skin", prefs.skin(), skins.map(([v, label]) => [v, `<span class="skin-swatch ${v}"></span>${label}`])))}
         ${row("对话文字", "", seg("text", prefs.text(), [["small", "小"], ["normal", "标准"], ["large", "大"]]))}
       </div>
-      <div class="card"><div class="card-h">对话</div>
+      <div class="card"><div class="card-h">${cardTitle("messages-square", "对话")}</div>
         ${row("打开 agent 时显示", "对话：从会话记录整理的消息；屏幕：终端原样；日志：自动换行的滚动输出", seg("mode2", mode, [["chat", "对话"], ["screen", "屏幕"], ["log", "日志"]]))}
         ${row("发送消息", "另一种按法用来换行；Shift+Enter 总是换行", seg("sendKey", prefs.sendKey(), [["enter", "Enter"], ["mod", mac ? "⌘ Enter" : "Ctrl Enter"]]))}
         ${row("折叠连续的工具步骤", "超过 3 步时收成一行，只露出最后一步", sw("fold", prefs.fold()))}
       </div>
-      <div class="card"><div class="card-h">侧边栏</div>
+      <div class="card"><div class="card-h">${cardTitle("panel-left", "侧边栏")}</div>
         ${row("显示其他终端里的只读会话", "在 iTerm、VS Code、tmux 或桌面版里开的会话，Collie 发不了消息、只能看的那些", sw("showReadOnly", prefs.readOnly()))}
       </div>
-      <div class="card"><div class="card-h">通知</div>
+      <div class="card"><div class="card-h">${cardTitle("bell", "通知")}</div>
         ${row("浏览器通知", esc(perm), sw("notify", prefs.notify() && (!("Notification" in window) || Notification.permission !== "denied")))}
         ${prefs.notify() ? row("后台推送", esc(pushSub ? "已开：需要你选或确认的事由 hub 推送，页面关掉、锁屏也能收到" + pushLastLine()
           : pushWhy ? "没开成：" + pushWhy : "正在连接…"), pushSub ? '<button type="button" class="btn small" data-act="push-test">发一条试试</button>'
@@ -4708,16 +4728,16 @@
   function devBrowsers(r) {
       const browsers = r.devices.filter((d) => d.kind !== "machine");
       return `
-      <div class="card"><div class="card-h">手机和浏览器</div><ul class="rows">
+      <div class="card"><div class="card-h">${cardTitle("smartphone", "手机和浏览器")}</div><ul class="rows">
         ${browsers.length ? browsers.map((d) => `<li class="row dev-row">
-          <span class="dot unknown"></span>
+          <span class="dev-ico">${ico(/iphone|ipad|android|手机|mobile/i.test(d.name) ? "smartphone" : "monitor")}</span>
           <div><div class="meta"><b>${esc(d.name)}</b>${d.current ? '<span class="tag">当前</span>' : ""}<span>最近 ${when(d.last_seen)}</span></div></div>
           <button class="btn ghost small" data-del-dev="${esc(d.id)}" data-name="${esc(d.name)}">移除</button></li>`).join("")
-        : `<li class="empty-row">还没有配对过的手机。用访问令牌登录的浏览器不在这里列出。</li>`}
+        : `<li class="empty-row with-ico">${ico("smartphone")}<div>还没有配对过的手机。用访问令牌登录的浏览器不在这里列出。</div></li>`}
       </ul></div>`;
   }
   const devHubs = () => `
-      <div class="card"><div class="card-h">其他 hub</div><p class="pair-hint">别的网络里的 Collie hub（云电脑、家里的电脑）。和这台 hub 不通也没关系：只要这个浏览器能打开它，它的会话就会出现在侧栏里。</p>
+      <div class="card"><div class="card-h">${cardTitle("server", "其他 hub")}</div><p class="pair-hint">别的网络里的 Collie hub（云电脑、家里的电脑）。和这台 hub 不通也没关系：只要这个浏览器能打开它，它的会话就会出现在侧栏里。</p>
         <ul class="rows">${hubs.map((h) => { const on = remote.get(h.key)?.online; return `<li class="row dev-row">
           <span class="dot ${on ? "online" : "offline"}"></span>
           <div><div class="meta"><b>${esc(h.name)}</b><span>${on ? "在线" : "连不上"}</span></div><div class="text mono">${esc(h.url)}</div></div>
@@ -4745,7 +4765,7 @@
 
       <div class="pair-grid">
         <div class="card pair-card">
-          <div class="card-h">连接手机或平板</div>
+          <div class="card-h">${cardTitle("smartphone", "连接手机或平板")}</div>
           <div class="qr-wrap">${pb ? `<img class="qr" alt="配对二维码" src="/api/qr?text=${encodeURIComponent(phoneURL)}">` : ""}</div>
           <p class="pair-hint">用相机扫一下，在浏览器里打开即可，之后可「添加到主屏幕」。<b>${pb ? left(pb) : ""}</b> 内有效，只能用一次。</p>
           <div class="code"><span>${esc(phoneURL)}</span><button class="icon-btn" data-copy="${esc(phoneURL)}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
@@ -4753,7 +4773,7 @@
         </div>
 
         <div class="card pair-card">
-          <div class="card-h">连接一台电脑</div>
+          <div class="card-h">${cardTitle("laptop", "连接一台电脑")}</div>
           <p class="pair-hint">在要加入的电脑上运行以下命令。脚本会安装 Collie 发布版并启动后台服务。</p>
           ${pm ? `<div class="code big"><span>${esc(installCmd)}</span><button class="icon-btn" data-copy="${esc(installCmd)}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
                <p class="pair-hint">已经装了 collie 的话：</p>

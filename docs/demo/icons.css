@@ -1,0 +1,41 @@
+/* Line icons (web/icons.js) and small logos beside the words they stand for.
+   Icons are quiet (--t-icon) and sized to the text next to them; logos keep
+   their colors on the --logo-bg backing, as extension tiles do. */
+
+/* A card's title with its icon. */
+.h-t { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.h-t > svg { width: 15px; height: 15px; color: var(--t-icon); }
+.set-sec header h4 { display: flex; align-items: center; gap: 8px; }
+.set-sec header h4 > svg { width: 16px; height: 16px; color: var(--t-icon); }
+
+/* A tile with a line icon, beside extension tiles: rows that lead elsewhere. */
+.ext-icon.sym { color: var(--t-secondary); }
+.ext-icon.sym > svg { width: 18px; height: 18px; }
+.market-entry { align-items: center; }
+.market-entry .ext-icon { width: 32px; height: 32px; }
+.market-h > svg { width: 15px; height: 15px; color: var(--t-icon); }
+
+/* Where a chat or an event is from: logo or icon, then its name. */
+.src-logo { width: 14px; height: 14px; flex: none; object-fit: contain; border-radius: calc(4px * var(--round)); background: var(--logo-bg); box-shadow: 0 0 0 var(--bw) var(--line); }
+.inbox-src, .row .meta .src { display: inline-flex; align-items: center; gap: 5px; }
+.inbox-src > svg, .row .meta .src > svg { width: 12.5px; height: 12.5px; color: var(--t-icon); }
+.inbox-src > svg { margin-left: 1px; }
+.inbox-filter button .src-logo { margin-right: 6px; }
+.inbox-unread { display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.inbox-unread > svg { width: 10px; height: 10px; stroke-width: calc(2 * var(--stroke)); }
+
+/* An empty list says so under an icon of what would be there. */
+.empty-row.with-ico { display: grid; justify-items: center; gap: 8px; }
+.empty-row.with-ico > svg { width: 22px; height: 22px; color: var(--t-icon); opacity: .75; }
+.empty-row.with-ico a { color: inherit; }
+
+.dev-ico { display: inline-flex; color: var(--t-icon); }
+.dev-ico > svg { width: 18px; height: 18px; }
+
+/* An extension's settings: the hidden-chat switches under their own heading, and the save button lights up once something changed. */
+.form .check:has(input.switch) { gap: 10px; }
+.set-sub { margin-top: 4px; padding-top: 12px; border-top: var(--bw) solid var(--line); font-size: var(--fs-small); font-weight: var(--fw-strong); color: var(--t-secondary); }
+.ext-dirty { display: none; align-self: center; font-size: var(--fs-small); }
+.ext-config.dirty .ext-dirty { display: inline; }
+.ext-config.dirty [data-ext-save] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.wb-ico > svg { width: 16px; height: 16px; vertical-align: -3px; color: var(--t-icon); }

@@ -333,6 +333,7 @@ function loadApp(expose, extra = {}) {
   const instrumented = appSrc.replace(marker, "  globalThis.__collieTest = { " + expose + " };\n})();");
   // The scripts app.js uses go first, as on the page.
   vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(root, "web/icons.js"), "utf8"), ctx, { filename: "web/icons.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/threads.js"), "utf8"), ctx, { filename: "web/threads.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/machines.js"), "utf8"), ctx, { filename: "web/machines.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/ext.js"), "utf8"), ctx, { filename: "web/ext.js" });
