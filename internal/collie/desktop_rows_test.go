@@ -325,3 +325,45 @@ func TestAgyDesktopRowsReadOnlyTheAppsIndexWhereItIs(t *testing.T) {
 		t.Fatalf("rows = %+v, want the App's index alone: it lists the CLI's too", rows)
 	}
 }
+
+func TestCodexDesktopSessionsAllowSendWhileRunning(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, ".codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	control := filepath.Join(codexHome, "app-server-control")
+	if err := os.MkdirAll(control, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(control, "app-server-control.sock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codexLoadedCache.Lock()
+	codexLoadedCache.at, codexLoadedCache.ids, codexLoadedCache.err = time.Now(), map[string]bool{}, nil
+	codexLoadedCache.Unlock()
+	t.Cleanup(func() {
+		codexLoadedCache.Lock()
+		codexLoadedCache.at = time.Time{}
+		codexLoadedCache.Unlock()
+	})
+	desktopCache.Lock()
+	desktopCache.at, desktopCache.app = time.Now(), false
+	desktopCache.rows = []desktopRow{
+		{id: "cx-idle", kind: "codex", app: appCodex, session: "idle", cwd: "/root"},
+		{id: "cx-run", kind: "codex", app: appCodex, session: "run", cwd: "/root", running: true},
+	}
+	desktopCache.Unlock()
+	t.Cleanup(forgetDesktopRows)
+	got := map[string]*External{}
+	for _, e := range (&Server{home: home}).desktopSessions(nil, nil, time.Now()) {
+		got[e.Session] = e
+	}
+	for _, tc := range []struct {
+		id       string
+		takeOver bool
+	}{{"idle", true}, {"run", false}} {
+		e := got[tc.id]
+		if e == nil || !e.CanSend || e.via != "queue" || e.ReadOnly != "" || e.CanTakeOver != tc.takeOver {
+			t.Fatalf("session %s = %+v, want CanSend=true via=queue ReadOnly='' CanTakeOver=%v", tc.id, e, tc.takeOver)
+		}
+	}
+}

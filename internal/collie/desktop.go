@@ -143,18 +143,17 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 				// A thread the App opened on this machine from another
 				// computer runs in Codex's shared background service.
 				e.CanSend = true
-			case isCodexApp(d.app) && !d.running && s.codexDaemonSock() != "":
-				// The new App (and a closed one) can't be written to; the
-				// shared daemon continues the thread instead.
-				e.CanSend, e.via = true, "bg"
+			case isCodexApp(d.app) && s.codexDaemonSock() != "":
+				// Queue through the shared daemon: the App's own app-server
+				// picks it up directly if it holds the thread, otherwise we
+				// wake the App (or fall back to the daemon).
+				e.CanSend, e.via = true, "queue"
 				// The CLI shares ~/.codex with the App: `codex resume` picks
 				// the thread up in a herdr pane too.
-				e.CanTakeOver = e.Session != "" && e.Cwd != ""
-			case isCodexApp(d.app) && d.running:
-				e.ReadOnly = "Codex 正在跑这个对话：等它这一轮跑完再发，或直接在 Codex 里说"
+				e.CanTakeOver = !d.running && e.Session != "" && e.Cwd != ""
 			case isCodexApp(d.app):
 				e.ReadOnly = "这台电脑上没有 Codex 后台：在 Codex 里接着说，或在 herdr 里接管"
-				e.CanTakeOver = e.Session != "" && e.Cwd != ""
+				e.CanTakeOver = !d.running && e.Session != "" && e.Cwd != ""
 			default:
 				e.ReadOnly = "这个对话现在没有在 Codex 里打开：在 Codex App 里点开它，就能从这里发消息"
 			}

@@ -14,10 +14,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -437,20 +440,6 @@ func (s *Server) codexLoaded() (map[string]bool, error) {
 }
 
 func (s *Server) codexSend(ctx context.Context, thread, text string) error {
-	return s.codexDaemonSend(ctx, thread, text, false)
-}
-
-// codexBgSend continues a Codex App thread in the shared daemon when nothing
-// else runs it: the new App keeps its own app-server private, so this is the
-// way in. The App locks only the thread it has open; the daemon takes the
-// lock for the turn and lets go about a minute after it ends. Nobody is there
-// to approve, so the turn asks for none: what its sandbox won't allow fails,
-// and Codex says so.
-func (s *Server) codexBgSend(ctx context.Context, thread, text string) error {
-	return s.codexDaemonSend(ctx, thread, text, true)
-}
-
-func (s *Server) codexDaemonSend(ctx context.Context, thread, text string, idle bool) error {
 	sock := s.codexDaemonSock()
 	if sock == "" {
 		return errors.New("这台电脑上没有运行 Codex 后台")
@@ -464,14 +453,10 @@ func (s *Server) codexDaemonSend(ctx context.Context, thread, text string, idle 
 	if err != nil {
 		return err
 	}
-	headless := idle && !ids[thread]
-	if !ids[thread] && !headless {
+	if !ids[thread] {
 		return errors.New("这个 Codex 会话没有在共享后台里运行，只能看")
 	}
 	if err := c.call("thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}, nil); err != nil {
-		if strings.Contains(err.Error(), "active writer") || strings.Contains(err.Error(), "live local writer") {
-			return errors.New("这个对话正在 Codex 里打开着：在 Codex 里切到别的对话再发，或直接在 Codex 里说")
-		}
 		return err
 	}
 	var read struct {
@@ -495,15 +480,106 @@ func (s *Server) codexDaemonSend(ctx context.Context, thread, text string, idle 
 	if running != "" {
 		return c.call("turn/steer", map[string]any{"threadId": thread, "input": input, "expectedTurnId": running}, nil)
 	}
-	if !headless {
-		return c.call("turn/start", map[string]any{"threadId": thread, "input": input}, nil)
+	return c.call("turn/start", map[string]any{"threadId": thread, "input": input}, nil)
+}
+
+const codexBgNote = "已发出：这一轮在 Codex 后台里跑，Codex App 不会实时显示；跑完后（本机的对话再等一分钟左右）在 Codex 里打开就能看到"
+
+var (
+	codexWakeApp = func(ctx context.Context, thread string) error {
+		if runtime.GOOS != "darwin" {
+			return errors.New("not darwin")
+		}
+		return exec.CommandContext(ctx, "open", "-g", "codex://threads/wake/"+thread).Run()
 	}
-	if err := c.call("turn/start", map[string]any{"threadId": thread, "input": input, "approvalPolicy": "never"}, nil); err != nil {
-		return err
+	codexWakeWait = 3 * time.Second
+)
+
+func (s *Server) codexThreadLocked(thread string) bool {
+	f, err := os.Open(filepath.Join(s.codexHome(), "thread-writer-locks", thread+".lock"))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return errors.Is(err, syscall.EWOULDBLOCK)
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}
+
+func (c *codexRPC) queueHas(thread, id string) bool {
+	var page struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := c.call("thread/queue/list", map[string]any{"threadId": thread}, &page); err != nil {
+		return true
+	}
+	for _, item := range page.Data {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// codexQueueSend enqueues a message through the shared daemon so whichever
+// app-server holds the thread's writer lock picks it up (immediately when
+// idle, or after the active turn finishes) with live UI sync in the Codex App.
+// For an unloaded thread, macOS wakes the App silently; otherwise the shared
+// daemon resumes the thread to drain the queue.
+func (s *Server) codexQueueSend(ctx context.Context, thread, text string) (string, error) {
+	sock := s.codexDaemonSock()
+	if sock == "" {
+		return "", errors.New("这台电脑上没有运行 Codex 后台")
+	}
+	c, err := dialCodex(ctx, sock)
+	if err != nil {
+		return "", err
+	}
+	defer c.close()
+	var added struct {
+		QueuedSubmission struct {
+			ID string `json:"id"`
+		} `json:"queuedSubmission"`
+	}
+	input := []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}}
+	if err := c.call("thread/queue/add", map[string]any{
+		"threadId":            thread,
+		"clientUserMessageId": uuid4(),
+		"input":               input,
+	}, &added); err != nil {
+		return "", err
+	}
+	if s.codexThreadLocked(thread) {
+		forgetDesktopRows()
+		return "", nil
+	}
+	if codexWakeApp(ctx, thread) == nil {
+		for deadline := time.Now().Add(codexWakeWait); time.Now().Before(deadline) && ctx.Err() == nil; {
+			if s.codexThreadLocked(thread) || (added.QueuedSubmission.ID != "" && !c.queueHas(thread, added.QueuedSubmission.ID)) {
+				forgetDesktopRows()
+				return "", nil
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	if err := c.call("thread/resume", map[string]any{"threadId": thread, "excludeTurns": true, "approvalPolicy": "never"}, nil); err != nil {
+		if strings.Contains(err.Error(), "active writer") || strings.Contains(err.Error(), "live local writer") {
+			forgetDesktopRows()
+			return "", nil
+		}
+		return "", err
+	}
+	if added.QueuedSubmission.ID != "" {
+		c.call("thread/queue/start", map[string]any{"threadId": thread, "queuedSubmissionId": added.QueuedSubmission.ID}, nil)
 	}
 	// Let go, so the daemon closes the thread (and its lock) once it is idle.
 	c.call("thread/unsubscribe", map[string]any{"threadId": thread}, nil)
-	return nil
+	forgetDesktopRows()
+	return codexBgNote, nil
 }
 
 // codexInterrupt stops the turn a Codex thread is running in the shared
@@ -621,19 +697,24 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "codex":
+		if e.via == "queue" {
+			note, err := s.codexQueueSend(ctx, e.Session, text)
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			if note != "" {
+				writeJSON(w, 200, map[string]any{"ok": true, "note": note})
+				return
+			}
+			break
+		}
 		send := s.codexSend
-		switch e.via {
-		case "app":
+		if e.via == "app" {
 			send = s.codexAppSend
-		case "bg":
-			send = s.codexBgSend
 		}
 		if err := send(ctx, e.Session, text); err != nil {
 			fail(w, err)
-			return
-		}
-		if e.via == "bg" {
-			writeJSON(w, 200, map[string]any{"ok": true, "note": "已发出：这一轮在 Codex 后台里跑，Codex App 不会实时显示；跑完后（本机的对话再等一分钟左右）在 Codex 里打开就能看到"})
 			return
 		}
 	case "agy":
