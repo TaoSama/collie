@@ -174,11 +174,7 @@ func (x *extension) restore() {
 	defer func() {
 		x.mu.Lock()
 		x.restoring = false
-		g := x.gateway
 		x.mu.Unlock()
-		if g == nil {
-			x.wakeOutbox()
-		}
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), hostCallTimeout)
 	defer cancel()

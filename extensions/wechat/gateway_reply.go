@@ -311,7 +311,7 @@ func (g *Gateway) ackEngineReply(item DeliveryOutboxItem, status, messageID stri
 		return nil
 	}
 	state := map[string]string{"accepted": DeliverySent, "uncertain": DeliveryUncertain, "expired": DeliveryExpired}[status]
-	if err := g.host.Delivery(extproto.Delivery{Ref: item.DeliveryKey, State: state, MessageID: messageID}); err != nil {
+	if err := g.reportDelivery(extproto.Delivery{Ref: item.DeliveryKey, State: state, MessageID: messageID}); err != nil {
 		return err
 	}
 	if err := g.answers.finish(item.DeliveryKey, state, "", messageID); err != nil {
@@ -360,7 +360,12 @@ func (g *Gateway) downloadArtifact(_ context.Context, a ResultArtifact) ([]byte,
 
 // reportResult tells Collie a result's outcome.
 func (g *Gateway) reportResult(ref, state, reason string) error {
-	return g.host.Delivery(extproto.Delivery{Ref: ref, State: state, Reason: reason})
+	return g.reportDelivery(extproto.Delivery{Ref: ref, State: state, Reason: reason})
+}
+
+func (g *Gateway) reportDelivery(d extproto.Delivery) (err error) {
+	g.loop.await(func() { err = g.host.Delivery(g.ctx, d) })
+	return err
 }
 
 // localResults is the result service over the local store.
