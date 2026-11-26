@@ -85,11 +85,6 @@ func TestServiceWorkerStamp(t *testing.T) {
 	if err := json.Unmarshal([]byte(m[1]), &shell); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"/markdown.js", "/highlight.js"} {
-		if !slices.Contains(shell, p) {
-			t.Errorf("%s is missing from the offline shell", p)
-		}
-	}
 	// One missing file fails the whole install, leaving the app uncached.
 	for _, p := range shell {
 		if p == "/" {
@@ -104,8 +99,17 @@ func TestServiceWorkerStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	refs := regexp.MustCompile(`(?i)<(?:script|link)\b[^>]*\s(?:src|href)\s*=\s*["'](/[^/"'?#][^"'?#]*)(?:[?#][^"']*)?["']`)
+	linked := []string{"/"}
+	for _, m := range refs.FindAllSubmatch(page, -1) {
+		p := string(m[1])
+		linked = append(linked, p)
+		if !slices.Contains(shell, p) {
+			t.Errorf("index.html links %s, which is missing from the offline shell", p)
+		}
+	}
 	for _, p := range shell {
-		if p != "/" && !bytes.Contains(page, []byte(`"`+p+`"`)) {
+		if !slices.Contains(linked, p) {
 			t.Errorf("shell file %s is not linked from index.html", p)
 		}
 	}

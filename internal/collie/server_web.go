@@ -20,9 +20,13 @@ var webBuildOnce struct {
 // shellFiles are what a launch needs before it can draw anything. The
 // service worker keeps them, so an installed app starts without the network.
 var shellFiles = []string{
-	"/", "/app.js", "/imgedit.js", "/threads.js", "/ext.js", "/workbench.js", "/markdown.js", "/highlight.js", "/app.css", "/skins.css", "/icon.svg", "/manifest.webmanifest",
-	"/media.css", "/workbench.css",
-	"/vendor/xterm.css", "/vendor/xterm.js", "/vendor/katex/katex.min.css", "/vendor/katex/katex.min.js",
+	"/", "/icon.svg", "/icon-512.png", "/manifest.webmanifest",
+	"/vendor/xterm.css", "/vendor/katex/katex.min.css",
+	"/app.css", "/media.css", "/inbox-message.css", "/workbench.css", "/icons.css", "/skins.css",
+	"/vendor/xterm.js", "/vendor/katex/katex.min.js",
+	"/imgedit.js", "/icons.js", "/threads.js", "/tasks.js", "/machines.js", "/ext.js",
+	"/header_status.js", "/wheel.js", "/screencache.js", "/workbench.js", "/markdown.js",
+	"/inbox-message.js", "/highlight.js", "/app.js",
 }
 
 // webBuild fingerprints the web app's files, the service worker's included.
