@@ -12,6 +12,8 @@ import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import history
+import message_view
 import richtext
 from lark_ws import PushStream
 
@@ -20,7 +22,7 @@ log = logging.getLogger("larkx")
 QR_WAITING, QR_SCANNED, QR_DONE, QR_EXPIRED, QR_FAILED = "waiting", "scanned", "done", "expired", "failed"
 QR_STATUS = {1: QR_WAITING, 2: QR_SCANNED, 3: QR_FAILED, 4: QR_FAILED, 5: QR_EXPIRED}
 
-MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM, MSG_CARD = 3, 4, 5, 6, 14
+MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM = 3, 4, 5, 6
 CHAT_P2P = 1
 CMD_PUT_MESSAGE = 5
 SIGNED_OUT_RECHECK = 2  # seconds before asking Feishu again whether a session is really gone
@@ -193,6 +195,7 @@ class Feishu:
         self._mu = threading.Lock()
         self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self.doc_comments, self.signed_out)
         self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
+        self.history = history.History(self)
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
         self.self_mention = True  # @自己唤起: @-mentioning yourself is a request
         self.ignored = False  # 来源策略 ignores this extension: nothing gets marked
@@ -305,8 +308,11 @@ class Feishu:
         """An upstream push message as the host's channel.receive message, or None."""
         mid, chat, sender = str(msg.get("msg_id") or ""), str(msg.get("chat_id") or ""), str(msg.get("from_id") or "")
         mtype = msg.get("msg_type")
-        if not mid or not chat or mtype == MSG_SYSTEM:
+        if not mid or not chat:
             return None
+        self.history.invalidate(chat)
+        if mtype == MSG_SYSTEM:
+            return None  # system notices appear in history without increasing the unread count
         with self._mu:
             if msg.get("cid") and msg["cid"] in self.own_cids:
                 return None
@@ -314,6 +320,11 @@ class Feishu:
         root = "" if root == "0" else root
         out = {"id": mid, "chat_id": chat, "sender": sender, "owner": bool(self.me) and sender == self.me}
         data = msg.get("content_data") or {}
+        view, preview = message_view.describe(self.U, msg)
+        if view:
+            out["view"] = view
+        if preview:
+            out["preview"] = preview
         if mtype in (richtext.MSG_POST, MSG_TEXT):
             text, mention = self._written(sender, data)
             if mention:
@@ -327,11 +338,8 @@ class Feishu:
                 out["images" if mtype == MSG_IMAGE else "files"] = [blob]
             else:
                 out["unsupported"] = ["图片（没能下载）" if mtype == MSG_IMAGE else "文件 %s（没能下载）" % data.get("name", "")]
-        elif mtype == MSG_CARD:
-            head = data.get("cardHeader") or {}
-            text = " ".join(x for x in ("[卡片]", head.get("title") or head.get("mainTitle") or "", data.get("cardDesc") or "") if x)
         else:
-            text = re.sub(r",?\s*(key|imageKey|stickerId)=\S+", "", msg.get("content") or "").strip()
+            text = preview
         out["text"] = text
         with self._mu:
             quoted = self.recent.get(str(msg.get("parent_id") or ""))
@@ -363,10 +371,8 @@ class Feishu:
         folded = self.folded(chat)
         if folded is not None:
             out["folded"] = folded
-        at = msg.get("create_time")
-        if at:
-            at = int(at) / (1000 if int(at) > 10 ** 12 else 1)
-            out["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+        if at := history.message_at(msg):
+            out["at"] = at
         return out
 
     def _remember(self, mid, root, text, again=False):

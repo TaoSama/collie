@@ -6,6 +6,8 @@ import time
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 
+import message_view
+
 log = logging.getLogger("larkx")
 
 CMD_PUSH_MESSAGES = 6
@@ -130,14 +132,9 @@ class PushStream:
             log.warning("push %s: %s", cmd, e)
 
     def _messages(self, payload):
-        """A PushMessagesRequest's messages, decoded by upstream; a topic group's root opens its topic."""
+        """The raw messages of a push share the same decoder as inbox history."""
         U = self.U
-        frame = U.P.Frame(payload=U.P.Packet(cmd=CMD_PUSH_MESSAGES, payload=payload).SerializeToString())
-        out = []
-        for msg in U.decoders.decode_push_messages(frame.SerializeToString()):
-            if not msg.get("from_id"):
-                continue
-            if msg["scope"] == "chat" and msg.get("chat_type") == 2 and self._get_client().is_thread_chat(msg["chat_id"]):
-                msg["scope"], msg["anchor"] = U.decoders.resolve_scope(msg["msg_id"], msg["msg_type"], 2, "", "", thread_chat=True)
-            out.append(msg)
-        return out
+        request = U.P.PushMessagesRequest()
+        request.ParseFromString(payload)
+        raw = U.decoders.protobuf_to_dict(request).get("messages") or {}
+        return [message_view.decode(U, entry) for entry in raw.values()]

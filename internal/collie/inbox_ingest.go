@@ -64,7 +64,7 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 		}
 	}()
 	if keep {
-		added, err := putInboxMsg(tx, InboxMsg{ID: in.ID, Conv: id, At: in.At, Sender: in.Sender, SenderName: in.SenderName, Mine: in.fromYou(), Text: in.Text})
+		added, err := putInboxMsg(tx, InboxMsg{ID: in.ID, Conv: id, At: in.At, Sender: in.Sender, SenderName: in.SenderName, Mine: in.fromYou(), Text: in.Text, View: in.View})
 		if err != nil {
 			return InboxConv{}, nil, fmt.Errorf("save message: %w", err)
 		}

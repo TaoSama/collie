@@ -7,7 +7,7 @@
   const TABLE_NUMBER = /^[+−-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?[%％]?$/;
   const QUOTE_LINE = /^ {0,3}&gt;[ \t]?(.*)$/;
 
-  function createRenderer({ fileLinkAttrs, filePattern, imagePattern, thumbnailURL, detectCodeLang, highlightCode }) {
+  function createRenderer({ fileLinkAttrs, filePattern = /(?!)/g, imagePattern, thumbnailURL, detectCodeLang, highlightCode, externalContent = false }) {
     // Minimal, safe Markdown: escape first, then add a little structure.
     const previewCache = new Map(), sessionCache = new Map();
     const CODE_CHIP_MAX = 24; // inline code up to this many characters is kept on one line in a table cell
@@ -278,7 +278,7 @@
               const raw = unesc(c).trim();
               const cleanP = parseInlineCodePath(raw);
               const chip = raw.length <= CODE_CHIP_MAX ? " data-chip" : "";
-              if (cleanP) {
+              if (cleanP && !externalContent) {
                 const ep = esc(cleanP);
                 scanned += keep(`<a ${fileLinkAttrs(cleanP, ep, "打开这个文件")}><code class="code-link"${chip}>${c}</code></a>`);
               } else if (isPureHttpUrl(raw)) {
@@ -365,10 +365,12 @@
         let r = scanned
           .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
           .replace(/!\[([^\]\n]*)\]\((https?:\/\/(?:[^()\s"]|\([^()\s"]*\))+)\)/g, (_, alt, u) => {
+            if (externalContent) return alt || "图片";
             const rawU = unesc(u), eu = esc(rawU);
             return keep(`<button type="button" class="md-img-btn" data-img-url="${eu}" data-img-alt="${alt}" aria-label="${alt || "查看大图"}"><img class="md-img" src="${eu}" alt="${alt}" loading="lazy"></button>`);
           })
           .replace(/!\[([^\]\n]*)\]\((?:file:\/\/)?((?:\/|~\/)[^)\s"#]+)(?:#[^)\s"]*)?\)/g, (_, alt, p) => {
+            if (externalContent) return alt || "图片";
             p = unesc(p).replace(/:\d+(?:[-:]\d+)?$/, "");
             try { p = decodeURI(p); } catch {}
             const ep = esc(p);
@@ -378,6 +380,7 @@
           .replace(/\[([^\]\n]+)\]\((https?:\/\/(?:[^()\s"]|\([^()\s"]*\))+)\)/g, (_, l, u) => keep(`<a href="${u}" target="_blank" rel="noopener noreferrer">${l}</a>`))
           // [MergeStatus.tsx](file:///…/MergeStatus.tsx#L67-L84): the name, opening the file.
           .replace(/\[([^\]\n]+)\]\((?:file:\/\/)?((?:\/|~\/)[^)\s"#]+)(?:#[^)\s"]*)?\)/g, (_, label, p) => {
+            if (externalContent) return label;
             p = unesc(p).replace(/:\d+(?:[-:]\d+)?$/, "");
             try { p = decodeURI(p); } catch {}
             const ep = esc(p);
@@ -403,6 +406,7 @@
             return keep(`<a class="url" href="${eu}" target="_blank" rel="noopener noreferrer" title="${eu}">${esc(urlLabel(u))}</a>`) + esc(tail + rest);
           })
           .replace(filePattern, (_, pre, p) => {
+            if (externalContent) return pre + p;
             const rawP = unesc(p);
             return `${pre}${keep(`<a ${fileLinkAttrs(rawP, p, "打开这个文件")}>${p}</a>`)}`;
           })

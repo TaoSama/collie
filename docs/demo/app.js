@@ -3641,16 +3641,27 @@
     return c ? `${c.label} · ${c.name || c.chat}` : thread.replace(/^ext:/, "");
   };
   const wechatThreadName = (thread) => thread?.startsWith("ext:wechat:") ? convName(thread) : thread;
-  async function loadConv() {
+  let inboxLoading = null;
+  function loadConv() {
     const id = inboxCur;
-    try {
-      const d = await api("/api/inbox/conv?id=" + encodeURIComponent(id));
-      if (id === inboxCur) inboxDetail = d;
-    } catch (err) { if (id === inboxCur) { inboxCur = ""; inboxDetail = null; toast(err.message, "attn"); } }
+    if (inboxLoading?.id === id) return inboxLoading.promise;
+    const request = { id };
+    inboxLoading = request;
+    request.promise = api("/api/inbox/conv?id=" + encodeURIComponent(id)).then((d) => {
+      if (id === inboxCur && inboxLoading === request) inboxDetail = d;
+    }).catch((err) => {
+      if (id === inboxCur && inboxLoading === request) {
+        inboxCur = ""; inboxDetail = null; toast(err.message, "attn");
+      }
+    }).finally(() => {
+      if (inboxLoading === request) inboxLoading = null;
+    });
+    return request.promise;
   }
   async function setConv(body) {
     try {
       await api("/api/inbox/conv", { body: { id: inboxCur, ...body } });
+      inboxLoading = null;
       await Promise.all([loadConv(), fetchAuto("inbox")]);
       if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
     } catch (err) { toast(err.message, "attn"); }

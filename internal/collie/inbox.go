@@ -46,6 +46,8 @@ type incomingMsg struct {
 	Mention                  bool     // you @-mentioned yourself: a request like the trigger word
 	Topic                    string   // a group topic that is a conversation of its own ("" none)
 	Text, Quote              string
+	Preview                  string
+	View                     *extproto.MessageView
 	At                       time.Time
 	Live                     bool // not history being caught up
 	Unsupported              []string
@@ -139,7 +141,7 @@ func (h *extHost) received(r *extRun, m extproto.Message) error {
 	}
 	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, Folded: m.Folded, Tags: m.ChatTags, AtMe: m.AtMe, Avatar: m.ChatAvatar, ID: m.ID, Sender: m.Sender,
 		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Mention: m.Mention, Topic: m.Thread, Text: m.Text, Quote: m.Quote, At: at, Live: true,
-		Unsupported: m.Unsupported}
+		Unsupported: m.Unsupported, Preview: m.Preview, View: m.View}
 	for _, b := range append(append([]extproto.Blob(nil), m.Images...), m.Files...) {
 		p, err := saveBlob(b)
 		if err != nil {
@@ -214,16 +216,15 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 	}
 	if !in.At.Before(c.LastAt) {
 		c.LastAt = in.At
-		preview := clip(oneLine(in.Text), inboxPreviewMost)
-		if preview == "" && len(in.Files) > 0 {
+		preview := in.Preview
+		if preview == "" {
+			preview = in.Text
+		}
+		if strings.TrimSpace(preview) == "" && len(in.Files) > 0 {
 			preview = "[附件]"
 		}
-		if preview != "" {
-			who := in.SenderName
-			if in.fromYou() {
-				who = "你"
-			}
-			c.Preview = clip(who+": "+preview, inboxPreviewMost)
+		if line := inboxPreview(preview, in.SenderName, in.fromYou()); line != "" {
+			c.Preview = line
 		}
 	}
 	if !in.fromYou() && in.Live && time.Since(in.At) < extFresh {
@@ -232,6 +233,20 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 		c.AtMe = c.AtMe || in.AtMe
 	}
 	return c
+}
+
+func inboxPreview(text, sender string, mine bool) string {
+	text = oneLine(text)
+	if text == "" {
+		return ""
+	}
+	if mine {
+		sender = "你"
+	}
+	if sender != "" {
+		text = sender + ": " + text
+	}
+	return clip(text, inboxPreviewMost)
 }
 
 func (in incomingMsg) triggerRequest(m *ExtManifest, conv InboxConv, request string, triggered bool) (string, bool) {

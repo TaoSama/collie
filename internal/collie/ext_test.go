@@ -486,6 +486,36 @@ func TestLarkxFake(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(dir, "ext", "larkx", "data", "fake-reactions.jsonl"))
 		return strings.Contains(string(b), `"message_id": "m3", "key": "OnIt"`)
 	})
+	waitFor(t, "rich inbox preview", func() bool { c, _ := h.store.conv("larkx:c_inbox"); return c.Preview != "" })
+	conv, _ := h.store.conv("larkx:c_inbox")
+	if conv.On || conv.Preview != "值班助手: [卡片] 数据库告警已恢复" || len(h.store.msgs(conv.ID, time.Time{})) != 0 {
+		t.Fatalf("closed chat stores just its preview: %+v", conv)
+	}
+	h.store.update(conv.ID, func(c *InboxConv) { c.Preview = "值班助手: [卡片]" })
+	reply := httptest.NewRecorder()
+	sp.s.inboxConv(reply, httptest.NewRequest("GET", "/api/inbox/conv?id=larkx:c_inbox", nil))
+	var detail struct{ Msgs []InboxMsg }
+	if err := json.Unmarshal(reply.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Msgs) != 5 || detail.Msgs[4].View == nil || detail.Msgs[4].View.Title != "数据库告警已恢复" {
+		t.Fatalf("history of a closed chat: %+v", detail.Msgs)
+	}
+	if upgraded, _ := h.store.conv(conv.ID); upgraded.Preview != conv.Preview {
+		t.Fatalf("history should repair the old card placeholder: %q", upgraded.Preview)
+	}
+	for i, kind := range []string{"image/png", "application/octet-stream"} {
+		path := detail.Msgs[i+1].View.Nodes[0].URL
+		if !strings.HasPrefix(path, "/api/inbox/media?") {
+			t.Fatalf("media URL does not go through hub: %q", path)
+		}
+		media := httptest.NewRecorder()
+		sp.s.inboxMedia(media, httptest.NewRequest("GET", path, nil))
+		if media.Code != 200 || media.Header().Get("Content-Type") != kind || media.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("media %d: %d %v", i, media.Code, media.Header())
+		}
+	}
+
 	// Read state: Feishu's counts stand over Collie's;
 	// what you read here stays read, and is marked read in Feishu once
 	// read-back is on (a switch of Collie's: the program keeps running).

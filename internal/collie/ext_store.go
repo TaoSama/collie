@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/TaoSama/collie/internal/extproto"
 )
 
 // What the hub keeps of extension conversations (extensions/README.md §4,
@@ -153,14 +155,15 @@ func (c *InboxConv) setAsk(topic string, change func(*ConvAsk)) {
 
 // InboxMsg is one message of an open conversation.
 type InboxMsg struct {
-	ID         string    `json:"id"`
-	Conv       string    `json:"conv"`
-	At         time.Time `json:"at"`
-	Sender     string    `json:"sender,omitempty"`
-	SenderName string    `json:"sender_name,omitempty"`
-	Mine       bool      `json:"mine,omitempty"`
-	Text       string    `json:"text"`
-	Ref        string    `json:"ref,omitempty"` // a send of Collie's: its outbox ref
+	ID         string                `json:"id"`
+	Conv       string                `json:"conv"`
+	At         time.Time             `json:"at"`
+	Sender     string                `json:"sender,omitempty"`
+	SenderName string                `json:"sender_name,omitempty"`
+	Mine       bool                  `json:"mine,omitempty"`
+	Text       string                `json:"text"`
+	Ref        string                `json:"ref,omitempty"` // a send of Collie's: its outbox ref
+	View       *extproto.MessageView `json:"view,omitempty"`
 }
 
 // OutboxItem is one send to a conversation.

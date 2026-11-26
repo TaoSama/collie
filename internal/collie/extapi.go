@@ -43,6 +43,7 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("POST /api/ext/{id}/do", s.extDo)
 	api("GET /api/inbox", s.inboxList)
 	api("GET /api/inbox/conv", s.inboxConv)
+	api("GET /api/inbox/media", s.inboxMedia)
 	api("POST /api/inbox/conv", s.inboxSetConv)
 	api("POST /api/inbox/read", s.inboxRead)
 	api("GET /api/inbox/avatar", s.inboxAvatar)
@@ -287,7 +288,15 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 	for _, o := range s.ext.store.outs(`conv = ?`, id) {
 		outs[o.Ref] = o
 	}
-	writeJSON(w, 200, map[string]any{"conv": s.convView(c), "msgs": s.ext.store.msgs(id, time.Time{}), "outbox": outs})
+	msgs := s.ext.store.msgs(id, time.Time{})
+	if !c.On {
+		msgs = nil // a closed conversation shows its source window, never saved request context
+	}
+	msgs, unavailable := s.inboxRecent(r.Context(), &c, msgs, outs)
+	for i := range msgs {
+		s.inboxMediaURLs(c.ID, &msgs[i])
+	}
+	writeJSON(w, 200, map[string]any{"conv": s.convView(c), "msgs": msgs, "outbox": outs, "history_unavailable": unavailable})
 }
 
 func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {

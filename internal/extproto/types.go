@@ -30,6 +30,8 @@ const (
 	MActionsDo      = "connector.actions.do"
 	MHeaderStatus   = "connector.header_status"
 	MChannelSend    = "channel.send"
+	MInboxRecent    = "connector.inbox.recent"
+	MInboxMedia     = "connector.inbox.media"
 )
 
 // Methods and events the extension sends.
@@ -201,14 +203,52 @@ type Message struct {
 	AtMe bool `json:"at_me,omitempty"`
 	// Mention: the signed-in person @-mentioned themselves (the @ already
 	// taken out of Text): a request like the trigger word.
-	Mention     bool     `json:"mention,omitempty"`
-	At          string   `json:"at,omitempty"`
-	Quote       string   `json:"quote,omitempty"`
-	Forward     string   `json:"forward,omitempty"`
-	Thread      string   `json:"thread,omitempty"`
-	Images      []Blob   `json:"images,omitempty"`
-	Files       []Blob   `json:"files,omitempty"`
-	Unsupported []string `json:"unsupported,omitempty"`
+	Mention     bool         `json:"mention,omitempty"`
+	At          string       `json:"at,omitempty"`
+	Quote       string       `json:"quote,omitempty"`
+	Forward     string       `json:"forward,omitempty"`
+	Thread      string       `json:"thread,omitempty"`
+	Images      []Blob       `json:"images,omitempty"`
+	Files       []Blob       `json:"files,omitempty"`
+	Unsupported []string     `json:"unsupported,omitempty"`
+	Preview     string       `json:"preview,omitempty"`
+	View        *MessageView `json:"view,omitempty"`
+}
+
+// MessageView carries readable content independently of the text used for requests.
+type MessageView struct {
+	Kind     string        `json:"kind"`
+	Title    string        `json:"title,omitempty"`
+	Subtitle string        `json:"subtitle,omitempty"`
+	Tone     string        `json:"tone,omitempty"`
+	URL      string        `json:"url,omitempty"`
+	Start    string        `json:"start,omitempty"`
+	End      string        `json:"end,omitempty"`
+	AllDay   bool          `json:"all_day,omitempty"`
+	Nodes    []MessageNode `json:"nodes,omitempty"`
+}
+
+type MessageNode struct {
+	Kind     string        `json:"kind"`
+	Text     string        `json:"text,omitempty"`
+	Tone     string        `json:"tone,omitempty"`
+	URL      string        `json:"url,omitempty"`
+	Key      string        `json:"key,omitempty"` // source-specific attachment key, converted to a hub URL
+	Children []MessageNode `json:"children,omitempty"`
+}
+
+type InboxRecentRequest struct {
+	ChatID string `json:"chat_id"`
+}
+
+type InboxRecentResult struct {
+	Messages []Message `json:"messages"`
+}
+
+type InboxMediaRequest struct {
+	ChatID    string `json:"chat_id"`
+	MessageID string `json:"message_id"`
+	Key       string `json:"key"`
 }
 
 type Receive struct {

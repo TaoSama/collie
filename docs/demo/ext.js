@@ -325,7 +325,8 @@
       const n = c.unread > 0 ? c.unread : 0, kind = KIND[c.kind] || c.kind || "";
       const name = c.name || c.chat;
       // A direct chat's preview needn't repeat who it is with.
-      const preview = c.kind === "dm" && c.preview?.startsWith(name + ": ") ? c.preview.slice(name.length + 2) : c.preview || "";
+      const line = c.ext === "larkx" ? collieInboxMessage.legacyPreview(c.preview) : c.preview || "";
+      const preview = c.kind === "dm" && line.startsWith(name + ": ") ? line.slice(name.length + 2) : line;
       return `<li class="row inbox-row${n ? " unread" : ""}${c.id === cur ? " sel" : ""}" data-conv="${esc(c.id)}">
         ${avatar(c, `${c.label} · ${kind}`)}
         <div class="inbox-main">
@@ -334,7 +335,7 @@
           ${c.on ? outLine(c.out) : ""}
         </div></li>`;
     };
-    const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。没打开的会话只留最后一条预览。</p>`;
+    const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。飞书会话可查看最近消息。</p>`;
     if (!convs.length) return intro + `<div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
     const sub = parseFilter(r, filter).sub;
     // 全部已读 heads the list; on a phone it sits beside the folded source list instead.
@@ -358,18 +359,24 @@
     const worker = c.worker ? (href ? `<a href="${esc(href)}">${esc(c.worker)} →</a>` : esc(c.worker)) : "";
     const msg = (m) => {
       const o = m.ref ? outs[m.ref] : null;
-      return `<li class="conv-msg ${m.mine ? "mine" : ""}"><div class="meta"><b>${esc(m.mine ? "你" : m.sender_name || "")}</b><span>${when(m.at)}</span>${o ? outLine(o) : ""}</div>
-        <div class="msg ${m.ref ? "assistant" : ""}">${m.ref ? md(m.text) : esc(m.text)}</div></li>`;
+      const rich = m.view && !m.ref;
+      const sender = m.mine ? "你" : m.sender_name;
+      const text = c.ext === "larkx" ? collieInboxMessage.legacyPreview(m.text) : m.text;
+      return `<li class="conv-msg ${m.mine ? "mine" : ""}"><div class="meta">${sender ? `<b>${esc(sender)}</b>` : ""}<span>${when(m.at)}</span>${o ? outLine(o) : ""}</div>
+        <div class="msg ${rich ? "im-rich" : m.ref ? "assistant" : ""}">${rich ? collieInboxMessage.render(m.view) : m.ref ? md(m.text) : esc(text)}</div></li>`;
     };
     return `<div class="card conv-card">
       <div class="card-h"><span class="conv-title">${avatar(c)}<span${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</span></span><button type="button" class="icon-btn conv-close" data-conv-close title="返回">×</button></div>
       <div class="form">
-        <div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button><span><b>处理这个会话</b>${c.on ? "" : `<small class="muted">打开后，以 ${esc(trigger || "/ai")} 开头的消息交给 agent，并开始保存这个会话的消息</small>`}</span></div>
+        <div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button><span><b>处理这个会话</b>${c.on ? "" : `<small class="muted">打开后，以 ${esc(trigger || "/ai")} 开头的消息交给 agent，并保存会话上下文</small>`}</span></div>
         ${c.on ? `<div class="conv-rule"><span class="tm-lab">谁能唤起</span>${seg("anyone", !!c.anyone, [[false, "只有我"], [true, "任何人"]])}</div>
           ${c.anyone ? `<p class="ext-warn">任何人都能唤起时，专属 agent 在隔离目录里工作，但那不是沙箱：只对信任的群打开。</p>` : ""}
           <div class="conv-rule"><span class="tm-lab">交给</span>${seg("handler", c.handler, [["collie", "Collie"], ["agent", "专属 agent"]])}${c.handler === "agent" ? `<span class="muted">${worker || "第一次唤起时启动"}</span>` : ""}</div>` : ""}
       </div>
-      ${c.on ? `<ul class="conv-msgs">${msgs.slice().reverse().map(msg).join("") || `<li class="empty-row">打开以后的消息会出现在这里</li>`}</ul>` : `<div class="empty-row">${esc(c.preview || "")}</div>`}
+      ${msgs.length ? `<ul class="conv-msgs" aria-label="最近消息">${msgs.slice().reverse().map(msg).join("")}</ul>`
+        : `<div class="empty-row">${esc(c.ext === "larkx" ? collieInboxMessage.legacyPreview(c.preview) : c.preview || "")
+          || (c.on ? "打开以后的消息会出现在这里" : "暂无消息")}</div>`}
+      ${d.history_unavailable ? `<div class="empty-row">暂时无法从飞书读取最近消息</div>` : ""}
     </div>`;
   }
 

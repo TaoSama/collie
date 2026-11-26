@@ -7,6 +7,7 @@ import os
 import threading
 import time
 
+import inbox_example
 import lark
 import richtext
 
@@ -25,6 +26,8 @@ class Fake:
         self.trigger = ""
         self.ignored = False
         self.marked = set()
+        self.history = self
+        self.inbox = list(inbox_example.messages(U))
 
     def restore(self, saved):
         if saved and saved.get("unreachable_once") and not getattr(self, "_tried", False):
@@ -69,8 +72,21 @@ class Fake:
             if m["owner"] and not self.ignored and lark.is_request(m["text"], self.trigger):
                 self.mark_working(m["id"])
             on_message(m)
+        for m in self.inbox:
+            if m["id"] in (inbox_example.CARD_ID, "8006"):
+                on_message(m)
         while not stop.is_set() and self.signed_in:
             self.wake.wait(1)
+
+    def recent(self, chat):
+        return [m for m in self.inbox if m["chat_id"] == chat]
+
+    def media(self, chat, mid, key):
+        if (chat, mid, key) == (inbox_example.CHAT, "8002", "img_v3_example"):
+            return {"mime": "image/png", "data": inbox_example.PIXEL}
+        if (chat, mid, key) == (inbox_example.CHAT, "8003", "file_example"):
+            return {"mime": "text/plain", "data": "ZXhhbXBsZSBpbmJveCBmaWxl"}
+        raise ValueError("示例附件不存在")
 
     # Unread counts as the fake Feishu has them: more than came while Collie ran.
     UNREAD = {"c_dm": 3, "c_group": 2}

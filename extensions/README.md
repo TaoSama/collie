@@ -106,6 +106,7 @@ COLLIE_HOME/ext/<id>/
 | `working` | `channel.working` | Collie 接下一条请求时告诉扩展，扩展在原应用里标出「在处理」（飞书：表情回复） |
 | `header_status` | `connector.header_status` | 在会话页顶部标题栏右侧槽位显示结构化状态与明细弹层 |
 | `read` | `connector.read.state`、`connector.read.mark` | 原应用自己的未读数，以及把在 Collie 里读过的会话在原应用里标为已读 |
+| `inbox_recent` | `connector.inbox.recent`、`connector.inbox.media` | 收件箱详情按需读取最近消息和附件 |
 
 三类扩展：
 
@@ -174,6 +175,8 @@ COLLIE_HOME/ext/<id>/
 
 `actions` 方式发消息时，`connector.send_action` 指定的动作参数为 `{chat, text, reply_to?}`，`request_id` 就是 Collie 的 `ref`。
 
+带 `inbox_recent` 能力的扩展提供 `connector.inbox.recent({chat_id}) → {messages}` 和 `connector.inbox.media({chat_id, message_id, key}) → {mime, data}`。前者返回最旧到最新的消息，不触发请求或改变已读状态。消息可带 `preview`（一行可读摘要）和 `view`（带类型的正文结构，见 `internal/extproto/types.go`），推送也可带这两项。附件的 `key` 来自对应消息，hub 生成仅登录用户可访问的签名地址。附件内容沿用 base64，最多 20 MB。
+
 ### 3.4 扩展调用 Collie 的方法和事件
 
 | 方法 / 事件 | 参数 | 应答 / 说明 |
@@ -181,7 +184,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.secrets.load` | `{contribution}` | `{data?}`：上次存的 base64 |
 | `connector.secrets.save` | `{contribution, data}` | `{}`。在扩展所在的电脑上写 `secrets.json`，不经过 hub |
 | `connector.secrets.delete` | `{contribution}` | `{}` |
-| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, folded?, chat_tags?, chat_avatar?, at_me?, mention?, thread?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。`folded`：在原应用的会话列表里被折叠了，收件箱不列出它。`chat_avatar`：会话的头像，一个 https 地址，主机必须在清单的 `permissions.network` 里；hub 去取并缓存一天（`COLLIE_HOME/cache/avatars/`），页面经 `/api/inbox/avatar` 向 hub 要，浏览器不直连原应用的 CDN。`at_me`：别人在这条消息里 @ 了你或 @所有人，收件箱的「@我」据此列出未读的会话。`chat_tags`：会话在种类之外的身份（例如项目工具为某个缺陷建的群），供 `x-hide` 的 `tag:` 规则使用；知道才写，Collie 记下最近一次写的。`mention`：本人在消息里真的 @ 了自己（扩展已经把这个 @ 从 `text` 里去掉），和触发词一样算请求。`thread`：群里自成一段对话的话题；有它时，这条请求进 `ext:<id>:<chat_id>#<thread>` 线程，有自己的专属 agent，回复挂在这个话题的请求下。私聊不带。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
+| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, folded?, chat_tags?, chat_avatar?, at_me?, mention?, thread?, at?, quote?, images?, files?, unsupported?, preview?, view?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。`folded`：在原应用的会话列表里被折叠了，收件箱不列出它。`chat_avatar`：会话的头像，一个 https 地址，主机必须在清单的 `permissions.network` 里；hub 去取并缓存一天（`COLLIE_HOME/cache/avatars/`），页面经 `/api/inbox/avatar` 向 hub 要，浏览器不直连原应用的 CDN。`at_me`：别人在这条消息里 @ 了你或 @所有人，收件箱的「@我」据此列出未读的会话。`chat_tags`：会话在种类之外的身份（例如项目工具为某个缺陷建的群），供 `x-hide` 的 `tag:` 规则使用；知道才写，Collie 记下最近一次写的。`mention`：本人在消息里真的 @ 了自己（扩展已经把这个 @ 从 `text` 里去掉），和触发词一样算请求。`thread`：群里自成一段对话的话题；有它时，这条请求进 `ext:<id>:<chat_id>#<thread>` 线程，有自己的专属 agent，回复挂在这个话题的请求下。私聊不带。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
 | 事件 `connector.changed` | `{contribution, scope: inbox\|chats\|status\|outbox}` | 有新消息或状态变了；有 `archive` 能力时 Collie 收到就去拉。最多每 3 秒一次 |
 | 事件 `channel.delivery` | `{contribution, ref, state: sent\|deferred\|uncertain\|failed\|expired, message_id?, reason?}` | 一次发送最后怎样了。`uncertain` 表示可能已发出，**不会再重发** |
 
@@ -289,7 +292,7 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 - **网络**：`permissions.network` 只在界面上展示，Collie 不做出网限制，也不做沙箱。Collie 运行内置目录里的扩展，以及你自己放进本地目录的扩展（第 9 节）；后者 Collie 不校验内容，接入页会写明。
 - **凭证**：登录态只能通过 `connector.secrets.*` 存取，落在扩展所在电脑的 `secrets.json`（0600），不上传 hub。
 - **日志**：不写 token、cookie、消息正文、手机号；错误只写类别。
-- **消息正文**：hub 只保存已打开处理的会话的最近 50 条，其余会话只留名字和一行预览。
+- **消息正文**：hub 只保存已打开处理的会话的最近 50 条，其余会话只留名字和一行预览。支持 `inbox_recent` 的扩展可在打开详情时按需读取最近消息，这部分不写入 hub 的消息库。
 - **代人发言**：扩展以你的身份发消息时，必须让接收方能分辨这是 AI 发的。Collie 的尾标做到了这一点，扩展不要再去掉或改写正文。只有回复由一个单独的 bot 账号发出的渠道（微信）才可以用 `no_footer` 去掉尾标。
 - **别人唤起**：会话打开「任何人可唤起」后，专属 agent 的工作目录是 `COLLIE_HOME/ext-sandbox/<会话>`。这只是默认工作目录，不是沙箱。
 
