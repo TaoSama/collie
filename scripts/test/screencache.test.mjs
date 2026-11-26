@@ -203,3 +203,65 @@ test("dedicated scroll-indicator rows (Codex Back-to-bottom, agy ↓ N lines) ne
   assert.equal(sb.atBottom, false);
   assert.ok(sb.unknownBelow > 0);
 });
+
+test("remote-RTT regression: unchanged frames never trip hitTop, and dragging top->bottom reaches 1.0 on Claude and agy", () => {
+  for (const [kind, make] of [["claude", makeClaudeFrame], ["agy", makeAgyFrame]]) {
+    const c = createScreenCache();
+    c.ingest(make(138, { sticky: false }), { pane: "w1:p1", kind, cols: 120, rows: 40, hist: 184, now: 100 });
+    // Cold miss up
+    const s1 = c.scroll(-4, 200);
+    assert.equal(s1.hit, false);
+    // An unrelated status/cursor frame arrives 80ms later (same body) while POST is still in flight
+    const unchanged = c.ingest(make(138, { sticky: false }), { pane: "w1:p1", kind, cols: 120, rows: 40, now: 280 });
+    assert.equal(unchanged.changed, false);
+    assert.equal(c.state().hitTop, false, `${kind}: unchanged frame must not falsely trip hitTop`);
+    assert.ok(c.scrollbar().total >= 184, `${kind}: total must not collapse before reaching top`);
+
+    // A single confirmed no-op POST when hist indicates far more lines above still does not trip hitTop
+    assert.equal(c.noteNoChangeAfterUp(), false);
+    assert.equal(c.state().hitTop, false);
+
+    // Real older lines finally arrive -> prepends and keeps hitTop=false
+    const r1 = c.ingest(make(130, { sticky: true }), { pane: "w1:p1", kind, cols: 120, rows: 40, now: 500 });
+    assert.ok(r1.prepended > 0);
+    assert.equal(c.state().hitTop, false);
+    assert.ok(c.scrollbar().total >= 184, `${kind}: total stays >= 184 while unseen history remains`);
+
+    // Simulate reaching top, then dragging all the way back to bottom (0.97 / 1.0)
+    c.scroll(-4, 600);
+    c.noteNoChangeAfterUp();
+    c.scroll(-4, 700);
+    c.noteNoChangeAfterUp();
+    assert.equal(c.state().hitTop, true);
+    assert.equal(c.scrollbar().ratio, 0);
+
+    const dragEnd = c.scrollToRatio(0.97, 800);
+    assert.equal(dragEnd.goHome, true, `${kind}: dragging near bottom must return home`);
+    assert.equal(c.scrollbar().atBottom, true, `${kind}: atBottom must be true`);
+    assert.equal(c.scrollbar().ratio, 1, `${kind}: ratio must reach 1.0 (not 0.833/0.857)`);
+  }
+});
+
+test("disjoint PageUp drag to top stays scrolled up and dragging back to bottom returns home", () => {
+  for (const [kind, make] of [["codex", makeCodexFrame], ["agy", makeAgyFrame]]) {
+    const c = createScreenCache();
+    c.ingest(make(138, { sticky: false }), { pane: "w2:p1", kind, cols: 120, rows: 40, hist: 184, now: 100 });
+    // User drags scrollbar straight to ratio 0 -> disjoint PageUp jump
+    const dragTop = c.scrollToRatio(0, 200);
+    assert.ok(dragTop.pageUp > 0, `${kind}: dragging far above cache should request PageUp`);
+    // Agent responds with much older disjoint frame (no overlap with cached bottom)
+    const older = make(20, { sticky: true });
+    if (kind === "codex") older[33] = "                    ↓ Back to bottom · esc                    ";
+    if (kind === "agy") older[35] = "                                                         ↓ 120 lines";
+    c.ingest(older, { pane: "w2:p1", kind, cols: 120, rows: 40, now: 300 });
+    const sbTop = c.scrollbar();
+    assert.equal(sbTop.atBottom, false, `${kind}: disjoint PageUp frame must not snap back to atBottom`);
+    assert.ok(sbTop.ratio < 0.5, `${kind}: disjoint PageUp frame should stay near top (got ${sbTop.ratio})`);
+
+    // Dragging back to bottom returns home cleanly at ratio 1.0
+    const dragBot = c.scrollToRatio(0.98, 400);
+    assert.equal(dragBot.goHome, true, `${kind}: dragging from disjoint top to bottom must trigger goHome`);
+    assert.equal(c.scrollbar().atBottom, true);
+    assert.equal(c.scrollbar().ratio, 1);
+  }
+});

@@ -5453,7 +5453,7 @@
   let term = null;
   let size = { cols: 0, rows: 0 };
   let prevScreenLines = null;
-  let rawScreenLines = null;
+  let sseScreenLines = null;
   let pendingScreen = null;
   let screenFresh = true;
   let screenWheel = false; // the frame says: hand the wheel to the program (paneWheel)
@@ -5464,11 +5464,30 @@
   let topProbeTimer = null;
   let pageUpBusy = false;
   let pendingScrollPerf = null;
+  let lastWheelRtt = 80;
+  let screenPrependGen = 0;
   const screenPerfLog = (window.__collieScreenPerf = []);
   const wheelUp = window.collieWheel.tracker(); // how far that turned the program's view up
-  // The reports go out a few at a time, in line with typed keys.
-  const wheelOut = window.collieWheel.sender((pane, text) =>
-    (sendChain = sendChain.then(() => postPane(pane, "text", { text })).catch((e) => toast(e.message))));
+  // Wheel reports go out BURST at a time, strictly one request in flight
+  // (wheel.js sender), without waiting behind unrelated sendChain work. Upward
+  // wheel sends ask the server to return the updated frame inline (wait: true)
+  // so cold misses over remote hubs finish in one round trip.
+  const wheelOut = window.collieWheel.sender((pane, text) => {
+    const isUp = text.includes("\x1b[<64;");
+    const genBefore = screenPrependGen;
+    const tSent = performance.now();
+    return postPane(pane, "text", isUp ? { text, wait: true } : { text })
+      .then((data) => {
+        const rtt = performance.now() - tSent;
+        lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
+        if (pane !== current || curMode() !== "screen") return;
+        if (data?.frame) drawScreen(data.frame, null, true);
+        if (isUp && screenPrependGen === genBefore) {
+          armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));
+        }
+      })
+      .catch((e) => toast(e.message));
+  });
   function cancelScreenScrollTimers() {
     clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
     clearTimeout(topProbeTimer); topProbeTimer = null;
@@ -5524,7 +5543,7 @@
   }
   function resetScreen() {
     prevScreenLines = null;
-    rawScreenLines = null;
+    sseScreenLines = null;
     pendingScreen = null;
     setTermLook(null);
     screenFresh = true;
@@ -5577,7 +5596,12 @@
     addEventListener("collie:theme", () => {
       term.options.theme = termTheme();
       term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
+      fitTerm();
     });
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => { if (curMode() === "screen") fitTerm(); }).observe($("#screen"));
+    }
+    document.fonts?.ready?.then(() => { if (curMode() === "screen") fitTerm(); });
   }
   function updateScreenScrollbar() {
     const sbEl = $("#screen-sb"), thumb = $("#screen-sb-thumb");
@@ -5616,22 +5640,37 @@
     updateScreenScrollbar();
   }
 
-  function sendScreenPageUp() {
+  function sendScreenPageUp(count = 1) {
     if (!current || pageUpBusy) return;
     pageUpBusy = true;
+    const n = Math.min(6, Math.max(1, count | 0));
     const pane = current;
-    wheelUp.scrolled(pane, -Math.max(10, (size.rows || 40) - 8));
-    sendChain = sendChain.then(() => postPane(pane, "text", { text: window.collieWheel.PAGE_UP }))
+    const genBefore = screenPrependGen;
+    const tSent = performance.now();
+    wheelUp.scrolled(pane, -n * Math.max(10, (size.rows || 40) - 8));
+    postPane(pane, "text", { text: window.collieWheel.PAGE_UP.repeat(n), wait: true })
+      .then((data) => {
+        const rtt = performance.now() - tSent;
+        lastWheelRtt = lastWheelRtt * 0.6 + rtt * 0.4;
+        if (pane !== current || curMode() !== "screen") return;
+        if (data?.frame) drawScreen(data.frame, null, true);
+        if (screenPrependGen === genBefore) {
+          armTopProbe(Math.max(400, Math.round(lastWheelRtt * 1.5 + 220)));
+        }
+      })
       .catch((e) => toast(e.message))
       .finally(() => { pageUpBusy = false; });
   }
 
-  function armTopProbe() {
+  function armTopProbe(delayMs = 450) {
     clearTimeout(topProbeTimer);
     topProbeTimer = setTimeout(() => {
       topProbeTimer = null;
-      if (screenCache.noteNoChangeAfterUp()) updateScreenScrollbar();
-    }, 240);
+      if (screenCache.noteNoChangeAfterUp()) {
+        pendingScrollPerf = null;
+        updateScreenScrollbar();
+      }
+    }, delayMs);
   }
 
   function scheduleAgentSync(syncDelta) {
@@ -5651,12 +5690,11 @@
       wheelUp.scrolled(current, ticks);
       wheelOut.scroll(current, ticks, size.cols, size.rows);
       screenCache.noteAgentSync(ticks);
-      if (ticks < 0) armTopProbe();
     }, 85);
   }
 
   function paintScreenLines(lines, cols, paneRows, cursor, { stick = false, savedTop = 0, perf = null } = {}) {
-    if (!term) return;
+    if (!term) return false;
     const el = $("#screen");
     const rows = screenWheel ? Math.max(paneRows || 1, lines.length) : Math.max(1, lines.length);
     const dimChanged = cols !== size.cols || paneRows !== size.rows;
@@ -5693,7 +5731,7 @@
         if (screenNearBottom()) hideJump(); else $("#jump").hidden = false;
       }
     };
-    if (!out) { finishScroll(); return; }
+    if (!out) { finishScroll(); return false; }
     term.write(out, () => {
       finishScroll();
       if (perf) {
@@ -5713,6 +5751,7 @@
         requestAnimationFrame(finishScroll);
       }
     });
+    return true;
   }
 
   // An agent drawing fullscreen keeps its history to itself, so once the
@@ -5730,6 +5769,7 @@
     let rest = 0;
     // dy < 0 is toward older output.
     const scrollPane = (dy) => {
+      if (rest && Math.sign(rest) !== Math.sign(dy)) rest = 0;
       rest += dy;
       const n = Math.trunc(rest / lineH());
       if (!n) return;
@@ -5750,10 +5790,11 @@
       if (res.sendTicks) {
         clearTimeout(scrollSyncTimer);
         scrollSyncTimer = null;
+        clearTimeout(topProbeTimer);
+        topProbeTimer = null;
         if (!res.hit) pendingScrollPerf = { t0, hit: false };
         wheelUp.scrolled(current, res.sendTicks);
         wheelOut.scroll(current, res.sendTicks, size.cols, size.rows);
-        if (res.sendTicks < 0) armTopProbe();
       } else if (res.syncDelta) {
         scheduleAgentSync(res.syncDelta);
       }
@@ -5766,11 +5807,14 @@
     // Real right-edge scrollbar: click track or drag thumb smoothly.
     const sbEl = $("#screen-sb"), thumb = $("#screen-sb-thumb");
     if (sbEl && thumb) {
-      let dragging = false, grabOff = 0, lastDragPageAt = 0;
+      let dragging = false, grabFrac = 0.5, lastDragPageAt = 0;
       const ratioFromY = (clientY) => {
         const rect = sbEl.getBoundingClientRect();
+        if (clientY <= rect.top + 6) return 0;
+        if (clientY >= rect.bottom - 6) return 1;
         const th = thumb.offsetHeight || 28;
         const maxTop = Math.max(1, rect.height - th);
+        const grabOff = grabFrac * th;
         return Math.max(0, Math.min(1, (clientY - rect.top - grabOff) / maxTop));
       };
       const scrubTo = (ratio) => {
@@ -5787,17 +5831,17 @@
           sendScreenHome();
         } else if (res.pageUp) {
           clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
+          clearTimeout(topProbeTimer); topProbeTimer = null;
           wheelOut.drop();
           if (t0 - lastDragPageAt > 60) {
             lastDragPageAt = t0;
-            sendScreenPageUp();
-            armTopProbe();
+            sendScreenPageUp(res.pageUp);
           }
         } else if (res.sendTicks) {
           clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
+          clearTimeout(topProbeTimer); topProbeTimer = null;
           wheelUp.scrolled(current, res.sendTicks);
           wheelOut.scroll(current, res.sendTicks, size.cols, size.rows);
-          armTopProbe();
         } else if (res.syncDelta) {
           scheduleAgentSync(res.syncDelta);
         }
@@ -5806,7 +5850,9 @@
         if (!on() || e.button !== 0) return;
         e.preventDefault();
         const tr = thumb.getBoundingClientRect();
-        grabOff = (e.clientY >= tr.top && e.clientY <= tr.bottom) ? (e.clientY - tr.top) : (tr.height / 2);
+        grabFrac = (e.clientY >= tr.top && e.clientY <= tr.bottom && tr.height > 0)
+          ? (e.clientY - tr.top) / tr.height
+          : 0.5;
         dragging = true;
         sbEl.classList.add("drag");
         sbEl.setPointerCapture?.(e.pointerId);
@@ -5881,17 +5927,41 @@
     const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
     const fitW = Math.floor(((el.clientWidth - padX) / size.cols / 0.602) * 2) / 2;
     const overview = store.get("term-overview", false);
-    let fs = narrowScreen.matches && !overview ? Math.min(14, Math.max(fitW, 11)) : Math.max(4.5, Math.min(14, fitW));
-    // Fullscreen agents (screenWheel) own their scrollback: fit all pane rows
-    // inside #screen vertically too so native overflow never clips or bounces
-    // the top line on laptop viewports.
-    if (screenWheel && size.rows && (!narrowScreen.matches || overview) && el.clientHeight > padY + 40) {
-      const maxCellH = Math.floor((el.clientHeight - padY) / size.rows);
-      const fitH = Math.floor((maxCellH / (term.options.lineHeight + 0.04)) * 2) / 2;
-      if (fitH >= 8) fs = Math.min(fs, fitH);
+    const maxFs = narrowScreen.matches && !overview ? Math.min(14, Math.max(fitW, 11)) : Math.max(4.5, Math.min(14, fitW));
+    let fs = maxFs;
+    // Fullscreen agents (screenWheel) own their scrollback: measure xterm's
+    // real cell height (font glyph ascent+descent × lineHeight) and fit all
+    // pane rows inside #screen vertically so no viewport clips the bottom row.
+    const fitVert = screenWheel && size.rows && (!narrowScreen.matches || overview) && el.clientHeight > padY + 40;
+    const availH = el.clientHeight - padY;
+    const measureRowsH = () => {
+      const cellH = term._core?._renderService?.dimensions?.css?.cell?.height;
+      if (cellH > 0) return cellH * size.rows;
+      const rowsEl = el.querySelector(".xterm-rows");
+      return rowsEl ? rowsEl.getBoundingClientRect().height : 0;
+    };
+    if (fitVert) {
+      const est = Math.floor(((availH / size.rows) / (term.options.lineHeight * 1.24)) * 2) / 2;
+      if (est >= 7) fs = Math.min(fs, est);
     }
-    if (term.options.fontSize !== fs) {
-      term.options.fontSize = fs;
+    const prevFs = term.options.fontSize;
+    if (term.options.fontSize !== fs) term.options.fontSize = fs;
+    if (fitVert) {
+      // Closed-loop exact fit: step up if we were conservative, then step down
+      // until the real measured terminal height fits inside availH with 0 clip.
+      for (let i = 0; i < 4 && fs + 0.5 <= maxFs; i++) {
+        const tryFs = fs + 0.5;
+        term.options.fontSize = tryFs;
+        if (measureRowsH() <= availH && el.scrollHeight <= el.clientHeight) fs = tryFs;
+        else { term.options.fontSize = fs; break; }
+      }
+      for (let i = 0; i < 10 && fs > 7; i++) {
+        if (measureRowsH() <= availH && el.scrollHeight <= el.clientHeight) break;
+        fs = Math.max(7, fs - 0.5);
+        term.options.fontSize = fs;
+      }
+    }
+    if (term.options.fontSize !== prevFs || fitVert) {
       if (was && !screenWheel) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; hideJump(); });
       else if (screenWheel) requestAnimationFrame(() => { if (el.scrollHeight <= el.clientHeight + 2) el.scrollTop = 0; updateScreenScrollbar(); });
     }
@@ -5991,7 +6061,7 @@
     if (home) sendChain = sendChain.then(() => postPane(home.pane, "text", { text: home.text })).catch((e) => toast(e.message));
   }
 
-  function drawScreen(f, restore = null) {
+  function drawScreen(f, restore = null, inline = false) {
     if (!term) return;
     const sseNow = performance.now();
     setScreenWheel(!!f.wheel);
@@ -6000,8 +6070,9 @@
     const el = $("#screen");
     const stick = restore ? !!restore.atBottom : (screenFresh || screenNearBottom());
     setTermLook(f.kind);
-    const decoded = window.collieScreenCache.applyFramePatch(rawScreenLines, f);
-    rawScreenLines = decoded;
+    const decoded = inline
+      ? window.collieScreenCache.applyFramePatch(null, f)
+      : (sseScreenLines = window.collieScreenCache.applyFramePatch(sseScreenLines, f));
     if (!screenFresh && term.hasSelection()) {
       pendingScreen = f;
       return;
@@ -6026,22 +6097,27 @@
     let cursor = !!f.cursor;
     let perf = null;
     if (screenWheel) {
-      clearTimeout(topProbeTimer);
-      topProbeTimer = null;
       const ing = screenCache.ingest(decoded, {
         pane: current, kind: screenKind, cols, rows: paneRows, hist: f.hist || 0, now: sseNow,
       });
+      if (ing.prepended > 0) {
+        screenPrependGen++;
+        clearTimeout(topProbeTimer);
+        topProbeTimer = null;
+      }
       lines = ing.renderLines;
       cursor = ing.atBottom ? !!f.cursor : false;
-      if (pendingScrollPerf) {
+      if (pendingScrollPerf && ing.changed) {
         perf = { t0: pendingScrollPerf.t0, hit: false, sseMs: sseNow - pendingScrollPerf.t0 };
-        pendingScrollPerf = null;
       }
     } else if (lines.length > 0) {
       lines = lines.slice();
       lines[0] = window.collieScreenCache.polishClaudeRow0(lines[0], screenKind);
     }
-    paintScreenLines(lines, cols, paneRows, cursor, { stick, savedTop, perf });
+    const painted = paintScreenLines(lines, cols, paneRows, cursor, { stick, savedTop, perf });
+    if (painted && perf && pendingScrollPerf && pendingScrollPerf.t0 === perf.t0) {
+      pendingScrollPerf = null;
+    }
   }
   function cleanLog(text) {
     return text.split("\n").map((l) => l.replace(/\s+$/, ""))

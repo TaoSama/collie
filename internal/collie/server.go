@@ -37,6 +37,7 @@ type Server struct {
 	aliases aliasBook    // hub only: launcher aliases each computer has
 	sysmon  *sysMonitor  // this computer's load and tokens; nil in tests
 	wakes   paneWake     // streams to nudge when input reaches a pane
+	screens screenMetaCache
 	direct  directTokens // node only: tokens for a browser on this computer
 
 	wbDomain string  // hub only: modules kept by the hub open at <id>.<wbDomain> (-wb-domain)

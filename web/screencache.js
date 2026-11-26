@@ -143,7 +143,10 @@
     // agy's "↓ 44 lines", Claude's standalone "Jump to bottom") belong to botPin,
     // never to the stitched transcript body.
     let scrolledIndicator = false;
+    let belowLines = 0;
     while (botStart > topCount + 2 && isSoloOverlay(lines[botStart - 1])) {
+      const m = stripAnsi(lines[botStart - 1]).match(/↓\s*(\d+)\s+lines?/i);
+      if (m) belowLines = Math.max(belowLines, parseInt(m[1], 10) || 0);
       botStart--;
       scrolledIndicator = true;
     }
@@ -152,7 +155,7 @@
     }
 
     if (botStart - topCount < 4) {
-      return { topCount: 0, botStart: n, topPin: [], body: lines.slice(), botPin: [], scrolledIndicator };
+      return { topCount: 0, botStart: n, topPin: [], body: lines.slice(), botPin: [], scrolledIndicator, belowLines };
     }
     return {
       topCount,
@@ -161,6 +164,7 @@
       body: lines.slice(topCount, botStart),
       botPin: lines.slice(botStart),
       scrolledIndicator,
+      belowLines,
     };
   }
 
@@ -206,7 +210,7 @@
   }
 
   const MAX_CACHE_LINES = 6000;
-  const PREFETCH_MARGIN = 6;
+  const PREFETCH_MARGIN = 14;
   const DEFAULT_TICKS_SPEED = { claude: 1, codex: 1, agy: 2 };
 
   function createScreenCache() {
@@ -230,6 +234,8 @@
     let hitTop = false;   // true once scrolling up reaches real top of history
     let atBottom = true;  // true when user is following live bottom
     let seenBottom = true; // false if pane opened while already scrolled up
+    let estBelow = 0;     // estimated transcript lines below `lines` when !seenBottom
+    let pendingPageUpLines = 0;
     let totalHint = 0;    // server-estimated total transcript lines (optional)
     let linesPerTick = 1; // observed lines scrolled per single SGR wheel report
 
@@ -238,6 +244,7 @@
     let pendingUpDemand = 0;   // lines the user wanted above index 0 when a miss fired
     let pendingUpSentAt = 0;
     let prefetchInFlight = false;
+    let noOpUpCount = 0;       // consecutive confirmed no-op upward fetches at agentTop === 0
     let lastAgentBodySig = "";
 
     function reset(newPane = "", newKind = "", newCols = 0, newRows = 0) {
@@ -259,12 +266,15 @@
       hitTop = false;
       atBottom = true;
       seenBottom = true;
+      estBelow = 0;
+      pendingPageUpLines = 0;
       totalHint = 0;
       linesPerTick = DEFAULT_TICKS_SPEED[newKind] || 1;
       lastUserScrollAt = 0;
       pendingUpDemand = 0;
       pendingUpSentAt = 0;
       prefetchInFlight = false;
+      noOpUpCount = 0;
       lastAgentBodySig = "";
     }
 
@@ -395,21 +405,18 @@
       }
       bodyRows = seg.body.length;
 
-      // Did the agent return the exact same body after we asked to scroll up?
+      // Unchanged body (e.g. cursor blink / status bar update while a remote
+      // wheel POST is still in flight): never falsely trip hitTop here! Only
+      // refresh chrome/cursor and let post-completion top confirmation decide.
       if (bodySig === lastAgentBodySig) {
-        if (pendingUpSentAt > 0 && now - pendingUpSentAt > 40 && agentTop === 0) {
-          hitTop = true;
-          pendingUpDemand = 0;
-          prefetchInFlight = false;
-        }
-        // Still refresh bottom chrome / cursor on live bottom!
         const browsing = !atBottom && (viewTop !== agentTop || now - lastUserScrollAt < 250);
         return {
           renderLines: browsing ? compose(viewTop, false) : padded,
           usedCache: browsing,
           hitTop,
           atBottom,
-          changed: true,
+          changed: false,
+          prepended: 0,
         };
       }
       lastAgentBodySig = bodySig;
@@ -417,11 +424,17 @@
       // Align incoming body against our stitched line buffer.
       const prevAgentTop = agentTop;
       const ov = findOverlap(keys, bodyKeys, agentTop);
+      let prepended = 0;
 
+      let disjointUp = false;
       if (ov) {
         let top = ov.top;
         if (top < 0) {
           const prepend = -top;
+          prepended = prepend;
+          hitTop = false;
+          noOpUpCount = 0;
+          pendingUpSentAt = 0;
           const newLines = new Array(prepend);
           const newKeys = new Array(prepend);
           const newClean = new Array(prepend);
@@ -481,11 +494,17 @@
           hitTop = hasBanner;
         } else {
           // User jumped upward into an uncached distant page: anchor at top of a
-          // fresh stitched window (keep totalHint so scrollbar remains stable).
-          totalHint = Math.max(totalHint, lines.length + seg.body.length);
-          lines = seg.body.slice();
+          // fresh stitched window (keep totalHint and estimated lines below).
+          disjointUp = true;
+          const prevLen = lines.length;
+          seenBottom = false;
+          if (seg.belowLines > 0) estBelow = seg.belowLines;
+          else estBelow = Math.max(estBelow + prevLen, pendingPageUpLines || seg.body.length);
+          pendingPageUpLines = 0;
+          totalHint = Math.max(totalHint, estBelow + seg.body.length);
+          lines = seg.body.map(cleanCachedLine);
           keys = bodyKeys;
-          clean = seg.body.map((l) => !hasOverlayPill(l));
+          clean = seg.body.map(() => true);
           viewTop = 0;
           agentTop = 0;
           pendingUpDemand = 0;
@@ -501,7 +520,7 @@
       const browsing = !atBottom && (Math.abs(viewTop - agentTop) > 0 || now - lastUserScrollAt < 180);
       if (!browsing) {
         viewTop = agentTop;
-        if (agentTop >= Math.max(0, lines.length - seg.body.length) && seg.topPin.length === topPinAtBottom.length && !hasOverlayPill(padded[seg.botStart - 1] || "")) {
+        if (!disjointUp && !seg.scrolledIndicator && seenBottom && agentTop >= Math.max(0, lines.length - seg.body.length) && seg.topPin.length === topPinAtBottom.length) {
           atBottom = true;
         }
       }
@@ -511,6 +530,7 @@
         hitTop,
         atBottom,
         changed: true,
+        prepended,
       };
     }
 
@@ -617,14 +637,22 @@
     }
 
     // Real scrollbar position & proportion metadata.
+    // Uses a consistent viewport height (`baseBodyRows || bodyRows`) so ratio
+    // never jumps or stops short of 1.0 when sticky headers appear/disappear.
     function scrollbar() {
-      const h = Math.max(1, visibleBodyHeight(atBottom, viewTop));
+      const h = Math.max(1, baseBodyRows || bodyRows || visibleBodyHeight(atBottom, viewTop));
       const cached = lines.length;
-      const unknownAbove = hitTop ? 0 : Math.max(0, Math.max(totalHint, cached + (cached > h ? Math.ceil(h * 0.5) : h)) - cached);
-      const unknownBelow = seenBottom ? 0 : Math.max(h, totalHint > cached + unknownAbove ? totalHint - cached - unknownAbove : h);
+      const unknownBelow = seenBottom ? 0 : Math.max(h, estBelow);
+      const unknownAbove = hitTop
+        ? 0
+        : seenBottom
+          ? Math.max(0, Math.max(totalHint, cached + (cached > h ? Math.ceil(h * 0.5) : h)) - cached)
+          : Math.max(0, totalHint - cached - unknownBelow);
       const total = Math.max(h, cached + unknownAbove + unknownBelow);
       const maxOffset = Math.max(0, total - h);
-      const offset = atBottom ? maxOffset : Math.max(0, Math.min(maxOffset, unknownAbove + viewTop));
+      const maxCacheTop = Math.max(0, cached - h);
+      const clampedView = Math.min(viewTop, maxCacheTop);
+      const offset = atBottom ? maxOffset : Math.max(0, Math.min(maxOffset, unknownAbove + clampedView));
       const ratio = maxOffset > 0 ? offset / maxOffset : 1;
       const thumbRatio = Math.min(1, h / total);
       return {
@@ -656,15 +684,20 @@
       const r = Math.max(0, Math.min(1, ratio));
       const sb = scrollbar();
       lastUserScrollAt = now;
-      if (r >= 0.992 || sb.maxOffset === 0) {
-        const h = visibleBodyHeight(true, lines.length);
-        viewTop = Math.max(0, lines.length - h);
+      const maxBottomTop = maxViewTopFor(true);
+      if (r >= 0.96 || sb.maxOffset === 0) {
+        const wasAtBottom = atBottom;
+        const wasSeenBottom = seenBottom;
+        viewTop = maxBottomTop;
         atBottom = true;
+        seenBottom = true;
+        estBelow = 0;
+        pendingPageUpLines = 0;
         pendingUpDemand = 0;
         return {
           hit: true,
           renderLines: compose(viewTop, true),
-          goHome: agentTop < viewTop,
+          goHome: !wasSeenBottom || agentTop < viewTop || !wasAtBottom,
           pageUp: 0,
           sendTicks: 0,
           syncDelta: 0,
@@ -672,15 +705,29 @@
       }
       const targetVirtual = Math.round(r * sb.maxOffset);
       const cacheIdx = targetVirtual - sb.unknownAbove;
-      const h = visibleBodyHeight(false, Math.max(0, cacheIdx));
-      const maxT = Math.max(0, lines.length - h);
+      const maxT = maxViewTopFor(false);
+
+      if (seenBottom && cacheIdx >= maxBottomTop) {
+        const wasAtBottom = atBottom;
+        viewTop = maxBottomTop;
+        atBottom = true;
+        pendingUpDemand = 0;
+        return {
+          hit: true,
+          renderLines: compose(viewTop, true),
+          goHome: agentTop < viewTop || !wasAtBottom,
+          pageUp: 0,
+          sendTicks: 0,
+          syncDelta: 0,
+        };
+      }
 
       if (cacheIdx >= 0 && cacheIdx <= maxT) {
         viewTop = cacheIdx;
-        atBottom = cacheIdx >= maxT;
+        atBottom = false;
         return {
           hit: true,
-          renderLines: compose(viewTop, atBottom),
+          renderLines: compose(viewTop, false),
           goHome: false,
           pageUp: 0,
           sendTicks: 0,
@@ -694,7 +741,8 @@
       atBottom = false;
       pendingUpSentAt = now;
       prefetchInFlight = true;
-      const pageUp = needLines >= h ? 1 : 0;
+      const pageUp = needLines >= sb.viewport ? Math.min(6, Math.max(1, Math.ceil(needLines / sb.viewport))) : 0;
+      if (pageUp) pendingPageUpLines = Math.max(pendingPageUpLines, Math.max(sb.viewport, sb.maxOffset - targetVirtual));
       const sendTicks = pageUp ? 0 : -Math.min(8, Math.max(2, Math.ceil(needLines / linesPerTick)));
       return {
         hit: true,
@@ -712,8 +760,14 @@
       pendingUpDemand = 0;
       pendingUpSentAt = 0;
       if (agentTop === 0) {
-        hitTop = true;
-        return true;
+        noOpUpCount++;
+        // If server history hint indicates substantially more unseen lines
+        // above, require two confirmed no-op POSTs before collapsing to hitTop.
+        const likelyMoreAbove = totalHint > lines.length + Math.max(8, bodyRows);
+        if (!likelyMoreAbove || noOpUpCount >= 2) {
+          hitTop = true;
+          return true;
+        }
       }
       return false;
     }
@@ -722,6 +776,9 @@
       const h = visibleBodyHeight(true, lines.length);
       viewTop = Math.max(0, lines.length - h);
       atBottom = true;
+      seenBottom = true;
+      estBelow = 0;
+      pendingPageUpLines = 0;
       pendingUpDemand = 0;
       prefetchInFlight = false;
       lastUserScrollAt = 0;

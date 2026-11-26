@@ -601,3 +601,69 @@ func TestComputeScreenDiffAndReadFastHedge(t *testing.T) {
 		t.Fatalf("ReadFast = %q in %v, want hedged-ok quickly", rr.Text, time.Since(t0))
 	}
 }
+
+func TestSendTextWaitReturnsUpdatedFrame(t *testing.T) {
+	var sent atomic.Bool
+	h := &Herdr{
+		local: &Machine{
+			ID: "", Name: "test", Local: true, Online: true,
+			conn: &herdrConn{dial: func(ctx context.Context) (net.Conn, error) {
+				c1, c2 := net.Pipe()
+				go func() {
+					defer c2.Close()
+					sc := bufio.NewScanner(c2)
+					if !sc.Scan() {
+						return
+					}
+					var req struct {
+						ID     string `json:"id"`
+						Method string `json:"method"`
+					}
+					json.Unmarshal(sc.Bytes(), &req)
+					var resp map[string]any
+					switch req.Method {
+					case "pane.send_text":
+						sent.Store(true)
+						resp = map[string]any{"id": req.ID, "result": map[string]any{}}
+					case "pane.read":
+						txt := "LINE-070\r\nLINE-071"
+						rev := 1
+						if sent.Load() {
+							txt = "LINE-062\r\nLINE-063"
+							rev = 2
+						}
+						resp = map[string]any{"id": req.ID, "result": map[string]any{"read": map[string]any{"text": txt, "revision": rev}}}
+					}
+					b, _ := json.Marshal(resp)
+					c2.Write(append(b, '\n'))
+				}()
+				return c1, nil
+			}},
+		},
+		remote: map[string]*Machine{},
+	}
+	srv := &Server{herdr: h, token: "tok", web: fstest.MapFS{}}
+	srv.screens.set("w1:p1", paneScreenMeta{size: Rect{Width: 120, Height: 40}, wheel: true, kind: "claude", lastText: "LINE-070\r\nLINE-071"})
+	r := httptest.NewRequest("POST", "/api/panes/w1:p1/text", strings.NewReader(`{"text":"\u001b[<64;60;20M","wait":true}`))
+	r.SetPathValue("id", "w1:p1")
+	w := httptest.NewRecorder()
+	srv.sendText(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var out struct {
+		OK    bool `json:"ok"`
+		Frame *struct {
+			Text     string `json:"text"`
+			Revision uint64 `json:"revision"`
+			Wheel    bool   `json:"wheel"`
+			Kind     string `json:"kind"`
+		} `json:"frame"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || out.Frame == nil || !strings.Contains(out.Frame.Text, "LINE-062") || out.Frame.Revision != 2 || !out.Frame.Wheel || out.Frame.Kind != "claude" {
+		t.Fatalf("unexpected response: %s", w.Body.String())
+	}
+}

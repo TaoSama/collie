@@ -8,9 +8,40 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+type paneScreenMeta struct {
+	size     Rect
+	wheel    bool
+	kind     string
+	lastText string
+	at       time.Time
+}
+
+type screenMetaCache struct {
+	mu sync.RWMutex
+	m  map[string]paneScreenMeta
+}
+
+func (c *screenMetaCache) get(id string) (paneScreenMeta, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	v, ok := c.m[id]
+	return v, ok
+}
+
+func (c *screenMetaCache) set(id string, v paneScreenMeta) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = map[string]paneScreenMeta{}
+	}
+	v.at = time.Now()
+	c.m[id] = v
+}
 
 // streamPane mirrors one pane over SSE.
 //
@@ -146,6 +177,9 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				b, _ := json.Marshal(frame)
 				if sse.send("frame", b) != nil {
 					return
+				}
+				if mode != "log" {
+					s.screens.set(id, paneScreenMeta{size: lastSize, wheel: wheel, kind: kind, lastText: lastText})
 				}
 				beat = time.Now()
 			} else if wheel && mode != "log" {
@@ -348,17 +382,75 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text  string `json:"text"`
 		Enter bool   `json:"enter"`
+		Wait  bool   `json:"wait"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	id := r.PathValue("id")
+	var beforeMeta paneScreenMeta
+	hasMeta := false
+	if body.Wait {
+		beforeMeta, hasMeta = s.screens.get(id)
+		if !hasMeta || beforeMeta.lastText == "" {
+			if rr, err := s.herdr.ReadFast(r.Context(), id, "recent", "ansi", screenLines, 6*time.Millisecond); err == nil {
+				beforeMeta.lastText = rr.Text
+			}
+		}
+	}
 	if err := s.writePaneText(r, id, body.Text, body.Enter); err != nil {
 		fail(w, err)
 		return
 	}
 	s.wakes.wake(id)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	resp := map[string]any{"ok": true}
+	if body.Wait {
+		if frame := s.waitForScreenFrame(r.Context(), id, beforeMeta, hasMeta); frame != nil {
+			resp["frame"] = frame
+		}
+	}
+	writeJSON(w, 200, resp)
+}
+
+// waitForScreenFrame briefly polls local herdr right after a wheel write so a
+// remote browser gets the updated frame in the same HTTP round trip instead of
+// waiting for a separate SSE delivery. Bounded to 32ms so it never stalls.
+func (s *Server) waitForScreenFrame(parent context.Context, id string, meta paneScreenMeta, hasMeta bool) map[string]any {
+	ctx, cancel := context.WithTimeout(parent, 55*time.Millisecond)
+	defer cancel()
+	deadline := time.Now().Add(50 * time.Millisecond)
+	for {
+		time.Sleep(2 * time.Millisecond)
+		res, err := s.herdr.ReadFast(ctx, id, "recent", "ansi", screenLines, 6*time.Millisecond)
+		if err != nil {
+			return nil
+		}
+		if res.Text != meta.lastText {
+			if !hasMeta || meta.size.Width == 0 {
+				if sz, e := s.herdr.PaneSize(ctx, id); e == nil {
+					meta.size = sz
+				}
+				if p, e := s.herdr.Pane(ctx, id); e == nil {
+					meta.wheel = paneWheel(p)
+					if p.Agent != nil {
+						meta.kind = *p.Agent
+					}
+				}
+			}
+			text, cursor := markScreenCursor(res.Text, meta.size.Height, meta.kind)
+			text = trimScreenBlankTail(text)
+			meta.lastText = res.Text
+			s.screens.set(id, meta)
+			return map[string]any{
+				"text": text, "revision": res.Revision, "truncated": res.Truncated,
+				"cols": meta.size.Width, "rows": meta.size.Height, "cursor": cursor,
+				"wheel": meta.wheel, "kind": meta.kind,
+			}
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return nil
+		}
+	}
 }
 
 func (s *Server) writePaneText(r *http.Request, id, text string, enter bool) error {
