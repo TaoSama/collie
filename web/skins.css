@@ -62,7 +62,7 @@
   --fg: #1a1c1f; --fg-2: #4d4e51; --fg-3: #606164; --fg-4: #7e7f83;
   --accent: #1a1c1f; --on-accent: #ffffff;
   --attn: #a3400b; --attn-soft: #fff5f0; --on-attn: #ffffff;
-  --ok: #007a30; --info: #0b62c4; --danger: #ba2623; --pin: #0169cc;
+  --ok: #007a30; --info: #0b62c4; --danger: #ba2623; --pin: #0169cc; --toast-act: #83c3ff;
   --term-bg: #ffffff; --term-fg: #1a1c1f;
   --code-bg: #f4f4f4; --code-fg: #1a1c1f; --code-ln: #8e8f90;
   --hl-c: #4f4f4f; --hl-k: #ab4f7a; --hl-fn: #1f4e94; --hl-ty: #643cae; --hl-s: #2c6732;
@@ -79,7 +79,7 @@
   --fg: #dfdfdf; --fg-2: #b0b0b0; --fg-3: #969696; --fg-4: #717171;
   --accent: #dfdfdf; --on-accent: #1d1d1d;
   --attn: #ff8549; --attn-soft: #38271f; --on-attn: #181818;
-  --ok: #40c977; --info: #83c3ff; --danger: #ff6662; --pin: #83c3ff;
+  --ok: #40c977; --info: #83c3ff; --danger: #ff6662; --pin: #83c3ff; --toast-act: #0956ad;
   --term-bg: #181818; --term-fg: #dfdfdf;
   --code-bg: #242424; --code-fg: #dfdfdf; --code-ln: #8b8b8b;
   --hl-c: #9a9a9a; --hl-k: #f8a6c8; --hl-fn: #63a8f8; --hl-ty: #b897f4; --hl-s: #83d197;
@@ -124,7 +124,7 @@
   --accent: #5561cc; --on-accent: #ffffff;
   --c-cpu: #5561cc; --c-mem: #19803d; --c-rx: #c2410c; --c-tx: #0e6fa8;
   --attn: #ad3a0b; --attn-soft: #fdf1e7; --on-attn: #ffffff;
-  --ok: #16733a; --info: #4b56c0; --danger: #bf2a2a; --pin: #5a6270;
+  --ok: #16733a; --info: #4b56c0; --danger: #bf2a2a; --pin: #5a6270; --toast-act: #8f98ff;
   --term-bg: #f8f9fb; --term-fg: #1d1f23;
   --code-bg: #f8f9fb; --code-fg: #1d1f23; --code-ln: #8f949c;
   --hl-c: #6e737c; --hl-k: #6d28d9; --hl-fn: #4338ca; --hl-ty: #0e6fa8; --hl-s: #1a7a3c;
@@ -141,7 +141,7 @@
   --accent: #5e6ad2; --on-accent: #ffffff;
   --c-cpu: #8b95f0; --c-mem: #4cb782; --c-rx: #f2994a; --c-tx: #7dd3fc;
   --attn: #f2994a; --attn-soft: #22180e; --on-attn: #08090a;
-  --ok: #4cb782; --info: #8f98ff; --danger: #eb5757; --pin: #8a93a3;
+  --ok: #4cb782; --info: #8f98ff; --danger: #eb5757; --pin: #8a93a3; --toast-act: #4b56c0;
   --term-bg: #0c0d10; --term-fg: #e2e4e7;
   --code-bg: #13141a; --code-fg: #e2e4e7; --code-ln: #565a61;
   --hl-c: #7a7f88; --hl-k: #b4a0ff; --hl-fn: #82aaff; --hl-ty: #7dd3fc; --hl-s: #9ece6a;
@@ -182,7 +182,7 @@
   --accent: #1b365d; --on-accent: #faf9f5;
   --c-cpu: #2d5a8a; --c-mem: #2f7d4f; --c-rx: #a84d08; --c-tx: #8c2f5b;
   --attn: #964406; --attn-soft: #f8eedf; --on-attn: #faf9f5;
-  --ok: #276a42; --info: #1b365d; --danger: #b53333; --pin: #5e5d59;
+  --ok: #276a42; --info: #1b365d; --danger: #b53333; --pin: #5e5d59; --toast-act: #93b8de;
   --term-bg: #f3f1e9; --term-fg: #1f1e1c;
   --code-bg: #f3f1e9; --code-fg: #1f1e1c; --code-ln: #959288;
   --hl-c: #716e65; --hl-k: #8c2f5b; --hl-fn: #1f4e8c; --hl-ty: #2d6a6a; --hl-s: #4d6b1f;
@@ -200,7 +200,7 @@
   --user-bg: #2c3e57; --user-fg: #ede9df;
   --c-cpu: #7fa7d6; --c-mem: #7fb77e; --c-rx: #e39b4b; --c-tx: #d98aa6;
   --attn: #e39b4b; --attn-soft: #2a2114; --on-attn: #141413;
-  --ok: #7fb77e; --info: #93b8de; --danger: #f08a7c; --pin: #a8a69d;
+  --ok: #7fb77e; --info: #93b8de; --danger: #f08a7c; --pin: #a8a69d; --toast-act: #1b365d;
   --term-bg: #161512; --term-fg: #e8e6dc;
   --code-bg: #22201c; --code-fg: #e8e6dc; --code-ln: #6b675f;
   --hl-c: #87867f; --hl-k: #d98aa6; --hl-fn: #9fbbe0; --hl-ty: #8cc5c0; --hl-s: #a9c58a;

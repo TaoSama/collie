@@ -23,6 +23,7 @@
   --ok: #13773a;
   --info: #1d4ed8;
   --on-info: #ffffff;
+  --toast-act: #6ea8fe;
   --logo-bg: #ffffff;
   --image-bg: #f6f6f4; /* stays light behind transparent images */
   --c-cpu: #1a7cf2;
@@ -154,6 +155,7 @@
   --ok: #4ade80;
   --info: #6ea8fe;
   --on-info: #0b0b0c;
+  --toast-act: #1d4ed8;
   --logo-bg: #ececee;
   --c-cpu: #4ea1ff;
   --c-mem: #4ade80;
@@ -1480,15 +1482,35 @@ a.url:hover { text-decoration-color: currentColor; }
 .ask .sheet-foot .btn { width: 100%; height: 48px; padding: 0 20px; border-radius: 999px; font-size: var(--fs-lead); font-weight: var(--fw-medium); }
 
 /* ─── toasts ─── */
-.toasts { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translateX(-50%); display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); }
-.toast { padding: 10px 16px; border-radius: calc(12px * var(--round)); font-size: var(--fs-meta); background: var(--fg); color: var(--bg); box-shadow: var(--shadow); animation: rise .2s ease-out; }
-.toast.has-act { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: min(320px, calc(100vw - 32px)); padding: 6px 8px 6px 16px; }
-.toast-msg { min-width: 0; line-height: var(--lh-ui); }
-.toast-act { flex: none; min-height: 32px; padding: 0 12px; border: 0; border-radius: calc(8px * var(--round)); background: color-mix(in srgb, currentColor 14%, transparent); color: inherit; font-size: var(--fs-meta); font-weight: var(--fw-strong); cursor: pointer; }
-.toast-act:hover { background: color-mix(in srgb, currentColor 22%, transparent); }
-.toast-act:active { background: color-mix(in srgb, currentColor 28%, transparent); }
+.toasts {
+  position: fixed; z-index: 50; left: var(--toast-x, 50%); bottom: var(--toast-bottom, 24px); transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px;
+  width: max-content; min-width: min(288px, calc(100vw - 32px)); max-width: min(560px, var(--toast-max, calc(100vw - 32px)));
+  pointer-events: none;
+}
+.toast {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  min-height: 48px; max-width: 100%; padding: 12px 16px; border-radius: calc(12px * var(--round));
+  font-size: var(--fs-body); line-height: var(--lh-ui); text-align: left; overflow-wrap: anywhere;
+  background: var(--fg); color: var(--bg); box-shadow: var(--shadow);
+  pointer-events: auto; animation: rise .2s ease-out;
+}
+.toast.has-act { padding-block: 2px; }
+.toast-msg { flex: 1; min-width: 0; padding: 10px 0; text-align: left; }
+.toast-act {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px; padding: 0 8px; margin-right: -8px;
+  border: 0; border-radius: calc(8px * var(--round)); background: transparent;
+  color: var(--toast-act); font-size: var(--fs-body); font-weight: var(--fw-medium);
+  white-space: nowrap; cursor: pointer; transition: background .12s;
+}
+.toast-act:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.toast-act:active { background: color-mix(in srgb, currentColor 18%, transparent); }
+.toast-act:focus-visible { outline: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 40%, transparent); }
 .toast.attn { background: var(--attn); color: var(--on-attn); }
+.toast.attn .toast-act { color: inherit; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
 /* ─── responsive ─── */
 @media (max-width: 1100px) { :root { --side-w: 268px; } }
@@ -2249,14 +2271,15 @@ select.picked { display: none; }
   .kb-open .composer, .kb-open .detail:not(.chat-mode) .composer, .kb-open #v-ext .composer, .kb-open .viewer[data-mode="screen"] ~ .keys { padding-bottom: 8px; }
 }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
-  /* Toasts drop from under the header, clear of the input box. */
-  .toasts { top: calc(env(safe-area-inset-top) + 64px); bottom: auto; }
-  /* Action snackbars (e.g. undo archive) sit at the bottom for easy thumb reach. */
-  .toasts:has(.toast.has-act) { top: auto; bottom: calc(env(safe-area-inset-bottom) + 60px); width: calc(100vw - 24px); max-width: 480px; }
-  .toast.has-act { width: 100%; min-width: 0; min-height: 52px; padding: 4px 6px 4px 16px; font-size: var(--fs-body); }
-  .toast-act { min-height: 44px; min-width: 56px; padding: 0 14px; font-size: var(--fs-body); }
+  /* Snackbars sit at the bottom, inset 16px from the edges, clear of safe area and composer. */
+  .toasts {
+    left: calc(env(safe-area-inset-left) + 16px);
+    right: calc(env(safe-area-inset-right) + 16px);
+    bottom: var(--toast-bottom, calc(max(16px, env(safe-area-inset-bottom) + 16px) + max(0px, 100dvh - var(--vh) - var(--vtop, 0px))));
+    transform: none;
+    width: auto; min-width: 0; max-width: 560px; margin-inline: auto;
+  }
   #update-bar { top: calc(env(safe-area-inset-top) + 64px); }
-  .has-update .toasts:not(:has(.toast.has-act)) { top: calc(env(safe-area-inset-top) + 108px); }
   .auto-body { scroll-padding-bottom: 96px; }
   /* While typing, the strip of running workers gives its room to the chat. */
   #v-collie:has(.composer textarea:focus) .crew { display: none; }

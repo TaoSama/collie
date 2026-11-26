@@ -332,6 +332,42 @@
   $$("select").forEach(enhance);
 
 
+  function syncToastPos() {
+    const host = $("#toasts");
+    if (!host) return;
+    let bottom = 0, centerX = null, maxW = null;
+    if (narrow()) {
+      const sel = document.body.classList.contains("show-main")
+        ? ".view:not([hidden]) .composer, .runpane.open .composer, .view:not([hidden]) .keys"
+        : ".side-foot";
+      for (const el of $$(sel)) {
+        if (!el.offsetParent) continue;
+        const r = el.getBoundingClientRect();
+        if (r.height > 0 && r.top < innerHeight) bottom = Math.max(bottom, Math.round(innerHeight - r.top));
+      }
+    } else {
+      let mainComp = null;
+      for (const el of $$(".view:not([hidden]) .composer, .runpane.open .composer")) {
+        if (!el.offsetParent) continue;
+        const r = el.getBoundingClientRect();
+        if (r.height <= 0 || r.top >= innerHeight) continue;
+        bottom = Math.max(bottom, Math.round(innerHeight - r.top));
+        if (!mainComp && !el.closest(".runpane")) mainComp = r;
+      }
+      const area = mainComp || (!$("#app")?.hidden ? $(".main")?.getBoundingClientRect() : null);
+      if (area && area.width > 0) {
+        centerX = Math.round(area.left + area.width / 2);
+        maxW = Math.max(288, Math.round(area.width - 32));
+      }
+    }
+    if (bottom > 0) host.style.setProperty("--toast-bottom", `${bottom + 12}px`);
+    else host.style.removeProperty("--toast-bottom");
+    if (centerX != null) host.style.setProperty("--toast-x", `${centerX}px`);
+    else host.style.removeProperty("--toast-x");
+    if (maxW != null) host.style.setProperty("--toast-max", `${maxW}px`);
+    else host.style.removeProperty("--toast-max");
+  }
+
   function toast(msg, kind = "", { action, ms } = {}) {
     const t = document.createElement("div");
     t.className = ["toast", kind, action ? "has-act" : ""].filter(Boolean).join(" ");
@@ -354,6 +390,7 @@
       t.textContent = msg;
     }
     $("#toasts").append(t);
+    syncToastPos();
     timer = setTimeout(close, ms ?? (action ? 6000 : kind === "attn" ? 5000 : 2600));
   }
 
@@ -9159,6 +9196,7 @@
       if (f?.closest?.(".auto-body")) requestAnimationFrame(() => f.scrollIntoView({ block: "nearest" }));
     }
     document.documentElement.classList.toggle("kb-open", kb);
+    if ($("#toasts")?.childElementCount) syncToastPos();
   }
   window.visualViewport?.addEventListener("resize", setVH);
   window.visualViewport?.addEventListener("scroll", setVH);
@@ -9180,6 +9218,10 @@
     el.addEventListener("scroll", () => { el._atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_PX; }, { passive: true });
     pinObs.observe(el);
   });
+  const toastObs = new ResizeObserver(() => {
+    if ($("#toasts")?.childElementCount) syncToastPos();
+  });
+  $$(".composer, .main, .side-foot").forEach((el) => toastObs.observe(el));
 
   // ───────────────────────────── boot
   function stripLarkJumpParams() {
