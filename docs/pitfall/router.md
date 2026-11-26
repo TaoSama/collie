@@ -8,7 +8,7 @@ hub 的 `agent.list` 跨机器合并：没连上（或这次没答）的电脑�
 - herdr 仍拒绝名字 `collie`（`agent_name_taken`）时：占名的是 Router 目录里的活 agent，就保留它、关掉刚起的工作区；否则新 Router 取 `collie-2`…`collie-9`。
 - 实际 herdr 名字记在 kv `router_on` 的 `name`；`liveAgents` 把它映射回逻辑名 `routerName`，发消息用 `routerAgent()` 取真实名字。别再直接 `Prompt(ctx, routerName, …)`。
 
-代码：`internal/collie/router_name.go`、`ensureRouter`（`internal/collie/super.go`）。
+代码见 `internal/collie/router_name.go` 和 `internal/collie/super_router.go` 的 `ensureRouter`。
 
 ## 系统错误先给能处理的一方
 

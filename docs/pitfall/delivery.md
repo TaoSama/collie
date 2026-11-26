@@ -1,4 +1,6 @@
-# 往会话里送消息（`internal/collie/prompt.go`、`super.go` 的 `tick` / `deliver`）
+# 往会话里送消息
+
+代码见 `internal/collie/prompt.go`、`super_tick.go` 的 `tick` 和 `super_delivery.go` 的 `deliver`。
 
 Router 的事件、`collie send`、spawn / resume 的首条任务、页面上给 agent 发消息、新建会话的首个任务、切换模型的命令，都走 `Herdr.Prompt`。外部会话不经过 pane，有自己的确认（`peerTaken`，`external_send.go`）。
 

@@ -19,7 +19,7 @@ alias 往往自带网关，网关只认它自己的模型（`ccx` 配 Fable 会�
 
 启动失败（`startAgentAs` 报错）或 agent 退回 shell（tick 判定 `workerDead`）时，先读屏幕尾部写进事件和给 Router 的消息，再关掉它的工作区。不关的话，侧栏会留一个空 shell，没人会去用它。
 
-代码：`Spawn`、`workerDead`、`paneTail`（`internal/collie/super.go`）。
+代码见 `internal/collie/worker_spawn.go` 的 `Spawn`，以及 `internal/collie/worker_lifecycle.go` 的 `workerDead` 和 `paneTail`。
 
 ## 目录在 worker 那台电脑上检查
 
