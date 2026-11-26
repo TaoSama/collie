@@ -60,9 +60,8 @@ func (wb *workbench) latestSnap(id string) (path string, at time.Time) {
 	return path, at
 }
 
-// snapshotDue runs from the tick: at most once a minute it looks for keep
-// modules whose last snapshot is older than their interval and takes those
-// in the background, one run at a time.
+// snapshotDue schedules a background scan and snapshots of due keep modules
+// at most once a minute, one run at a time.
 func (wb *workbench) snapshotDue() {
 	if wb == nil { // a Super built without one (tests)
 		return
@@ -72,13 +71,12 @@ func (wb *workbench) snapshotDue() {
 		return
 	}
 	wb.lastCheck.Store(now.Unix())
-	due := wb.due(now)
-	if len(due) == 0 {
-		wb.snapping.Store(false)
-		return
-	}
 	go func() {
 		defer wb.snapping.Store(false)
+		due := wb.due(now)
+		if len(due) == 0 {
+			return
+		}
 		for _, m := range due {
 			ctx, cancel := context.WithTimeout(context.Background(), wbFetchTimeout)
 			err := wb.snapshot(ctx, m, now)
