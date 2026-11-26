@@ -15,6 +15,7 @@ description: |
 | `URL` | hub 的公网地址 | `CLAUDE.local.md`「打开界面」 |
 | `HUB_ITEM` | hub 的 SSH 主机、端口、私钥所在的 1Password 条目 | `CLAUDE.local.md`「部署」 |
 | `HUB_ADDR` | hub 本机监听地址（`-addr` 参数） | `CLAUDE.local.md`「部署」，或 hub 上 `systemctl --user cat collie-hub` |
+| `HUB_ARGS` | hub 的启动参数（`-addr`、`-url`、`-wb-domain`） | `CLAUDE.local.md`「部署」 |
 | node 清单、各台的代理 | 哪些电脑要升级，哪台下载要走代理 | `CLAUDE.local.md`「部署」 |
 
 不要把 IP、端口、私钥、令牌写进仓库里的任何文件，也不要贴进聊天。
@@ -79,12 +80,13 @@ api() { hub "curl -s -H \"Authorization: Bearer \$(cat ~/.collie/token)\" ${2:+-
 **切换前**：
 
 ```bash
-hub 'systemctl --user show collie-hub -p MainPID; ~/.local/bin/collie version; uname -m'
+hub 'systemctl --user show collie-hub -p MainPID; ~/.local/bin/collie version; uname -m; systemctl --user cat collie-hub | grep ExecStart'
 api /api/super | jq '{queued, queued_router, router: .router | {status, pane_id, machine, handover, dreaming}}'
 ```
 
 - 记下 MainPID、当前版本、Router 的 `pane_id` 和 `machine`，最后核对要用。
 - 等到 `queued_router == 0`、`handover` 和 `dreaming` 都不为 true、Router 不是 `working` 时再切换。这时切换不会打断 Router 正在处理的事情。
+- `ExecStart` 要带齐 `HUB_ARGS`。缺了哪个（比如工作台代理用的 `-wb-domain`）就先备份 `~/.config/systemd/user/collie-hub.service`，在 `ExecStart` 末尾补上，再 `systemctl --user daemon-reload`。下面那次 restart 一并生效，不要单独多重启一次。补完 `-wb-domain` 后，`api /api/wb | jq .proxy` 应为 `true`。
 - 如果 MainPID 和你开始时看到的不一样，说明有人刚部署过。先看线上版本，已经是 `$V` 或更新就不要再部署，只做第 4 步的核对。
 
 **替换并重启**，按 `uname -m` 选 `collie-linux-amd64` 或 `collie-linux-arm64`：
