@@ -2,16 +2,34 @@
 // capability. Pure string rendering (no DOM coupling) so it can be unit-tested
 // directly and shared across every session view header.
 (() => {
-  const TONES = new Set(["ok", "warn", "danger", "muted"]);
+  const TONES = new Set(["ok", "info", "warn", "hot", "danger", "muted"]);
+  const ACCENTS = new Set(["claude", "codex", "agy", "gemini"]);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const toneCls = (t) => (TONES.has(t) ? " hs-" + t : "");
+  const accentCls = (a) => (ACCENTS.has(a) ? " hs-brand-" + a : "");
   const clampPct = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null);
+  const CHEV_SVG = `<svg class="hs-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
+  const CHECK_SVG = `<svg class="hs-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>`;
 
-  function renderItem(it, showSub) {
+  function renderIcon(key, opts, cls) {
+    if (!key || !opts || !opts.icons || !opts.icons[key]) return "";
+    return `<span class="${cls}" aria-hidden="true">${opts.icons[key]}</span>`;
+  }
+
+  function actionAttrs(slotId, action) {
+    if (!action || !action.name) return "";
+    const args = action.args ? JSON.stringify(action.args) : "{}";
+    const tip = action.label ? ` title="${esc(action.label)}" aria-label="${esc(action.label)}"` : "";
+    return ` data-hs-action="${esc(action.name)}" data-hs-slot="${esc(slotId)}" data-hs-args="${esc(args)}"${tip}`;
+  }
+
+  function renderItem(it, showSub, opts) {
     const pct = clampPct(it.percent);
     const tip = it.tooltip ? ` title="${esc(it.tooltip)}"` : "";
     const bar = pct !== null ? `<span class="hs-bar" aria-hidden="true"><span class="hs-fill" style="width:${pct}%"></span></span>` : "";
-    return `<span class="hs-item${toneCls(it.tone)}"${tip}>`
+    const ico = renderIcon(it.icon, opts, "hs-item-ico");
+    return `<span class="hs-item${toneCls(it.tone)}${accentCls(it.accent)}"${tip}>`
+      + ico
       + (it.label ? `<span class="hs-lab">${esc(it.label)}</span>` : "")
       + bar
       + (it.value ? `<span class="hs-val">${esc(it.value)}</span>` : "")
@@ -31,22 +49,84 @@
     return title;
   }
 
-  function renderSection(sec) {
-    const head = sec.title || sec.meta
-      ? `<div class="hs-sec-h"><span>${esc(sec.title || "")}</span>${sec.meta ? `<span class="hs-sec-m">${esc(sec.meta)}</span>` : ""}</div>`
-      : "";
-    const rows = (sec.rows || []).map((r) => {
-      const top = `<div class="hs-row-top">`
-        + `<span class="hs-row-l">${r.current ? `<span class="hs-cur" aria-hidden="true">▸</span>` : ""}<span class="hs-row-name">${esc(r.label)}</span>${r.badge ? `<span class="hs-badge">${esc(r.badge)}</span>` : ""}</span>`
-        + (r.value ? `<span class="hs-row-v${toneCls(r.tone)}">${esc(r.value)}</span>` : "")
-        + `</div>`;
-      const meters = (r.meters || []).length
-        ? `<div class="hs-meters">${r.meters.map((m) => renderItem(m, true)).join("")}</div>`
+  function renderBadges(r) {
+    const list = Array.isArray(r.badges) && r.badges.length
+      ? r.badges.filter((b) => b && b.text)
+      : r.badge ? [{ text: r.badge, tone: "" }] : [];
+    if (!list.length) return "";
+    return list.map((b) => `<span class="hs-badge${toneCls(b.tone)}">${esc(b.text)}</span>`).join("");
+  }
+
+  function renderRow(r, slotId, foldKey, opts) {
+    const folded = Array.isArray(r.folded_rows) && r.folded_rows.length ? r.folded_rows : null;
+    if (folded) {
+      const expanded = !!(opts.expandedFolds && opts.expandedFolds[foldKey]);
+      const head = `<button type="button" class="hs-fold-row${expanded ? " is-expanded" : ""}" data-hs-fold-row="${esc(foldKey)}" aria-expanded="${expanded}">`
+        + `<span class="hs-fold-row-l">${CHEV_SVG}<span class="hs-healthy-dot" aria-hidden="true"></span><span class="hs-fold-row-t">${esc(r.label)}</span>${r.detail ? `<span class="hs-fold-row-d">${esc(r.detail)}</span>` : ""}</span>`
+        + `<span class="hs-fold-row-a">${expanded ? "收起" : "展开"}</span>`
+        + `</button>`;
+      const children = expanded
+        ? `<div class="hs-fold-children">${folded.map((c, idx) => renderRow(c, slotId, `${foldKey}.${idx}`, opts)).join("")}</div>`
         : "";
-      const det = r.detail ? `<div class="hs-row-d">${esc(r.detail)}</div>` : "";
-      return `<div class="hs-row${r.current ? " is-cur" : ""}">${top}${meters}${det}</div>`;
-    }).join("");
-    return `<div class="hs-sec">${head}<div class="hs-rows">${rows}</div></div>`;
+      return `<div class="hs-fold-group">${head}${children}</div>`;
+    }
+    const right = r.metric
+      ? `<span class="hs-row-metric">${renderItem(r.metric, false, opts)}</span>`
+      : r.value ? `<span class="hs-row-v${toneCls(r.tone)}">${esc(r.value)}</span>` : "";
+    const selTag = r.selected
+      ? `<span class="hs-sel-tag">${CHECK_SVG}<span>顶栏</span></span>`
+      : "";
+    const badges = renderBadges(r);
+    const ico = renderIcon(r.icon, opts, "hs-row-ico");
+    const titleBlock = `<span class="hs-row-id">`
+      + `<span class="hs-row-title-line">${r.current && !r.selected ? `<span class="hs-cur" aria-hidden="true">▸</span>` : ""}${ico}<span class="hs-row-name" title="${esc(r.label)}">${esc(r.label)}</span>${badges}${selTag}</span>`
+      + (r.sublabel ? `<span class="hs-row-sub" title="${esc(r.sublabel)}">${esc(r.sublabel)}</span>` : "")
+      + `</span>`;
+    const top = `<div class="hs-row-top">${titleBlock}${right}</div>`;
+    const meters = (r.meters || []).length
+      ? `<div class="hs-meters">${r.meters.map((m) => renderItem(m, true, opts)).join("")}</div>`
+      : "";
+    const det = r.detail ? `<div class="hs-row-d${toneCls(r.tone)}">${esc(r.detail)}</div>` : "";
+    const clickable = !!(r.action && r.action.name);
+    const cls = `hs-row${r.current ? " is-cur" : ""}${r.selected ? " is-selected" : ""}${clickable ? " is-action" : ""}${accentCls(r.accent)}`;
+    if (clickable) {
+      return `<div class="${cls}" role="button" tabindex="0" aria-pressed="${!!r.selected}"${actionAttrs(slotId, r.action)}>${top}${meters}${det}</div>`;
+    }
+    return `<div class="${cls}">${top}${meters}${det}</div>`;
+  }
+
+  function renderChips(chips, slotId) {
+    if (!Array.isArray(chips) || !chips.length) return "";
+    return `<span class="hs-chips">${chips.map((c) => {
+      const attrs = c.action ? actionAttrs(slotId, c.action) : "";
+      return `<button type="button" class="hs-chip${c.selected ? " is-selected" : ""}${toneCls(c.tone)}" aria-pressed="${!!c.selected}"${attrs}>${c.selected ? CHECK_SVG : ""}${esc(c.label)}</button>`;
+    }).join("")}</span>`;
+  }
+
+  function renderSection(sec, slotId, idx, opts) {
+    const secKey = `${slotId}:${sec.title || idx}`;
+    const collapsible = !!sec.collapsible;
+    const override = opts.secState && Object.prototype.hasOwnProperty.call(opts.secState, secKey)
+      ? !!opts.secState[secKey]
+      : null;
+    const collapsed = collapsible ? (override !== null ? override : !!sec.collapsed) : false;
+    const icoHtml = renderIcon(sec.icon, opts, "hs-sec-ico");
+    const chipsHtml = renderChips(sec.chips, slotId);
+    let head = "";
+    if (sec.title || sec.meta || chipsHtml) {
+      if (collapsible) {
+        head = `<button type="button" class="hs-sec-h is-toggle${collapsed ? " is-collapsed" : ""}${accentCls(sec.accent)}" data-hs-sec="${esc(secKey)}" data-hs-sec-default="${sec.collapsed ? "1" : "0"}" aria-expanded="${!collapsed}">`
+          + `<span class="hs-sec-l">${CHEV_SVG}${icoHtml}<span class="hs-sec-t">${esc(sec.title || "")}</span></span>`
+          + (sec.meta ? `<span class="hs-sec-m">${esc(sec.meta)}</span>` : "")
+          + `</button>`;
+      } else {
+        head = `<div class="hs-sec-h${accentCls(sec.accent)}"><span class="hs-sec-l">${icoHtml}<span class="hs-sec-t">${esc(sec.title || "")}</span></span>${chipsHtml || (sec.meta ? `<span class="hs-sec-m">${esc(sec.meta)}</span>` : "")}</div>`;
+      }
+    }
+    const rows = collapsed
+      ? ""
+      : `<div class="hs-rows">${(sec.rows || []).map((r, rIdx) => renderRow(r, slotId, `${secKey}:${rIdx}`, opts)).join("")}</div>`;
+    return `<div class="hs-sec${collapsed ? " is-collapsed" : ""}">${head}${rows}</div>`;
   }
 
   function renderPanel(slot, opts) {
@@ -57,9 +137,9 @@
     const closeIcon = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>';
     const errText = st?.error || slot.error || "";
     const updated = st?.updated_at ? when(st.updated_at) : "";
-    const secs = (st?.sections || []).map(renderSection).join("");
+    const secs = (st?.sections || []).map((sec, idx) => renderSection(sec, slot.id, idx, opts)).join("");
     const fallbackItems = !secs && (st?.items || []).length
-      ? `<div class="hs-sec"><div class="hs-rows"><div class="hs-row"><div class="hs-meters">${st.items.map((m) => renderItem(m, true)).join("")}</div></div></div></div>`
+      ? `<div class="hs-sec"><div class="hs-rows"><div class="hs-row"><div class="hs-meters">${st.items.map((m) => renderItem(m, true, opts)).join("")}</div></div></div></div>`
       : "";
     const empty = !secs && !fallbackItems && !errText
       ? `<div class="hs-empty">${slot.state === "starting" ? "正在启动扩展…" : "暂无状态数据"}</div>`
@@ -86,26 +166,36 @@
     const folded = !!opts.folded;
     let desktopMain = "";
     if (items.length) {
-      desktopMain = `<span class="hs-line">${items.map((it) => renderItem(it, false)).join(`<span class="hs-sep" aria-hidden="true">·</span>`)}</span>`
+      desktopMain = `<span class="hs-line">${items.map((it) => renderItem(it, false, opts)).join(`<span class="hs-sep" aria-hidden="true">·</span>`)}</span>`
         + (st.subline ? `<span class="hs-sub">${esc(st.subline)}</span>` : "");
     } else if (slot.state === "starting" && !st) {
       desktopMain = `<span class="hs-line"><span class="dot starting"></span><span class="hs-lab">${esc(title)}</span><span class="hs-val hs-muted">启动中…</span></span>`;
     } else {
       desktopMain = `<span class="hs-line"><span class="hs-lab">${esc(title)}</span><span class="hs-val hs-warn">${esc(st?.error || slot.error || "暂不可用")}</span></span>`;
     }
-    const chev = `<svg class="hs-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
     const itemText = (it) => [it.label, it.value].filter(Boolean).join(" ");
     const firstVal = items.length >= 2 && items[0].percent == null && items[1].percent != null
       ? `${itemText(items[0])} · ${itemText(items[1])}`
       : items[0] ? itemText(items[0]) : title;
     const mobileText = folded ? firstVal : compact;
+    const mobileIco = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
+      || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
     return `<div class="hs-wrap${open ? " is-open" : ""}${pinned ? " is-pinned" : ""}${folded ? " is-folded" : ""}" data-hs-id="${esc(slot.id)}">`
       + `<button type="button" class="hs-trigger${toneCls(tone)}" data-hs-toggle="${esc(slot.id)}" aria-expanded="${open}" aria-haspopup="dialog" title="${esc(title)}">`
       + `<span class="hs-desktop">${desktopMain}</span>`
-      + `<span class="hs-mobile">${slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : ""}<span class="hs-mobile-t">${esc(mobileText)}</span>${chev}</span>`
+      + `<span class="hs-mobile">${mobileIco}<span class="hs-mobile-t">${esc(mobileText)}</span>${CHEV_SVG}</span>`
       + `</button>`
       + `<button type="button" class="hs-fold-btn" data-hs-fold aria-label="${folded ? "展开状态栏" : "收起状态栏"}" title="${folded ? "展开状态栏" : "收起状态栏"}">${folded ? "展开" : "收起"}</button>`
-      + renderPanel(slot, { open, pinned, loading: !!opts.loading, when: opts.when, refreshIcon: opts.refreshIcon })
+      + renderPanel(slot, {
+        open,
+        pinned,
+        loading: !!opts.loading,
+        when: opts.when,
+        refreshIcon: opts.refreshIcon,
+        icons: opts.icons,
+        secState: opts.secState,
+        expandedFolds: opts.expandedFolds,
+      })
       + `</div>`;
   }
 

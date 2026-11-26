@@ -340,27 +340,64 @@ type HeaderStatusItem struct {
 	Label   string   `json:"label,omitempty"`
 	Value   string   `json:"value,omitempty"`
 	Sub     string   `json:"sub,omitempty"`
+	Icon    string   `json:"icon,omitempty"`    // optional built-in icon key (claude, codex, agy, gemini)
+	Accent  string   `json:"accent,omitempty"`  // optional brand accent (claude, codex, agy, gemini)
 	Percent *float64 `json:"percent,omitempty"` // 0..100 when a mini bar should be drawn
-	Tone    string   `json:"tone,omitempty"`    // "" | ok | warn | danger | muted
+	Tone    string   `json:"tone,omitempty"`    // "" | ok | info | warn | hot | danger | muted
 	Tooltip string   `json:"tooltip,omitempty"`
+}
+
+// HeaderStatusBadge is a compact semantic tag attached to a detail row.
+type HeaderStatusBadge struct {
+	Text string `json:"text"`
+	Tone string `json:"tone,omitempty"` // "" | ok | info | warn | hot | danger | muted
+}
+
+// HeaderStatusAction describes an extension action triggered by clicking a
+// selectable row or section chip inside the header status panel.
+type HeaderStatusAction struct {
+	Name  string         `json:"name"`
+	Args  map[string]any `json:"args,omitempty"`
+	Label string         `json:"label,omitempty"`
+}
+
+// HeaderStatusChip is a compact interactive toggle pill in a section header.
+type HeaderStatusChip struct {
+	Label    string              `json:"label"`
+	Selected bool                `json:"selected,omitempty"`
+	Tone     string              `json:"tone,omitempty"`
+	Action   *HeaderStatusAction `json:"action,omitempty"`
 }
 
 // HeaderStatusSection is one group of detail rows inside the header status popover.
 type HeaderStatusSection struct {
-	Title string            `json:"title,omitempty"`
-	Meta  string            `json:"meta,omitempty"`
-	Rows  []HeaderStatusRow `json:"rows,omitempty"`
+	Title       string             `json:"title,omitempty"`
+	Meta        string             `json:"meta,omitempty"`
+	Icon        string             `json:"icon,omitempty"`        // optional built-in icon key (e.g. claude, codex, agy, gemini)
+	Accent      string             `json:"accent,omitempty"`      // optional brand accent
+	Collapsible bool               `json:"collapsible,omitempty"` // allow collapsing/expanding this group
+	Collapsed   bool               `json:"collapsed,omitempty"`   // initial collapsed state when Collapsible is true
+	Chips       []HeaderStatusChip `json:"chips,omitempty"`       // optional quick toggle pills in the header
+	Rows        []HeaderStatusRow  `json:"rows,omitempty"`
 }
 
 // HeaderStatusRow is one row inside a HeaderStatusSection.
 type HeaderStatusRow struct {
-	Label   string             `json:"label"`
-	Badge   string             `json:"badge,omitempty"`
-	Value   string             `json:"value,omitempty"`
-	Detail  string             `json:"detail,omitempty"`
-	Tone    string             `json:"tone,omitempty"`
-	Current bool               `json:"current,omitempty"`
-	Meters  []HeaderStatusItem `json:"meters,omitempty"`
+	Label      string              `json:"label"`
+	Sublabel   string              `json:"sublabel,omitempty"`
+	Icon       string              `json:"icon,omitempty"`
+	Accent     string              `json:"accent,omitempty"`
+	Badge      string              `json:"badge,omitempty"`
+	Badges     []HeaderStatusBadge `json:"badges,omitempty"`
+	Value      string              `json:"value,omitempty"`
+	Metric     *HeaderStatusItem   `json:"metric,omitempty"`
+	Detail     string              `json:"detail,omitempty"`
+	Tone       string              `json:"tone,omitempty"`
+	Current    bool                `json:"current,omitempty"`
+	Selected   bool                `json:"selected,omitempty"`
+	Action     *HeaderStatusAction `json:"action,omitempty"`
+	Meters     []HeaderStatusItem  `json:"meters,omitempty"`
+	FoldedRows []HeaderStatusRow   `json:"folded_rows,omitempty"`
 }
 
 // MChannelWorking marks a message Collie took as a request: the chat app

@@ -1894,12 +1894,21 @@
     openId: "",
     pinnedId: "",
     folded: !!store.get("hs.folded", false),
+    secState: {},
+    expandedFolds: {},
     loading: false,
     model: "",
     at: 0,
     inflight: null,
     openTimer: 0,
     closeTimer: 0,
+  };
+  const HS_ICONS = {
+    claude: GLYPHS.claude,
+    codex: GLYPHS.codex,
+    agy: GLYPHS.agy,
+    antigravity: GLYPHS.agy,
+    gemini: '<svg viewBox="0 0 24 24"><path fill="#4E86F7" stroke="none" d="M12 2c.6 5.2 4.8 9.4 10 10-5.2.6-9.4 4.8-10 10-.6-5.2-4.8-9.4-10-10 5.2-.6 9.4-4.8 10-10z"/></svg>',
   };
   const canHoverHeaderStatus = () => matchMedia("(hover: hover) and (pointer: fine)").matches && !narrow();
   function clearHeaderStatusTimers() {
@@ -1936,6 +1945,9 @@
       openId: hdrStatus.openId,
       pinnedId: hdrStatus.pinnedId,
       folded: hdrStatus.folded,
+      secState: hdrStatus.secState,
+      expandedFolds: hdrStatus.expandedFolds,
+      icons: HS_ICONS,
       loading: hdrStatus.loading,
       when,
       refreshIcon: ico("refresh-cw"),
@@ -1969,6 +1981,21 @@
     });
     hdrStatus.inflight = p;
     return p;
+  }
+  async function runHeaderStatusAction(el) {
+    const slotId = el.dataset.hsSlot;
+    const action = el.dataset.hsAction;
+    if (!slotId || !action) return;
+    let args = {};
+    try { args = JSON.parse(el.dataset.hsArgs || "{}"); } catch {}
+    hdrStatus.loading = true;
+    renderHeaderStatus();
+    try {
+      await api(`/api/ext/${encodeURIComponent(slotId)}/do`, {
+        body: { action, args },
+      });
+    } catch {}
+    await fetchHeaderStatus({ fresh: false });
   }
   function maybeRefreshHeaderStatus(force = false) {
     if (!booted) return;
@@ -2043,6 +2070,31 @@
       renderHeaderStatus();
       return;
     }
+    const secBtn = e.target.closest("[data-hs-sec]");
+    if (secBtn) {
+      e.stopPropagation();
+      const key = secBtn.dataset.hsSec;
+      const cur = Object.prototype.hasOwnProperty.call(hdrStatus.secState, key)
+        ? !!hdrStatus.secState[key]
+        : secBtn.dataset.hsSecDefault === "1";
+      hdrStatus.secState[key] = !cur;
+      renderHeaderStatus();
+      return;
+    }
+    const foldRowBtn = e.target.closest("[data-hs-fold-row]");
+    if (foldRowBtn) {
+      e.stopPropagation();
+      const key = foldRowBtn.dataset.hsFoldRow;
+      hdrStatus.expandedFolds[key] = !hdrStatus.expandedFolds[key];
+      renderHeaderStatus();
+      return;
+    }
+    const actEl = e.target.closest("[data-hs-action]");
+    if (actEl) {
+      e.stopPropagation();
+      runHeaderStatusAction(actEl);
+      return;
+    }
     const tog = e.target.closest("[data-hs-toggle]");
     if (tog) {
       e.stopPropagation();
@@ -2064,6 +2116,14 @@
     }
   });
   document.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !composing(e)) {
+      const actEl = document.activeElement?.closest?.("[data-hs-action]");
+      if (actEl && actEl.tagName !== "BUTTON") {
+        e.preventDefault();
+        runHeaderStatusAction(actEl);
+        return;
+      }
+    }
     if (e.key === "ArrowDown" && !composing(e)) {
       const tog = document.activeElement?.closest?.("[data-hs-toggle]");
       if (tog) {

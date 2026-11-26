@@ -85,3 +85,107 @@ test("pinned state renders pin badge, scrim, and close button", () => {
   assert.match(html, /data-hs-close/);
   assert.match(html, /hs-scrim/);
 });
+
+test("renders collapsible sections with icons, sublabels, multi-badges, metrics, and folded rows", () => {
+  const slot = {
+    id: "pool",
+    name: "Pool",
+    state: "ok",
+    status: {
+      items: [{ label: "5H", value: "80%", percent: 80 }],
+      sections: [{
+        title: "Claude",
+        meta: "3 个账号",
+        icon: "claude",
+        collapsible: true,
+        rows: [
+          {
+            label: "Primary OAuth",
+            sublabel: "user@example.com",
+            badges: [
+              { text: "Max 5x ($100)" },
+              { text: "额度保护", tone: "warn" },
+            ],
+            metric: { label: "并发", value: "2/100", percent: 2 },
+            meters: [{ label: "5H", value: "剩 80%", sub: "用 20% · 2h 后 (03:00)", percent: 80 }],
+          },
+          {
+            label: "其余 2 个账号额度充足",
+            detail: "所有窗口 ≥90%，状态正常",
+            folded_rows: [
+              { label: "healthy1@example.com", badges: [{ text: "Pro" }] },
+              { label: "healthy2@example.com", badges: [{ text: "Free", tone: "muted" }] },
+            ],
+          },
+        ],
+      }],
+    },
+  };
+
+  const expanded = hs.render([slot], {
+    openId: "pool",
+    icons: { claude: '<svg data-ico="claude"></svg>' },
+  });
+  assert.match(expanded, /data-hs-sec="pool:Claude"/);
+  assert.match(expanded, /data-ico="claude"/);
+  assert.match(expanded, /Primary OAuth/);
+  assert.match(expanded, /hs-row-sub"[^>]*>user@example\.com</);
+  assert.match(expanded, /Max 5x \(\$100\)/);
+  assert.match(expanded, /hs-badge hs-warn">额度保护</);
+  assert.match(expanded, /hs-row-metric/);
+  assert.match(expanded, /2\/100/);
+  assert.match(expanded, /data-hs-fold-row="pool:Claude:1"/);
+  assert.doesNotMatch(expanded, /healthy1@example\.com/);
+
+  // Expanding the folded row reveals its children.
+  const withFoldOpen = hs.render([slot], {
+    openId: "pool",
+    expandedFolds: { "pool:Claude:1": true },
+  });
+  assert.match(withFoldOpen, /healthy1@example\.com/);
+  assert.match(withFoldOpen, /healthy2@example\.com/);
+  assert.match(withFoldOpen, />收起</);
+
+  // Collapsing the section hides its rows.
+  const collapsed = hs.render([slot], {
+    openId: "pool",
+    secState: { "pool:Claude": true },
+  });
+  assert.match(collapsed, /is-collapsed/);
+  assert.doesNotMatch(collapsed, /Primary OAuth/);
+});
+
+test("renders interactive selectable rows, section chips, and brand accents", () => {
+  const html = hs.render([{
+    id: "meter",
+    name: "Meter",
+    state: "ok",
+    status: {
+      items: [{ label: "Codex", value: "2/2", icon: "codex", accent: "codex" }],
+      sections: [{
+        title: "Pools",
+        chips: [
+          { label: "跟随模型", selected: false, action: { name: "set_focus", args: { focus: "auto" } } },
+          { label: "全部", selected: false, action: { name: "set_focus", args: { focus: "all" } } },
+        ],
+        rows: [{
+          label: "Codex",
+          icon: "codex",
+          accent: "codex",
+          selected: true,
+          action: { name: "set_focus", args: { focus: "codex" }, label: "切换顶栏显示" },
+          meters: [{ label: "7D", value: "剩 26%", percent: 26, tone: "hot" }],
+        }],
+      }],
+    },
+  }], { openId: "meter", icons: { codex: '<svg data-ico="codex"></svg>' } });
+
+  assert.match(html, /hs-brand-codex/);
+  assert.match(html, /is-selected/);
+  assert.match(html, /is-action/);
+  assert.match(html, /data-hs-action="set_focus"/);
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /hs-hot/);
+  assert.match(html, /hs-chip/);
+  assert.match(html, /跟随模型/);
+});
