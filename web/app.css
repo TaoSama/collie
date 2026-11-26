@@ -2474,9 +2474,27 @@ select.picked { display: none; }
 .ext-row .meta b { font-family: var(--sans); color: var(--fg); font-size: var(--fs-row-title); }
 .ext-row .text { color: var(--t-desc); -webkit-line-clamp: 1; }
 .ext-row-state { display: inline-flex; align-items: center; gap: 6px; }
+.ext-st { display: grid; justify-items: end; gap: 2px; }
+.ext-st-l { display: inline-flex; align-items: center; gap: 6px; color: var(--t-secondary); }
+.ext-st-on { max-width: 12em; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-tiny); color: var(--t-meta); }
 .ext-row .chev { margin-left: 6px; color: var(--t-icon); font-size: var(--fs-title); line-height: 1; }
-.ext-icon { width: 32px; height: 32px; border-radius: calc(9px * var(--round)); display: inline-flex; align-items: center; justify-content: center; background: var(--bg-3); color: var(--fg); font-weight: var(--fw-strong); font-size: var(--fs-body); flex: none; }
-.ext-icon.ghost { background: transparent; }
+/* Its color (--ext-c, from the manifest; ink when it has none) tints the
+   tile, and its icon (--ext-i) is a mask painted in that color. */
+.ext-icon {
+  --ext-c: var(--fg); width: 36px; height: 36px; border-radius: calc(10px * var(--round)); display: inline-flex; align-items: center; justify-content: center; flex: none;
+  background: color-mix(in srgb, var(--ext-c) 12%, var(--bg)); box-shadow: inset 0 0 0 var(--bw) color-mix(in srgb, var(--ext-c) 20%, transparent);
+  color: var(--ext-c); font-weight: var(--fw-strong); font-size: var(--fs-body);
+}
+.ext-icon > i { width: 62%; height: 62%; background: currentColor; -webkit-mask: var(--ext-i) center / contain no-repeat; mask: var(--ext-i) center / contain no-repeat; }
+.ext-icon.off { background: var(--bg-2); box-shadow: inset 0 0 0 var(--bw) var(--line-2); color: color-mix(in srgb, var(--ext-c) 45%, var(--t-icon)); }
+.ext-icon.ink:not(.off) { background: color-mix(in srgb, var(--fg) 7%, var(--bg)); }
+.ext-icon.wait { background: color-mix(in srgb, var(--ext-c) 6%, var(--bg)); }
+.ext-icon.bad { background: var(--attn-soft); box-shadow: inset 0 0 0 var(--bw) color-mix(in srgb, var(--attn) 45%, transparent); }
+.ext-icon.big { width: 48px; height: 48px; border-radius: calc(13px * var(--round)); font-size: var(--fs-lead); }
+.ext-icon.ghost { background: transparent; box-shadow: none; }
+.ext-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.ext-head > div { min-width: 0; display: grid; gap: 2px; }
+.ext-head .muted { font-size: var(--fs-meta); }
 .sub-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
 .sub-head h3 { margin: 0; font-size: var(--fs-title); font-weight: var(--fw-strong); }
 .sub-back { color: var(--t-secondary); text-decoration: none; font-size: var(--fs-meta); flex-basis: 100%; }
@@ -2501,7 +2519,6 @@ select.picked { display: none; }
 .spinner.small { width: 12px; height: 12px; border-width: 1.5px; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
-  .ext-row-state .muted { display: none; }
   .ext-status { flex-wrap: wrap; }
   .ext-status .btn.primary { width: 100%; }
 }

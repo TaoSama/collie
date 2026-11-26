@@ -9,6 +9,8 @@ out=docs/demo
 rm -rf "$out" && mkdir -p "$out"
 cp -R web/vendor web/fonts web/imgedit.js web/threads.js web/machines.js web/ext.js web/workbench.js web/app.css web/skins.css web/icon.svg web/icon-512.png "$out/"
 cp scripts/demo/demo.js scripts/demo/demo-qr.png scripts/demo/bench-pagination.html "$out/"
+# Extension icons, which the hub hands out from the manifests (extensions/*/icon.svg).
+mkdir "$out/ext-icons" && for f in extensions/*/icon.svg; do cp "$f" "$out/ext-icons/$(basename "$(dirname "$f")").svg"; done
 # Use paths relative to the demo directory when serving it on GitHub Pages.
 sed -e 's#src="/icon.svg"#src="icon.svg"#g' -e 's#"/api/qr?text=#"demo-qr.png?text=#g' web/app.js > "$out/app.js"
 sed -e 's#href="/#href="#g' -e 's#src="/#src="#g' \

@@ -22,7 +22,7 @@
   function stateOf(v) {
     const m = v.manifest;
     if (!v.setting.enabled) return { key: "off", dot: "asleep", label: "未开启", text: "未开启" };
-    if (declarative(m)) return { key: "on", dot: "idle", label: "已开启", text: "已开启（不需要运行程序）", ok: true };
+    if (declarative(m)) return { key: "on", dot: "online", label: "已开启", text: "已开启（不需要运行程序）", ok: true };
     if (v.problem && !v.proc) return { key: "error", dot: "blocked", label: "出错", text: "连不上它所在的电脑：" + v.problem };
     const p = v.proc || { state: "starting" };
     if (p.state === "error") return { key: "error", dot: "blocked", label: "出错", text: p.error || "启动失败" };
@@ -32,14 +32,20 @@
     }
     const s = v.status;
     if (!s) return { key: "starting", dot: "starting", label: "启动中", text: "正在读取状态…", busy: true };
-    if (s.state === "ok") return { key: "on", dot: "idle", label: "运行中", text: needsLogin(m) ? "已登录" + (s.account ? " " + s.account : "") : "运行中", ok: true };
+    if (s.state === "ok") return { key: "on", dot: "online", label: "运行中", text: needsLogin(m) ? "已登录" + (s.account ? " " + s.account : "") : "运行中", ok: true };
     if (s.state === "not_signed_in") return { key: "login", dot: "blocked", label: "未登录", text: "未登录", login: true };
     // Just started, an extension may say "error" while it prepares (a first
     // start downloads what it needs): that is starting, not broken.
     if (p.since && Date.now() - Date.parse(p.since) < 5 * 60e3) return { key: needsLogin(m) ? "login" : "starting", dot: "starting", label: needsLogin(m) ? "未登录" : "启动中", text: s.error || "正在启动…", busy: true };
     return { key: "error", dot: "blocked", label: "出错", text: s.error || "出错" };
   }
-  const extIcon = (m) => `<span class="ext-icon" aria-hidden="true">${esc((m.label || m.name || m.id).slice(0, 1))}</span>`;
+  // Its icon (or first letter) on a tile tinted by how it is: its own
+  // color when on, quiet when off, attention when it needs you.
+  const TONE = { online: "on", asleep: "off", blocked: "bad", starting: "wait" };
+  const extIcon = (m, st, big) => {
+    const look = [m.color && `--ext-c:${m.color}`, m.icon_url && `--ext-i:url(${m.icon_url})`].filter(Boolean).join(";");
+    return `<span class="ext-icon ${TONE[st?.dot] || ""}${m.color ? "" : " ink"}${big ? " big" : ""}"${look ? ` style="${esc(look)}"` : ""} aria-hidden="true">${m.icon_url ? "<i></i>" : esc((m.label || m.name || m.id).slice(0, 1))}</span>`;
+  };
   const loginWord = (m) => m.contributes?.connector?.login === "secret" ? "填写密钥" : "登录" + (m.label || "");
 
   // Until one is chosen, none is picked; drawn as every computer picker (machines.js).
@@ -103,9 +109,9 @@
       const n = convs.filter((c) => c.ext === m.id), on = n.filter((c) => c.on).length;
       const sub = [m.market ? "市场" : m.local ? "本地" : "内置", n.length ? `${n.length} 个会话${on ? `，${on} 个处理中` : ""}` : "",
         (m.contributes?.connector?.actions || []).length ? `${m.contributes.connector.actions.length} 个动作` : ""].filter(Boolean).join(" · ");
-      return `<a class="row ext-row" href="#/auto/hooks/ext/${encodeURIComponent(m.id)}">${extIcon(m)}
+      return `<a class="row ext-row" href="#/auto/hooks/ext/${encodeURIComponent(m.id)}">${extIcon(m, st)}
         <div><div class="meta"><b>${esc(m.name)}</b></div><div class="text">${esc(sub)}</div></div>
-        <span class="right ext-row-state"><span class="dot ${esc(st.dot)}"></span>${esc(st.label)}${v.setting.enabled && !declarative(m) ? `<span class="muted"> · ${esc(machineName(ms, v.setting.machine))}</span>` : ""}<span class="chev" aria-hidden="true">›</span></span></a>`;
+        <span class="right ext-row-state"><span class="ext-st"><span class="ext-st-l"><span class="dot ${esc(st.dot)}"></span>${esc(st.label)}</span>${v.setting.enabled && !declarative(m) ? `<span class="ext-st-on">${esc(machineName(ms, v.setting.machine))}</span>` : ""}</span><span class="chev" aria-hidden="true">›</span></span></a>`;
     };
     const nav = (href, title, sub) => `<a class="row ext-row" href="${href}"><span class="ext-icon ghost" aria-hidden="true"></span><div><div class="meta"><b>${title}</b></div><div class="text">${esc(sub)}</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a>`;
     const updates = (markets?.markets || []).reduce((n, mk) => n + (mk.index || []).filter((e) => mk.installed?.[e.id] && mk.installed[e.id] !== e.version).length, 0);
@@ -117,7 +123,8 @@
       </div></div>`;
   }
 
-  const pageHead = (title, sub = "") => `<div class="sub-head"><a class="sub-back" href="#/auto" data-sub-back aria-label="返回接入">‹ 接入</a><h3>${title}</h3>${sub}</div>`;
+  // icon: an extension's page leads with its icon, the name and version beside it.
+  const pageHead = (title, sub = "", icon = "") => `<div class="sub-head"><a class="sub-back" href="#/auto" data-sub-back aria-label="返回接入">‹ 接入</a>${icon ? `<div class="ext-head">${icon}<div><h3>${title}</h3>${sub}</div></div>` : `<h3>${title}</h3>${sub}`}</div>`;
 
   // One extension's page: its state and the one thing to do next on top.
   function extPage(v, r, qr, inbox) {
@@ -131,7 +138,7 @@
       ? `<div class="ext-field"><span class="tm-lab">运行在</span><span>${esc(machineName(ms, m.local_on))}<small class="muted">本地扩展，只在装了它的那台电脑上运行</small></span></div>`
       : `<label class="ext-field"><span class="tm-lab">运行在</span><select data-ext-machine data-pick="compact" data-title="在哪台电脑上运行">${machineOptions(ms, v.setting.machine || "", ask)}</select></label>
          <small class="muted ext-field-note">${ask ? "它只能在一台电脑上运行，先选好再开启。" : ""}换电脑会停掉原来那台上的；登录状态留在原来那台，新电脑上可能要重新登录。</small>`;
-    return `${pageHead(esc(m.name), `<span class="muted">${esc(m.version)} · ${m.market ? "市场" : m.local ? "本地" : "内置"}</span>`)}
+    return `${pageHead(esc(m.name), `<span class="muted">${esc(m.version)} · ${m.market ? "市场" : m.local ? "本地" : "内置"}</span>`, extIcon(m, st, true))}
       <div class="card ext-card" data-ext="${esc(m.id)}"><div class="form">
         <div class="ext-status"><span class="dot ${esc(st.dot)}"></span><div><b>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${primary}</div>
         ${loginPanel(m, qr)}
