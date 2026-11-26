@@ -280,3 +280,23 @@ func TestAgyDesktopSessionsTakeOverOnlyTheCLIs(t *testing.T) {
 		}
 	}
 }
+
+func TestAgyDesktopRowsReadTheCLIsIndexWithoutTheApp(t *testing.T) {
+	home := t.TempDir()
+	agyIndexFixture(t, filepath.Join(home, ".gemini", "antigravity-cli"))("cli", time.Now(), false)
+	rows := (&Server{home: home}).agyDesktopRows()
+	// The CLI leaves source empty in its own index: all its rows are the CLI's.
+	if len(rows) != 1 || rows[0].session != "cli" || rows[0].surface != surfaceCLI || rows[0].app != appAgyCLI {
+		t.Fatalf("rows = %+v, want the CLI's conversation, as the CLI's", rows)
+	}
+}
+
+func TestAgyDesktopRowsReadOnlyTheAppsIndexWhereItIs(t *testing.T) {
+	home := t.TempDir()
+	agyIndexFixture(t, filepath.Join(home, ".gemini", "antigravity"))("app", time.Now(), false)
+	agyIndexFixture(t, filepath.Join(home, ".gemini", "antigravity-cli"))("cli", time.Now(), false)
+	rows := (&Server{home: home}).agyDesktopRows()
+	if len(rows) != 1 || rows[0].session != "app" {
+		t.Fatalf("rows = %+v, want the App's index alone: it lists the CLI's too", rows)
+	}
+}

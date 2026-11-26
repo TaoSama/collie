@@ -165,6 +165,8 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			}
 			if agyDesktopServer() != nil {
 				e.CanSend, e.via = true, "app"
+			} else if d.surface == surfaceCLI {
+				e.ReadOnly = "这个会话现在没在运行"
 			} else {
 				e.ReadOnly = "Antigravity 没有打开：打开它之后就能从这里发消息"
 			}
@@ -619,8 +621,14 @@ func (s *Server) codexAppSend(ctx context.Context, thread, text string) error {
 func (s *Server) agyDesktopRows() []desktopRow {
 	root := filepath.Join(s.home, ".gemini", "antigravity")
 	path := filepath.Join(root, "conversation_summaries.db")
+	// The App's index lists the CLI's conversations too. Without the App
+	// (Linux), the CLI's own index lists them, all the CLI's.
+	cliOnly := false
 	if !isFile(path) {
-		return nil
+		path, cliOnly = filepath.Join(s.agyCLIHome(), "conversation_summaries.db"), true
+		if !isFile(path) {
+			return nil
+		}
 	}
 	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(2000)")
 	if err != nil {
@@ -676,11 +684,14 @@ func (s *Server) agyDesktopRows() []desktopRow {
 		if len(ws) > 0 {
 			cwd = strings.TrimSuffix(strings.TrimPrefix(ws[0], "file://"), "/")
 		}
-		app := appAgy
-		if agySurface(src) == surfaceCLI {
+		app, surface := appAgy, agySurface(src)
+		if cliOnly {
+			surface = surfaceCLI // the CLI leaves source empty in its own index
+		}
+		if surface == surfaceCLI {
 			app = appAgyCLI
 		}
-		d := desktopRow{id: "ag-" + id, kind: "agy", app: app, surface: agySurface(src), session: id, title: messageTitle(title), cwd: cwd,
+		d := desktopRow{id: "ag-" + id, kind: "agy", app: app, surface: surface, session: id, title: messageTitle(title), cwd: cwd,
 			created: sqlTime(input), updated: sqlTime(mod), running: status == "CASCADE_RUN_STATUS_RUNNING"}
 		d.waiting = !d.running && notIdle
 		// A conversation the CLI started keeps its log in the CLI's home.
