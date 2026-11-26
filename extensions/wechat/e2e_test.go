@@ -2,6 +2,7 @@ package wechat
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,13 +18,14 @@ import (
 // fakeILink is iLink for the end-to-end test: one QR login, then a queue
 // of polled messages and a record of everything sent.
 type fakeILink struct {
-	mu      sync.Mutex
-	server  *httptest.Server
-	queue   [][]map[string]any
-	sent    []map[string]any
-	scans   int
-	polls   int
-	expired bool
+	mu         sync.Mutex
+	server     *httptest.Server
+	queue      [][]map[string]any
+	sent       []map[string]any
+	scans      int
+	polls      int
+	expired    bool
+	beforePoll func()
 }
 
 func newFakeILink(t *testing.T) *fakeILink {
@@ -34,6 +36,9 @@ func newFakeILink(t *testing.T) *fakeILink {
 }
 
 func (f *fakeILink) serve(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/ilink/bot/getupdates" && f.beforePoll != nil {
+		f.beforePoll()
+	}
 	body, _ := io.ReadAll(r.Body)
 	var payload map[string]any
 	_ = json.Unmarshal(body, &payload)
@@ -102,15 +107,20 @@ func (f *fakeILink) texts() []string {
 
 // fakeHost is Collie: it keeps secrets, takes messages and records events.
 type fakeHost struct {
-	mu       sync.Mutex
-	peer     *extproto.Peer
-	secret   string
-	received []extproto.Message
-	events   []extproto.Delivery
-	changed  []string
+	mu              sync.Mutex
+	peer            *extproto.Peer
+	secret          string
+	received        []extproto.Message
+	events          []extproto.Delivery
+	changed         []string
+	beforeLoad      func()
+	deliveryOffline bool
 }
 
 func (h *fakeHost) handle(_ context.Context, method string, params json.RawMessage) (any, error) {
+	if method == extproto.MSecretsLoad && h.beforeLoad != nil {
+		h.beforeLoad()
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch method {
@@ -123,6 +133,16 @@ func (h *fakeHost) handle(_ context.Context, method string, params json.RawMessa
 		return struct{}{}, nil
 	case extproto.MSecretsDelete:
 		h.secret = ""
+		return struct{}{}, nil
+	case extproto.MChannelDelivery:
+		if h.deliveryOffline {
+			return nil, extproto.Errorf(extproto.ErrHubUnavailable, "test hub disconnected")
+		}
+		var d extproto.Delivery
+		if err := json.Unmarshal(params, &d); err != nil {
+			return nil, err
+		}
+		h.events = append(h.events, d)
 		return struct{}{}, nil
 	case extproto.MChannelReceive:
 		var r extproto.Receive
@@ -288,5 +308,86 @@ func TestHostProtocolEndToEnd(t *testing.T) {
 	h.mu.Unlock()
 	if !sawStatus {
 		t.Fatal("no connector.changed{scope:status} after the login expired")
+	}
+}
+
+func TestHostProtocolSendDuringRestore(t *testing.T) {
+	f := newFakeILink(t)
+	load, baseline := make(chan struct{}), make(chan struct{})
+	f.beforePoll = func() { <-baseline }
+	h, stop := startExtension(t, f)
+	releaseLoad := sync.OnceFunc(func() { close(load) })
+	releaseBaseline := sync.OnceFunc(func() { close(baseline) })
+	defer stop()
+	defer releaseLoad()
+	defer releaseBaseline()
+	h.beforeLoad = func() { <-load }
+	raw, err := json.Marshal(secrets{Credentials: Credentials{
+		Token: "token-1", BotID: "bot-1", UserID: "owner@im.wechat", BaseURL: f.server.URL,
+	}})
+	mustNoErr(t, err)
+	h.secret = base64.StdEncoding.EncodeToString(raw)
+	call[extproto.InitializeResult](t, h, extproto.MInitialize, extproto.InitializeParams{Protocol: 1,
+		Extension: extproto.ExtensionInfo{ID: "wechat", DataDir: t.TempDir()}})
+	send := extproto.Send{Ref: "replayed", Chat: "owner@im.wechat", Text: "hello", Kind: extproto.KindAnswer}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	checkError := func(phase, code string) {
+		t.Helper()
+		if err := h.peer.Call(ctx, extproto.MChannelSend, send, nil); !extproto.IsCode(err, code) {
+			t.Errorf("%s: send error = %v, want %s", phase, err, code)
+		}
+	}
+	checkError("restoring secrets", extproto.ErrNotReady)
+	releaseLoad()
+	eventually(t, "baseline in progress", func() bool {
+		st := call[extproto.Status](t, h, extproto.MStatus, nil)
+		return st.Detail["基线"] == "建立中"
+	})
+	checkError("establishing baseline", extproto.ErrNotReady)
+	releaseBaseline()
+	eventually(t, "baseline ready", func() bool {
+		st := call[extproto.Status](t, h, extproto.MStatus, nil)
+		return st.State == extproto.StateOK && st.Detail["基线"] == nil
+	})
+	if got := call[extproto.SendResult](t, h, extproto.MChannelSend, send); !got.Deferred {
+		t.Fatalf("after restore = %+v, want deferred until owner opens the reply window", got)
+	}
+	call[struct{}](t, h, extproto.MLogout, nil)
+	checkError("after logout", extproto.ErrNotSignedIn)
+}
+
+func TestHostProtocolDeliveryAfterReconnect(t *testing.T) {
+	f := newFakeILink(t)
+	h, stop := startExtension(t, f)
+	defer stop()
+	h.deliveryOffline = true
+	call[extproto.InitializeResult](t, h, extproto.MInitialize, extproto.InitializeParams{Protocol: 1,
+		Extension: extproto.ExtensionInfo{ID: "wechat", DataDir: t.TempDir()}})
+	step := call[extproto.LoginStep](t, h, extproto.MLoginStep, nil)
+	call[extproto.LoginStep](t, h, extproto.MLoginStep, map[string]string{"step": step.Step})
+	call[extproto.LoginStep](t, h, extproto.MLoginStep, map[string]string{"step": step.Step})
+	eventually(t, "baseline", func() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.polls >= 2 })
+	f.push(map[string]any{"message_type": 1, "from_user_id": "owner@im.wechat", "client_id": "m-1",
+		"create_time_ms": nowMs(), "context_token": "ctx-1",
+		"item_list": []any{map[string]any{"type": 1, "text_item": map[string]any{"text": "hello"}}}})
+	eventually(t, "receive", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.received) == 1 })
+	req := extproto.Send{Contribution: "wechat", Ref: "offline", Chat: "owner@im.wechat", Text: "only once", Kind: extproto.KindAnswer}
+	res := call[extproto.SendResult](t, h, extproto.MChannelSend, req)
+	h.mu.Lock()
+	reports := len(h.events)
+	h.deliveryOffline = false
+	h.mu.Unlock()
+	if !res.Deferred || reports != 0 {
+		t.Errorf("while disconnected: send = %+v, deliveries = %d", res, reports)
+	}
+	eventually(t, "acknowledged delivery", func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.events) == 1 && h.events[0].Ref == req.Ref &&
+			h.events[0].State == extproto.DeliverySent && h.events[0].MessageID != ""
+	})
+	if got := f.texts(); len(got) != 1 || got[0] != req.Text {
+		t.Fatalf("WeChat sends = %v", got)
 	}
 }

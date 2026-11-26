@@ -342,3 +342,23 @@ func TestGwfUnreachableChatDoesNotBlock(t *testing.T) {
 		}
 	}
 }
+
+func TestResultReceiptReplaysAfterRestart(t *testing.T) {
+	h := newHarness(t, harnessOptions{})
+	id := gwfPlant(t, h, "offline-result", testChat, "only once")
+	h.do(func() {
+		h.gateway.host = &gweFlakyHost{h.host, func() bool { return true }}
+	})
+	if _, err := h.deliverNotificationsOnce(); err == nil {
+		t.Fatal("the host did not acknowledge the result")
+	}
+	if len(h.sent()) != 1 || gwfPlan(h, id).Status != ResultAccepted || len(h.host.events()) != 0 {
+		t.Fatalf("before restart: %d sends, plan %s, events %v", len(h.sent()), gwfPlan(h, id).Status, h.host.events())
+	}
+	r := gwfRestart(t, h)
+	_ = gwfSummary(t, r)
+	_ = gwfSummary(t, r)
+	if len(r.sent()) != 0 || fmt.Sprint(gwfEventStates(r)) != "[sent:]" {
+		t.Fatalf("after restart: %d new sends, events %v", len(r.sent()), gwfEventStates(r))
+	}
+}

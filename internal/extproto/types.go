@@ -12,6 +12,7 @@ const (
 	ErrTimeout        = "timeout"
 	ErrClosed         = "closed"
 	ErrInternal       = "internal"
+	ErrNotReady       = "not_ready" // channel.send: the connector is starting
 	ErrNotSignedIn    = "not_signed_in"
 	ErrCannotSend     = "cannot_send"
 	ErrHubUnavailable = "hub_unavailable"
@@ -36,12 +37,13 @@ const (
 
 // Methods and events the extension sends.
 const (
-	MSecretsLoad    = "connector.secrets.load"
-	MSecretsSave    = "connector.secrets.save"
-	MSecretsDelete  = "connector.secrets.delete"
-	MChannelReceive = "channel.receive"
-	EChanged        = "connector.changed"
-	EDelivery       = "channel.delivery"
+	MSecretsLoad     = "connector.secrets.load"
+	MSecretsSave     = "connector.secrets.save"
+	MSecretsDelete   = "connector.secrets.delete"
+	MChannelReceive  = "channel.receive"
+	EChanged         = "connector.changed"
+	EDelivery        = "channel.delivery" // legacy notification
+	MChannelDelivery = EDelivery
 )
 
 // InitializeParams is the first call after the program starts.
@@ -290,7 +292,7 @@ type SendResult struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-// Delivery is the channel.delivery event: what became of a send.
+// Delivery is the channel.delivery receipt: what became of a send.
 type Delivery struct {
 	Contribution string `json:"contribution,omitempty"`
 	Ref          string `json:"ref"`

@@ -21,7 +21,7 @@ const (
 type Host interface {
 	// Receive hands one message over; nil means Collie has it.
 	Receive(ctx context.Context, m extproto.Message) error
-	// Delivery reports what became of a send.
+	// Delivery reports what became of a send. Nil means Collie recorded it.
 	Delivery(d extproto.Delivery) error
 	// Changed tells Collie something it shows changed (status, outbox).
 	Changed(scope string) error
@@ -43,7 +43,9 @@ func (h *peerHost) Receive(ctx context.Context, m extproto.Message) error {
 func (h *peerHost) Delivery(d extproto.Delivery) error {
 	d.Contribution = h.contribution
 	d.Reason = humanReason(d.State, d.Reason)
-	return h.peer.Notify(extproto.EDelivery, d)
+	ctx, cancel := context.WithTimeout(context.Background(), hostCallTimeout)
+	defer cancel()
+	return h.peer.Call(ctx, extproto.MChannelDelivery, d, nil)
 }
 
 func (h *peerHost) Changed(scope string) error {

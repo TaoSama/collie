@@ -25,11 +25,10 @@ var (
 	errResultsFull    = errors.New("Result store capacity exhausted")
 )
 
-// storedResult is a plan with what the store alone needs: which outcome
-// Collie was told, so each is reported once.
+// storedResult keeps the plan and the last outcome acknowledged by Collie.
 type storedResult struct {
 	ResultDelivery
-	Reported string `json:"reported,omitempty"`
+	Acknowledged string `json:"acknowledged,omitempty"`
 }
 
 type resumeRecord struct {
@@ -57,13 +56,13 @@ type resultStore struct {
 	// already have replaced results.json before reporting an error.
 	savePending bool
 	// report tells Collie a result's outcome: sent, deferred, uncertain or expired.
-	report func(ref, state, reason string)
+	report func(ref, state, reason string) error
 	// attempted reports whether any step of a plan reached WeChat; an
 	// attempt that ran out without one is retried, never made uncertain.
 	attempted func(ResultDelivery) bool
 }
 
-func newResultStore(dir string, fingerprint func() string, report func(ref, state, reason string)) (*resultStore, error) {
+func newResultStore(dir string, fingerprint func() string, report func(ref, state, reason string) error) (*resultStore, error) {
 	s := &resultStore{dir: dir, fingerprint: fingerprint, current: fingerprint(), plans: map[string]*storedResult{}, report: report}
 	var st resultStoreFile
 	found, err := readPrivateJSON(filepath.Join(dir, resultsFileName), resultStoreBytes, &st)
@@ -178,12 +177,10 @@ func (s *resultStore) create(plan ResultDelivery, artifact []byte) (ResultDelive
 		return ResultDelivery{}, err
 	}
 	before := map[string]storedResult{}
-	var superseded []string
 	for id, older := range s.plans {
 		if canSupersede(older.ResultDelivery, plan) {
 			before[id] = *older
 			older.Status = ResultSuperseded
-			superseded = append(superseded, older.Key)
 		} else if canSupersede(plan, older.ResultDelivery) {
 			plan.Status = ResultSuperseded
 		}
@@ -192,12 +189,6 @@ func (s *resultStore) create(plan ResultDelivery, artifact []byte) (ResultDelive
 	if err := s.commit(before); err != nil {
 		delete(s.plans, plan.ID)
 		return ResultDelivery{}, err
-	}
-	for _, key := range superseded {
-		s.reportOnce(key, DeliveryExpired, reasonSuperseded)
-	}
-	if plan.Status == ResultSuperseded {
-		s.reportOnce(plan.Key, DeliveryExpired, reasonSuperseded)
 	}
 	return plan, nil
 }
@@ -208,22 +199,6 @@ func writePrivateFile(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-// reportOnce tells Collie a plan's outcome the first time it is reached.
-func (s *resultStore) reportOnce(key, state, reason string) {
-	p := s.byKey(key)
-	if p == nil || p.Reported == state && state != DeliveryDeferred {
-		return
-	}
-	p.Reported = state
-	if err := s.save(); err != nil {
-		p.Reported = ""
-		return
-	}
-	if s.report != nil {
-		s.report(key, state, reason)
-	}
 }
 
 // get also turns an attempt that outlived its deadline into uncertain.
@@ -245,9 +220,6 @@ func (s *resultStore) get(id string, now int64) (ResultDelivery, error) {
 		}
 		if err := s.commit(before); err != nil {
 			return ResultDelivery{}, err
-		}
-		if !unsent {
-			s.reportOnce(p.Key, DeliveryUncertain, reasonSendUnknown)
 		}
 	}
 	return p.ResultDelivery, nil
@@ -308,24 +280,11 @@ func (s *resultStore) claim(id, attemptID string, now int64) (ResultDelivery, er
 }
 
 func (s *resultStore) deferResult(id, attemptID, reason string, now int64, submitted int) (ResultDelivery, error) {
-	p, err := s.transition(id, func(p ResultDelivery) *ResultDelivery { return deferDelivery(p, attemptID, reason, now, submitted) })
-	if err == nil && p.Status == ResultWaitingForUser {
-		s.reportOnce(p.Key, DeliveryDeferred, reason)
-	}
-	return p, err
+	return s.transition(id, func(p ResultDelivery) *ResultDelivery { return deferDelivery(p, attemptID, reason, now, submitted) })
 }
 
 func (s *resultStore) receipt(id, status, attemptID string) (ResultDelivery, error) {
-	p, err := s.transition(id, func(p ResultDelivery) *ResultDelivery { return receiptDelivery(p, status, attemptID) })
-	if err != nil {
-		return p, err
-	}
-	if p.Status == ResultAccepted {
-		s.reportOnce(p.Key, DeliverySent, "")
-	} else {
-		s.reportOnce(p.Key, DeliveryUncertain, reasonSendUnknown)
-	}
-	return p, nil
+	return s.transition(id, func(p ResultDelivery) *ResultDelivery { return receiptDelivery(p, status, attemptID) })
 }
 
 // resume releases a chat's waiting plans once per inbound generation.
@@ -368,25 +327,19 @@ func (s *resultStore) markChatWaiting(chatID, reason string, now int64) (int, er
 		return 0, err
 	}
 	before := map[string]storedResult{}
-	var keys []string
 	for id, p := range s.plans {
 		if p.ChatID == chatID && p.Status == ResultReady && p.SubmittedMessages == 0 && p.CreatedAt <= now && p.ExpiresAt > now && p.RetainedUntil > now {
 			before[id] = *p
 			p.Status, p.DeferReason = ResultWaitingForUser, reason
-			keys = append(keys, p.Key)
 		}
 	}
-	if len(keys) == 0 {
+	if len(before) == 0 {
 		return 0, nil
 	}
 	if err := s.commit(before); err != nil {
 		return 0, err
 	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		s.reportOnce(k, DeliveryDeferred, reason)
-	}
-	return len(keys), nil
+	return len(before), nil
 }
 
 // materialize is the plan as sent: download plans gain their link message.
@@ -412,37 +365,58 @@ func (s *resultStore) artifact(id string) ([]byte, error) {
 	return data, err
 }
 
-// prune forgets plans past retention and reports those never delivered.
+// resultOutcome reconstructs the receipt from the persisted plan, including
+// after a restart between saving the outcome and reporting it.
+func resultOutcome(p ResultDelivery, now int64) (state, reason string) {
+	switch p.Status {
+	case ResultAccepted:
+		return DeliverySent, ""
+	case ResultUncertain:
+		return DeliveryUncertain, reasonSendUnknown
+	case ResultSuperseded:
+		return DeliveryExpired, reasonSuperseded
+	}
+	if p.ExpiresAt <= now {
+		return DeliveryExpired, reasonExpired
+	}
+	if p.Status == ResultWaitingForUser {
+		return DeliveryDeferred, p.DeferReason
+	}
+	return "", ""
+}
+
+// prune reports outstanding receipts and removes plans past retention.
 func (s *resultStore) prune(now int64) error {
-	var expired []string
-	for id, p := range s.plans {
-		final := p.Status == ResultAccepted || p.Status == ResultUncertain || p.Status == ResultSuperseded
-		if !final && p.ExpiresAt <= now && p.Reported != DeliveryExpired {
-			expired = append(expired, p.Key)
-			p.Reported = DeliveryExpired
+	var first error
+	plans := make([]*storedResult, 0, len(s.plans))
+	for _, p := range s.plans {
+		plans = append(plans, p)
+	}
+	sort.Slice(plans, func(i, j int) bool { return plans[i].Key < plans[j].Key })
+	for _, p := range plans {
+		state, reason := resultOutcome(p.ResultDelivery, now)
+		if state != "" && p.Acknowledged != state+":"+reason {
+			if s.report != nil {
+				if err := s.report(p.Key, state, reason); err != nil {
+					first = err
+					break
+				}
+			}
+			p.Acknowledged = state + ":" + reason
 			s.savePending = true
 		}
 		if p.RetainedUntil <= now {
-			delete(s.plans, id)
-			s.savePending = true
 			if err := os.Remove(s.artifactPath(p.Artifact.ID)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
+				return firstErr(first, err)
 			}
+			delete(s.plans, p.ID)
+			s.savePending = true
 		}
 	}
-	if !s.savePending {
-		return nil
+	if s.savePending {
+		return firstErr(first, s.save())
 	}
-	if err := s.save(); err != nil {
-		return err
-	}
-	sort.Strings(expired)
-	for _, key := range expired {
-		if s.report != nil {
-			s.report(key, DeliveryExpired, reasonExpired)
-		}
-	}
-	return nil
+	return first
 }
 
 // chats lists chats that still have a result to deliver.

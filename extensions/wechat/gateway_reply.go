@@ -84,7 +84,9 @@ func (g *Gateway) deliverReply(ctx context.Context, item DeliveryOutboxItem, rep
 	messageID, err := g.sendReply(ctx, item, reply)
 	if err == nil {
 		if item.Source == SourceEngine {
-			if err := g.state.UpdateOutbox(item.DeliveryKey, func(i *DeliveryOutboxItem) { i.Status, i.ReceiptStatus = OutboxReceipt, "accepted" }); err != nil {
+			if err := g.state.UpdateOutbox(item.DeliveryKey, func(i *DeliveryOutboxItem) {
+				i.Status, i.ReceiptStatus, i.ReceiptMessageID = OutboxReceipt, "accepted", messageID
+			}); err != nil {
 				return err
 			}
 		}
@@ -281,7 +283,7 @@ func (g *Gateway) recoverAccepted(ctx context.Context, item DeliveryOutboxItem) 
 }
 
 func (g *Gateway) recoveryAck(ctx context.Context, item DeliveryOutboxItem, status string) error {
-	return traceStep(ctx, "delivery.recovery.ack", nil, func() error { return g.ackEngineReply(item, status, "") })
+	return traceStep(ctx, "delivery.recovery.ack", nil, func() error { return g.ackEngineReply(item, status, item.ReceiptMessageID) })
 }
 
 func (g *Gateway) withRecoveryTrace(ctx context.Context, item DeliveryOutboxItem, action func(context.Context) error) error {
@@ -357,10 +359,8 @@ func (g *Gateway) downloadArtifact(_ context.Context, a ResultArtifact) ([]byte,
 }
 
 // reportResult tells Collie a result's outcome.
-func (g *Gateway) reportResult(ref, state, reason string) {
-	if err := g.host.Delivery(extproto.Delivery{Ref: ref, State: state, Reason: reason}); err != nil {
-		traceEvent(withTrace(context.Background(), createMessageTrace("result", ref)), "result.report.failed", Fields{"reason": SanitizeErrorType(err)})
-	}
+func (g *Gateway) reportResult(ref, state, reason string) error {
+	return g.host.Delivery(extproto.Delivery{Ref: ref, State: state, Reason: reason})
 }
 
 // localResults is the result service over the local store.

@@ -333,16 +333,14 @@ func (st *extStore) dropMsgs(conv string) {
 
 // putOutIf saves o only while the stored send is still in one of the
 // states given: an answer that came late never undoes a newer one.
-func (st *extStore) putOutIf(o *OutboxItem, from ...string) bool {
+func (st *extStore) putOutIf(o *OutboxItem, from ...string) error {
 	b, _ := json.Marshal(o)
-	res, err := st.db.Exec(`UPDATE ext_outbox SET state = ?, data = ? WHERE ref = ? AND state IN (?`+strings.Repeat(",?", len(from)-1)+`)`,
+	_, err := st.db.Exec(`UPDATE ext_outbox SET state = ?, data = ? WHERE ref = ? AND state IN (?`+strings.Repeat(",?", len(from)-1)+`)`,
 		append([]any{o.State, string(b), o.Ref}, toAny(from)...)...)
 	if err != nil {
 		log.Printf("ext: save send: %v", err)
-		return false
 	}
-	n, _ := res.RowsAffected()
-	return n > 0
+	return err
 }
 
 func toAny(ss []string) []any {
@@ -362,9 +360,17 @@ func (st *extStore) putOut(o *OutboxItem) {
 }
 
 func (st *extStore) out(ref string) *OutboxItem {
-	var o *OutboxItem
-	loadRows(st.db, `SELECT data FROM ext_outbox WHERE ref = ?`, func(x *OutboxItem) { o = x }, ref)
+	o, err := st.readOut(ref)
+	if err != nil {
+		log.Printf("ext: read send: %v", err)
+	}
 	return o
+}
+
+func (st *extStore) readOut(ref string) (*OutboxItem, error) {
+	var o *OutboxItem
+	err := loadRows(st.db, `SELECT data FROM ext_outbox WHERE ref = ?`, func(x *OutboxItem) { o = x }, ref)
+	return o, err
 }
 
 // outs lists matching sends, oldest first. Callers supply a fixed SQL condition.

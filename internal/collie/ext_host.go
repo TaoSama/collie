@@ -464,13 +464,18 @@ func (r *extRun) event(name string, params json.RawMessage) {
 		if c.Scope == "status" || c.Scope == "" {
 			go r.refreshStatus(context.Background())
 		}
+		if c.Scope == "outbox" {
+			go r.h.retrySends(r)
+		}
 		if c.Scope != "status" && c.Scope != "header_status" {
 			r.signalPull()
 		}
 	case extproto.EDelivery:
 		var d extproto.Delivery
 		if json.Unmarshal(params, &d) == nil {
-			r.h.delivered(r, d)
+			if err := r.h.delivered(r, d); err != nil {
+				log.Printf("ext %s: delivery %s: %v", r.man.ID, d.Ref, err)
+			}
 		}
 	}
 }
@@ -479,6 +484,12 @@ func (r *extRun) event(name string, params json.RawMessage) {
 // process side keeps them on its computer).
 func (r *extRun) handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	switch method {
+	case extproto.MChannelDelivery:
+		var d extproto.Delivery
+		if err := json.Unmarshal(params, &d); err != nil {
+			return nil, extproto.Errorf(extproto.ErrInvalidParams, "bad delivery")
+		}
+		return struct{}{}, r.h.delivered(r, d)
 	case extproto.MChannelReceive:
 		if !r.man.has(capReceive) {
 			return struct{}{}, nil // it said it doesn't: Collie reads its archive instead
