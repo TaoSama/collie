@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -83,6 +84,9 @@ func TestServiceWorkerStamp(t *testing.T) {
 	var shell []string
 	if err := json.Unmarshal([]byte(m[1]), &shell); err != nil {
 		t.Fatal(err)
+	}
+	if !slices.Contains(shell, "/markdown.js") {
+		t.Error("Markdown renderer is missing from the offline shell")
 	}
 	// One missing file fails the whole install, leaving the app uncached.
 	for _, p := range shell {

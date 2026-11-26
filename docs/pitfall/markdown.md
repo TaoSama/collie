@@ -1,4 +1,4 @@
-# Markdown 渲染（`web/app.js` 的 `md`、`web/app.css` 的 `.md-table`）
+# Markdown 渲染（`web/markdown.js` 的 `md`、`web/app.css` 的 `.md-table`）
 
 ## 表格单元格里的长内容会压到相邻列
 

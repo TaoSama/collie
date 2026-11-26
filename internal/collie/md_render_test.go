@@ -57,9 +57,9 @@ func TestWebEmbeddedKaTeXOffline(t *testing.T) {
 func TestMarkdownEscapingAndMathRender(t *testing.T) {
 	runAppJS(t, `
 const katex = require(path.join(root, "web/vendor/katex/katex.min.js"));
-const loadRenderer = (withKatex) => loadApp("mdRender, plainLine", withKatex ? { katex } : {});
+const loadRenderer = (withKatex) => loadApp("md, plainLine", withKatex ? { katex } : {});
 
-const { mdRender, plainLine, warnings } = loadRenderer(true);
+const { md: mdRender, plainLine, warnings } = loadRenderer(true);
 const stripTags = (h) => h.replace(/<[^>]+>/g, "");
 
 // 1. Exact screenshot regression case
@@ -237,7 +237,7 @@ const stripTags = (h) => h.replace(/<[^>]+>/g, "");
 // 6. Graceful fallback when KaTeX global is absent
 {
   const fb = loadRenderer(false);
-  const html = fb.mdRender("$$\\frac{1}{2}$$\n\n行内 $x^2$ 与 \\$9.99");
+  const html = fb.md("$$\\frac{1}{2}$$\n\n行内 $x^2$ 与 \\$9.99");
   assert.ok(html.includes("md-math-fallback"), "fallback class present without KaTeX");
   assert.ok(html.includes("$9.99") && !html.includes("\\$9.99"), "escaping still works without KaTeX");
 }
@@ -337,6 +337,7 @@ function loadApp(expose, extra = {}) {
   vm.runInContext(fs.readFileSync(path.join(root, "web/machines.js"), "utf8"), ctx, { filename: "web/machines.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/ext.js"), "utf8"), ctx, { filename: "web/ext.js" });
   vm.runInContext(fs.readFileSync(path.join(root, "web/workbench.js"), "utf8"), ctx, { filename: "web/workbench.js" });
+  vm.runInContext(fs.readFileSync(path.join(root, "web/markdown.js"), "utf8"), ctx, { filename: "web/markdown.js" });
   vm.runInContext(instrumented, ctx, { filename: "web/app.js" });
   return { ...ctx.__collieTest, ctx, warnings };
 }
