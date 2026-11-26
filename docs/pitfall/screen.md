@@ -19,3 +19,11 @@ Claude 画的反色块要去掉反色，否则闪烁的块光标和下面的反�
 ## 外观
 
 聚焦时显示闪烁的块光标，失焦时显示空心框（`cursorInactiveStyle: "outline"`）。颜色取 `--term-fg`，块里的字取 `--term-bg`，所以所有皮肤都看得见。xterm 在第一次聚焦之前不画光标。
+
+## 能往上翻多少
+
+屏幕模式把 `pane.read` 的 `recent` 整段画成一个和行数一样高的 xterm（`scrollback: 0`），靠 `#screen` 自己的滚动条往上翻；人往上看时新帧先压着不画（`pendingScreen`），回到底部再画并恢复跟随。
+
+- herdr 的 `pane.read` 不管 `lines` 传多大，最多返回 1000 行（0.9.5 实测），所以 `screenLines` 就是 1000。herdr 自己留的 scrollback 有一万行左右，再多也读不到。
+- 全屏运行的 agent（Claude Code 设了 `tui: fullscreen`、Codex）在备用屏里，herdr 没有它们的 scrollback（`pane.get` 的 `scroll.max_offset_from_bottom` 是 0），屏幕模式只有当前一屏，看历史用对话模式。herdr 的 API 不告诉我们 pane 开没开鼠标上报，没法安全地把滚轮转发给 agent 让它自己滚。
+- 代价随行数线性涨：一直在滚的满屏 shell，每帧要重画全部行（DOM 渲染器），帧也是整段发、SSE 不压缩。80 列带颜色的输出持续滚动时，从 500 行到 1000 行，每帧从约 63 KB 涨到约 126 KB，浏览器主线程占用约翻倍。没有输出时不发帧，没有影响。

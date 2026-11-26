@@ -433,7 +433,10 @@ func (s *Server) streamState(w http.ResponseWriter, r *http.Request) {
 //	mode=screen: recent output with ANSI styling, for a scrollable terminal render,
 //	             the cursor marked in it (markScreenCursor).
 //	mode=log:    recent output with soft wraps joined, for reading on narrow screens.
-const screenLines = 500
+//
+// screenLines is how far back screen mode can scroll: herdr's pane.read
+// returns at most 1000 lines however many you ask for.
+const screenLines = 1000
 
 func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
