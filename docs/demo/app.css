@@ -1792,7 +1792,6 @@ a.foot-status:hover, a.foot-status.active { background: var(--bg-3); }
   .thread { padding: 22px 16px 18px; }
   .thread > * + * { margin-top: 22px; }
   .msg { font-size: var(--msg-fs-m, var(--fs-msg-m)); }
-  .dev-row { grid-template-columns: auto 1fr auto !important; }
 }
 .dot.online { background: var(--ok); }
 .dot.offline { box-shadow: inset 0 0 0 1.5px var(--fg-3); opacity: .6; }
@@ -2392,8 +2391,6 @@ select.picked { display: none; }
 
 /* ───────────── extensions: 接入 cards, 收件箱 (web/ext.js) */
 .ext-card .card-h { gap: 12px; }
-.ext-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.ext-title .muted { font-weight: var(--fw-normal); font-size: var(--fs-meta); }
 .switch-row { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-meta); font-weight: var(--fw-normal); }
 .ext-desc { margin: 0; color: var(--t-desc); font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.2); }
 .ext-warn { margin: 0; padding: 8px 10px; border-radius: calc(8px * var(--round)); background: var(--attn-soft); color: var(--fg); font-size: var(--fs-meta); line-height: calc(var(--lh-ui) + 0.2); }

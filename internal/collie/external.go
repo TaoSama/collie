@@ -260,12 +260,8 @@ func (s *Server) externalSessions() []*External {
 			}
 		}
 	}
-	used := map[int]bool{}
 	for _, p := range cands {
 		app, inHerdr := terminalApp(ps, p)
-		if r := regOf[p.pid]; r != nil {
-			used[r.PID] = true
-		}
 		if inHerdr {
 			continue
 		}

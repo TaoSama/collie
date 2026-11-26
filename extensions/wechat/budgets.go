@@ -27,13 +27,12 @@ const (
 	MaxPollPhaseMs        = (MaxPollTimeoutMs+PollNetworkMarginMs)*MaxPollAttempts + CheckpointMarginMs
 
 	// Local transfer policy, independent of any WeChat size or protocol limit.
-	MaxTransferTimeoutMs    = 10 * 60_000
-	transferBytesPerSecond  = 1024 * 1024
-	maxSafeInteger          = 1<<53 - 1
-	millisecondsPerHour     = 60 * 60 * 1000
-	millisecondsPerDay      = 24 * millisecondsPerHour
-	maxTimestampMs          = 8_640_000_000_000_000
-	defaultNotifyIntervalMs = 1000
+	MaxTransferTimeoutMs   = 10 * 60_000
+	transferBytesPerSecond = 1024 * 1024
+	maxSafeInteger         = 1<<53 - 1
+	millisecondsPerHour    = 60 * 60 * 1000
+	millisecondsPerDay     = 24 * millisecondsPerHour
+	maxTimestampMs         = 8_640_000_000_000_000
 )
 
 var errInvalidTransferBudget = errors.New("Invalid transfer budget")

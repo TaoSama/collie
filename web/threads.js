@@ -61,5 +61,5 @@
     return { threads, member, folded, lastOf };
   }
 
-  window.collieThreads = { group, MIN_RUN };
+  window.collieThreads = { group };
 })();
