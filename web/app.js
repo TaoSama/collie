@@ -229,7 +229,7 @@
     if (pickPop.parentNode !== host) host.append(pickBack, pickPop);
     // Options without an icon keep its place when others have one, so the names line up.
     const iconGap = [...sel.options].some((o) => o.dataset.glyph || o.dataset.dot) ? `<span class="pi"></span>` : "";
-    const row = (o) => `<button type="button" class="po${o.selected ? " on" : ""}" role="option" aria-selected="${o.selected}" data-i="${o.index}" ${o.disabled ? "disabled" : ""}>
+    const row = (o) => `<button type="button" class="po${o.selected ? " on" : ""}" role="option" aria-selected="${o.selected}" data-i="${o.index}" ${o.disabled ? "disabled" : ""}${o.title ? ` title="${esc(o.title)}"` : ""}>
       ${optIcon(o) || iconGap}<span class="pl"><span>${esc(o.textContent)}</span>${o.dataset.sub ? `<small>${esc(o.dataset.sub)}</small>` : ""}</span>
       <svg class="ck" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`;
     let html = sel.dataset.title ? `<div class="ph">${esc(sel.dataset.title)}</div>` : "";

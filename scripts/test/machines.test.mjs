@@ -29,10 +29,12 @@ test("offers this hub's computers that are up, and the picked one even when not"
   assert.deepEqual(ids(choices(all, { isUp: (m) => m.online })), ["box", "mini"]);
 });
 
-test("each option: a dot, hub or the OS, offline, and the default", () => {
+test("each option: a dot, the name Collie knows it by, its kind, offline, and the default", () => {
   const html = options([hub, air, mini], { cur: "air", def: "mini" });
-  assert.match(html, /<option value="" data-dot="online" data-sub="hub">vps<\/option>/);
-  assert.match(html, /<option value="air" data-dot="offline" data-sub="darwin\/arm64 · 离线" selected>macair<\/option>/);
-  assert.match(html, /<option value="mini" data-dot="online" data-sub="darwin\/arm64 · 默认">macmini<\/option>/);
+  assert.match(html, /<option value="" data-dot="online" title="vps">hub<\/option>/);
+  assert.match(html, /<option value="air" data-dot="offline" data-sub="macOS · Apple 芯片 · 离线" selected>macair<\/option>/);
+  assert.match(html, /<option value="mini" data-dot="online" data-sub="macOS · Apple 芯片 · 默认">macmini<\/option>/);
   assert.match(options([{ id: "q", name: "q", online: true }], { def: "q" }), /data-sub="默认"/);
+  assert.match(options([{ id: "l", name: "l", os: "linux/amd64", online: true }]), /data-sub="Linux · x86_64"/);
+  assert.match(options([{ id: "", name: "ser1", os: "linux/arm64", local: true }]), /data-sub="Linux · ARM64" title="ser1">hub</);
 });

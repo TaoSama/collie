@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -76,7 +77,7 @@ type Herdr struct {
 
 func newHerdr(socket, hostname, home string) *Herdr {
 	return &Herdr{
-		local:    &Machine{ID: "", Name: hostname, Home: home, Local: true, conn: &herdrConn{dial: unixDialer(socket)}},
+		local:    &Machine{ID: "", Name: hostname, OS: runtime.GOOS + "/" + runtime.GOARCH, Home: home, Local: true, conn: &herdrConn{dial: unixDialer(socket)}},
 		remote:   map[string]*Machine{},
 		names:    map[string]string{},
 		named:    map[string]string{},

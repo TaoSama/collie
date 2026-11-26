@@ -55,7 +55,7 @@
     const M = window.collieMachines;
     return (pick ? `<option value="" disabled selected>选一台电脑</option>` : "") + M.options(M.choices(ms, { keep: cur }), { cur: pick ? undefined : cur });
   }
-  const machineName = (ms, id) => (ms.find((x) => x.id === (id || "")) || {}).name || id || "hub";
+  const machineName = (ms, id) => { const x = ms.find((x) => x.id === (id || "")); return x?.local ? "hub" : x?.name || id || "hub"; };
 
   // The actions it offers agents (collie ext do), and the switch for the
   // ones that change something.
@@ -78,19 +78,19 @@
         return `<label>${esc(p.title || k)}<input type="password" autocomplete="off" data-ext-config="${esc(k)}" placeholder="${isSet ? "已设置，留空不改" : "未设置"}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
       }
       if (p.type === "boolean") return `<label class="check"><input type="checkbox" class="switch" role="switch" data-ext-config="${esc(k)}" ${val ? "checked" : ""}><span>${esc(p.title)}${p.description ? `<small>${esc(p.description)}</small>` : ""}</span></label>`;
-      if (p.enum) return `<label>${esc(p.title)}<select data-ext-config="${esc(k)}" data-pick="compact">${p.enum.map((e, i) => `<option value="${esc(e)}" ${e === val ? "selected" : ""}>${esc(p["x-labels"]?.[i] || e)}</option>`).join("")}</select>${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
+      if (p.enum) return `<label class="ext-field">${esc(p.title)}<select data-ext-config="${esc(k)}" data-pick="compact">${p.enum.map((e, i) => `<option value="${esc(e)}" ${e === val ? "selected" : ""}>${esc(p["x-labels"]?.[i] || e)}</option>`).join("")}</select>${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
       return `<label>${esc(p.title)}<input data-ext-config="${esc(k)}" value="${esc(val ?? "")}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
     });
   }
-  // The choices first, then the switches, and those that leave chats out
-  // of the 收件箱 (x-hide) under a heading of their own.
+  // The choices first, then the switches in one column, and those that
+  // leave chats out of the 收件箱 (x-hide) under a heading of their own.
   function configGrid(v) {
     const props = Object.entries(v.manifest.configuration?.properties || {});
     const fields = configFields(v), hides = props.map(([, p]) => p.type === "boolean" && !!p["x-hide"]);
     const pick = (f) => fields.filter((_, i) => f(props[i][1], hides[i])).join("");
-    const hidden = pick((_, h) => h);
-    return `<div class="set-grid">${pick((p) => p.type !== "boolean")}${pick((p, h) => p.type === "boolean" && !h)}</div>`
-      + (hidden ? `<div class="set-sub">收件箱里不显示</div><div class="set-grid">${hidden}</div>` : "");
+    const choices = pick((p) => p.type !== "boolean"), switches = pick((p, h) => p.type === "boolean" && !h), hidden = pick((_, h) => h);
+    return (choices ? `<div class="set-grid">${choices}</div>` : "") + (switches ? `<div class="ext-switches">${switches}</div>` : "")
+      + (hidden ? `<div class="set-sub">收件箱里不显示</div><div class="ext-switches">${hidden}</div>` : "");
   }
 
   function detailLine(s) {
@@ -146,15 +146,18 @@
     const primary = st.key === "off" ? (needsLogin(m) ? `<button class="btn primary" data-ext-login>${esc(loginWord(m))}</button>` : `<button class="btn primary" data-ext-enable>开启</button>`)
       : st.login && !(qr && qr.id === m.id) ? `<button class="btn primary" data-ext-login>${esc(loginWord(m))}</button>` : "";
     const convs = (inbox?.convs || []).filter((c) => c.ext === m.id);
+    // Where it runs sits on the state's line, what that means under it.
     const machine = declarative(m) ? "" : m.local
-      ? `<div class="ext-field"><span class="tm-lab">运行在</span><span>${esc(machineName(ms, m.local_on))}<small class="muted">本地扩展，只在装了它的那台电脑上运行</small></span></div>`
-      : `<label class="ext-field"><span class="tm-lab">运行在</span><select data-ext-machine data-pick="compact" data-title="在哪台电脑上运行">${machineOptions(ms, v.setting.machine || "", ask)}</select></label>
-         <small class="muted ext-field-note">${ask ? "它只能在一台电脑上运行，先选好再开启。" : ""}换电脑会停掉原来那台上的；登录状态留在原来那台，新电脑上可能要重新登录。</small>`;
+      ? `<span class="ext-field">运行在<b>${esc(machineName(ms, m.local_on))}</b></span>`
+      : `<label class="ext-field">运行在<select data-ext-machine data-pick="compact" data-title="在哪台电脑上运行">${machineOptions(ms, v.setting.machine || "", ask)}</select></label>`;
+    const machineNote = declarative(m) ? "" : `<small class="muted ext-field-note">${m.local ? "本地扩展，只在装了它的那台电脑上运行" : `${ask ? "它只能在一台电脑上运行，先选好再开启。" : ""}换电脑会停掉原来那台上的；登录状态留在原来那台，新电脑上可能要重新登录。`}</small>`;
+    // The buttons that stop or remove it, each with what it does beside it.
+    const danger = (attr, label, note) => `<button type="button" class="btn small danger" ${attr}>${label}</button><small class="muted">${note}</small>`;
     return `${pageHead(esc(m.name), `<span class="muted">${esc(m.version)} · ${m.market ? "市场" : m.local ? "本地" : "内置"}</span>`, extIcon(m, st, true))}
       <div class="card ext-card" data-ext="${esc(m.id)}"><div class="form">
-        <div class="ext-status"><span class="dot ${esc(st.dot)}"></span><div><b${st.title ? ` title="${esc(st.title)}"` : ""}>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${primary}</div>
+        <div class="ext-status"><span class="dot ${esc(st.dot)}"></span><div><b${st.title ? ` title="${esc(st.title)}"` : ""}>${esc(st.text)}</b>${st.busy ? `<span class="spinner small" aria-hidden="true"></span>` : ""}${detailLine(v.status)}</div>${machine}${primary}</div>
+        ${machineNote}
         ${loginPanel(m, qr)}
-        ${machine}
       </div></div>
       ${m.configuration ? `<div class="card" data-ext="${esc(m.id)}"><div class="card-h">${cardTitle("settings-2", "设置")}</div><div class="form ext-config">${configGrid(v)}<div class="form-actions"><span class="ext-dirty muted">有改动，保存后生效</span><button class="btn small" data-ext-save>保存设置</button></div></div></div>` : ""}
       <div data-ext="${esc(m.id)}">${actionsHTML(v)}</div>
@@ -168,10 +171,9 @@
       </div></div>
       ${v.proc?.logs?.length ? `<div class="card"><details class="ext-logs"><summary class="card-h">${cardTitle("scroll-text", "最近日志")}</summary><pre>${esc(v.proc.logs.join("\n"))}</pre></details></div>` : ""}
       <div class="card" data-ext="${esc(m.id)}"><div class="form ext-danger">
-        ${on && st.ok && needsLogin(m) ? `<button type="button" class="link-danger" data-ext-logout>退出登录</button>` : ""}
-        ${on ? `<button type="button" class="link-danger" data-ext-disable>关闭扩展</button>` : `<button type="button" class="btn small" data-ext-enable>开启</button>`}
-        ${m.market ? `<button type="button" class="link-danger" data-ext-uninstall>卸载</button>` : ""}
-        <small class="muted">关闭只是暂停收发，数据和登录都还在；退出登录会清掉登录状态。</small>
+        ${on ? danger("data-ext-disable", "关闭扩展", "只是暂停收发，数据和登录都还在。") : `<button type="button" class="btn small" data-ext-enable>开启</button><small class="muted">开启后开始收发。</small>`}
+        ${on && st.ok && needsLogin(m) ? danger("data-ext-logout", "退出登录", "会清掉登录状态，之后要重新登录。") : ""}
+        ${m.market ? danger("data-ext-uninstall", "卸载", "停掉它，删掉它的设置和安装包。") : ""}
       </div></div>`;
   }
 
