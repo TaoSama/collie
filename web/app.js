@@ -5994,7 +5994,9 @@
           i++;
           continue;
         }
-        html += m.kind === "user" ? `<div class="msg user${m.sending ? " sending" : ""}">${userText(m.text)}</div>` : `<div class="msg assistant">${md(m.text)}</div>`;
+        html += m.kind === "user"
+          ? `<div class="msg user${m.sending ? " sending" : ""}">${userText(m.text)}</div>`
+          : `<div class="msg assistant${top ? " session-markdown" : ""}">${md(m.text, { session: top })}</div>`;
         cut();
         i++;
       }
@@ -7237,6 +7239,12 @@
     }
   }
   document.addEventListener("click", (e) => {
+    const copy = e.target.closest(".md-code-copy");
+    if (copy) {
+      const code = copy.closest(".md-code").querySelector("pre > code");
+      copyText(code.textContent).then((ok) => toast(ok ? "已复制代码" : "复制失败", ok ? "" : "attn"));
+      return;
+    }
     const t = e.target.closest(".thumb[data-img]");
     if (t) {
       e.preventDefault();

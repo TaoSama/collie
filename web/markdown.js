@@ -4,16 +4,19 @@
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const unesc = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (m) => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" }[m]));
+  const TABLE_NUMBER = /^[+−-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?[%％]?$/;
+  const QUOTE_LINE = /^ {0,3}&gt;[ \t]?(.*)$/;
 
   function createRenderer({ fileLinkAttrs, filePattern, imagePattern, thumbnailURL, detectCodeLang, highlightCode }) {
     // Minimal, safe Markdown: escape first, then add a little structure.
-    const mdCache = new Map();
+    const previewCache = new Map(), sessionCache = new Map();
     const CODE_CHIP_MAX = 24; // inline code up to this many characters is kept on one line in a table cell
-    function md(src) {
+    function md(src, { session = false } = {}) {
+      const mdCache = session ? sessionCache : previewCache;
       const key = String(src || "");
       let out = mdCache.get(key);
       if (out === undefined) {
-        out = mdRender(key);
+        out = mdRender(key, session);
         if (mdCache.size > 8000) mdCache.delete(mdCache.keys().next().value);
         mdCache.set(key, out);
       }
@@ -217,14 +220,37 @@
       }
       return -1;
     };
-    function mdRender(src) {
+    function extractSessionFences(text, storeCode) {
+      const openFence = /^( {0,3})(`{3,}|~{3,})([^\n]*)$/gm;
+      let result = "", cursor = 0, open;
+      while ((open = openFence.exec(text))) {
+        const [line, indent, fence, info] = open;
+        if (fence[0] === "`" && info.includes("`")) continue;
+        const contentStart = open.index + line.length + 1;
+        const closeFence = new RegExp("^ {0,3}" + fence[0] + "{" + fence.length + ",}[ \\t]*$", "gm");
+        closeFence.lastIndex = contentStart;
+        const close = closeFence.exec(text);
+        let code = text.slice(contentStart, close ? close.index : text.length);
+        if (indent) code = code.replace(new RegExp("^ {1," + indent.length + "}", "gm"), "");
+        result += text.slice(cursor, open.index) + storeCode(info, code);
+        if (!close) return result;
+        cursor = openFence.lastIndex = close.index + close[0].length;
+      }
+      return result + text.slice(cursor);
+    }
+    function mdRender(src, session) {
       const blocks = [];
-      let text = String(src || "").replace(/\r\n?/g, "\n").replace(/[\u0000\u0001]/g, "").replace(/```([^\n`]*)\n([\s\S]*?)(```|$)/g, (_, info, code) => {
+      const storeCode = (info, code) => {
         const raw = code.replace(/\n$/, "");
         const lang = detectCodeLang(info, false);
-        blocks.push(`<pre><code${lang ? ` data-lang="${lang.id}"` : ""}>${lang ? highlightCode(raw, lang.id) : esc(raw)}</code></pre>`);
+        const pre = `<pre><code${lang ? ` data-lang="${lang.id}"` : ""}>${lang ? highlightCode(raw, lang.id) : esc(raw)}</code></pre>`;
+        const label = lang?.label || info.trim().split(/\s+/, 1)[0] || "纯文本";
+        blocks.push(session ? `<div class="md-code"><div class="md-code-bar"><span>${esc(label)}</span><button type="button" class="md-code-copy" aria-label="复制代码">复制</button></div>${pre}</div>` : pre);
         return `\u0000${blocks.length - 1}\u0000`;
-      });
+      };
+      let text = src.replace(/\r\n?/g, "\n").replace(/[\u0000\u0001]/g, "");
+      text = session ? extractSessionFences(text, storeCode)
+        : text.replace(/```([^\n`]*)\n([\s\S]*?)(```|$)/g, (_, info, code) => storeCode(info, code));
       text = extractMathBlocks(text, blocks);
       text = esc(text);
       const inline = (s) => {
@@ -401,22 +427,32 @@
         if (line.includes("|") && li + 1 < lines.length && isSep(lines[li + 1]) && lines[li + 1].includes("|")) {
           flushPara(); flushList();
           const head = cells(line);
-          const align = cells(lines[li + 1]).map((c) => c.endsWith(":") ? (c.startsWith(":") ? "center" : "right") : "");
-          const td = (tag, c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ""}>${inline(c)}</${tag}>`;
-          let body = "";
+          const align = cells(lines[li + 1]).map((c) => {
+            if (c.endsWith(":")) return c.startsWith(":") ? "center" : "right";
+            return session && c.startsWith(":") ? "left" : "";
+          });
+          const rows = [];
           li += 2;
           while (li < lines.length && lines[li].includes("|") && lines[li].trim()) {
-            const r = cells(lines[li]);
-            body += `<tr>${head.map((_, k) => td("td", r[k] || "", k)).join("")}</tr>`;
+            rows.push(cells(lines[li]));
             li++;
           }
           li--;
+          const numeric = session ? head.map((_, k) => {
+            const values = rows.map((row) => row[k]).filter(Boolean);
+            return values.length > 0 && values.every((value) => TABLE_NUMBER.test(value));
+          }) : [];
+          const td = (tag, c, k) => {
+            const direction = align[k] || (numeric[k] ? "right" : "");
+            return `<${tag}${numeric[k] ? ' class="md-number"' : ""}${direction ? ` style="text-align:${direction}"` : ""}>${inline(c)}</${tag}>`;
+          };
+          const body = rows.map((row) => `<tr>${head.map((_, k) => td("td", row[k] || "", k)).join("")}</tr>`).join("");
           out.push(`<div class="md-table" tabindex="0" role="region" aria-label="数据表格"><table><thead><tr>${head.map((c, k) => td("th", c, k)).join("")}</tr></thead><tbody>${body}</tbody></table></div>`);
           continue;
         }
         if (/^\u0000\d+\u0000$/.test(line.trim())) { flushPara(); flushList(); out.push(line.trim()); continue; }
         if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); flushList(); out.push("<hr>"); continue; }
-        if ((m = line.match(/^(#{1,4})\s+(.*)$/))) { flushPara(); flushList(); const h = Math.min(m[1].length + 1, 4); out.push(`<h${h}>${inline(m[2])}</h${h}>`); continue; }
+        if ((m = line.match(/^(#{1,4})\s+(.*)$/))) { flushPara(); flushList(); const h = session ? m[1].length : Math.min(m[1].length + 1, 4); out.push(`<h${h}>${inline(m[2])}</h${h}>`); continue; }
         if ((m = line.match(/^\s*[-*•]\s+(.*)$/)) || (m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
           const tag = /^\s*\d/.test(line) ? "ol" : "ul";
           flushPara();
@@ -425,7 +461,18 @@
           list.items.push(m[1]);
           continue;
         }
-        if ((m = line.match(/^&gt;\s?(.*)$/))) { flushPara(); flushList(); out.push(`<blockquote>${inline(m[1])}</blockquote>`); continue; }
+        if ((m = line.match(session ? QUOTE_LINE : /^&gt;\s?(.*)$/))) {
+          flushPara(); flushList();
+          const quote = [inline(m[1])];
+          if (session) {
+            while ((m = lines[li + 1]?.match(QUOTE_LINE))) {
+              quote.push(inline(m[1]));
+              li++;
+            }
+          }
+          out.push(`<blockquote>${quote.join("<br>")}</blockquote>`);
+          continue;
+        }
         if (!line.trim()) { flushPara(); flushList(); continue; }
         flushList();
         para.push(line);
