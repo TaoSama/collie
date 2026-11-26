@@ -2451,11 +2451,18 @@ func (sp *Super) sendNotifications() {
 // ---------------------------------------------------------------- recall
 
 // Show renders any object by id with links to related ids (chain of recall).
-func (sp *Super) Show(id string) (string, bool) {
+func (sp *Super) Show(id string, before int64) (string, bool) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	var b strings.Builder
-	if t := sp.st.trigger(id); t != nil {
+	t := sp.st.trigger(id)
+	if t == nil && sp.db != nil {
+		var err error
+		if t, err = triggerByID(sp.db, id); err != nil {
+			log.Printf("show %s: %v", id, err)
+		}
+	}
+	if t != nil {
 		fmt.Fprintf(&b, "trigger %s\nsource: %s  thread: %s  from: %s  at: %s  status: %s  action: %s\n", t.ID, t.Source, t.Thread, t.From, t.At.Format(time.RFC3339), t.Status, t.Action)
 		if t.Ref != "" {
 			fmt.Fprintf(&b, "ref: %s\n", t.Ref)
@@ -2463,18 +2470,8 @@ func (sp *Super) Show(id string) (string, bool) {
 		fmt.Fprintf(&b, "\n%s\n", t.Text)
 		return b.String(), true
 	}
-	if th := sp.st.Threads[id]; th != nil {
-		fmt.Fprintf(&b, "thread %s\nsubscribers: %s\nrecent triggers:\n", th.ID, strings.Join(th.Subscribers, ", "))
-		ids := th.Triggers
-		if len(ids) > 15 {
-			ids = ids[len(ids)-15:]
-		}
-		for _, tid := range ids {
-			if t := sp.st.trigger(tid); t != nil {
-				fmt.Fprintf(&b, "  #%s %s %s: %s\n", t.ID, t.At.Format("01-02 15:04"), t.Source, clip(firstLine(t.Text), 90))
-			}
-		}
-		return b.String(), true
+	if out, ok := sp.showThreadLocked(id, before); ok {
+		return out, true
 	}
 	if w := sp.st.Workers[id]; w != nil {
 		fmt.Fprintf(&b, "worker %s (%s)\nstatus: %s  thread: %s  pane: %s  cwd: %s\ncreated: %s by %s\n", w.Name, w.Kind, w.Status, w.Thread, w.PaneID, w.Cwd, w.CreatedAt.Format("01-02 15:04"), w.CreatedBy)

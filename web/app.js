@@ -2702,7 +2702,7 @@
     };
     if (tab === "events") {
       const seg = `<div class="seg events-seg">${[["events", "事件"], ["threads", "线程"]].map(([k, l]) => `<button type="button" data-events-sub="${k}" class="${eventsSub === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
-      body.innerHTML = seg + (eventsSub === "threads" ? threadsHTML(r.threads || []) : inboxHTML(r.triggers || []));
+      body.innerHTML = seg + (eventsSub === "threads" ? threadsHTML(r.threads || [], r.counts || {}) : inboxHTML(r.triggers || []));
       applyAfter();
     } else if (tab === "inbox") {
       // The list and the open chat redraw apart: a new message elsewhere
@@ -2873,10 +2873,11 @@
         <span class="right">${when(t.at)}</span></li>`).join("") : `<li class="empty-row">还没有事件</li>`}</ul></div>`;
   }
 
-  function threadsHTML(ths) {
+  // counts are each thread's total events from the DB; th.triggers holds only the latest.
+  function threadsHTML(ths, counts) {
     return `<p class="panel-intro">同一个对话、Issue/PR 或群聊话题里的连续事件构成一条线程。Collie 派出的 agent 订阅线程后，后续事件直达它，不再经过 Collie。chat:main 始终由 Collie 自己处理。</p>
       <div class="card"><ul class="rows">${ths.length ? ths.map((th) => `<li class="row">
-        <span class="badge">${th.triggers?.length || 0}</span>
+        <span class="badge">${counts[th.id] ?? th.triggers?.length ?? 0}</span>
         <div><div class="meta"><b>${esc(th.id)}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Collie</span>"}</div></div>
         <span class="right">${when(th.last_at)}</span></li>`).join("") : `<li class="empty-row">还没有线程</li>`}</ul></div>`;
   }

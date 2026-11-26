@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strconv"
+	"strings"
 )
 
 func writeStateSeq(tx *sql.Tx, seq int) error {
@@ -110,4 +111,33 @@ func (sp *Super) commitTriggerLocked(t *Trigger, th *Thread, entry *Entry, worke
 		sp.appendEntryLocked(entry)
 	}
 	return nil
+}
+
+// triggerByID reads one trigger from the DB, for ids past the in-memory window.
+func triggerByID(db *sql.DB, id string) (t *Trigger, err error) {
+	err = loadRows(db, `SELECT data FROM triggers WHERE id = ?`, func(v *Trigger) { t = v }, id)
+	return t, err
+}
+
+// threadTriggerCounts counts the stored triggers of each thread in one query;
+// memory only keeps the latest ids of a thread.
+func threadTriggerCounts(db *sql.DB, threads []string) (map[string]int, error) {
+	out := make(map[string]int, len(threads))
+	if len(threads) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(`SELECT thread, COUNT(*) FROM triggers WHERE thread IN (?`+strings.Repeat(",?", len(threads)-1)+`) GROUP BY thread`, toAny(threads)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }

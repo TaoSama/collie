@@ -703,12 +703,8 @@ func (s *Server) stopWorker(ctx context.Context, name string) error {
 
 func (s *Server) superShow(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if out, ok := s.sup.Show(id); ok {
-		if strings.HasPrefix(out, "thread ") {
-			if older := threadHistory(s.sup.db, id, 1<<62, 40); len(older) > 15 {
-				out += fmt.Sprintf("  … %d older triggers in history (SQLite)\n", len(older)-15)
-			}
-		}
+	s.sup.flush() // a thread's listing reads the DB
+	if out, ok := s.sup.Show(id, idNum(r.URL.Query().Get("before"))); ok {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, out)
 		return
@@ -723,6 +719,7 @@ func (s *Server) superList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) superTriggers(w http.ResponseWriter, r *http.Request) {
 	sp := s.sup
+	sp.flush() // thread counts come from the DB
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	ts := sp.st.Triggers
@@ -743,7 +740,17 @@ func (s *Server) superTriggers(w http.ResponseWriter, r *http.Request) {
 	if len(ths) > 40 {
 		ths = ths[:40]
 	}
-	writeJSON(w, 200, map[string]any{"triggers": out, "threads": ths})
+	// Memory keeps only a thread's latest ids; the DB has them all.
+	ids := make([]string, len(ths))
+	for i, th := range ths {
+		ids[i] = th.ID
+	}
+	counts, err := threadTriggerCounts(sp.db, ids)
+	if err != nil {
+		log.Printf("count thread triggers: %v", err)
+		counts = map[string]int{}
+	}
+	writeJSON(w, 200, map[string]any{"triggers": out, "threads": ths, "counts": counts})
 }
 
 // ---------------------------------------------------------------- timers

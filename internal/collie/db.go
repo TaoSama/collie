@@ -217,11 +217,11 @@ func saveState(db *sql.DB, st *State, deletedTimers []string) error {
 
 // threadHistory reads older triggers of a thread straight from the DB, for
 // recall beyond the in-memory working set.
-func threadHistory(db *sql.DB, thread string, before int64, limit int) []*Trigger {
+func threadHistory(db *sql.DB, thread string, before int64, limit int) ([]*Trigger, error) {
 	var out []*Trigger
-	loadRows(db, `SELECT data FROM triggers WHERE thread = ? AND n < ? ORDER BY n DESC LIMIT ?`,
+	err := loadRows(db, `SELECT data FROM triggers WHERE thread = ? AND n < ? ORDER BY n DESC LIMIT ?`,
 		func(t *Trigger) { out = append(out, t) }, thread, before, limit)
-	return out
+	return out, err
 }
 
 // entryHistory reads a thread's chat from before entry number `before`,
