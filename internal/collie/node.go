@@ -267,10 +267,10 @@ func nodeSession(ctx context.Context, cfg nodeConfig, name, home, bin, sock stri
 		}
 		conn = tc
 	}
-	req, _ := http.NewRequest("GET", strings.TrimRight(cfg.Hub, "/")+"/api/node/connect", nil)
+	req, _ := http.NewRequest("GET", strings.TrimRight(cfg.Hub, "/")+nodeConnectPath, nil)
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "collie-node")
+	req.Header.Set("Upgrade", nodeUpgradeProtocol)
 	req.Header.Set("X-Collie-Name", name)
 	req.Header.Set("X-Collie-Home", home)
 	req.Header.Set("X-Collie-OS", runtime.GOOS+"/"+runtime.GOARCH)
@@ -301,10 +301,7 @@ func nodeSession(ctx context.Context, cfg nodeConfig, name, home, bin, sock stri
 	}
 	conn.SetDeadline(time.Time{})
 
-	ycfg := yamux.DefaultConfig()
-	ycfg.LogOutput = io.Discard
-	ycfg.KeepAliveInterval = 15 * time.Second
-	sess, err := yamux.Server(&bufConn{Conn: conn, r: br}, ycfg)
+	sess, err := yamux.Server(&bufConn{Conn: conn, r: br}, nodeTunnelConfig())
 	if err != nil {
 		conn.Close()
 		return err
@@ -331,7 +328,7 @@ func nodeSession(ctx context.Context, cfg nodeConfig, name, home, bin, sock stri
 				return
 			}
 			switch kind {
-			case "herdr":
+			case nodeStreamHerdr:
 				h, err := dialHerdr(context.Background(), sock)
 				if err != nil {
 					log.Printf("herdr: %v", err)
@@ -342,13 +339,13 @@ func nodeSession(ctx context.Context, cfg nodeConfig, name, home, bin, sock stri
 				io.Copy(st, h)
 				h.Close()
 				st.Close()
-			case "http":
+			case nodeStreamHTTP:
 				select {
 				case ln.ch <- st:
 				case <-ln.done:
 					st.Close()
 				}
-			case "ext":
+			case nodeStreamExt:
 				localExtProcs.serve(st, collieDir())
 			default:
 				st.Close()

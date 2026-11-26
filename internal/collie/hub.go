@@ -358,7 +358,7 @@ func lanAddresses(port int, extra []string) []string {
 func (s *Server) hubRoutes(mux *http.ServeMux) {
 	api := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.auth(h)) }
 	mux.HandleFunc("POST /api/pair", s.pair)
-	mux.HandleFunc("GET /api/node/connect", s.nodeConnect)
+	mux.HandleFunc("GET "+nodeConnectPath, s.nodeConnect)
 	api("POST /api/pair/new", s.pairNew)
 	api("GET /api/local-app", s.localApp)
 	api("POST /api/direct", s.offerDirect)
@@ -528,7 +528,7 @@ func (s *Server) nodeConnect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]any{"error": "unauthorized"})
 		return
 	}
-	if !strings.EqualFold(r.Header.Get("Upgrade"), "collie-node") {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), nodeUpgradeProtocol) {
 		writeJSON(w, 400, map[string]any{"error": "upgrade required"})
 		return
 	}
@@ -541,26 +541,23 @@ func (s *Server) nodeConnect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: collie-node\r\nConnection: Upgrade\r\n\r\n")
+	buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: " + nodeUpgradeProtocol + "\r\nConnection: Upgrade\r\n\r\n")
 	if err := buf.Flush(); err != nil {
 		conn.Close()
 		return
 	}
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	cfg.KeepAliveInterval = 15 * time.Second
-	sess, err := yamux.Client(&bufConn{Conn: conn, r: buf.Reader}, cfg)
+	sess, err := yamux.Client(&bufConn{Conn: conn, r: buf.Reader}, nodeTunnelConfig())
 	if err != nil {
 		conn.Close()
 		return
 	}
 	open := func() (net.Conn, error) { return sess.Open() }
-	httpDial := streamDialer(open, "http")
+	httpDial := streamDialer(open, nodeStreamHTTP)
 	m := &Machine{
 		ID: d.ID, Name: d.Name, OS: r.Header.Get("X-Collie-OS"), Home: r.Header.Get("X-Collie-Home"),
 		Bin: r.Header.Get("X-Collie-Bin"), Version: r.Header.Get("X-Collie-Version"), Agents: parseAgentsHeader(r.Header.Get("X-Collie-Agents")), Online: true, Since: time.Now(),
-		conn: &herdrConn{dial: streamDialer(open, "herdr")},
-		ext:  streamDialer(open, "ext"),
+		conn: &herdrConn{dial: streamDialer(open, nodeStreamHerdr)},
+		ext:  streamDialer(open, nodeStreamExt),
 		snap: &listSnap{},
 		client: &http.Client{Transport: &http.Transport{
 			DialContext:         func(ctx context.Context, _, _ string) (net.Conn, error) { return httpDial(ctx) },
