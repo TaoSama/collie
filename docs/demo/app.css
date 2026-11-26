@@ -1295,6 +1295,7 @@ body.dragging .app { transition: none; }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) { .app.has-file, .app.has-run { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .app, .filepane, .runpane { transition: none !important; } }
 
+.rv-md { font-size: var(--msg-fs, calc(var(--fs-msg) + .5px)); line-height: calc(var(--lh-msg) + .05); }
 a.fpath { color: inherit; text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 2px; cursor: pointer; }
 a.fpath.img-link { cursor: zoom-in; }
 a.fpath:hover { text-decoration-color: currentColor; }

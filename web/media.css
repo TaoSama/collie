@@ -42,7 +42,6 @@ body.reading-file .main { display: flex !important; }
   overflow: auto; max-width: 100%;
 }
 .rv-code-card .fv-pre.fv-large, .rv-code-card > .fv-pre { margin: 0; padding: 16px 20px 24px; }
-.rv-md { font-size: var(--msg-fs, calc(var(--fs-msg) + .5px)); line-height: calc(var(--lh-msg) + .05); }
 .rv-md h2 { font-size: var(--fs-title); font-weight: calc(var(--fw-strong) + 50); margin: 1.7em 0 .6em; padding-bottom: .3em; border-bottom: var(--bw) solid var(--line); letter-spacing: calc(var(--ls-title) - .005em); }
 .rv-md h3 { font-size: calc(var(--fs-lead) + 1px); font-weight: var(--fw-strong); margin: 1.45em 0 .5em; letter-spacing: var(--ls-title); }
 .rv-md h4 { font-size: calc(var(--fs-lead) - 0.5px); font-weight: var(--fw-strong); margin: 1.25em 0 .45em; }
