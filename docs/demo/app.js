@@ -5091,9 +5091,13 @@
   let size = { cols: 0, rows: 0 };
   let prevScreenLines = null;
   let pendingScreen = null;
+  let lastScreen = null; // the frame drawn last, to draw again in a new skin
   let screenFresh = true;
   let screenWheel = false; // the frame says: hand the wheel to the program (paneWheel)
   const wheelUp = window.collieWheel.tracker(); // how far that turned the program's view up
+  // The reports go out a few at a time, in line with typed keys.
+  const wheelOut = window.collieWheel.sender((pane, text) =>
+    (sendChain = sendChain.then(() => postPane(pane, "text", { text })).catch((e) => toast(e.message))));
 
   // A plain shell has no conversation to show, so it opens on the screen.
   const isShell = () => { const v = find(current); return !!v && !v.is_agent; };
@@ -5131,6 +5135,7 @@
   function resetScreen() {
     prevScreenLines = null;
     pendingScreen = null;
+    lastScreen = null;
     screenFresh = true;
     screenWheel = false;
     size = { cols: 0, rows: 0 };
@@ -5142,6 +5147,7 @@
     }
   }
 
+  const SCREEN_CONTRAST = 4.5; // WCAG AA for body text
   function ensureTerm() {
     if (term || !window.Terminal) return;
     const css = getComputedStyle(document.documentElement);
@@ -5151,6 +5157,11 @@
       // into it, an outline otherwise.
       cursorBlink: true, cursorStyle: "block", cursorInactiveStyle: "outline",
       scrollback: 0, allowTransparency: true, theme: termTheme(),
+      // An agent picks its colours for the terminal it thinks it's in:
+      // Codex paints dark bars under text in the default colour, which on
+      // a light skin is dark on dark. Only the text colour moves, as far as
+      // it takes to read; what's drawn and where stays the agent's own.
+      minimumContrastRatio: SCREEN_CONTRAST,
     });
     // Native #screen handles 2D scrolling: never translate wheel into Up/Down
     // arrow keys (\x1b[A/\x1b[B) or let xterm cancel horizontal touch pans.
@@ -5175,6 +5186,7 @@
     addEventListener("collie:theme", () => {
       term.options.theme = termTheme();
       term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
+      if (lastScreen && curMode() === "screen") { prevScreenLines = null; drawScreen(lastScreen); }
     });
   }
   // An agent drawing fullscreen keeps its history to itself, so once the
@@ -5193,8 +5205,8 @@
       const n = Math.trunc(rest / lineH());
       if (!n) return;
       rest -= n * lineH();
-      wheelUp.scrolled(current, n, size.cols, size.rows);
-      sendText(window.collieWheel.report(n, size.cols, size.rows));
+      wheelUp.scrolled(current, n);
+      wheelOut.scroll(current, n, size.cols, size.rows);
     };
     el.addEventListener("wheel", (e) => {
       if (!on() || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY) || !atEdge(e.deltaY)) return;
@@ -5228,7 +5240,9 @@
   function termTheme() {
     const css = getComputedStyle(document.documentElement);
     const fg = css.getPropertyValue("--term-fg").trim(), bg = css.getPropertyValue("--term-bg").trim();
-    return { background: "rgba(0,0,0,0)", foreground: fg, cursor: fg, cursorAccent: bg, selectionBackground: "rgba(127,127,127,.3)" };
+    // The real background (the viewer's own) so minimumContrastRatio
+    // measures against what you see.
+    return { background: bg, foreground: fg, cursor: fg, cursorAccent: bg, selectionBackground: "rgba(127,127,127,.3)" };
   }
   // The pane keeps its own width (herdr can't resize it for us), so a phone
   // can't fit 120 columns legibly: there it shows the screen at a readable
@@ -5278,6 +5292,7 @@
   function closeStream() {
     stream?.close(); stream = null; term?.blur();
     resetEarlier($("#thread"), null);
+    wheelOut.drop();
     // Leaving the screen: an agent scrolled up from here goes back to the
     // bottom, after whatever is still on its way to it.
     const home = wheelUp.home();
@@ -5289,7 +5304,9 @@
     screenWheel = !!f.wheel;
     const el = $("#screen");
     const stick = restore ? !!restore.atBottom : (screenFresh || screenNearBottom());
-    const raw = (f.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "");
+    lastScreen = f;
+    const { background, foreground } = term.options.theme;
+    const raw = window.collieTermColor.adapt(f.text || "", background, foreground).replace(/\r\n/g, "\n").replace(/\r/g, "");
     const lines = raw ? raw.split("\n") : [""];
     if (!screenFresh && term.hasSelection()) {
       pendingScreen = f;
@@ -7247,10 +7264,11 @@
   });
 
   // ───────────────────────────── input
+  // Keys herdr has names for (0.9.5 has none for Home, End, Delete or the
+  // page keys: those go as text, the whole sequence in one send).
   const SEQ = {
     "\r": "enter", "\x7f": "backspace", "\b": "backspace", "\t": "tab", "\x1b": "esc",
     "\x1b[A": "up", "\x1b[B": "down", "\x1b[C": "right", "\x1b[D": "left", "\x1b[Z": "shift+tab",
-    "\x1b[H": "home", "\x1b[F": "end", "\x1b[3~": "delete", "\x1b[5~": "pageup", "\x1b[6~": "pagedown",
     "\x1bOA": "up", "\x1bOB": "down", "\x1bOC": "right", "\x1bOD": "left",
   };
   function typeIntoPane(data) {

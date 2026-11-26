@@ -7,6 +7,8 @@ func TestMarkScreenCursor(t *testing.T) {
 		name, text, want string
 		rows             int
 		found            bool
+		kind             string // the pane's agent; claude unless shell
+		shell            bool
 	}{
 		{
 			// Claude Code's input row as herdr 0.9.5 reads it: the caret is
@@ -59,13 +61,13 @@ func TestMarkScreenCursor(t *testing.T) {
 			found: true,
 		},
 		{
-			name:  "shell prompt whose trailing space was dropped",
+			name: "shell prompt whose trailing space was dropped", shell: true,
 			text:  "out\r\nme@mac ~ %\r\n   \r\n",
 			want:  "out\r\nme@mac ~ % \x1b7\r\n   \r\n",
 			found: true,
 		},
 		{
-			name:  "shell mid-command",
+			name: "shell mid-command", shell: true,
 			text:  "me@mac ~ % ls -la",
 			want:  "me@mac ~ % ls -la\x1b7",
 			found: true,
@@ -82,11 +84,31 @@ func TestMarkScreenCursor(t *testing.T) {
 			want:  "\x1b]8;;https://x\x07link\x1b]8;;\x1b\\ \x1b[7m\x1b7\x1b[27mz\x1b[7m\x1b[0m",
 			found: true,
 		},
+		{
+			// Codex draws no caret: a lone inverse cell is its own, and stays.
+			name:  "codex keeps its inverse cells",
+			text:  "\x1b[7m1\x1b[0m next\r\n› hi",
+			want:  "\x1b[7m1\x1b[0m next\r\n› hi\x1b7",
+			kind:  "codex",
+			found: true,
+		},
+		{
+			// An agent's picture gains nothing but the mark.
+			name:  "an agent's row ending in a prompt sign gets no space",
+			text:  "out\r\nwaiting >",
+			want:  "out\r\nwaiting >\x1b7",
+			kind:  "agy",
+			found: true,
+		},
 		{name: "empty", text: "", want: ""},
 		{name: "blank screen", text: "\x1b[0m  \r\n", want: "\x1b[0m  \r\n"},
 	}
 	for _, c := range cases {
-		got, found := markScreenCursor(c.text, c.rows)
+		kind := c.kind
+		if kind == "" && !c.shell {
+			kind = "claude"
+		}
+		got, found := markScreenCursor(c.text, c.rows, kind)
 		if got != c.want || found != c.found {
 			t.Errorf("%s:\n got %q %v\nwant %q %v", c.name, got, found, c.want, c.found)
 		}

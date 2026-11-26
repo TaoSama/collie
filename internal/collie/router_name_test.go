@@ -39,6 +39,7 @@ type fakePane struct {
 	// prompts or Enters; quiet ones take a message without changing state.
 	sim                     bool
 	box                     string
+	writes                  []string // each pane.send_text, as sent
 	said                    []string
 	seq                     uint64
 	dropPrompts, dropEnters int
@@ -232,6 +233,7 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		if p == nil {
 			return nil, &HerdrError{Code: "pane_not_found"}
 		}
+		p.writes = append(p.writes, str("text"))
 		p.box += strings.TrimSuffix(strings.TrimPrefix(str("text"), "\x1b[200~"), "\x1b[201~")
 		return map[string]any{}, nil
 	case "agent.prompt":

@@ -50,6 +50,7 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	var lastText string
 	var lastSize Rect
 	var wheel bool
+	var kind string // the pane's agent, "" for a shell
 	var sizeAt time.Time
 	beat := time.Now()
 	for {
@@ -67,6 +68,10 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				}
 				if p, e := s.herdr.Pane(ctx, id); e == nil {
 					wheel = paneWheel(p)
+					kind = ""
+					if p.Agent != nil {
+						kind = *p.Agent
+					}
 				}
 				sizeAt = time.Now()
 			}
@@ -84,7 +89,7 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				lastText = res.Text
 				text, cursor := res.Text, false
 				if mode != "log" {
-					text, cursor = markScreenCursor(text, lastSize.Height)
+					text, cursor = markScreenCursor(text, lastSize.Height, kind)
 					text = trimScreenBlankTail(text)
 				}
 				b, _ := json.Marshal(map[string]any{
@@ -150,6 +155,39 @@ func (s *Server) logInterrupting(r *http.Request, pane, what string) {
 	log.Printf("pane %s: %s from %s", pane, what, who)
 }
 
+// escChunkMax bounds one write of text holding escape sequences.
+const escChunkMax = 256
+
+// escChunks cuts text holding escape sequences into writes of about max bytes,
+// each cut just before an ESC. An agent that reads an ESC with nothing after
+// it yet takes it for the Esc key and stops its turn, and a terminal passes
+// a long write on in pieces (macOS holds 1 KB): a cut can land right after
+// an ESC. A short write that ends where a sequence does can't leave one
+// hanging. Text without ESC, or short, goes whole.
+func escChunks(text string, max int) []string {
+	if len(text) <= max || !strings.Contains(text, "\x1b") {
+		if text == "" {
+			return nil
+		}
+		return []string{text}
+	}
+	var out []string
+	for len(text) > max {
+		cut := strings.LastIndexByte(text[1:max+1], 0x1b) + 1
+		if cut <= 0 {
+			// No ESC to cut at in reach: up to the next one, whole.
+			if next := strings.IndexByte(text[1:], 0x1b); next >= 0 {
+				cut = next + 1
+			} else {
+				break
+			}
+		}
+		out = append(out, text[:cut])
+		text = text[cut:]
+	}
+	return append(out, text)
+}
+
 func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text  string `json:"text"`
@@ -172,8 +210,8 @@ func (s *Server) writePaneText(r *http.Request, id, text string, enter bool) err
 		s.logInterrupting(r, id, fmt.Sprintf("%d bytes holding %d Esc", len(text), n))
 	}
 	ctx := r.Context()
-	if text != "" {
-		if err := s.herdr.SendText(ctx, id, text); err != nil {
+	for _, part := range escChunks(text, escChunkMax) {
+		if err := s.herdr.SendText(ctx, id, part); err != nil {
 			return err
 		}
 	}

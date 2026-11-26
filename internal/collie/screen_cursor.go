@@ -10,8 +10,8 @@ import (
 // herdr's pane.read doesn't say where the terminal cursor is, so the screen
 // frame locates it from what the pane shows, best first:
 //
-//  1. a single inverse-video character in the visible rows: the caret Claude
-//     Code paints itself (it hides the real cursor);
+//  1. in Claude Code, a single inverse-video character in the visible rows:
+//     the caret it paints itself (it hides the real cursor);
 //  2. the last prompt line (`❯ `, `› `, `> `), at the end of what's typed, or
 //     before a dimmed placeholder (Codex's empty composer);
 //  3. the end of the last non-blank row (a shell prompt).
@@ -40,8 +40,11 @@ type screenRune struct {
 }
 
 // markScreenCursor returns text with the cursor marked, and whether one was
-// found. rows is the pane height: the cursor is in the last rows lines.
-func markScreenCursor(text string, rows int) (string, bool) {
+// found. rows is the pane height: the cursor is in the last rows lines. kind
+// is the pane's agent ("" for a shell). Other than the mark, an agent's
+// picture stays as it drew it: only Claude Code's painted caret gives up its
+// inverse, to the cursor drawn in its place.
+func markScreenCursor(text string, rows int, kind string) (string, bool) {
 	if rows <= 0 {
 		rows = defaultPaneRows
 	}
@@ -73,8 +76,9 @@ func markScreenCursor(text string, rows int) (string, bool) {
 		lines[i] = l
 		return head + strings.Join(lines, "\n"), true
 	}
-	// 1. A painted caret.
-	for i := len(lines) - 1; i >= 0; i-- {
+	// 1. A painted caret. Anywhere else a lone inverse cell is the
+	// program's own (a highlighted key, a selected choice).
+	for i := len(lines) - 1; i >= 0 && kind == "claude"; i-- {
 		rs := parsed[i]
 		for j := len(rs) - 1; j >= 0; j-- {
 			if rs[j].inverse && (j == 0 || !rs[j-1].inverse) && (j == len(rs)-1 || !rs[j+1].inverse) {
@@ -115,7 +119,7 @@ func markScreenCursor(text string, rows int) (string, bool) {
 			l := lines[i]
 			// A shell prompt reads "… % "; the snapshot may have dropped
 			// the space the cursor sits after.
-			if promptEndRe.MatchString(plainScreenLine(l, rs)) && (len(rs) == 0 || !rs[len(rs)-1].space) {
+			if kind == "" && promptEndRe.MatchString(plainScreenLine(l, rs)) && (len(rs) == 0 || !rs[len(rs)-1].space) {
 				lines[i] = l[:at] + " " + l[at:]
 				at++
 			}
