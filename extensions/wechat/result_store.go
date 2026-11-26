@@ -53,6 +53,9 @@ type resultStore struct {
 	current     string
 	plans       map[string]*storedResult
 	resumes     []resumeRecord
+	// savePending covers in-memory changes and failed checkpoints, which may
+	// already have replaced results.json before reporting an error.
+	savePending bool
 	// report tells Collie a result's outcome: sent, deferred, uncertain or expired.
 	report func(ref, state, reason string)
 	// attempted reports whether any step of a plan reached WeChat; an
@@ -68,6 +71,7 @@ func newResultStore(dir string, fingerprint func() string, report func(ref, stat
 		return nil, errors.New("Failed to read result store state")
 	}
 	if !found || st.Fingerprint != s.current {
+		s.savePending = found
 		return s, nil
 	}
 	for _, p := range st.Plans {
@@ -87,6 +91,7 @@ func (s *resultStore) account() error {
 		return nil
 	}
 	s.current, s.plans, s.resumes = current, map[string]*storedResult{}, nil
+	s.savePending = true
 	if err := os.RemoveAll(filepath.Join(s.dir, artifactsDirectory)); err != nil {
 		return err
 	}
@@ -98,7 +103,9 @@ func (s *resultStore) save() error {
 	for _, p := range s.sorted() {
 		plans = append(plans, p)
 	}
-	return writePrivateJSON(filepath.Join(s.dir, resultsFileName), resultStoreFile{Fingerprint: s.current, Plans: plans, Resumes: s.resumes})
+	err := writePrivateJSON(filepath.Join(s.dir, resultsFileName), resultStoreFile{Fingerprint: s.current, Plans: plans, Resumes: s.resumes})
+	s.savePending = err != nil
+	return err
 }
 
 func (s *resultStore) sorted() []*storedResult {
@@ -413,13 +420,18 @@ func (s *resultStore) prune(now int64) error {
 		if !final && p.ExpiresAt <= now && p.Reported != DeliveryExpired {
 			expired = append(expired, p.Key)
 			p.Reported = DeliveryExpired
+			s.savePending = true
 		}
 		if p.RetainedUntil <= now {
 			delete(s.plans, id)
+			s.savePending = true
 			if err := os.Remove(s.artifactPath(p.Artifact.ID)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
 		}
+	}
+	if !s.savePending {
+		return nil
 	}
 	if err := s.save(); err != nil {
 		return err
