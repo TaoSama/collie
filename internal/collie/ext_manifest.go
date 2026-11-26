@@ -210,8 +210,10 @@ func (m *ExtManifest) programConfig(cfg map[string]any) map[string]any {
 	return out
 }
 
-// hides: the 收件箱 rules switched on in cfg.
+// hides: the 收件箱 rules switched on in cfg. A switch never saved (the
+// setting is older than the switch) is at its default, as 接入 shows it.
 func (m *ExtManifest) hides(cfg map[string]any) []string {
+	cfg = m.configWithDefaults(cfg)
 	var out []string
 	if m.Configuration != nil {
 		for k, p := range m.Configuration.Properties {

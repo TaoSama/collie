@@ -935,3 +935,61 @@ func TestExtRequestsIgnored(t *testing.T) {
 		t.Fatalf("ignored: %+v", ts)
 	}
 }
+
+// End to end: a setting saved before the inbox switches existed (only
+// region) still hides as 接入 shows them, on by default; the list the page
+// gets marks muted chats and Meego sync groups hidden, the rest not.
+func TestInboxHiddenEndToEnd(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range cat {
+		if m.ID == "larkx" {
+			h.mu.Lock()
+			h.cat[m.ID] = m
+			h.sets[m.ID] = ExtSetting{ID: m.ID, Machine: "devbox", Config: map[string]any{"region": "feishu"}}
+			h.mu.Unlock()
+		}
+	}
+	m := h.manifest("larkx")
+	yes := true
+	for _, in := range []incomingMsg{
+		{Chat: "g1", ChatName: "严肃 Agent 交流群", ChatKind: "group", Muted: &yes},
+		{Chat: "g2", ChatName: "手机任务自建 harness 二期 - [需求同步群]", ChatKind: "group"},
+		{Chat: "g3", ChatName: "闪退 - [缺陷同步群]", ChatKind: "group"},
+		{Chat: "g4", ChatName: "产品群", ChatKind: "group"},
+	} {
+		in.ID, in.Sender, in.Text, in.At, in.Live = in.Chat+"-1", "u2", "hi", time.Now(), true
+		if err := h.incoming(m, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := func() map[string]bool {
+		rec := httptest.NewRecorder()
+		h.s.inboxList(rec, httptest.NewRequest("GET", "/api/inbox", nil))
+		var out struct{ Convs []convView }
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		hidden := map[string]bool{}
+		for _, c := range out.Convs {
+			hidden[c.Name] = c.Hidden
+		}
+		return hidden
+	}
+	got := list()
+	if !got["严肃 Agent 交流群"] || !got["手机任务自建 harness 二期 - [需求同步群]"] || !got["闪退 - [缺陷同步群]"] || got["产品群"] {
+		t.Fatalf("switches never saved count as on: %v", got)
+	}
+	if _, err := h.configure("larkx", func(x *ExtSetting) {
+		x.Config = map[string]any{"region": "feishu", "hide_muted": false, "hide_meego_story": true, "hide_meego_bug": false}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = list()
+	if got["严肃 Agent 交流群"] || !got["手机任务自建 harness 二期 - [需求同步群]"] || got["闪退 - [缺陷同步群]"] {
+		t.Fatalf("switched off: shown again: %v", got)
+	}
+}
