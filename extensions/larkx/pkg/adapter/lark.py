@@ -378,6 +378,8 @@ class Feishu:
         uid, name = peer
         name = sender_name or name or (self.user_name(uid, chat) if uid else "")
         return name or "私聊 " + (uid or chat)[-6:]
+
+    def user_name(self, uid, chat):
         if not uid or self.client is None:
             return ""
         return self.names.get("user:" + uid, lambda: self.client.get_user_name(uid, chat or self.self_chat or "0"))

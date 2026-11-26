@@ -293,6 +293,34 @@ def at_rich(uid, name, text):
     return protobuf_to_dict(rt)
 
 
+class Methods(unittest.TestCase):
+    def test_used_methods_exist(self):
+        """Every method the adapter calls on itself is there: tests that stub some must not hide a lost one."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(lark))
+        defined = {n.name for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "Feishu" for n in c.body if isinstance(n, ast.FunctionDef)}
+        called = {n.func.attr for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "Feishu" for n in ast.walk(c)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id == "self"}
+        self.assertEqual(called - defined - {"names", "client"}, set())
+
+    def test_real_names_unstubbed(self):
+        f = lark.Feishu(U, "feishu", lambda d: None)
+        f.me = "u_me"
+
+        class Client:
+            def get_user_name(self, uid, chat):
+                return {"u_me": "陆文韬"}.get(uid)
+
+            def api(self, name, data):
+                return {"chatters": {"u_me": {"name": "陆文韬"}}}
+
+        f.client = Client()
+        self.assertEqual(f.user_name("u_me", "c"), "陆文韬")
+        self.assertEqual(f.dm_name("c", f.peer("c")), "陆文韬（我）")
+
+
 class Names(unittest.TestCase):
     """A direct chat is named as in Feishu: the other person, or you （我）; never 还不知道对方是谁."""
 

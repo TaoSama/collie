@@ -256,12 +256,18 @@ class Extension:
                 with self.mu:
                     self.expired = "expired"
                 break
-            except Exception as e:  # Feishu not reached: the sign-in stands, try again
+            except OSError as e:  # Feishu not reached (requests' errors are OSErrors too): the sign-in stands
                 wait = RESTORE_WAITS[tries] if tries < len(RESTORE_WAITS) else RESTORE_RETRY
                 tries += 1
                 log.warning("Feishu not reached, trying again in %ds: %s", wait, self.lark.short_reason(str(e)))
                 if self.stop.wait(wait):
                     break
+            except Exception as e:  # a fault here, not Feishu: say so instead of waiting on the network forever
+                log.exception("signing in again failed")
+                with self.mu:
+                    self.loading = "登录出错：%s" % e
+                    self.backend = None
+                break
         with self.mu:
             self.restoring = False
         self.changed()
