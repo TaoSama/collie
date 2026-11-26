@@ -5289,6 +5289,54 @@
   $("#term-fit").addEventListener("click", () => { store.set("term-overview", !store.get("term-overview", false)); fitTerm(); });
   $("#term-kbd").addEventListener("click", () => term?.focus());
 
+  const PANE_RETRY_START_MS = 1000, PANE_RETRY_MAX_MS = 5000;
+  function setPaneRetry(retrying) {
+    const status = $("#pane-reconnect"), label = retrying ? "重连中" : "";
+    if (status.textContent !== label) status.textContent = label;
+  }
+  function openPaneStream(source, bind) {
+    let timer = null, retries = 0;
+    const pane = stream = { es: null, close, retryNow };
+    function close() {
+      clearTimeout(timer);
+      timer = null;
+      const es = pane.es;
+      pane.es = null;
+      es?.close();
+    }
+    function retryNow() {
+      if (timer !== null) start();
+    }
+    function start() {
+      if (stream !== pane) return;
+      close();
+      const { es, fallback } = source();
+      pane.es = es;
+      const listen = (type, receive) => es.addEventListener(type, (e) => {
+        if (pane.es === es) receive(e);
+      });
+      const ready = () => {
+        if (retries) setPaneRetry(false);
+        retries = 0;
+      };
+      const reopen = () => { if (pane.es === es) start(); };
+      listen("error", () => {
+        close(); // own the retry even when EventSource would retry on its own
+        if (fallback) { fallback(); start(); return; }
+        setPaneRetry(true);
+        const ceiling = Math.min(PANE_RETRY_START_MS * 2 ** retries++, PANE_RETRY_MAX_MS);
+        timer = setTimeout(start, ceiling * (0.5 + Math.random() * 0.5));
+      });
+      bind({ listen, ready, reopen, retrying: retries > 0, direct: !!fallback });
+    }
+    start();
+    return pane;
+  }
+  addEventListener("online", () => stream?.retryNow());
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) stream?.retryNow();
+  });
+
   function openStream(restore = null) {
     const id = current;
     applyMode();
@@ -5296,23 +5344,26 @@
     if (m === "chat") return openChat(id, restore);
     if (m === "screen") ensureTerm();
     let pendingRestore = restore && !restore.atBottom ? restore : null;
-    const d = directOf(id), es = stream = d ? new EventSource(directURL(d, id, "stream?mode=" + m)) : openES(paneURL(id, "stream") + "?mode=" + m);
-    // Straight from this computer when it can be (the hub's way meanwhile);
-    // back through the hub when that stops working.
-    const again = () => { if (stream === es && id === current && curMode() === m) { es.close(); openStream(); } };
-    if (d) es.addEventListener("error", () => { dropDirect(id); again(); });
-    else probeDirect(id).then((got) => got && again());
-    stream.addEventListener("frame", (e) => {
-      if (id !== current) return;
-      const f = JSON.parse(e.data);
-      if (m === "screen") drawScreen(f, pendingRestore);
-      else drawLog(f.text, pendingRestore);
-      pendingRestore = null;
+    const part = "stream?mode=" + m;
+    openPaneStream(() => {
+      const d = directOf(id);
+      return d ? { es: new EventSource(directURL(d, id, part)), fallback: () => dropDirect(id) }
+        : { es: openES(paneURL(id, "stream") + "?mode=" + m) };
+    }, ({ listen, ready, reopen, direct }) => {
+      // Prefer the node when this browser can reach it directly.
+      if (!direct) probeDirect(id).then((got) => { if (got) reopen(); });
+      listen("frame", (e) => {
+        const f = JSON.parse(e.data);
+        if (m === "screen") drawScreen(f, pendingRestore);
+        else drawLog(f.text, pendingRestore);
+        pendingRestore = null;
+        ready();
+      });
+      listen("gone", () => { $("#gone").hidden = false; wheelUp.forget(); closeStream(); });
     });
-    stream.addEventListener("gone", () => { $("#gone").hidden = false; wheelUp.forget(); closeStream(); });
   }
   function closeStream() {
-    stream?.close(); stream = null; term?.blur();
+    stream?.close(); stream = null; setPaneRetry(false); term?.blur();
     resetEarlier($("#thread"), null);
     wheelOut.drop();
     // Leaving the screen: an agent scrolled up from here goes back to the
@@ -5496,25 +5547,43 @@
     th._sig = ""; th._msgs = null; th._blocks = null; th._restore = null; showRaw = false;
   }
   function openChat(id, restore = null) {
-    const es = stream = openES(paneURL(id, "chat"));
-    const alive = () => stream === es && id === current && curMode() === "chat";
-    stream.addEventListener("reset", () => alive() && resetChat());
-    const th = $("#thread");
+    const th = $("#thread"), key = "p:" + id;
     resetEarlier(th, (c) => paneURL(id, "earlier") + "?before=" + c);
     th._restore = restore && !restore.atBottom ? restore : null;
-    th._redraw = () => alive() && drawThread(withSending("p:" + id, threadMsgs(th)));
-    if (!th._msgs) primeThread(th, "p:" + id);
-    const showPane = (msgs) => { keepThread("p:" + id, msgs); drawThread(withSending("p:" + id, msgs)); };
-    stream.addEventListener("patch", (e) => alive() && showPane(applyPatch(th, JSON.parse(e.data))));
-    stream.addEventListener("messages", (e) => alive() && drawThread(withSending("p:" + id, JSON.parse(e.data)))); // an older computer
-    stream.addEventListener("log", (e) => alive() && drawFallback(JSON.parse(e.data).text));
-    stream.addEventListener("live", (e) => {
-      if (!alive()) return;
-      const l = JSON.parse(e.data);
-      drawLive(l);
-      if (l.approval && l.approval_sig === undefined) refreshChatAsk(id); // an older computer
+    if (!th._msgs) primeThread(th, key);
+    const showPane = (msgs) => { keepThread(key, msgs); drawThread(withSending(key, msgs)); };
+    const pane = openPaneStream(() => ({ es: openES(paneURL(id, "chat")) }), ({ listen, ready, retrying }) => {
+      let received = false, unstructured = false;
+      const drawn = () => { received = true; ready(); };
+      // The server starts each connection with a reset before the snapshot.
+      // Keep the previous frame until the snapshot can replace or extend it.
+      listen("reset", () => { if (received) resetChat(); });
+      listen("meta", (e) => { unstructured = JSON.parse(e.data).structured === false; });
+      listen("patch", (e) => {
+        showPane(applyPatch(th, JSON.parse(e.data), retrying && !received));
+        drawn();
+      });
+      listen("messages", (e) => { // an older computer
+        drawThread(withSending(key, JSON.parse(e.data)));
+        drawn();
+      });
+      const fallback = (text) => {
+        if (th._msgs) resetChat();
+        drawFallback(text);
+        drawn();
+      };
+      listen("log", (e) => fallback(JSON.parse(e.data).text));
+      listen("live", (e) => {
+        if (!received && unstructured) fallback("");
+        const l = JSON.parse(e.data);
+        drawLive(l);
+        if (l.approval && l.approval_sig === undefined) refreshChatAsk(id); // an older computer
+      });
+      listen("gone", () => { $("#gone").hidden = false; closeStream(); });
     });
-    stream.addEventListener("gone", () => { if (alive()) { $("#gone").hidden = false; closeStream(); } });
+    th._redraw = () => {
+      if (stream === pane) drawThread(withSending(key, threadMsgs(th)));
+    };
   }
   // Threads on a .viewer.chatbg scroll the viewer around them.
   const scroller = (el) => el.closest(".viewer.chatbg") || el;
@@ -5529,11 +5598,17 @@
   // A stream sends {base, from, msgs}: the first (and every reconnect) has
   // from === base and carries the whole view; later ones replace the
   // messages from position `from` on, and `base` moves when old ones fall off.
-  function applyPatch(el, p) {
+  function applyPatch(el, p, reconnecting = false) {
     let list = el._msgs, base = el._base;
     if (!list || p.from === p.base || p.from < base || p.from > base + list.length) {
+      const hasHistory = el._older || el._earlier?.loading;
+      const join = reconnecting && hasHistory && p.from === p.base ? reconnectOverlap(el, p) : -1;
+      if (join < 0) resetEarlier(el, el._earlier?.url);
+      if (join > 0) {
+        if (!el._older) el._olderEarlier = el._liveEarlier; // keep an in-flight page's cursor
+        el._older = (el._older || []).concat(list.slice(0, join));
+      }
       list = []; base = p.from;
-      resetEarlier(el, el._earlier?.url); // older pages may not join a fresh view
     }
     list = list.slice(0, p.from - base).concat(p.msgs);
     if (p.base > base) {
@@ -5542,6 +5617,22 @@
     }
     el._msgs = list; el._base = base; el._liveEarlier = p.earlier || 0;
     return threadMsgs(el);
+  }
+  // Absolute positions can change when the server reopens the log from its tail.
+  // Join at the byte cursor and matching messages, keeping the loaded prefix.
+  function reconnectOverlap(el, p) {
+    const before = el._msgs || [], after = p.msgs;
+    const oldCursor = el._liveEarlier, newCursor = p.earlier || 0;
+    if (!after.length || newCursor < oldCursor) return -1;
+    // Tool results can arrive between snapshots. The call itself stays put.
+    const key = (m) => m.kind === "tool" ? JSON.stringify([m.kind, m.name, m.input]) : JSON.stringify(m);
+    const matchesAt = (start) => {
+      const count = Math.min(before.length - start, after.length);
+      return count > 0 && before.slice(start, start + count).every((m, i) => key(m) === key(after[i]));
+    };
+    if (newCursor === oldCursor) return matchesAt(0) ? 0 : -1;
+    const matches = before.map((_, i) => i).slice(1).filter((i) => matchesAt(i));
+    return matches.length === 1 ? matches[0] : -1;
   }
   // A thread's messages: the older ones loaded on request, then the live view.
   const threadMsgs = (el) => (el._older || []).concat(el._msgs || []);
@@ -5949,10 +6040,10 @@
   }
 
   async function refreshChatAsk(pane) {
-    const es = stream, live = lastLive;
+    const es = stream?.es, live = lastLive;
     try {
       const r = await api(paneURL(pane, "ask"));
-      if (pane !== current || es !== stream || live !== lastLive || view !== "pane" || curMode() !== "chat") return;
+      if (pane !== current || es !== stream?.es || live !== lastLive || view !== "pane" || curMode() !== "chat") return;
       drawLive(r.asking ? { status: "blocked", approval: r.approval, approval_sig: r.sig } : { status: "blocked" });
     } catch (err) {
       console.warn("reading the dialog:", err);

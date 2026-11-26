@@ -62,6 +62,7 @@ v2026.1125.39 线上结果（devbox 无头 Chrome，点击到内容画出，事�
 
 - 对话流（`streamChat`）先问 `agent.get`：`agent_not_found` 说明这个 pane 没有 agent（shell，或 agent 还没起来），再读一下屏幕，`pane_not_found` 才是关了。`agent.get` 报别的错时，整轮跳过，不要当成 shell 发 `meta`，否则顶栏会闪成终端。
 - 屏幕和日志流（`streamPane`）同样只认 `not_found`。两处共用 `notFound`（`server.go`）。
+- hub 返回 502、503 或流断开时，普通会话和经 hub 的终端会关闭旧 EventSource，带抖动退避后重新打开。标题栏的「重连中」等首个可用帧到了才消失。每次新会话流可能先发 `reset` 再发快照，重连时要等快照核对历史边界，以保留能接上的已加载页。
 
 ## 聊天里的图片
 

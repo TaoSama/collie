@@ -471,6 +471,8 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .d-meta > .muted:empty { display: none; }
 .d-meta > .mono { flex-shrink: 40; min-width: 4em; }
 .d-meta > .ctx { flex-shrink: 0; }
+#pane-reconnect { color: var(--info); }
+#pane-reconnect:empty { position: absolute; }
 
 .seg { display: inline-flex; align-items: center; height: var(--seg-h); padding: 2px; border-radius: var(--seg-radius); background: var(--bg-3); flex: none; }
 .seg button { display: inline-flex; align-items: center; height: calc(var(--seg-h) - 4px); border: 0; background: transparent; padding: 0 var(--seg-px); border-radius: calc(var(--seg-radius) - 2px); font-size: var(--btn-fs); color: var(--t-secondary); white-space: nowrap; transition: background .12s, color .12s; }
