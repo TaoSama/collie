@@ -2772,7 +2772,10 @@
       // The list and the open chat redraw apart: a new message elsewhere
       // leaves the chat you are reading as it is.
       const sig = JSON.stringify([r, inboxCur, inboxFilter]), dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger]);
-      const msgs = body.querySelector(".conv-msgs"), stick = msgs && msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 40;
+      // The chat lists newest first: at the top it stays there to show what
+      // arrives; scrolled down, it keeps the message you are reading in place.
+      const msgs = body.querySelector(".conv-msgs"), stick = msgs && msgs.scrollTop < 40;
+      const below = msgs ? msgs.scrollHeight - msgs.scrollTop : 0;
       if (sig !== body._sig) {
         body._sig = sig; body._dsig = dsig;
         body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxFilter);
@@ -2781,7 +2784,7 @@
         $("#inbox-detail").innerHTML = collieExt.detailHTML(inboxCur, inboxDetail, r?.trigger);
       } else { if (restore) restoreSimpleScroll(body, restore); return; }
       const m2 = body.querySelector(".conv-msgs");
-      if (m2 && (stick || !msgs)) m2.scrollTop = m2.scrollHeight;
+      if (m2 && msgs && !stick) m2.scrollTop = m2.scrollHeight - below;
       applyAfter();
     } else if (tab === "hooks") {
       // 接入 is a list of extensions with the webhooks under it, as before;

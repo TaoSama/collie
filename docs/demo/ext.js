@@ -239,6 +239,7 @@
 
   const detailHTML = (cur, detail, trigger) => cur ? convHTML(detail, trigger) : `<div class="card"><div class="empty-row with-ico">${ico("messages-square")}<div>选一个会话</div></div></div>`;
 
+  // Newest message first, so the latest reply is the first thing you see.
   function convHTML(d, trigger) {
     if (!d) return `<div class="card"><div class="empty-row">正在读取…</div></div>`;
     const c = d.conv, msgs = d.msgs || [], outs = d.outbox || {};
@@ -258,7 +259,7 @@
           ${c.anyone ? `<p class="ext-warn">任何人都能唤起时，专属 agent 在隔离目录里工作，但那不是沙箱：只对信任的群打开。</p>` : ""}
           <div class="conv-rule"><span class="tm-lab">交给</span>${seg("handler", c.handler, [["collie", "Collie"], ["agent", "专属 agent"]])}${c.handler === "agent" ? `<span class="muted">${worker || "第一次唤起时启动"}</span>` : ""}</div>` : ""}
       </div>
-      ${c.on ? `<ul class="conv-msgs">${msgs.map(msg).join("") || `<li class="empty-row">打开以后的消息会出现在这里</li>`}</ul>` : `<div class="empty-row">${esc(c.preview || "")}</div>`}
+      ${c.on ? `<ul class="conv-msgs">${msgs.slice().reverse().map(msg).join("") || `<li class="empty-row">打开以后的消息会出现在这里</li>`}</ul>` : `<div class="empty-row">${esc(c.preview || "")}</div>`}
     </div>`;
   }
 
