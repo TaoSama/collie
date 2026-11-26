@@ -173,7 +173,7 @@ COLLIE_HOME/ext/<id>/
 | `connector.secrets.load` | `{contribution}` | `{data?}`：上次存的 base64 |
 | `connector.secrets.save` | `{contribution, data}` | `{}`。在扩展所在的电脑上写 `secrets.json`，不经过 hub |
 | `connector.secrets.delete` | `{contribution}` | `{}` |
-| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
+| `channel.receive` | `{contribution, message:{id, text, chat_id, chat?, chat_kind?, sender?, sender_name?, owner?, muted?, folded?, at?, quote?, images?, files?, unsupported?}}` | `{}`。`muted`：这个会话在原应用里设了免打扰（不知道就不写），Collie 不为它提醒，未读数照常显示但用灰色。`folded`：在原应用的会话列表里被折叠了，收件箱不列出它。同一个 `id` 只收一次，所以失败可以重试；Collie 暂时连不上时回 `hub_unavailable`，扩展应自己保留消息并稍后重试 |
 | 事件 `connector.changed` | `{contribution, scope: inbox\|chats\|status\|outbox}` | 有新消息或状态变了；有 `archive` 能力时 Collie 收到就去拉。最多每 3 秒一次 |
 | 事件 `channel.delivery` | `{contribution, ref, state: sent\|deferred\|uncertain\|failed\|expired, message_id?, reason?}` | 一次发送最后怎样了。`uncertain` 表示可能已发出，**不会再重发** |
 
@@ -269,6 +269,8 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 `configuration` 是 JSON Schema 的子集：顶层 `type: object`，`properties` 里每项是 `string`（可带 `enum` 和 `x-labels`）、`boolean` 或 `integer`，带 `title`、`description`、`default`。Collie 按这个表单渲染，补齐默认值后放进 `initialize.config`。不支持嵌套、数组和 `required`。
 
 字段加 `"x-secret": true` 是密钥（API Key、访问令牌）：接入页用密码框，填过的只显示「已设置」；值存在 hub 的 `COLLIE_HOME/ext/<id>/config-secrets.json`（0600），不进 hub 的数据库、不进日志，只在启动程序时放进 `initialize.config`。没有程序的声明式扩展，由 hub 里用到它的功能按 id 和字段名读取。
+
+布尔字段加 `"x-hide"` 是收件箱的显示规则，由 Collie 自己执行，开着时生效：`"muted"` 隐藏免打扰的会话，`"name:<文字>"` 隐藏名字里带这段文字的会话。这类字段不传给程序判断，改了也不重启程序；隐藏只影响收件箱列表，触发照常。
 
 不要把 Collie 已经统一管理的东西做成扩展配置，比如触发词、尾标、谁能唤起、交给谁。
 

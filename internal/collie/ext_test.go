@@ -779,6 +779,10 @@ func TestInboxMuted(t *testing.T) {
 	if c = inboxConversation(m, in, &c); c.Muted {
 		t.Fatalf("unmuted: %+v", c)
 	}
+	in.Folded = &yes
+	if c = inboxConversation(m, in, &c); !c.Folded {
+		t.Fatalf("folded: %+v", c)
+	}
 }
 
 // A line the extension writes to stderr reaches the hub's view (接入's log)
@@ -807,3 +811,49 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return s.b.Write(p)
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// The 收件箱 leaves out chats folded in the chat app and those a switch of
+// 接入 hides; the switches are Collie's: changing one restarts nothing.
+func TestInboxHidden(t *testing.T) {
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lark *ExtManifest
+	for _, m := range cat {
+		if m.ID == "larkx" {
+			lark = m
+		}
+	}
+	on := lark.hides(lark.configWithDefaults(nil))
+	if len(on) != 3 {
+		t.Fatalf("three switches, on by default: %v", on)
+	}
+	for _, c := range []struct {
+		conv  InboxConv
+		rules []string
+		want  bool
+	}{
+		{InboxConv{Name: "产品群"}, on, false},
+		{InboxConv{Name: "产品群", Folded: true}, nil, true},
+		{InboxConv{Name: "大群", Muted: true}, on, true},
+		{InboxConv{Name: "大群", Muted: true}, nil, false},
+		{InboxConv{Name: "登录页改版 - [需求同步群]"}, on, true},
+		{InboxConv{Name: "[Main] 闪退 - [缺陷同步群]"}, on, true},
+		{InboxConv{Name: "[Main] 闪退 - [缺陷同步群]"}, nil, false},
+	} {
+		if got := hiddenInInbox(c.conv, c.rules); got != c.want {
+			t.Errorf("%+v with %v: hidden %v, want %v", c.conv, c.rules, got, c.want)
+		}
+	}
+	cfg := lark.configWithDefaults(nil)
+	off := lark.configWithDefaults(map[string]any{"hide_muted": false})
+	if !sameJSON(lark.programConfig(cfg), lark.programConfig(off)) || sameJSON(cfg, off) {
+		t.Fatal("a 收件箱 switch is not the program's config")
+	}
+	bad := *lark
+	bad.Configuration = &ExtConfig{Type: "object", Properties: map[string]ExtConfigProp{"x": {Type: "string", Hide: "muted"}}}
+	if bad.validate() == nil {
+		t.Fatal("x-hide belongs to a boolean")
+	}
+}

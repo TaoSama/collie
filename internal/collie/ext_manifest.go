@@ -185,6 +185,34 @@ type ExtConfigProp struct {
 	Labels      []string `json:"x-labels,omitempty"`
 	// Secret: kept apart from the config, never shown again (§6).
 	Secret bool `json:"x-secret,omitempty"`
+	// Hide: a 收件箱 rule Collie applies while this switch (a boolean) is
+	// on: "muted" hides muted chats, "name:<text>" chats whose name has it.
+	// The program doesn't read it, so changing it restarts nothing.
+	Hide string `json:"x-hide,omitempty"`
+}
+
+// programConfig is the config the program gets: without Collie's own switches.
+func (m *ExtManifest) programConfig(cfg map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range cfg {
+		if m.Configuration == nil || m.Configuration.Properties[k].Hide == "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// hides: the 收件箱 rules switched on in cfg.
+func (m *ExtManifest) hides(cfg map[string]any) []string {
+	var out []string
+	if m.Configuration != nil {
+		for k, p := range m.Configuration.Properties {
+			if on, _ := cfg[k].(bool); on && p.Hide != "" {
+				out = append(out, p.Hide)
+			}
+		}
+	}
+	return out
 }
 
 // Connector capabilities (extensions/README.md §2).
@@ -216,6 +244,14 @@ func (m *ExtManifest) has(capability string) bool {
 }
 
 func (m *ExtManifest) validate() error {
+	if m.Configuration != nil {
+		for k, p := range m.Configuration.Properties {
+			name, isName := strings.CutPrefix(p.Hide, hideNamePrefix)
+			if p.Hide != "" && (p.Type != "boolean" || !(p.Hide == hideMuted || isName && name != "")) {
+				return fmt.Errorf("config %s: x-hide is a boolean's, %q or %q<text>", k, hideMuted, hideNamePrefix)
+			}
+		}
+	}
 	switch {
 	case m.ManifestVersion != 1:
 		return fmt.Errorf("manifest_version must be 1")

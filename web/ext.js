@@ -69,7 +69,7 @@
         const isSet = (v.secrets || []).includes(k);
         return `<label>${esc(p.title || k)}<input type="password" autocomplete="off" data-ext-config="${esc(k)}" placeholder="${isSet ? "已设置，留空不改" : "未设置"}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
       }
-      if (p.type === "boolean") return `<label class="check"><input type="checkbox" data-ext-config="${esc(k)}" ${val ? "checked" : ""}><span>${esc(p.title)}</span></label>`;
+      if (p.type === "boolean") return `<label class="check"><input type="checkbox" data-ext-config="${esc(k)}" ${val ? "checked" : ""}><span>${esc(p.title)}${p.description ? `<small>${esc(p.description)}</small>` : ""}</span></label>`;
       if (p.enum) return `<label>${esc(p.title)}<select data-ext-config="${esc(k)}" data-pick="compact">${p.enum.map((e, i) => `<option value="${esc(e)}" ${e === val ? "selected" : ""}>${esc(p["x-labels"]?.[i] || e)}</option>`).join("")}</select>${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
       return `<label>${esc(p.title)}<input data-ext-config="${esc(k)}" value="${esc(val ?? "")}">${p.description ? `<small>${esc(p.description)}</small>` : ""}</label>`;
     }).join("");
@@ -197,7 +197,7 @@
 
   // 收件箱: every chat of every extension; the open one beside it.
   function inboxHTML(r, cur, detail, filter) {
-    const convs = r?.convs || [];
+    const convs = (r?.convs || []).filter((c) => !c.hidden); // folded, or switched off in 接入
     const shown = convs.filter((c) => filter === "on" ? c.on : filter && filter !== "all" ? c.ext === filter : true);
     const exts = [...new Set(convs.map((c) => c.ext))];
     const chips = [["all", "全部"], ["on", `处理中 ${convs.filter((c) => c.on).length}`], ...exts.map((x) => [x, convs.find((c) => c.ext === x)?.label || x])]

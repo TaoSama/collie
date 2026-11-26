@@ -180,7 +180,7 @@ func (h *extHost) configure(id string, change func(*ExtSetting)) (ExtSetting, er
 	h.sets[id] = x
 	h.saveSetsLocked()
 	old := h.runs[id]
-	if old != nil && (!x.Enabled || x.Machine != before.Machine || !sameJSON(x.Config, before.Config)) {
+	if old != nil && (!x.Enabled || x.Machine != before.Machine || !sameJSON(m.programConfig(x.Config), m.programConfig(before.Config))) {
 		delete(h.runs, id)
 	} else {
 		old = nil

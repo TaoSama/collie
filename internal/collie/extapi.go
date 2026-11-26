@@ -203,16 +203,23 @@ type convView struct {
 	Label string `json:"label"`
 	// The last send's state, when it isn't plainly sent.
 	Out *OutboxItem `json:"out,omitempty"`
+	// Hidden: left out of the list (folded in the chat app, or a rule of 接入).
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 	convs := s.ext.store.list(r.URL.Query().Get("ext"))
 	out := make([]convView, 0, len(convs))
+	hides := map[string][]string{}
 	for _, c := range convs {
 		v := convView{InboxConv: c, Label: c.Ext}
 		if m := s.ext.manifest(c.Ext); m != nil {
 			v.Label = extLabel(m)
+			if _, ok := hides[c.Ext]; !ok {
+				hides[c.Ext] = m.hides(s.ext.setting(c.Ext).Config)
+			}
 		}
+		v.Hidden = hiddenInInbox(c, hides[c.Ext])
 		if c.On {
 			v.Out = s.ext.store.lastOut(c.ID)
 		}
@@ -220,6 +227,28 @@ func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"convs": out, "trigger": s.ext.trigger()})
 }
+
+// hiddenInInbox: folded in the chat app, or caught by a rule switched on.
+// Only the list leaves it out: your own trigger word works there as anywhere.
+func hiddenInInbox(c InboxConv, rules []string) bool {
+	if c.Folded {
+		return true
+	}
+	for _, r := range rules {
+		if r == hideMuted && c.Muted {
+			return true
+		}
+		if text, ok := strings.CutPrefix(r, hideNamePrefix); ok && text != "" && strings.Contains(c.Name, text) {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	hideMuted      = "muted"
+	hideNamePrefix = "name:"
+)
 
 func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
