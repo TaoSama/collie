@@ -68,6 +68,8 @@ type Super struct {
 	noAgent        map[string]time.Time // worker → since when its pane has had no agent in it
 	unanswered     map[string]time.Time // machine → since when it hasn't answered the tick's list
 	pinnedCache    map[string]*Entry    // older pinned entries resolved from SQLite
+	heldCache      map[string]*Entry    // held pending entries, likewise
+	remindLookAt   time.Time            // when to look again for the daily reminder
 	notifyBuf      []notice
 	notifyAt       time.Time
 	seenAt         time.Time            // when a page of Collie was last open in front of you
@@ -154,6 +156,7 @@ func (sp *Super) flushLocked() error {
 	if !sp.dirty {
 		return nil
 	}
+	sp.holdPendingLocked(time.Now()) // what still waits on you outlives the trim
 	if err := saveState(sp.db, sp.st, sp.deletedTimers); err != nil {
 		return err
 	}
@@ -176,7 +179,7 @@ func (sp *Super) addEntryReplyLocked(role, thread, text, ref, tone string, re *Q
 
 func (sp *Super) appendEntryLocked(e *Entry) *Entry {
 	sp.st.Entries = append(sp.st.Entries, e)
-	if e.Role == "collie" || e.Tone == "blocked" || e.Tone == "error" {
+	if e.Role == "collie" || e.Tone == "blocked" || e.Tone == "error" || e.Tone == toneRemind {
 		sp.queueNotifyLocked(e)
 	}
 	sp.changed()
@@ -444,6 +447,7 @@ func (sp *Super) tick(parent context.Context) {
 	}
 	var fin []finished
 	var dead []*Worker // the agent never started, or quit, leaving a shell
+	var resumes []*Worker
 	deliveries := map[string][]*Trigger{}
 
 	sp.mu.Lock()
@@ -457,6 +461,7 @@ func (sp *Super) tick(parent context.Context) {
 			sp.ingestLocked("timer", t.Thread, t.ID, t.Text, "", t.Target, t.ID)
 		}
 	}
+	sp.remindPendingLocked(now)
 	// 2. Worker lifecycle → triggers for the router.
 	for _, w := range sp.st.Workers {
 		if w.Ended {
@@ -520,11 +525,18 @@ func (sp *Super) tick(parent context.Context) {
 			switch {
 			case a.Status == "blocked":
 				fin = append(fin, finished{w, true})
+			case a.Status == "working":
+				w.ResumeAt = time.Time{} // it got going again: a message, the human, or Collie's own nudge
 			case prev == "working" && (a.Status == "done" || a.Status == "idle"):
 				if now.Sub(w.ReportAt) > 90*time.Second {
 					fin = append(fin, finished{w, false})
 				}
 			}
+		}
+		if !paused && sp.resumeDueLocked(w, a.Status, now) {
+			w.ResumeAt = time.Time{}
+			resumes = append(resumes, w)
+			sp.changed()
 		}
 	}
 	// 3. Route queued triggers to sessions: subscribed workers first (fast path), router otherwise.
@@ -575,6 +587,11 @@ func (sp *Super) tick(parent context.Context) {
 	if paused {
 		return
 	}
+	var resuming sync.WaitGroup
+	for _, w := range resumes {
+		resuming.Go(func() { sp.resumeWorker(ctx, w) })
+	}
+	resuming.Wait()
 
 	// 4. Deliver batches to free sessions, side by side: each one is a send
 	// and a read back across the internet, with its own time.
@@ -800,6 +817,9 @@ func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 		return
 	}
 	sp.finishDeliveryLocked(target, list, false, "")
+	if w := sp.st.Workers[target]; w != nil {
+		w.clearResume() // new words for it: they carry it on
+	}
 	if fresh {
 		sp.routerFresh = false
 	}
@@ -935,20 +955,14 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 	if msg := sp.workerAgentError(ctx, w, summary); msg != "" {
 		// Its agent stopped it (out of quota, logged out, the API down):
 		// the turn ended, the work did not.
-		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s stopped on an error from its agent, not because it was done:\n%s\nLast message before it:\n%s\nIf this is a usage limit, a login or an outage, it won't get better by itself soon: hand the job to another kind of agent (spawn a fresh one with the brief and what this one got done; --resume only works with the same agent), then tell the human in one line what happened and who carries on.", w.Name, msg, summary), "", "", w.Name)
-		log.Printf("worker %s stopped on an agent error: %s", w.Name, msg)
+		sp.workerStoppedLocked(w, msg, summary, time.Now())
 		return
 	}
 	sp.ingestLocked("worker", w.Thread, w.Name,
-		fmt.Sprintf("worker %s finished a turn. Last message:\n%s", w.Name, summary), "", "", w.Name)
+		fmt.Sprintf("worker %s finished a turn.%s Last message:\n%s", w.Name, resumedNote(w.Resumed), summary), "", "", w.Name)
+	w.clearResume()
 	sp.addEntryLocked("event", w.Thread, w.Name+" 完成了一轮", w.Name, "done")
 }
-
-// workerQuotaRe is an agent CLI saying it can't go on: a usage limit, the
-// login, the API. Narrower than agentErrRe: a worker's screen is full of its
-// work, and "error:" there is mostly the work's own.
-var workerQuotaRe = regexp.MustCompile(`(?i)(usage limit|limit reached|hit your( \w+)? limit|reached your( \w+)? limit|quota exceeded|exceeded your( current)? quota|resource.?exhausted|daily limit|rate.?limit(ed)?\b|credit balance|out of credits|please run /login|not logged in|invalid api key|api error|overloaded|unexpected status \d{3}|try again (at|in) )`)
 
 // workerAgentError reads the bottom of a worker's terminal after a turn:
 // what its agent printed when it gave up, or "". A line that is also in its
@@ -967,7 +981,9 @@ func (sp *Super) workerAgentError(ctx context.Context, w *Worker, summary string
 func agentStopLine(screen, summary string) string {
 	var tail []string
 	for _, l := range strings.Split(screen, "\n") {
-		if t := strings.TrimSpace(l); t != "" {
+		if strings.Contains(l, workerResumeMark) {
+			tail = nil // what is above was handled when Collie said to carry on
+		} else if t := strings.TrimSpace(l); t != "" {
 			tail = append(tail, t)
 		}
 	}
@@ -975,7 +991,7 @@ func agentStopLine(screen, summary string) string {
 		tail = tail[len(tail)-12:]
 	}
 	for _, l := range tail {
-		if workerQuotaRe.MatchString(l) && !strings.Contains(summary, strings.Trim(l, "⎿⏺●•✗✘⚠■│ ")) {
+		if workerStopRe.MatchString(l) && !strings.Contains(summary, strings.Trim(l, "⎿⏺●•✗✘⚠■│ ")) {
 			return clip(strings.Trim(l, "⎿⏺●•✗✘⚠■│ "), 200)
 		}
 	}
@@ -1685,6 +1701,8 @@ func (sp *Super) queueNotifyLocked(e *Entry) {
 		n.decision, n.task, n.options, n.pane = e.ID, entryTask(e), e.Ask.Choices, e.Ask.Pane
 	case isDecision(e):
 		n.decision, n.task, n.summary = e.ID, entryTask(e), pendingSummary(e.Text, nil)
+	case e.Tone == toneRemind:
+		n.remind = e.Ref
 	case !n.needsYou() && sp.st.Settings.NotifyLevel == "quiet" && e.Role == "collie":
 		return
 	}
@@ -1704,10 +1722,11 @@ type notice struct {
 	link       string // set when it goes out
 	summary    string // a --opt/--check message's first line
 	pane       string // a dialog's pane
+	remind     string // the daily reminder: the oldest thing it lists
 }
 
 func (n notice) needsYou() bool {
-	return n.tone == "blocked" || len(n.options) > 0 || n.check
+	return n.tone == "blocked" || len(n.options) > 0 || n.check || n.remind != ""
 }
 
 // quoteLine is a Quote as one line: "你：首页加一个暗色模式…".
@@ -1925,37 +1944,44 @@ func (sp *Super) dismissLocked(id string) bool {
 // An item resolves when:
 //  1. the human tapped「已看」or × (/api/super/dismiss),
 //  2. the human tapped one of its options or quoted it (re.entry == e.id),
-//  3. the human sent a plain unquoted message right after it with no other
-//     role=="collie" reply in between (system/worker events do not interrupt).
+//  3. for --opt only: the human sent a plain unquoted message right after it
+//     with no other role=="collie" reply in between (system/worker events do
+//     not interrupt). A --check waits for 1 or 2: a quick message after it is
+//     often about something else.
+//
+// Ones older than the entries in memory are held (pending_hold.go).
 func (sp *Super) pendingLocked(now time.Time) []PendingItem {
-	es := sp.st.Entries
 	var out []PendingItem
-	for i, e := range es {
-		if e.Role != "collie" || (e.Thread != "" && e.Thread != mainThread) || (len(e.Options) == 0 && !e.Check) || e.ID == "" {
-			continue
-		}
-		if sp.st.Dismissed[e.ID] {
-			continue
-		}
-		if !now.IsZero() && !e.At.IsZero() && now.Sub(e.At) > pendingMaxAge {
-			continue
-		}
-		opts := cleanOptions(e.Options)
-		if len(opts) == 0 && !e.Check {
-			continue
-		}
-		if sp.replyLocked(i) == nil {
-			out = append(out, PendingItem{
-				ID:      e.ID,
-				At:      e.At,
-				Summary: pendingSummary(e.Text, opts),
-				Options: opts,
-				Check:   e.Check,
-				Task:    entryTask(e),
-			})
+	seen := map[string]bool{}
+	for i, e := range sp.st.Entries {
+		if sp.waitsLocked(i, now) {
+			out = append(out, pendingItem(e))
+			seen[e.ID] = true
 		}
 	}
-	return out
+	var held []PendingItem
+	quoted := map[string]*Entry(nil)
+	if len(sp.st.Held) > 0 {
+		quoted = sp.quotesLocked()
+	}
+	for _, id := range sp.st.Held {
+		if e := sp.heldEntryLocked(id); e != nil && !seen[id] && sp.heldWaitsLocked(e, now, quoted) {
+			held = append(held, pendingItem(e))
+		}
+	}
+	return append(held, out...)
+}
+
+func pendingItem(e *Entry) PendingItem {
+	opts := cleanOptions(e.Options)
+	return PendingItem{
+		ID:      e.ID,
+		At:      e.At,
+		Summary: pendingSummary(e.Text, opts),
+		Options: opts,
+		Check:   e.Check,
+		Task:    entryTask(e),
+	}
 }
 
 // replyLocked is your message that settles the --opt/--check message at
@@ -1972,7 +1998,7 @@ func (sp *Super) replyLocked(i int) *Entry {
 			if next.Re != nil {
 				reID = next.Re.Entry
 			}
-			if reID == e.ID || (reID == "" && !otherCollie) {
+			if reID == e.ID || (reID == "" && !otherCollie && !e.Check) {
 				return next
 			}
 		case "collie":

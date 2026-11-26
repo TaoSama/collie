@@ -1796,7 +1796,7 @@
         const next = allEntries[j];
         if (next.role === "user") {
           const reId = next.re?.entry || "";
-          if (reId === id || (!reId && !otherCollie)) return false;
+          if (reId === id || (!reId && !otherCollie && !allEntries[idx].check)) return false;
         } else if (next.role === "collie") {
           otherCollie = true;
         }

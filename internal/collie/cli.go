@@ -563,6 +563,8 @@ Flags may go before or after the text; text that has to spell a flag (say "--opt
   When a reply has no ` + "`--opt`" + ` buttons yet still needs the human to handle, review or answer
   (a todo for them, an open question, a report or issue awaiting sign-off), add ` + "`--check`" + `
   so it stays in their pending reminder; leave ` + "`--check`" + ` off for plain updates or closed items.
+  It stays until they tap 已看 or reply quoting it (a plain next message doesn't settle it);
+  Collie reminds them once a day of what has waited longer than a day, so don't nag.
 - ` + "`{{BIN}} spawn [--cwd DIR] [--machine M] [--kind K] [--model ID] [--effort E] [--alias A | --no-alias] [--thread T] [--name N] \"task brief\"`" + `
   starts a worker in the background and returns at once. Defaults: kind {{WKIND}}, cwd {{WCWD}}.
   If --name is taken, the worker gets a spare one: the result's "worker" is its name.
@@ -615,6 +617,11 @@ Flags may go before or after the text; text that has to spell a flag (say "--opt
   one listed in notes/index.md; one-off details can go. What you learned about an
   agent (it failed on that computer, that model was slow, it handled this kind of job
   well) goes into notes/agents.md; read it when choosing who does a job.
+- When a worker's agent stops on a dropped connection, a busy API or a usage limit, Collie
+  tells it to carry on by itself (up to 3 times, 20s / 1m / 3m apart; a limit that says when
+  it resets waits for that). The next event about it says "auto-resumed it N time(s)":
+  nothing to do. A login, key or credits problem, or an error that keeps coming back, comes
+  to you as "stopped on an error from its agent".
 - Once a worker's result is passed on and nothing more is coming for it (a one-off job,
   a check, a trial run), ` + "`stop`" + ` it, so the list holds only work in flight. Keep it while
   a next step waits on it: the human's answer, a fix to make, a follow-up.

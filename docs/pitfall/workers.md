@@ -29,3 +29,21 @@ Router 在 macpro 上跑 `collie spawn --machine devbox --cwd ~/x`，`~` 先被�
 - hub 派到别的电脑前，经 node 的 `/api/dirs` 确认目录在不在；node 上不存在、又在别人家目录下（`/Users/<u>`、`/home/<u>`、`/data00/home/<u>`、`/root`）的路径，换到本机家目录下同一位置；hub 记得的其他电脑家目录再试一次（`resolveDir`、`resolveDirOn`，`internal/collie/cwd.go`）。仍找不到就在那台电脑的家目录起 worker，但要说出来：spawn 的返回带 `cwd`（实际用的目录）和 `cwd_fallback`（为什么回退），「派出」事件里注明「目录不存在，在主目录」（`orHome`）。
 - 存在的路径原样用：devbox 上真有 `/Users/luwentao/Workspaces`，它不会被改。
 - 新建会话页面（`launchAgent`）和终端（`openShell`）同样回退，返回带 `cwd`，回退原因放进页面会弹出的 `warning`（`withCwd`）；目录选择器（`/api/dirs`）不回退，找不到就报错，hub 也靠它判断目录在不在。
+
+## 被模型打断的 worker 由 Collie 自己续跑
+
+worker 一轮结束时屏幕底部是 agent 的错误，就按类型处理（`classifyStop`，`internal/collie/worker_resume.go`）：
+
+- 临时故障（`API Error`、overloaded、ECONNRESET/ECONNREFUSED、5xx、stream disconnected）和读不出重置时间的 429：Collie 按 20 秒、1 分钟、3 分钟的间隔给原 worker 发「继续」。三次都没好，再按原来的方式交给 Router 换人。
+- 额度并且读得出重置时间（`resets 3pm (Asia/Shanghai)`、`try again at …`、`try again in 2 hours`、`|<unix 秒>`）：等到重置时间后一分钟再续跑，同时告诉 Router 一次，等不及的话由 Router 先 `stop` 再换人。没写时区的按 hub 本地时间算。
+- 登录、密钥、余额（`/login`、401/403、credit balance）：直接交给 Router，跟以前一样。
+
+先判断鉴权和额度，再判断临时故障：`API Error: 401` 和 `API Error: 429` 里面都有 `api error`。
+
+续跑计划存在 `Worker.ResumeAt`，hub 重启后不会丢，到时间由 tick 发出。三条规则避免重复发：
+
+- 只有计划到期、worker 没结束、状态是 idle/done，并且没有排队给它的新消息时才发；发不出去也算一次，三次后交给 Router。
+- worker 变成 working（人在终端里打了字、收到新消息、或者 agent 自己续上了）就取消计划。投递新消息时次数也清零。
+- 错误扫描从屏幕上最后一条「[collie] 继续」往下读，它上面那条已经处理过的错误不会再算一次。
+
+Router 不会每次续跑都被叫醒：下一条关于这个 worker 的事件会写「auto-resumed it N time(s)」。

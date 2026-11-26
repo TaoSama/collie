@@ -29,7 +29,9 @@ type fakePane struct {
 	ws, name, kind, cwd string
 	// screen is what pane.read shows; ⇧← turns it into unfolded.
 	screen, unfolded string
-	status           string // "" is idle
+	// detection, when set, is what a "detection" read shows instead.
+	detection string
+	status    string // "" is idle
 	// sim makes the pane an agent with an input box: its screen shows what
 	// it took (said) above what is typed (box). drop counts make it lose
 	// prompts or Enters; quiet ones take a message without changing state.
@@ -173,6 +175,9 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		p := f.panes[str("pane_id")]
 		if p == nil {
 			return nil, &HerdrError{Code: "pane_not_found"}
+		}
+		if str("source") == "detection" && p.detection != "" {
+			return map[string]any{"read": map[string]any{"text": p.detection}}, nil
 		}
 		if p.sim {
 			return map[string]any{"read": map[string]any{"text": p.simScreen()}}, nil

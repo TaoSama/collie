@@ -297,7 +297,8 @@ func TestReplyCheckPersistencePendingAndFourResolutions(t *testing.T) {
 		t.Fatalf("quoting cQuote should resolve it, got %v", got)
 	}
 
-	// Rule ③a: direct unquoted user reply (even with worker event in between) resolves --check.
+	// Rule ③ is --opt only: a plain message right after a --check is often
+	// about something else, so the --check waits for 已看 or a quote.
 	cDirect, _ := sp.Reply(mainThread, "这个开放式问题想听你的想法：下周重点先排哪块？", "", nil, true)
 	sp.mu.Lock()
 	sp.addEntryLocked("event", mainThread, "worker-a 完成了一轮", "worker-a", "done")
@@ -306,15 +307,17 @@ func TestReplyCheckPersistencePendingAndFourResolutions(t *testing.T) {
 		t.Fatalf("cDirect pending = %v, want [%s]", got, cDirect.ID)
 	}
 	call("POST", "/api/super/say", map[string]any{"text": "先做稳定性专项"})
-	if got := pendingIDs(t, call); len(got) != 0 {
-		t.Fatalf("direct reply should resolve cDirect, got %v", got)
+	if got := pendingIDs(t, call); !slices.Equal(got, []string{cDirect.ID}) {
+		t.Fatalf("a plain message must not settle a --check, got %v", got)
 	}
+	sp.Dismiss(cDirect.ID)
 
-	// Persistence across SQLite saveState/loadState and /api/super/earlier, plus 7-day cutoff.
+	// Persistence across SQLite saveState/loadState and /api/super/earlier,
+	// plus the 7-day cutoff, which is for --opt only.
 	sp.mu.Lock()
 	sp.st.Entries = append(sp.st.Entries, &Entry{
 		ID: sp.st.nextID("e"), Role: "collie", Thread: mainThread,
-		Text: "八天前的陈年 --check", At: time.Now().Add(-8 * 24 * time.Hour), Check: true,
+		Text: "八天前的陈年 --opt", At: time.Now().Add(-8 * 24 * time.Hour), Options: []string{"要", "不要"},
 	})
 	sp.changed()
 	sp.mu.Unlock()

@@ -77,6 +77,10 @@ type Worker struct {
 	// cwdFallback says the asked-for directory wasn't there, so it started in
 	// home; spawn's answer passes it on. Not kept.
 	cwdFallback string
+	// ResumeAt is when Collie tells it to carry on after its agent stopped
+	// on an error that passes (worker_resume.go); Resumed counts those in a row.
+	ResumeAt time.Time `json:"resume_at,omitempty"`
+	Resumed  int       `json:"resumed,omitempty"`
 }
 
 // Entry is one line of the human-facing super-agent conversation.
@@ -198,9 +202,13 @@ type State struct {
 	Entries   []*Entry           `json:"entries"`
 	Dismissed map[string]bool    `json:"dismissed,omitempty"`
 	Pinned    []string           `json:"pinned,omitempty"`
-	Timers    []*Timer           `json:"timers"`
-	Policies  []Policy           `json:"policies"`
-	Settings  Settings           `json:"settings"`
+	// Held: --opt/--check messages still waiting on the human that fell out
+	// of Entries (pending_hold.go). RemindedAt: the last daily reminder.
+	Held       []string  `json:"held,omitempty"`
+	RemindedAt time.Time `json:"reminded_at,omitempty"`
+	Timers     []*Timer  `json:"timers"`
+	Policies   []Policy  `json:"policies"`
+	Settings   Settings  `json:"settings"`
 }
 
 func defaultState() *State {
@@ -228,8 +236,10 @@ func (st *State) nextID(prefix string) string {
 const maxPinned = 200
 const keepTriggers = 600
 
+// keepEntries is how much of the conversation stays in memory; the rest is in SQLite.
+const keepEntries = 600
+
 func (st *State) trim() {
-	const keepEntries = 600
 	if n := len(st.Triggers); n > keepTriggers {
 		cutoff := n - keepTriggers
 		kept := make([]*Trigger, 0, keepTriggers)

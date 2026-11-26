@@ -124,13 +124,24 @@ func loadState(db *sql.DB) (*State, error) {
 		}
 	}
 
+	if v, ok := kv["held"]; ok {
+		if err := json.Unmarshal([]byte(v), &st.Held); err != nil {
+			log.Printf("load held pending: %v", err)
+		}
+	}
+	if v, ok := kv["reminded_at"]; ok {
+		if err := json.Unmarshal([]byte(v), &st.RemindedAt); err != nil {
+			log.Printf("load reminder time: %v", err)
+		}
+	}
+
 	// Keep the entire pending queue alongside the recent history window.
 	if err := loadRows(db, `SELECT data FROM triggers
 		WHERE status = 'queued' OR id IN (SELECT id FROM triggers ORDER BY n DESC LIMIT ?)
 		ORDER BY n`, func(t *Trigger) { st.Triggers = append(st.Triggers, t) }, keepTriggers); err != nil {
 		return nil, err
 	}
-	loadRows(db, `SELECT data FROM (SELECT data, n FROM entries ORDER BY n DESC LIMIT 600) ORDER BY n`, func(e *Entry) { st.Entries = append(st.Entries, e) })
+	loadRows(db, `SELECT data FROM (SELECT data, n FROM entries ORDER BY n DESC LIMIT ?) ORDER BY n`, func(e *Entry) { st.Entries = append(st.Entries, e) }, keepEntries)
 	// A subscribed thread still affects routing after its recent activity ages out.
 	const keepThreads = 500
 	if err := loadRows(db, `SELECT data FROM threads
@@ -183,6 +194,12 @@ func saveState(db *sql.DB, st *State, deletedTimers []string) error {
 		pinned = pinned[len(pinned)-maxPinned:]
 	}
 	put(`INSERT INTO kv(k,v) VALUES('pinned',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, js(pinned))
+	held := st.Held
+	if held == nil {
+		held = []string{}
+	}
+	put(`INSERT INTO kv(k,v) VALUES('held',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, js(held))
+	put(`INSERT INTO kv(k,v) VALUES('reminded_at',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, js(st.RemindedAt))
 	for _, t := range st.Triggers {
 		if err == nil {
 			err = writeTrigger(tx, t)

@@ -341,6 +341,9 @@ func (sp *Super) pushSubjectLocked() string {
 // noticeNote is the push for a decision Collie recorded: a worker's dialog,
 // a --opt or --check message. nil for anything else.
 func noticeNote(n notice) *pushNote {
+	if n.remind != "" { // one a day, replacing yesterday's
+		return &pushNote{Title: pushTitle, Body: clip(n.text, 300), Hash: "#/d/" + url.PathEscape(n.remind), Tag: toneRemind}
+	}
 	if n.decision == "" {
 		return nil
 	}

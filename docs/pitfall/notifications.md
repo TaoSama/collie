@@ -44,3 +44,9 @@
 
 - Playwright 默认的 headless shell 里 `Notification.permission` 始终是 `denied`，要用 `chromium.launch({ channel: "chromium" })`。
 - `clients.openWindow` 和 `WindowClient.focus` 只能在真实的通知点击中调用，headless 无法点击系统通知。测试时直接调用 `sw.js` 的 `notificationClicked(data, action)` 验证按钮作答和已打开页面收到消息；冷启动则在同一个 context 里新开窗口打开链接，看是否从 SW 缓存和启动快照起来。
+
+## 待决不丢，每天提醒一次（`internal/collie/pending_hold.go`）
+
+- `--check` 只有在人点「已看」或引用回复时才算结清。紧跟着的一条无引用消息不会结清它，人经常连发几条短消息说别的事。`--opt` 仍保留这条规则，7 天过期也只对 `--opt` 生效。
+- 内存里只保留最近 `keepEntries`（600）条消息。每次保存前，快要被挤出去但还没结清的消息 ID 记进 `State.Held`（kv `held`），需要时再从 SQLite 读回原消息。被挤出去的消息靠引用回复和「已看」结清。
+- 每天 10 点（hub 本地时间）以后，如果有等了超过 24 小时的待决，就发一条 `tone=remind` 事件，把它们汇总成一条，并链接到最早的那件。推送的 `tag` 是 `remind`，第二天的会替换前一天的。`RemindedAt` 存在 kv `reminded_at`，重启后不会重复提醒。

@@ -233,15 +233,19 @@ func (sp *Super) entryOutcomeLocked(e *Entry, idx int) (string, *Answer) {
 	if sp.st.Dismissed[e.ID] {
 		return decisionDone, &Answer{By: byYou, Dismissed: true}
 	}
+	var r *Entry
 	if idx >= 0 {
-		if r := sp.replyLocked(idx); r != nil {
-			return decisionDone, &Answer{Choice: clip(oneLine(humanText(r.Text)), 80), By: byYou, At: r.At}
-		}
+		r = sp.replyLocked(idx)
+	} else { // out of memory: a quote of it may still be in
+		r = sp.quotesLocked()[e.ID]
+	}
+	if r != nil {
+		return decisionDone, &Answer{Choice: clip(oneLine(humanText(r.Text)), 80), By: byYou, At: r.At}
 	}
 	switch {
-	case time.Since(e.At) > pendingMaxAge:
+	case askExpired(e, time.Now()):
 		return decisionExpired, nil
-	case idx < 0: // gone from the working set: whatever settled it is too
+	case idx < 0 && !sp.heldLocked(e.ID): // gone from the working set, not held: it was settled
 		return decisionDone, nil
 	}
 	return decisionOpen, nil
