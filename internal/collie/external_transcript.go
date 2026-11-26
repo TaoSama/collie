@@ -135,11 +135,10 @@ func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 		root := s.agyCLIHome()
 		brain := filepath.Join(root, "brain")
 		dir := cmp.Or(realDir(brain), brain)
-		const logPath = ".system_generated/logs/transcript.jsonl"
 		match := func(path string) string {
 			rel, err := filepath.Rel(dir, path)
 			session, rest, found := strings.Cut(rel, string(filepath.Separator))
-			if err == nil && found && rest == logPath && conversationRe.MatchString(session) && isFile(path) {
+			if err == nil && found && rest == agyTranscriptRelPath && conversationRe.MatchString(session) && isFile(path) {
 				return session
 			}
 			return ""
@@ -151,7 +150,7 @@ func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 			return
 		}
 		if id != "" {
-			if f := filepath.Join(brain, id, logPath); isFile(f) {
+			if f := filepath.Join(brain, id, agyTranscriptRelPath); isFile(f) {
 				e.Session, e.path, e.format = id, f, "agy"
 			}
 			return

@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const agyTranscriptRelPath = ".system_generated/logs/transcript.jsonl"
+
 type agyBinding struct {
 	pid       int
 	started   time.Time
@@ -241,7 +243,7 @@ func uniqueAgyTranscript(root, cwd string, since time.Time, index map[string][]s
 			continue
 		}
 		dir := filepath.Join(root, "brain", id)
-		f := filepath.Join(dir, ".system_generated", "logs", "transcript.jsonl")
+		f := filepath.Join(dir, agyTranscriptRelPath)
 		if claimed[f] || !isFile(f) {
 			continue
 		}
@@ -277,7 +279,7 @@ func (s *Server) agyLog(id string) string {
 		return ""
 	}
 	for _, root := range []string{s.agyCLIHome(), filepath.Join(s.home, ".gemini", "antigravity")} {
-		if p := filepath.Join(root, "brain", id, ".system_generated", "logs", "transcript.jsonl"); isFile(p) {
+		if p := filepath.Join(root, "brain", id, agyTranscriptRelPath); isFile(p) {
 			return p
 		}
 	}

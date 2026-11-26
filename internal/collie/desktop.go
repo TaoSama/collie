@@ -700,7 +700,7 @@ func (s *Server) agyDesktopRows() []desktopRow {
 		d.waiting = !d.running && notIdle
 		// A conversation the CLI started keeps its log in the CLI's home.
 		for _, r := range slices.Compact([]string{root, s.agyCLIHome()}) {
-			if f := filepath.Join(r, "brain", id, ".system_generated", "logs", "transcript.jsonl"); isFile(f) {
+			if f := filepath.Join(r, "brain", id, agyTranscriptRelPath); isFile(f) {
 				d.path, d.format = f, "agy"
 				break
 			}
