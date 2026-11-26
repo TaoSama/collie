@@ -225,6 +225,9 @@ func (s *Server) sessionLog(kind, session string) string {
 	key := kind + "\x00" + session
 	known, _ := sessionLogs.Load(key)
 	path, _ := known.(string)
+	if compressedCodex(path, kind) {
+		path = codexRollout(strings.TrimSuffix(path, codexZstSuffix))
+	}
 	if !isFile(path) {
 		if path, _ = s.findTranscript(kind, "", session, "", ""); path == "" {
 			return ""

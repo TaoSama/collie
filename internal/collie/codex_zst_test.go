@@ -1,9 +1,15 @@
 package collie
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,14 +42,28 @@ func compressRollout(t *testing.T, path, content string) time.Time {
 	return mod
 }
 
-// codexCacheFixture points COLLIE_HOME at a new directory, and holds off the
-// background prune, which would race the test's clean-up.
 func codexCacheFixture(t *testing.T) {
 	t.Helper()
 	t.Setenv("COLLIE_HOME", t.TempDir())
-	codexUnpack.Lock()
-	codexUnpack.pruned = time.Now()
-	codexUnpack.Unlock()
+}
+
+func codexCacheBytes(t *testing.T) int64 {
+	t.Helper()
+	var size int64
+	err := filepath.WalkDir(codexCacheDir(), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		fi, err := d.Info()
+		if err == nil {
+			size += fi.Size()
+		}
+		return err
+	})
+	if !os.IsNotExist(err) {
+		must(t, err)
+	}
+	return size
 }
 
 func must(t *testing.T, err error) {
@@ -53,34 +73,60 @@ func must(t *testing.T, err error) {
 	}
 }
 
-func TestCodexRolloutUnpacksOnce(t *testing.T) {
+func TestCodexReplayConcurrentReaders(t *testing.T) {
 	codexCacheFixture(t)
-	path := filepath.Join(t.TempDir(), "rollout-2026-11-10T19-08-26-x.jsonl")
-	if got := codexRollout(path); got != "" {
-		t.Fatalf("no log: got %q, want \"\"", got)
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	compressRollout(t, path, zstRollout)
+	path += codexZstSuffix
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	type result struct {
+		file    *os.File
+		release func()
+		err     error
 	}
-	mod := compressRollout(t, path, zstRollout)
-	got := codexRollout(path)
-	if got != filepath.Join(codexCacheDir(), path) {
-		t.Fatalf("got %q, want the unpacked copy under the cache", got)
+	results := make(chan result, 2)
+	joined := make(chan struct{}, 2)
+	// Stop the decoder until two clients have joined the same job. A zero
+	// budget keeps the descriptor anonymous, so a cache hit cannot mask a
+	// duplicate decode.
+	codexDecodeSlot <- struct{}{}
+	for range 2 {
+		go func() {
+			f, release, err := openCodexReplay(ctx, path, func(p transcriptProgress) {
+				if p.Total == 0 {
+					joined <- struct{}{}
+				}
+			}, 0)
+			results <- result{f, release, err}
+		}()
 	}
-	b, err := os.ReadFile(got)
-	if err != nil || string(b) != zstRollout {
-		t.Fatalf("unpacked = %q, %v", b, err)
+	for range 2 {
+		select {
+		case <-joined:
+		case <-ctx.Done():
+			<-codexDecodeSlot
+			t.Fatal(ctx.Err())
+		}
 	}
-	if fi, _ := os.Stat(got); !fi.ModTime().Equal(mod) {
-		t.Fatalf("unpacked dated %v, want the rollout's %v", fi.ModTime(), mod)
+	<-codexDecodeSlot
+	r1, r2 := <-results, <-results
+	must(t, r1.err)
+	defer r1.release()
+	must(t, r2.err)
+	defer r2.release()
+	if r1.file != r2.file {
+		t.Fatal("concurrent readers decoded the replay independently")
 	}
-	// Unpacked already: read as it is, not again.
-	must(t, os.WriteFile(got, []byte("kept"), 0o600))
-	must(t, os.Chtimes(got, mod, mod))
-	if b, _ := os.ReadFile(codexRollout(path)); string(b) != "kept" {
-		t.Fatalf("unpacked again: %q", b)
+	for _, r := range []result{r1, r2} {
+		got, err := io.ReadAll(io.NewSectionReader(r.file, 0, int64(len(zstRollout))))
+		must(t, err)
+		if string(got) != zstRollout {
+			t.Fatalf("decoded replay = %q", got)
+		}
 	}
-	// A plain rollout is read where it is.
-	must(t, os.WriteFile(path, []byte(zstRollout), 0o644))
-	if got := codexRollout(path); got != path {
-		t.Fatalf("got %q, want the plain rollout", got)
+	if size := codexCacheBytes(t); size != 0 {
+		t.Fatalf("oversized replay left %d bytes", size)
 	}
 }
 
@@ -88,7 +134,8 @@ func TestCodexAppRowsReadCompressedRollout(t *testing.T) {
 	codexCacheFixture(t)
 	home, _ := codexStateFixture(t)
 	rollout := filepath.Join(home, ".codex", "sessions", "2026", "11", "10", "rollout-2026-11-10T19-08-26-cold.jsonl")
-	compressRollout(t, rollout, zstRollout)
+	source := strings.Replace(zstRollout, `{"type":"response_item"`, `{"timestamp":"2026-11-10T20:00:00Z","type":"response_item"`, 1)
+	compressRollout(t, rollout, source)
 	db, err := sql.Open("sqlite", filepath.Join(home, ".codex", "state_5.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -103,8 +150,17 @@ func TestCodexAppRowsReadCompressedRollout(t *testing.T) {
 	if len(rows) != 1 || rows[0].path == "" {
 		t.Fatalf("rows = %+v, want the thread with its log", rows)
 	}
+	if got := humanAt(rows[0].path, rows[0].format); !got.Equal(time.Date(2026, 11, 10, 20, 0, 0, 0, time.UTC)) {
+		t.Fatalf("latest human message = %v", got)
+	}
+	if got := firstUserLine(rows[0].path, rows[0].format); got != "list files" {
+		t.Fatalf("first user line = %q", got)
+	}
+	if size := codexCacheBytes(t); size != 0 {
+		t.Fatalf("listing and metadata left %d replay bytes", size)
+	}
 	tr := newTranscript(rows[0].path, rows[0].format)
-	tr.openTail()
+	must(t, tr.load(context.Background(), nil, true))
 	if len(tr.msgs) != 2 || tr.msgs[0].Text != "list files" || tr.msgs[1].Text != "Two files." {
 		t.Fatalf("msgs = %+v", tr.msgs)
 	}
@@ -118,49 +174,105 @@ func TestFindTranscriptCodexCompressed(t *testing.T) {
 	rollout := filepath.Join(home, ".codex", "sessions", "2026", "11", "10", "rollout-2026-11-10T19-08-26-"+id+".jsonl")
 	compressRollout(t, rollout, zstRollout)
 	path, format := (&Server{home: home}).findTranscript("codex", "id", id, "", "")
-	if format != "codex" || path != filepath.Join(codexCacheDir(), rollout) {
-		t.Fatalf("found %q (%s), want the unpacked rollout", path, format)
+	if format != "codex" || path != rollout+codexZstSuffix {
+		t.Fatalf("found %q (%s), want the source rollout", path, format)
 	}
 	if got := firstUserLine(path, format); got != "list files" {
 		t.Fatalf("first user line = %q", got)
 	}
 }
 
-func TestPruneCodexCache(t *testing.T) {
-	dir := t.TempDir()
-	live := filepath.Join(t.TempDir(), "rollout-live.jsonl")
-	compressRollout(t, live, zstRollout)
-	gone := filepath.Join(t.TempDir(), "rollout-gone.jsonl")
-	fresh := filepath.Join(dir, ".unpack-fresh")
-	for _, p := range []string{filepath.Join(dir, live), filepath.Join(dir, gone), fresh} {
-		must(t, os.MkdirAll(filepath.Dir(p), 0o700))
-		must(t, os.WriteFile(p, []byte(zstRollout), 0o600))
+func TestCodexReplayBudgetAndEviction(t *testing.T) {
+	codexCacheFixture(t)
+	dir := codexCacheDir()
+	legacy := filepath.Join(dir, t.TempDir(), "rollout-legacy.jsonl")
+	must(t, os.MkdirAll(filepath.Dir(legacy), 0o700))
+	must(t, os.WriteFile(legacy, make([]byte, 4096), 0o600))
+	// Startup cleanup reclaims old copies even with the source intact.
+	source := strings.TrimPrefix(legacy, dir)
+	compressRollout(t, source, zstRollout)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	maintainCodexCache(ctx)
+	if isFile(legacy) || !isFile(source+codexZstSuffix) {
+		t.Fatal("expected startup to remove the legacy cache and keep the source")
 	}
-	stale := filepath.Join(dir, ".unpack-stale")
-	must(t, os.WriteFile(stale, nil, 0o600))
-	old := time.Now().Add(-2 * codexUnpackStale)
-	must(t, os.Chtimes(stale, old, old))
-	pruneCodexCache(dir)
-	for p, want := range map[string]bool{filepath.Join(dir, live): true, filepath.Join(dir, gone): false, fresh: true, stale: false} {
-		if isFile(p) != want {
-			t.Errorf("%s kept = %v, want %v", p, !want, want)
-		}
+	budget := int64(len(zstRollout))
+	open := func(name string) (*os.File, func()) {
+		path := filepath.Join(t.TempDir(), name+".jsonl")
+		compressRollout(t, path, zstRollout)
+		f, release, err := openCodexReplay(context.Background(), path+codexZstSuffix, nil, budget)
+		must(t, err)
+		return f, release
+	}
+	first, release := open("first")
+	defer release()
+	_, releaseNext := open("next")
+	defer releaseNext()
+	if size := codexCacheBytes(t); size != budget {
+		t.Fatalf("cache = %d bytes, want %d", size, budget)
+	}
+	got, err := io.ReadAll(io.NewSectionReader(first, 0, budget))
+	must(t, err)
+	if string(got) != zstRollout {
+		t.Fatal("eviction interrupted an active reader")
 	}
 }
 
-// A .zst that won't unpack is left out, and not tried again until it changes.
-func TestCodexRolloutCorrupt(t *testing.T) {
+func TestCodexOversizedReplayMatchesPlainPages(t *testing.T) {
 	codexCacheFixture(t)
-	path := filepath.Join(t.TempDir(), "rollout-bad.jsonl")
-	must(t, os.WriteFile(path+codexZstSuffix, []byte("not zstd"), 0o644))
-	if got := codexRollout(path); got != "" {
-		t.Fatalf("got %q, want \"\"", got)
+	var rollout strings.Builder
+	for i := range 380 {
+		fmt.Fprintf(&rollout, `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"message %d"}]}}`+"\n", i)
 	}
-	codexUnpack.Lock()
-	_, remembered := codexUnpack.failed[path+codexZstSuffix]
-	codexUnpack.Unlock()
-	if !remembered || isFile(filepath.Join(codexCacheDir(), path)) {
-		t.Fatalf("remembered = %v, want the failure kept and no copy", remembered)
+	plain := filepath.Join(t.TempDir(), "plain.jsonl")
+	must(t, os.WriteFile(plain, []byte(rollout.String()), 0o600))
+	want := newTranscript(plain, "codex")
+	must(t, want.load(context.Background(), nil, true))
+	path := filepath.Join(t.TempDir(), "compressed.jsonl")
+	compressRollout(t, path, rollout.String())
+	f, release, err := openCodexReplay(context.Background(), path+codexZstSuffix, nil, 1024)
+	must(t, err)
+	defer release()
+	fi, err := f.Stat()
+	must(t, err)
+	got := newTranscript(path, "codex")
+	got.openTailFile(f, fi.Size())
+	if !reflect.DeepEqual(got.view(), want.view()) || got.earlierCursor() != want.earlierCursor() {
+		t.Fatal("compressed snapshot differs from plain JSONL")
+	}
+	for cursor := got.earlierCursor(); cursor > 0; {
+		msgs, next := earlierFile(f, "codex", fi.Size(), cursor, earlierPage)
+		expected, expectedNext, err := readEarlier(context.Background(), plain, "codex", cursor, earlierPage)
+		must(t, err)
+		if !reflect.DeepEqual(msgs, expected) || next != expectedNext || next >= cursor {
+			t.Fatalf("page before %d differs from plain JSONL", cursor)
+		}
+		cursor = next
+	}
+	if size := codexCacheBytes(t); size != 0 {
+		t.Fatalf("oversized replay left %d bytes", size)
+	}
+	// Plain logs remain live and keep using the same uncompressed offsets.
+	out, err := os.OpenFile(plain, os.O_APPEND|os.O_WRONLY, 0)
+	must(t, err)
+	_, err = out.WriteString(zstRollout)
+	must(t, err)
+	must(t, out.Close())
+	if !want.update() || want.view()[len(want.view())-1].Text != "Two files." {
+		t.Fatal("plain log did not pick up an appended reply")
+	}
+}
+
+func TestCodexReplayCorrupt(t *testing.T) {
+	codexCacheFixture(t)
+	path := filepath.Join(t.TempDir(), "rollout-bad.jsonl.zst")
+	must(t, os.WriteFile(path, []byte("not zstd"), 0o644))
+	if _, _, err := openCodexReplay(context.Background(), path, nil, codexCacheBudget); err == nil {
+		t.Fatal("expected a decoding error")
+	}
+	if size := codexCacheBytes(t); size != 0 {
+		t.Fatalf("corrupt replay left %d bytes", size)
 	}
 }
 

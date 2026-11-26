@@ -18,6 +18,9 @@ import (
 // A log is read once from its end backwards until their latest message; after
 // that only what it grows by.
 func humanAt(path, format string) time.Time {
+	if compressedCodex(path, format) {
+		return codexSummary(path).humanAt
+	}
 	if path == "" {
 		return time.Time{}
 	}

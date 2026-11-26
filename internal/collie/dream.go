@@ -469,7 +469,9 @@ func (sp *Super) writeDreamInput(ctx context.Context) error {
 			msgs = sp.remoteMessages(ctx, h)
 		} else if path, format := sp.s.findTranscript(h.Kind, "id", h.Session, "", ""); path != "" {
 			tr := newTranscript(transcriptPath(path, format), format)
-			tr.update()
+			if err := tr.load(ctx, nil, false); err != nil {
+				log.Printf("collie: read ended session: %v", err)
+			}
 			msgs = tr.msgs
 		}
 		if len(msgs) == 0 {

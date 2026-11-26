@@ -2059,6 +2059,21 @@ select.picked { display: none; }
 .thread-skel .sk:nth-child(2n) { animation-delay: .15s; }
 @keyframes sk { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .thread-skel .sk { animation: none; } }
+.thread-progress {
+  display: flex; align-items: center; gap: 8px; margin-block: 2px 6px;
+  color: var(--t-secondary); font-size: var(--fs-meta);
+}
+.thread-progress .ring {
+  width: 16px; height: 16px; border-radius: 50%; flex: none; color: var(--info);
+  border: 2px solid var(--line-2); border-top-color: currentColor; animation: spin .8s linear infinite;
+}
+.thread-progress.determinate .ring {
+  border: 0; animation: none;
+  background: conic-gradient(currentColor var(--progress), var(--line-2) 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), currentColor 0);
+}
+.thread-progress .pct { font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .thread-progress .ring { animation: none; } }
 .recap-note { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--line-2); color: var(--t-secondary); font-size: var(--fs-meta); }
 .ask-card .where { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 

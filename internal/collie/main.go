@@ -104,6 +104,7 @@ func serve() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go maintainCodexCache(ctx)
 	go sup.Run(ctx)
 	go srv.ext.Run(ctx)
 	go srv.watchEndings(ctx)

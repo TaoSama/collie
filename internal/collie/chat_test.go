@@ -1,6 +1,7 @@
 package collie
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -211,7 +212,7 @@ func TestOpenTail(t *testing.T) {
 	full := newTranscript(p, "claude")
 	full.update()
 	tail := newTranscript(p, "claude")
-	tail.openTail()
+	must(t, tail.load(context.Background(), nil, true))
 	if tail.offset != full.offset {
 		t.Fatalf("tail stopped at %d, file ends at %d", tail.offset, full.offset)
 	}
@@ -239,7 +240,7 @@ func TestEarlierMessagesWalkBack(t *testing.T) {
 	os.WriteFile(p, []byte(b.String()), 0o600)
 
 	tr := newTranscript(p, "claude")
-	tr.openTail()
+	must(t, tr.load(context.Background(), nil, true))
 	var got []string
 	for _, m := range tr.view() {
 		got = append(got, m.Text[:7])
@@ -249,7 +250,8 @@ func TestEarlierMessagesWalkBack(t *testing.T) {
 		if pages > 100 {
 			t.Fatal("never reached the top")
 		}
-		msgs, next := earlierMessages(p, "claude", cursor, earlierPage)
+		msgs, next, err := readEarlier(context.Background(), p, "claude", cursor, earlierPage)
+		must(t, err)
 		if len(msgs) == 0 || next >= cursor {
 			t.Fatalf("page %d: %d msgs, cursor %d → %d", pages, len(msgs), cursor, next)
 		}
@@ -273,7 +275,7 @@ func TestEarlierCursorShortLog(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.jsonl")
 	os.WriteFile(p, []byte(`{"type":"user","message":{"content":"hi"}}`+"\n"), 0o600)
 	tr := newTranscript(p, "claude")
-	tr.openTail()
+	must(t, tr.load(context.Background(), nil, true))
 	if c := tr.earlierCursor(); c != 0 {
 		t.Fatalf("a short log has nothing earlier, got cursor %d", c)
 	}

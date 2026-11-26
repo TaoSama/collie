@@ -36,6 +36,7 @@ function fixture({ mode = "chat", random = 0.5, loadPage = async () => ({ messag
     curMode: () => mode, applyMode() {}, ensureTerm() {}, primeThread() {}, keepThread() {},
     withSending: (_, msgs) => msgs,
     directOf: () => null, probeDirect: async () => null,
+    find: () => ({ machine: "test-computer" }),
     openES: (url) => new Source(url), paneURL: (id, part) => `/${id}/${part}`,
     wheelOut: { drop() {} }, wheelUp: { home() {}, forget() {} },
     drawThread: (msgs) => shown.push(Array.from(msgs, (m) => m.text)),

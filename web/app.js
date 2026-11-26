@@ -163,13 +163,37 @@
     });
     if (!r.hub) noteBuild(res.headers.get("X-Collie-Web"));
     let data = {};
-    try { data = await res.json(); } catch {}
+    if (res.ok && opts.progress && res.headers.get("Content-Type")?.startsWith("application/x-ndjson")) {
+      data = await readTranscriptFrames(res.body, opts.progress);
+    } else {
+      try { data = await res.json(); } catch {}
+    }
     if (res.status === 401) {
       if (r.hub) throw new Error(`${r.hub.name} 不认这个浏览器了，在「设备」里重新添加它`);
       showLogin(); throw new Error("unauthorized");
     }
     if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
     return r.hub ? tagIds(data, r.hub.key) : data;
+  }
+  async function readTranscriptFrames(body, progress) {
+    const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+    let pending = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("会话记录没有读完，请重试");
+        const lines = (pending + value).split("\n");
+        pending = lines.pop();
+        for (const line of lines) {
+          const frame = JSON.parse(line);
+          if (frame.error) throw new Error(frame.error);
+          if (!frame.progress) return frame;
+          progress(frame.progress);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
   // EventSource can't set headers: a remote hub takes its token in the URL.
   function openES(path, hub) {
@@ -3968,7 +3992,7 @@
     const stillOpening = () => mine() && el._earlier === opening;
     el._msgs = null;
     el._restore = restore && !restore.atBottom ? restore : null;
-    primeThread(el, "h:" + hid);
+    primeThread(el, "h:" + hid, hist.find((h) => h.id === hid)?.machine);
     if (!hist.some((h) => h.id === hid)) await loadHistory();
     if (!stillOpening()) return;
     renderHistHead(hid);
@@ -3976,9 +4000,12 @@
     if (!h) { el.innerHTML = ""; el._restore = null; return; }
     const q = new URLSearchParams({ kind: h.kind, session: h.session, cwd: h.cwd });
     if (h.machine) q.set("machine", h.machine);
+    const abort = opening.abort = new AbortController();
     let r;
     try {
-      r = await api("/api/transcript?" + q);
+      r = await api("/api/transcript?" + q + "&stream=1", {
+        signal: abort.signal, progress: (p) => { if (stillOpening()) setThreadProgress(el, p); },
+      });
     } catch (err) {
       if (stillOpening()) {
         el._restore = null;
@@ -4571,7 +4598,7 @@
     const opening = resetEarlier(el, (c) => `/api/external/${encodeURIComponent(id)}/earlier?before=${c}`);
     el._msgs = null;
     el._restore = restore && !restore.atBottom ? restore : null;
-    primeThread(el, "x:" + id);
+    primeThread(el, "x:" + id, ext.find((e) => e.id === id)?.machine || paneMachine(id) || hubOf(id)?.name);
     extSoonN = 0;
     if (!ext.some((e) => e.id === id)) await loadExternal();
     const mine = () => view === "ext" && extCur === id;
@@ -4591,6 +4618,12 @@
       });
       const show = (msgs) => { keepThread("x:" + id, msgs); if (active()) { drawThread(withSending("x:" + id, msgs), el, "这个会话还没有消息。"); extWorking(); } };
       el._redraw = () => show(threadMsgs(el));
+      es.addEventListener("replay-progress", (ev) => active() && setThreadProgress(el, JSON.parse(ev.data)));
+      es.addEventListener("load-error", (ev) => {
+        if (!active()) return;
+        closeExt();
+        threadLoadError(el, ev);
+      });
       es.addEventListener("patch", (ev) => active() && show(applyPatch(el, JSON.parse(ev.data))));
       es.addEventListener("messages", (ev) => { // an older computer
         if (!active()) return;
@@ -6073,7 +6106,7 @@
     const th = $("#thread"), key = "p:" + id;
     resetEarlier(th, (c) => paneURL(id, "earlier") + "?before=" + c);
     th._restore = restore && !restore.atBottom ? restore : null;
-    if (!th._msgs) primeThread(th, key);
+    if (!th._msgs) primeThread(th, key, find(id)?.machine || paneMachine(id) || hubOf(id)?.name);
     const showPane = (msgs) => { keepThread(key, msgs); drawThread(withSending(key, msgs)); };
     const pane = openPaneStream(() => ({ es: openES(paneURL(id, "chat")) }), ({ listen, ready, retrying }) => {
       let received = false, unstructured = false;
@@ -6082,6 +6115,8 @@
       // Keep the previous frame until the snapshot can replace or extend it.
       listen("reset", () => { if (received) resetChat(); });
       listen("meta", (e) => { unstructured = JSON.parse(e.data).structured === false; });
+      listen("replay-progress", (e) => setThreadProgress(th, JSON.parse(e.data)));
+      listen("load-error", (e) => { closeStream(); threadLoadError(th, e); });
       listen("patch", (e) => {
         showPane(applyPatch(th, JSON.parse(e.data), retrying && !received));
         drawn();
@@ -6218,6 +6253,11 @@
   }
   const earlierCursor = (el) => (el._older ? el._olderEarlier : el._liveEarlier) || 0;
   function resetEarlier(el, url) {
+    el._earlier?.abort?.abort();
+    if (el._loading) {
+      clearTimeout(el._loading.timer);
+      el._loading = null;
+    }
     el._older = null; el._olderEarlier = 0; el._liveEarlier = 0;
     // Each opening or replacement has its own state, even for the same URL.
     const earlier = el._earlier = { url, loading: false, failed: false };
@@ -6268,11 +6308,49 @@
   // stream updates it; a thread never opened shows a skeleton of a
   // conversation, so nothing jumps when the messages land.
   const threadCache = new Map();
+  const THREAD_PROGRESS_DELAY = 400;
   const SKELETON = `<div class="thread-skel" aria-label="读取中">${["user", "a", "a short", "tools", "user short", "a", "a short"].map((c) => `<div class="sk ${c}"></div>`).join("")}</div>`;
-  function primeThread(el, key) {
+  function primeThread(el, key, machine) {
     el._sig = ""; el._blocks = null; el._fresh = true;
     const got = key && threadCache.get(key);
-    if (got) { drawThread(got, el); el._fresh = true; } else el.innerHTML = SKELETON;
+    if (got) { drawThread(got, el); el._fresh = true; return; }
+    el.innerHTML = SKELETON;
+    const skeleton = el.firstElementChild;
+    const loading = el._loading = {
+      skeleton,
+      text: machine ? `正在从 ${machineName(machine)} 读取会话…` : "正在读取会话…",
+    };
+    loading.timer = setTimeout(() => {
+      if (el._loading !== loading || el.firstElementChild !== skeleton) return;
+      const tip = loading.tip = document.createElement("div");
+      tip.className = "thread-progress";
+      tip.innerHTML = `<span class="ring" role="progressbar" aria-labelledby="${el.id}-progress-label"></span><span id="${el.id}-progress-label" role="status"></span><span class="pct" aria-hidden="true"></span>`;
+      skeleton.prepend(tip);
+      drawThreadProgress(loading);
+    }, THREAD_PROGRESS_DELAY);
+  }
+  function setThreadProgress(el, progress) {
+    const loading = el._loading;
+    if (!loading || el.firstElementChild !== loading.skeleton) return;
+    loading.text = "正在解压 Codex 会话…";
+    loading.percent = progress.total > 0 ? Math.min(100, Math.floor(progress.read * 100 / progress.total)) : null;
+    if (loading.tip) drawThreadProgress(loading);
+  }
+  function drawThreadProgress({ tip, text, percent }) {
+    const [ring, label, pct] = tip.children;
+    if (label.textContent !== text) label.textContent = text;
+    const known = percent != null;
+    tip.classList.toggle("determinate", known);
+    if (known) {
+      ring.style.setProperty("--progress", percent + "%");
+      ring.setAttribute("aria-valuenow", percent);
+    } else {
+      ring.removeAttribute("aria-valuenow");
+    }
+    pct.textContent = known ? percent + "%" : "";
+  }
+  function threadLoadError(el, ev) {
+    el.innerHTML = `<div class="thread-empty">${esc(JSON.parse(ev.data).error)}</div>`;
   }
   function keepThread(key, msgs) {
     if (!key || !msgs || !msgs.length) return;

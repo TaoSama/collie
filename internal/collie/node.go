@@ -113,6 +113,7 @@ func runNode(args []string) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go maintainCodexCache(ctx)
 	nodeUI = startLocalUI(ctx, *ui, cfg.Hub, srv, api)
 	srv.sysmon = startSysmon(ctx, home)
 	backoff := time.Second

@@ -50,7 +50,9 @@ Codex 和 Antigravity 每几步就插一句过程消息，连续的工具调用�
 
 ## Codex 一周没动的会话文件会被压成 .zst
 
-Codex 把修改时间满 7 天的 rollout 压成 `<名字>.jsonl.zst`，原文件删掉，`threads.rollout_path` 却还记着 `.jsonl`。Codex 自己照常能读（文件是正本，paginated 线程打开时读 `thread_history_1.sqlite` 里的投影）。Collie 按字节偏移逐行读记录，只认 `.jsonl` 的话，这些会话在侧栏照常列出，点开却是「还没有找到这个会话的记录」。所以 `codexRollout`（`internal/collie/codex_zst.go`）在 `.jsonl` 不在时把 `.zst` 解压一次，放到 `COLLIE_HOME/cache/codex/<原绝对路径>`，修改时间和 `.zst` 一致，之后所有读取都当普通文件读；`.zst` 不在了（被归档或删除），对应的副本每小时清一次。App 行（`codexAppRows`）和按会话 ID 找记录（`findTranscript`）都走它。
+Codex 把修改时间满 7 天的 rollout 压成 `<名字>.jsonl.zst`，原文件删掉，`threads.rollout_path` 还记着 `.jsonl`。列表和标题从压缩正本流式提取最近人类消息时间、首条标题和上下文用量，同一进程按源文件路径、大小和修改时间复用摘要。
+
+只有详情和分页需要随机访问。读者共享同一次解压，仍使用原始 JSONL 的字节游标。每个 Collie 数据目录的持久回放缓存上限为 256 MiB，按最近访问时间淘汰，已经打开的文件描述符仍可读。超出预算的单份回放通过请求期间的匿名临时文件读取，最后一个读者离开后释放。hub 和 node 启动时回收旧版本留下的解压副本。浏览器先显示骨架，400 ms 后才显示读取提示，解压进度按压缩正本已读字节计算。
 
 ## Codex 和 Antigravity 自己归档的会话要从每条列表里拿掉
 

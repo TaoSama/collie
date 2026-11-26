@@ -213,7 +213,12 @@ var firstUserCache = struct {
 	m map[string]string
 }{m: map[string]string{}}
 
+const titleScanBytes = 8 << 20
+
 func firstUserLine(path, format string) string {
+	if compressedCodex(path, format) {
+		return codexSummary(path).title
+	}
 	firstUserCache.Lock()
 	t, ok := firstUserCache.m[path]
 	firstUserCache.Unlock()
@@ -228,7 +233,7 @@ func firstUserLine(path, format string) string {
 	tr := newTranscript(path, format)
 	r := bufio.NewReaderSize(f, 1<<20)
 	read := 0
-	for read < 8<<20 && t == "" {
+	for read < titleScanBytes && t == "" {
 		line, err := r.ReadBytes('\n')
 		if err != nil {
 			break
@@ -448,14 +453,20 @@ func (s *Server) codexAutomationThreads() []string {
 // silent for 20 minutes is taken as over (the App may have died mid-turn).
 // A long turn's start can sit megabytes back, so read backwards a chunk at a
 // time until a start or an end turns up.
+const codexRunningAge = 20 * time.Minute
+
 func codexTurnRunning(path string) bool {
+	if compressedCodex(path, "codex") {
+		fi, err := os.Stat(path)
+		return err == nil && time.Since(fi.ModTime()) <= codexRunningAge && codexSummary(path).running
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || time.Since(fi.ModTime()) > 20*time.Minute {
+	if err != nil || time.Since(fi.ModTime()) > codexRunningAge {
 		return false
 	}
 	return lastTurnOpen(f, fi.Size())
@@ -469,8 +480,7 @@ func lastTurnOpen(r io.ReaderAt, size int64) bool {
 		if _, err := r.ReadAt(b, off); err != nil && err != io.EOF {
 			return false
 		}
-		started := bytes.LastIndex(b, []byte(`"type":"task_started"`))
-		ended := max(bytes.LastIndex(b, []byte(`"type":"task_complete"`)), bytes.LastIndex(b, []byte(`"type":"turn_aborted"`)))
+		started, ended := codexTurnMarkers(b)
 		if started >= 0 || ended >= 0 {
 			return started > ended
 		}
@@ -479,6 +489,12 @@ func lastTurnOpen(r io.ReaderAt, size int64) bool {
 		}
 	}
 	return false
+}
+
+func codexTurnMarkers(b []byte) (started, ended int) {
+	started = bytes.LastIndex(b, []byte(`"type":"task_started"`))
+	ended = max(bytes.LastIndex(b, []byte(`"type":"task_complete"`)), bytes.LastIndex(b, []byte(`"type":"turn_aborted"`)))
+	return started, ended
 }
 
 // The Codex App's local message bus: its windows ask each other to run a turn

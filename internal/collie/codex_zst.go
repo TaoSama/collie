@@ -1,148 +1,340 @@
 package collie
 
 import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
 
-// Codex compresses a rollout nobody has written to for a week into
-// <name>.jsonl.zst, and its thread table keeps the plain name. Collie reads
-// logs by byte offset, a line at a time, as they grow, so a compressed one is
-// unpacked once into COLLIE_HOME/cache/codex/ under its own absolute path,
-// with its time; every reader then takes it for the plain log it was. Codex
-// never writes to a compressed rollout again, so a copy is never refreshed.
-// It is done while listing, not on opening: the sidebar orders the threads
-// by their logs. Paths are Unix ones: Collie isn't built for Windows.
-
 const (
 	codexZstSuffix   = ".zst"
-	codexUnpackTemp  = ".unpack-" // prefix of a copy still being written
-	codexCachePrune  = time.Hour  // how often unpacked logs whose .zst is gone are removed
-	codexUnpackStale = time.Hour  // a half-written unpacking older than this was abandoned
+	codexCacheBudget = 256 << 20
+	codexCachePrefix = "rollout-v2-"
+	codexUnpackTemp  = ".unpack-"
 )
-
-var codexUnpack struct {
-	sync.Mutex // one unpacking at a time: a 40 MB log takes a moment
-	pruned     time.Time
-	failed     map[string]time.Time // .zst → its time, when it couldn't be unpacked
-}
 
 func codexCacheDir() string { return filepath.Join(collieDir(), "cache", "codex") }
 
-// codexRollout is where the rollout recorded at path can be read: path
-// itself, the unpacked copy of path.zst when Codex has compressed it, or ""
-// when neither is there.
 func codexRollout(path string) string {
 	if path == "" || isFile(path) {
 		return path
 	}
-	zst := path + codexZstSuffix
-	zi, err := os.Stat(zst)
-	if err != nil || !zi.Mode().IsRegular() || !filepath.IsAbs(path) {
-		return ""
+	if filepath.IsAbs(path) && isFile(path+codexZstSuffix) {
+		return path + codexZstSuffix
 	}
-	plain := filepath.Join(codexCacheDir(), path)
-	if unpacked(plain, zi) {
-		return plain
+	return ""
+}
+
+func compressedCodex(path, format string) bool {
+	return format == "codex" && strings.HasSuffix(path, ".jsonl"+codexZstSuffix)
+}
+
+func openCodexDecoder(r io.Reader) (*zstd.Decoder, error) {
+	return zstd.NewReader(r, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
+}
+
+func codexFingerprint(path string, fi fs.FileInfo) string {
+	return fmt.Sprintf("%s:%d:%d", path, fi.Size(), fi.ModTime().UnixNano())
+}
+
+type transcriptProgress struct {
+	Read  int64 `json:"read"`
+	Total int64 `json:"total"`
+}
+
+type codexUnpacking struct {
+	done   chan struct{}
+	cancel context.CancelFunc
+	users  int
+	read   atomic.Int64
+	file   *os.File
+	err    error
+}
+
+var codexUnpacks = struct {
+	sync.Mutex
+	jobs map[string]*codexUnpacking
+}{jobs: map[string]*codexUnpacking{}}
+
+// Limit simultaneous disk-heavy decodes. Same-source readers share a file
+// descriptor and use independent offsets via ReadAt.
+var codexDecodeSlot = make(chan struct{}, 1)
+
+func openCodexReplay(ctx context.Context, path string, progress func(transcriptProgress), budget int64) (*os.File, func(), error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
 	}
-	codexUnpack.Lock()
-	defer codexUnpack.Unlock()
-	if time.Since(codexUnpack.pruned) >= codexCachePrune {
-		codexUnpack.pruned = time.Now()
-		go pruneCodexCache(codexCacheDir())
-	}
-	if unpacked(plain, zi) {
-		return plain
-	}
-	if at, ok := codexUnpack.failed[zst]; ok && at.Equal(zi.ModTime()) {
-		return ""
-	}
-	if err := unpackZst(zst, plain, zi.ModTime()); err != nil {
-		log.Printf("codex: unpack %s: %v", zst, err)
-		if codexUnpack.failed == nil {
-			codexUnpack.failed = map[string]time.Time{}
+	dir := codexCacheDir()
+	key := filepath.Join(dir, fmt.Sprintf("%s%x.jsonl", codexCachePrefix, sha256.Sum256([]byte(codexFingerprint(path, fi)))))
+	codexUnpacks.Lock()
+	if f, err := os.Open(key); err == nil {
+		codexUnpacks.Unlock()
+		now := time.Now()
+		if err := os.Chtimes(key, now, now); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("codex: touch replay: %v", err)
 		}
-		codexUnpack.failed[zst] = zi.ModTime()
-		return ""
+		return f, func() { closeCodexFile(f) }, nil
 	}
-	return plain
+	job := codexUnpacks.jobs[key]
+	if job == nil {
+		work, cancel := context.WithCancel(context.Background())
+		job = &codexUnpacking{done: make(chan struct{}), cancel: cancel}
+		codexUnpacks.jobs[key] = job
+		go job.unpack(work, path, key, budget)
+	}
+	job.users++
+	codexUnpacks.Unlock()
+
+	release := func() {
+		codexUnpacks.Lock()
+		defer codexUnpacks.Unlock()
+		job.users--
+		if job.users == 0 {
+			job.cancel()
+			delete(codexUnpacks.jobs, key)
+			select {
+			case <-job.done:
+				if job.file != nil {
+					closeCodexFile(job.file)
+				}
+			default:
+			}
+		}
+	}
+	if progress != nil {
+		progress(transcriptProgress{})
+	}
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+	var reported int64 = -1
+	report := func() {
+		n := job.read.Load()
+		if progress != nil && n > 0 && n != reported {
+			reported = n
+			progress(transcriptProgress{Read: n, Total: fi.Size()})
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			release()
+			return nil, nil, ctx.Err()
+		case <-job.done:
+			report()
+			if job.err != nil {
+				release()
+				return nil, nil, job.err
+			}
+			return job.file, release, nil
+		case <-ticker.C:
+			report()
+		}
+	}
 }
 
-// unpacked: plain is the copy of the .zst described by zi. Times are compared
-// to the second, which every filesystem keeps.
-func unpacked(plain string, zi fs.FileInfo) bool {
-	fi, err := os.Stat(plain)
-	return err == nil && fi.ModTime().Truncate(time.Second).Equal(zi.ModTime().Truncate(time.Second))
+func (job *codexUnpacking) unpack(ctx context.Context, path, key string, budget int64) {
+	select {
+	case codexDecodeSlot <- struct{}{}:
+		job.file, job.err = job.decode(ctx, path, key, budget)
+		<-codexDecodeSlot
+	case <-ctx.Done():
+		job.err = ctx.Err()
+	}
+	codexUnpacks.Lock()
+	defer codexUnpacks.Unlock()
+	if job.users == 0 && job.file != nil {
+		closeCodexFile(job.file)
+	}
+	close(job.done)
 }
 
-// unpackZst writes src's contents to dst, whole or not at all, dated mod.
-func unpackZst(src, dst string, mod time.Time) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
+type codexInput struct {
+	ctx  context.Context
+	in   io.Reader
+	read *atomic.Int64
+}
+
+func (r codexInput) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
 	}
-	defer in.Close()
-	dec, err := zstd.NewReader(in, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
+	n, err := r.in.Read(p)
+	r.read.Add(int64(n))
+	return n, err
+}
+
+func (job *codexUnpacking) decode(ctx context.Context, path, key string, budget int64) (*os.File, error) {
+	// Another process sharing COLLIE_HOME may have published it while we waited.
+	if f, err := os.Open(key); err == nil {
+		return f, nil
+	}
+	in, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	defer closeCodexFile(in)
+	dec, err := openCodexDecoder(codexInput{ctx, in, &job.read})
+	if err != nil {
+		return nil, err
 	}
 	defer dec.Close()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
+	dir := filepath.Dir(key)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
 	}
-	out, err := os.CreateTemp(filepath.Dir(dst), codexUnpackTemp+"*")
+	f, err := os.CreateTemp(dir, codexUnpackTemp+"*")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	tmp := out.Name()
-	_, err = io.Copy(out, dec)
-	if cerr := out.Close(); err == nil {
-		err = cerr
+	// Unlink before writing. Oversized replays stay readable by current
+	// requests and disappear even if the process is killed.
+	if err := os.Remove(f.Name()); err != nil {
+		closeCodexFile(f)
+		return nil, err
 	}
+	n, err := io.Copy(f, dec)
 	if err == nil {
-		err = os.Chtimes(tmp, time.Now(), mod)
-	}
-	if err == nil {
-		err = os.Rename(tmp, dst)
+		err = ctx.Err()
 	}
 	if err != nil {
-		os.Remove(tmp)
+		closeCodexFile(f)
+		return nil, err
 	}
-	return err
+	if n <= budget {
+		if err := publishCodexReplay(key, f, n, budget); err != nil {
+			log.Printf("codex: cache replay: %v", err)
+		}
+	}
+	return f, nil
 }
 
-// pruneCodexCache removes the unpacked logs whose compressed rollout is gone
-// (Codex archived or deleted the thread), and abandoned unpackings.
-func pruneCodexCache(dir string) {
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+func closeCodexFile(f *os.File) {
+	if err := f.Close(); err != nil {
+		log.Printf("codex: close replay: %v", err)
+	}
+}
+
+// Serialize admission and cleanup across hub/node processes that share a
+// data directory. Readers already holding a descriptor survive unlink.
+func withCodexCache(dir string, fn func() error) error {
+	lock, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer closeCodexFile(lock)
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	return fn()
+}
+
+func publishCodexReplay(key string, f *os.File, size, budget int64) error {
+	dir := filepath.Dir(key)
+	return withCodexCache(dir, func() error {
+		if isFile(key) {
+			return nil
+		}
+		if err := trimCodexCache(dir, budget-size); err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(dir, p)
+		tmp, err := os.CreateTemp(dir, ".publish-*")
 		if err != nil {
 			return err
 		}
-		if strings.HasPrefix(d.Name(), codexUnpackTemp) {
-			if fi, err := d.Info(); err == nil && time.Since(fi.ModTime()) < codexUnpackStale {
-				return nil
-			}
-		} else if isFile(string(filepath.Separator) + rel + codexZstSuffix) {
-			return nil
+		if _, err = io.Copy(tmp, io.NewSectionReader(f, 0, size)); err != nil {
+			closeCodexFile(tmp)
+		} else if err = tmp.Close(); err == nil {
+			err = os.Rename(tmp.Name(), key)
 		}
-		if err := os.Remove(p); err != nil {
-			log.Printf("codex: prune %s: %v", p, err)
+		if err != nil {
+			return errors.Join(err, os.Remove(tmp.Name()))
 		}
 		return nil
 	})
-	if err != nil && !os.IsNotExist(err) {
-		log.Printf("codex: prune %s: %v", dir, err)
+}
+
+func maintainCodexCache(ctx context.Context) {
+	dir := codexCacheDir()
+	for {
+		if isDir(dir) {
+			if err := withCodexCache(dir, func() error { return trimCodexCache(dir, codexCacheBudget) }); err != nil {
+				log.Printf("codex: clean replay cache: %v", err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Hour):
+		}
 	}
+}
+
+// Drop pre-budget copies (mirrored absolute paths) and interrupted writes,
+// then evict by last use until there's room for the incoming replay.
+func trimCodexCache(dir string, budget int64) error {
+	type cached struct {
+		path string
+		info fs.FileInfo
+	}
+	var files []cached
+	var total int64
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !d.Type().IsRegular() {
+			return err
+		}
+		name := d.Name()
+		switch {
+		case filepath.Dir(path) == dir && strings.HasPrefix(name, codexCachePrefix) && strings.HasSuffix(name, ".jsonl"):
+			fi, err := d.Info()
+			if err != nil {
+				return err
+			}
+			files = append(files, cached{path, fi})
+			total += fi.Size()
+		case strings.HasPrefix(name, ".publish-"), strings.HasSuffix(name, ".jsonl"):
+			return os.Remove(path)
+		case strings.HasPrefix(name, codexUnpackTemp):
+			// Another process can be between CreateTemp and unlink.
+			fi, err := d.Info()
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if time.Since(fi.ModTime()) > time.Hour {
+				return os.Remove(path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].info.ModTime().Before(files[j].info.ModTime()) })
+	for _, f := range files {
+		if total <= budget {
+			break
+		}
+		if err := os.Remove(f.path); err != nil {
+			return err
+		}
+		total -= f.info.Size()
+	}
+	return nil
 }

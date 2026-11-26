@@ -1,10 +1,9 @@
 package collie
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,224 +30,6 @@ type Message struct {
 	// steps before it can fold away once the turn is done.
 	TurnMS int64 `json:"turn_ms,omitempty"`
 	at     int64 // where in the log its line starts
-}
-
-// transcript incrementally parses an agent's JSONL session log.
-type transcript struct {
-	path    string
-	format  string // claude | codex | agy
-	offset  int64
-	msgs    []*Message
-	tools   map[string]*Message
-	pending []*Message // agy: tool calls waiting for their output, in order
-	lastID  string
-	dropped int       // messages trimmed off the front, so positions stay stable
-	partial bool      // offset may be mid-line: skip to the next line first
-	began   int64     // where reading started (0: the top of the log)
-	lineAt  int64     // where the line being parsed starts
-	asked   time.Time // agy: when the turn being read began
-	limit   int64     // stop reading here (0: at the end)
-}
-
-const (
-	maxMessages = 60 // what a viewer gets first; older ones load on demand
-	maxOutput   = 1600
-	maxInput    = 400
-)
-
-// Resolve the file before opening it or comparing it with a cached transcript.
-// Antigravity keeps complete messages next to its truncated transcript.jsonl.
-func transcriptPath(path, format string) string {
-	if format == "agy" && filepath.Base(path) == "transcript.jsonl" {
-		if full := filepath.Join(filepath.Dir(path), "transcript_full.jsonl"); isFile(full) {
-			return full
-		}
-	}
-	return path
-}
-
-func newTranscript(path, format string) *transcript {
-	return &transcript{path: path, format: format, tools: map[string]*Message{}}
-}
-
-func clip(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
-		return s
-	}
-	cut := n
-	for cut > 0 && (s[cut]&0xC0) == 0x80 { // stay on a UTF-8 boundary
-		cut--
-	}
-	return s[:cut] + " …"
-}
-
-func (m *Message) setToolResult(output string, failed bool) {
-	m.Output = clip(output, maxOutput)
-	m.Error = failed
-	m.ToolDone = m.Kind == "tool"
-}
-
-// update reads any complete lines appended since the last call. It reports
-// whether the conversation changed.
-func (t *transcript) update() bool {
-	f, err := os.Open(t.path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || fi.Size() == t.offset {
-		return false
-	}
-	if fi.Size() < t.offset { // rewritten
-		*t = *newTranscript(t.path, t.format)
-	}
-	f.Seek(t.offset, io.SeekStart)
-	r := bufio.NewReaderSize(f, 1<<20)
-	if t.partial {
-		skip, err := r.ReadBytes('\n')
-		if err != nil {
-			return false
-		}
-		t.offset += int64(len(skip))
-		t.partial = false
-		t.began = t.offset
-	}
-	changed := false
-	for t.limit == 0 || t.offset < t.limit {
-		line, err := r.ReadBytes('\n')
-		if err != nil { // incomplete trailing line: retry next tick
-			break
-		}
-		t.lineAt = t.offset
-		t.offset += int64(len(line))
-		changed = t.line(line) || changed
-	}
-	if len(t.msgs) > maxMessages*2 && t.limit == 0 { // a bounded read keeps all it reads
-		t.dropped += len(t.msgs) - maxMessages
-		t.msgs = append([]*Message(nil), t.msgs[len(t.msgs)-maxMessages:]...)
-	}
-	return changed
-}
-
-// openTail reads only the end of a long log: enough of it to fill the view,
-// growing the window when the last few megabytes hold too few messages. A
-// 40 MB Claude session otherwise takes most of a second to open.
-func (t *transcript) openTail() {
-	fi, err := os.Stat(t.path)
-	if err != nil {
-		return
-	}
-	for win := int64(1 << 20); ; win *= 4 {
-		*t = *newTranscript(t.path, t.format)
-		if win >= fi.Size() {
-			t.update()
-			return
-		}
-		t.offset, t.partial = fi.Size()-win, true
-		t.update()
-		if len(t.msgs) >= maxMessages/2 {
-			return
-		}
-	}
-}
-
-// msgSync sends a transcript to one viewer as patches: the first carries the
-// whole view, later ones only the messages from the first one that changed
-// (a tool call gets its output, a new message lands), so a long conversation
-// is not sent again on every line.
-type msgSync struct {
-	sent map[int]string // position → the message as last sent
-}
-
-type msgPatch struct {
-	Base    int        `json:"base"` // position of the first message in the view
-	From    int        `json:"from"` // position of msgs[0]
-	Msgs    []*Message `json:"msgs"`
-	Earlier int64      `json:"earlier,omitempty"` // cursor for older messages (see earlier)
-}
-
-// patch: what changed since the last call, or nil.
-func (m *msgSync) patch(t *transcript) *msgPatch {
-	view := t.view()
-	base := t.dropped + len(t.msgs) - len(view)
-	enc := make([]string, len(view))
-	for i, msg := range view {
-		b, _ := json.Marshal(msg)
-		enc[i] = string(b)
-	}
-	from := base + len(view)
-	if m.sent == nil {
-		from = base
-	} else {
-		for i, s := range enc {
-			if m.sent[base+i] != s {
-				from = base + i
-				break
-			}
-		}
-		if from == base+len(view) && len(m.sent) == len(view) {
-			if _, ok := m.sent[base]; ok {
-				return nil
-			}
-		}
-	}
-	m.sent = make(map[int]string, len(enc))
-	for i, s := range enc {
-		m.sent[base+i] = s
-	}
-	return &msgPatch{Base: base, From: from, Msgs: append([]*Message{}, view[from-base:]...), Earlier: t.earlierCursor()}
-}
-
-func (t *transcript) add(m *Message) { m.at = t.lineAt; t.msgs = append(t.msgs, m) }
-
-// earlierCursor: where the messages before the view end, or 0 when the view
-// starts at the top of the log.
-func (t *transcript) earlierCursor() int64 {
-	view := t.view()
-	if len(view) == 0 || (t.began == 0 && len(view) == len(t.msgs) && t.dropped == 0) {
-		return 0
-	}
-	return view[0].at
-}
-
-// earlierMessages reads the messages whose lines start before `before`: the
-// last `want` of them, and the cursor for the ones before those (0: none).
-// It reads a little past `before` too, so a tool call there gets its output.
-func earlierMessages(path, format string, before int64, want int) ([]*Message, int64) {
-	path = transcriptPath(path, format)
-	fi, err := os.Stat(path)
-	if err != nil || before <= 0 {
-		return nil, 0
-	}
-	end := min(fi.Size(), before+1<<20)
-	for win := int64(4 << 20); ; win *= 4 {
-		t := newTranscript(path, format)
-		if start := before - win; start > 0 {
-			t.offset, t.partial = start, true
-		}
-		t.limit = end
-		t.update()
-		var keep []*Message
-		for _, m := range t.msgs {
-			if m.at < before {
-				keep = append(keep, m)
-			}
-		}
-		// Read from the top of the log: nothing is older than what we have.
-		top := t.began == 0
-		if len(keep) > want {
-			keep = keep[len(keep)-want:]
-			return keep, keep[0].at
-		}
-		if top {
-			if t.dropped > 0 && len(keep) > 0 {
-				return keep, keep[0].at
-			}
-			return keep, 0
-		}
-	}
 }
 
 // line parses one complete log line.
@@ -716,7 +497,9 @@ func (s *Server) transcriptFor(key, pane string, a agentDetail, cache map[string
 	}
 	ck := key + "|" + kind + "|" + sessKind + ":" + value
 	if tr := cache[ck]; tr != nil {
-		return tr
+		if kind != "codex" || !compressedCodex(tr.path, kind) || !isFile(strings.TrimSuffix(tr.path, codexZstSuffix)) {
+			return tr
+		}
 	}
 	path, format := s.findTranscript(kind, sessKind, value, pane, deref(a.Cwd))
 	if path == "" {
@@ -733,6 +516,9 @@ func (s *Server) findTranscript(kind, sessKind, value, pane, cwd string) (path, 
 		format = "claude"
 	}
 	if sessKind == "path" {
+		if format == "codex" {
+			return codexRollout(strings.TrimSuffix(value, codexZstSuffix)), format
+		}
 		if isFile(value) {
 			return value, format
 		}
@@ -1209,10 +995,14 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		}
 		if tr != nil {
 			if lastLog == "" {
-				tr.openTail()
+				if err := tr.load(r.Context(), sse.replayProgress, true); err != nil && compressedCodex(tr.path, tr.format) {
+					cancel()
+					send("load-error", map[string]string{"error": "读取 Codex 会话失败"})
+					return
+				}
 				ms = msgSync{}
 			}
-			if tr.update() || lastLog == "" {
+			if lastLog == "" || tr.update() {
 				lastLog = "-"
 				if p := ms.patch(tr); p != nil && !send("patch", p) {
 					cancel()
@@ -1283,7 +1073,9 @@ func (s *Server) lastMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.herdr.Call(r.Context(), "agent.get", map[string]any{"target": id}, &info) == nil {
 		if tr := s.transcriptFor("last:"+id, id, info.Agent, map[string]*transcript{}); tr != nil {
-			tr.update()
+			if err := tr.load(r.Context(), nil, false); err != nil {
+				log.Printf("collie: read latest message: %v", err)
+			}
 			msgs := tr.view()
 			for i := len(msgs) - 1; i >= 0; i-- {
 				if msgs[i].Kind == "assistant" {

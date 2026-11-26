@@ -210,12 +210,50 @@ func (s *Server) getTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if before := queryOffset(r); before > 0 {
-		writeEarlier(w, path, format, before)
+		writeEarlier(w, r, path, format, before)
 		return
 	}
 	tr := newTranscript(transcriptPath(path, format), format)
-	tr.openTail()
-	writeJSON(w, 200, map[string]any{"messages": tr.view(), "earlier": tr.earlierCursor()})
+	if q.Get("stream") == "1" {
+		s.streamTranscript(w, r, tr)
+		return
+	}
+	if err := tr.load(r.Context(), nil, true); err != nil {
+		writeJSON(w, 500, map[string]string{"error": "读取会话记录失败"})
+		return
+	}
+	writeJSON(w, 200, transcriptPage{tr.view(), tr.earlierCursor()})
+}
+
+type transcriptPage struct {
+	Messages []*Message `json:"messages"`
+	Earlier  int64      `json:"earlier"`
+}
+
+func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, tr *transcript) {
+	f, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, 500, map[string]string{"error": "无法读取会话进度"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	enc := json.NewEncoder(w)
+	send := func(frame any) {
+		if err := enc.Encode(frame); err != nil {
+			log.Printf("collie: send transcript: %v", err)
+			return
+		}
+		f.Flush()
+	}
+	if err := tr.load(r.Context(), func(p transcriptProgress) {
+		send(map[string]any{"progress": p})
+	}, true); err != nil {
+		send(map[string]string{"error": "读取会话记录失败"})
+		return
+	}
+	send(transcriptPage{tr.view(), tr.earlierCursor()})
 }
 
 // earlierPage is how many older messages one "load earlier" brings.
@@ -226,12 +264,16 @@ func queryOffset(r *http.Request) int64 {
 	return n
 }
 
-func writeEarlier(w http.ResponseWriter, path, format string, before int64) {
-	msgs, cursor := earlierMessages(path, format, before, earlierPage)
+func writeEarlier(w http.ResponseWriter, r *http.Request, path, format string, before int64) {
+	msgs, cursor, err := readEarlier(r.Context(), path, format, before, earlierPage)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "读取更早的消息失败"})
+		return
+	}
 	if msgs == nil {
 		msgs = []*Message{}
 	}
-	writeJSON(w, 200, map[string]any{"messages": msgs, "earlier": cursor})
+	writeJSON(w, 200, transcriptPage{msgs, cursor})
 }
 
 // externalEarlier: older messages of a session running elsewhere on this computer.
@@ -241,7 +283,7 @@ func (s *Server) externalEarlier(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "这个会话没有记录"})
 		return
 	}
-	writeEarlier(w, e.path, e.format, queryOffset(r))
+	writeEarlier(w, r, e.path, e.format, queryOffset(r))
 }
 
 // paneEarlier: older messages of the agent in a herdr pane.
@@ -261,5 +303,5 @@ func (s *Server) paneEarlier(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "这个 agent 没有会话记录"})
 		return
 	}
-	writeEarlier(w, tr.path, tr.format, queryOffset(r))
+	writeEarlier(w, r, tr.path, tr.format, queryOffset(r))
 }

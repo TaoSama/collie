@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -327,6 +328,16 @@ func (s *sseWriter) send(event string, data []byte) error {
 	}
 	s.f.Flush()
 	return nil
+}
+
+func (s *sseWriter) replayProgress(p transcriptProgress) {
+	data, err := json.Marshal(p)
+	if err == nil {
+		err = s.send("replay-progress", data)
+	}
+	if err != nil {
+		log.Printf("collie: send replay progress: %v", err)
+	}
 }
 
 func (s *sseWriter) sendChangedJSON(event string, value any, last *[]byte) (bool, error) {

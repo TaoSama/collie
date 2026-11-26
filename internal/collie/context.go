@@ -47,6 +47,9 @@ type usageMark struct {
 // contextUsage returns the latest usage in a transcript; claudeWindow is the
 // window to assume for Claude (its logs don't say).
 func contextUsage(path, format string, claudeWindow int) ctxUsage {
+	if compressedCodex(path, format) {
+		return codexSummary(path).usage
+	}
 	fi, err := os.Stat(path)
 	if err != nil {
 		return ctxUsage{}
@@ -84,6 +87,8 @@ func contextUsage(path, format string, claudeWindow int) ctxUsage {
 	return u
 }
 
+const usageTail = 1 << 20
+
 func readUsage(path, format string, size int64) ctxUsage {
 	if format == "agy" {
 		return agyUsage(path)
@@ -93,9 +98,10 @@ func readUsage(path, format string, size int64) ctxUsage {
 		return ctxUsage{}
 	}
 	defer f.Close()
-	const tail = 1 << 20
-	if size > tail {
-		f.Seek(size-tail, io.SeekStart)
+	if size > usageTail {
+		if _, err := f.Seek(size-usageTail, io.SeekStart); err != nil {
+			return ctxUsage{}
+		}
 	}
 	var last ctxUsage
 	sc := bufio.NewScanner(f)
@@ -133,44 +139,48 @@ func readUsage(path, format string, size int64) ctxUsage {
 				last.Model, last.Effort = m, e.Effort
 			}
 		case "codex":
-			// turn_context says which model and effort a turn ran with;
-			// token_count how full the window is.
-			if bytes.Contains(line, []byte(`"turn_context"`)) {
-				var t struct {
-					Type    string `json:"type"`
-					Payload struct {
-						Model  string `json:"model"`
-						Effort string `json:"effort"`
-					} `json:"payload"`
-				}
-				if json.Unmarshal(line, &t) == nil && t.Type == "turn_context" && t.Payload.Model != "" {
-					last.Model, last.Effort = t.Payload.Model, t.Payload.Effort
-				}
-				continue
-			}
-			if !bytes.Contains(line, []byte(`"token_count"`)) {
-				continue
-			}
-			var e struct {
-				Payload struct {
-					Type string `json:"type"`
-					Info *struct {
-						Last struct {
-							Total int `json:"total_tokens"`
-						} `json:"last_token_usage"`
-						Window int `json:"model_context_window"`
-					} `json:"info"`
-				} `json:"payload"`
-			}
-			if json.Unmarshal(line, &e) != nil || e.Payload.Type != "token_count" || e.Payload.Info == nil {
-				continue
-			}
-			if e.Payload.Info.Last.Total > 0 {
-				last.Used, last.Window = e.Payload.Info.Last.Total, e.Payload.Info.Window
-			}
+			readCodexUsage(line, &last)
 		}
 	}
 	return last
+}
+
+func readCodexUsage(line []byte, last *ctxUsage) {
+	// turn_context says which model and effort a turn ran with;
+	// token_count how full the window is.
+	if bytes.Contains(line, []byte(`"turn_context"`)) {
+		var t struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Model  string `json:"model"`
+				Effort string `json:"effort"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(line, &t) == nil && t.Type == "turn_context" && t.Payload.Model != "" {
+			last.Model, last.Effort = t.Payload.Model, t.Payload.Effort
+		}
+		return
+	}
+	if !bytes.Contains(line, []byte(`"token_count"`)) {
+		return
+	}
+	var e struct {
+		Payload struct {
+			Type string `json:"type"`
+			Info *struct {
+				Last struct {
+					Total int `json:"total_tokens"`
+				} `json:"last_token_usage"`
+				Window int `json:"model_context_window"`
+			} `json:"info"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal(line, &e) != nil || e.Payload.Type != "token_count" || e.Payload.Info == nil {
+		return
+	}
+	if e.Payload.Info.Last.Total > 0 {
+		last.Used, last.Window = e.Payload.Info.Last.Total, e.Payload.Info.Window
+	}
 }
 
 // agyUsage: Antigravity keeps no usage in its transcript; its conversation

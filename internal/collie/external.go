@@ -545,12 +545,15 @@ func (s *Server) streamExternal(w http.ResponseWriter, r *http.Request) {
 	var ms msgSync
 	if e.path != "" {
 		tr = newTranscript(transcriptPath(e.path, e.format), e.format)
-		tr.openTail()
+		if err := tr.load(r.Context(), sse.replayProgress, true); err != nil && compressedCodex(tr.path, tr.format) {
+			send("load-error", map[string]string{"error": "读取 Codex 会话失败"})
+			return
+		}
 	}
 	first, beat := true, time.Now()
 	checked := time.Now()
 	for {
-		if tr != nil && (tr.update() || first) {
+		if tr != nil && (first || tr.update()) {
 			if p := ms.patch(tr); p != nil {
 				if !send("patch", p) {
 					return
