@@ -143,7 +143,7 @@
       <div class="card"><div class="card-h">说明</div><div class="form">
         <p class="ext-desc">${esc(m.description)}</p>
         ${m.warning ? `<p class="ext-warn">${esc(m.warning)}</p>` : ""}
-        ${m.market ? `<p class="ext-desc">来自市场 ${esc(m.market.repo)}（${esc((m.market.commit || "").slice(0, 7))}）</p>` : ""}
+        ${m.market ? `<p class="ext-desc">来自市场 ${esc(m.market.repo)}（${m.market.package ? esc(m.market.package.replace(/^release:/, "Release ")) : esc((m.market.commit || "").slice(0, 7))}）</p>` : ""}
         ${m.local ? `<p class="ext-warn">来自本地目录（${esc(m.id)}/pkg/${esc(m.version)}），Collie 不校验其内容。</p>` : ""}
         ${(m.permissions?.network || []).length ? `<p class="ext-desc">会访问：${esc(m.permissions.network.join("、"))}</p>` : ""}
       </div></div>

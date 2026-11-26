@@ -1,8 +1,6 @@
 package collie
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,7 +17,8 @@ import (
 
 // Marketplaces (extensions/README.md §9): a GitHub repository, private or
 // not, with collie-marketplace.json at its root listing the extensions in it.
-// The hub reads the index, installs a package at a pinned commit into
+// The hub reads the index, installs a package (a directory at a pinned
+// commit, or an archive attached to a release, ext_market_pkg.go) into
 // COLLIE_HOME/market/pkgs/<id>/<version>/ with every file's sha256, and the
 // computer that runs it downloads the package from the hub (with its own
 // device token) and checks each file. Only the hub holds the repository token.
@@ -34,10 +33,11 @@ const (
 
 // ExtMarketRef is where an installed extension came from.
 type ExtMarketRef struct {
-	Repo   string            `json:"repo"`
-	Commit string            `json:"commit"`
-	Path   string            `json:"path"`
-	Files  map[string]string `json:"files"` // relative path → sha256
+	Repo    string            `json:"repo"`
+	Commit  string            `json:"commit"`
+	Path    string            `json:"path,omitempty"`
+	Package string            `json:"package,omitempty"` // release:<tag>/<file>
+	Files   map[string]string `json:"files"`             // relative path → sha256
 }
 
 // ExtMarket is one marketplace you added (kv "ext_markets"; its token is
@@ -54,11 +54,12 @@ type ExtMarket struct {
 
 // MarketEntry is one line of collie-marketplace.json.
 type MarketEntry struct {
-	ID          string `json:"id"`
-	Path        string `json:"path"`
-	Version     string `json:"version"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
+	ID          string         `json:"id"`
+	Path        string         `json:"path,omitempty"`    // a directory of the repository
+	Package     *MarketPackage `json:"package,omitempty"` // or a built archive in a release
+	Version     string         `json:"version"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
 }
 
 type marketIndex struct {
@@ -185,7 +186,7 @@ func (h *extHost) readIndex(ctx context.Context, m *ExtMarket) {
 	}
 	var ok []MarketEntry
 	for _, e := range idx.Extensions {
-		if extIDRe.MatchString(e.ID) && e.Version != "" && cleanRel(e.Path) {
+		if validEntry(e) {
 			ok = append(ok, e)
 		}
 	}
@@ -207,6 +208,12 @@ func cleanRel(p string) bool {
 
 // github calls the GitHub API for repo with the marketplace's token, if any.
 func (h *extHost) github(ctx context.Context, repo, rest, accept string) ([]byte, error) {
+	return h.githubLimit(ctx, repo, rest, accept, marketTarMost)
+}
+
+// githubLimit is github for an answer of at most most bytes. A redirect to
+// another host (a release asset's storage) does not carry the token.
+func (h *extHost) githubLimit(ctx context.Context, repo, rest, accept string, most int64) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, marketWait)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", marketAPI+"/repos/"+repo+rest, nil)
@@ -228,7 +235,11 @@ func (h *extHost) github(ctx context.Context, repo, rest, accept string) ([]byte
 		}
 		return nil, fmt.Errorf("%s", resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, marketTarMost))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, most+1))
+	if err == nil && int64(len(b)) > most {
+		err = fmt.Errorf("超过 %d 字节", most)
+	}
+	return b, err
 }
 
 // installFromMarket installs (or updates) one extension of a marketplace at
@@ -260,10 +271,6 @@ func (h *extHost) installFromMarket(ctx context.Context, repo, id string) (*ExtM
 	if b := h.manifest(id); b != nil && b.Market == nil {
 		return nil, fmt.Errorf("%s 和自带或本地的扩展同名", id)
 	}
-	tarball, err := h.github(ctx, repo, "/tarball/"+mk.Commit, "application/vnd.github+json")
-	if err != nil {
-		return nil, fmt.Errorf("下载：%v", err)
-	}
 	base := filepath.Join(marketDir(h.home), "pkgs", id)
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return nil, err
@@ -273,7 +280,7 @@ func (h *extHost) installFromMarket(ctx context.Context, repo, id string) (*ExtM
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	if err := extractSubdir(tarball, e.Path, tmp); err != nil {
+	if err := h.fetchEntry(ctx, repo, mk.Commit, e, tmp); err != nil {
 		return nil, err
 	}
 	m, err := readStrictManifest(filepath.Join(tmp, "collie-extension.json"))
@@ -288,6 +295,9 @@ func (h *extHost) installFromMarket(ctx context.Context, repo, id string) (*ExtM
 		return nil, err
 	}
 	m.Market = &ExtMarketRef{Repo: repo, Commit: mk.Commit, Path: e.Path, Files: files}
+	if e.Package != nil {
+		m.Market.Package = e.Package.URL
+	}
 	if err := m.validate(); err != nil {
 		return nil, err
 	}
@@ -441,71 +451,6 @@ func hashFiles(dir string) (map[string]string, error) {
 		return nil
 	})
 	return out, err
-}
-
-// extractSubdir writes the files under subdir of a GitHub tarball into dst,
-// dropping its top directory. Links and anything leaving dst are refused.
-func extractSubdir(tarball []byte, subdir, dst string) error {
-	gz, err := gzip.NewReader(strings.NewReader(string(tarball)))
-	if err != nil {
-		return fmt.Errorf("不是 gzip：%v", err)
-	}
-	tr := tar.NewReader(gz)
-	prefix := strings.Trim(subdir, "/") + "/"
-	found := false
-	for {
-		hd, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		_, name, ok := strings.Cut(hd.Name, "/")
-		if !ok || !strings.HasPrefix(name, prefix) {
-			continue
-		}
-		rel := strings.TrimPrefix(name, prefix)
-		if rel == "" {
-			continue
-		}
-		if !cleanRel(strings.TrimSuffix(rel, "/")) {
-			return fmt.Errorf("包里有越界的路径 %q", rel)
-		}
-		target := filepath.Join(dst, filepath.FromSlash(rel))
-		switch hd.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			found = true
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			mode := os.FileMode(0o644)
-			if hd.Mode&0o111 != 0 {
-				mode = 0o755
-			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(f, io.LimitReader(tr, extFileMost+1))
-			if cerr := f.Close(); err == nil {
-				err = cerr
-			}
-			if err != nil {
-				return err
-			}
-		case tar.TypeSymlink, tar.TypeLink:
-			return fmt.Errorf("包里有链接 %q：不接受", rel)
-		}
-	}
-	if !found {
-		return fmt.Errorf("仓库里没有 %s", subdir)
-	}
-	return nil
 }
 
 // marketAPI is GitHub's API (a test points it elsewhere).

@@ -300,9 +300,20 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
     ]}
     ```
 
-    `path` 指向一个标准的扩展包目录（`collie-extension.json` 加程序，程序可以按平台给多个，见 `runtime.command`）。清单里的 `id`、`version` 必须和索引一致，不能写 `source`、`runtime.builtin`。
-  - **凭证**：私有仓库要一个能读它的 GitHub token，在添加市场时填，只存在 hub 的 `COLLIE_HOME/market/secrets.json`（0600），不显示、不进数据库和日志。运行扩展的 node 不需要它。
-  - **安装**：hub 把分支解析成具体 commit，下载这个目录，记下每个文件的 sha256，放进 `COLLIE_HOME/market/pkgs/<id>/<version>/`。扩展跑在 node 上时，node 用自己的设备令牌从 hub 下载这份包（`/api/super/ext-pkg/…`），逐个校验 sha256。
+    每项二选一给出包在哪：
+    - `path`：仓库里的一个标准扩展包目录（`collie-extension.json` 加程序，程序可以按平台给多个，见 `runtime.command`）。适合声明式或脚本类扩展，文件直接在 git 里。
+    - `package`：要编译的扩展，程序不进 git，打成 `.tar.gz`（文件在包的根目录：清单、README、`bin/` 下各平台的程序）挂在仓库的某个 Release 上：
+
+      ```json
+      {"id": "notes", "version": "1.1.0", "name": "笔记搜索", "description": "…",
+       "package": {"url": "release:notes-v1.1.0/notes-1.1.0.tar.gz", "sha256": "<sha256>", "size": 12345678}}
+      ```
+
+      `url` 写成 `release:<tag>/<文件名>`；`sha256` 和 `size`（字节）是这个文件的，由发布流程生成。已发布的版本不要覆盖，改了就升版本号。
+
+    清单里的 `id`、`version` 必须和索引一致，不能写 `source`、`runtime.builtin`。
+  - **凭证**：私有仓库要一个能读它的 GitHub token（细粒度 token 只给这个仓库 Contents 只读即可，读索引和下载 Release 都靠它），在添加市场时填，只存在 hub 的 `COLLIE_HOME/market/secrets.json`（0600），不显示、不进数据库和日志。运行扩展的 node 不需要它。
+  - **安装**：hub 把分支解析成具体 commit，读那个 commit 的索引。`path` 下载这个目录；`package` 用 token 经 GitHub API 下载 Release 里的文件，大小和 sha256 与索引不一致就失败。解包时拒绝链接、设备文件、`..` 和绝对路径，单个文件不超过 96 MB、整包不超过 256 MB。记下每个文件的 sha256，放进 `COLLIE_HOME/market/pkgs/<id>/<version>/`。扩展跑在 node 上时，node 用自己的设备令牌从 hub 下载这份包（`/api/super/ext-pkg/…`），逐个校验 sha256。
   - **更新**：索引里的版本比已装的新时显示「更新」，更新后正在运行的扩展会重启。**卸载**：停掉它，删掉设置和 hub 上的安装包；选「删除数据」时，连它在那台电脑上的 `COLLIE_HOME/ext/<id>/`（数据和登录态）一起删。
 - **本地扩展**：开发时，扩展可以不经过市场。把整个包（`collie-extension.json` 和程序）放进运行它的那台电脑的 `COLLIE_HOME/ext/<id>/pkg/<version>/`，Collie 每分钟扫描一次 hub 和在线的 node，接入页把它列为「本地扩展」，由你决定是否打开。
   - 清单规则不变（协议版本、`runtime.command` 相对路径或按平台的映射、环境变量白名单），但不能写 `source` 或 `runtime.builtin`。目录名必须等于清单的 `id` 和 `version`；同一个 id 有多个版本时取最新的。
