@@ -17,14 +17,15 @@ type paneWake struct {
 }
 
 const (
-	wakeBurst = 150 * time.Millisecond // right after input: the burst rate, if any
+	wakeSnap  = 35 * time.Millisecond  // immediately after input: catch 2-4ms agent redraws
+	wakeBurst = 200 * time.Millisecond // right after input: the burst rate, if any
 	wakeFast  = 3 * time.Second        // then the quick rate until this
 )
 
 // pollRates: how often a stream looks normally, for a while after input,
-// and right after it (0: no burst; a screen echoes in milliseconds, a
-// transcript takes longer to be written).
-type pollRates struct{ normal, quick, burst time.Duration }
+// right after it, and immediately after it (0: disabled; a screen redraws in
+// ~2-4ms after wheel/key input, a transcript takes longer to be written).
+type pollRates struct{ normal, quick, burst, snap time.Duration }
 
 // subscribe returns a channel that gets a value at the pane's input, and
 // the function to call when the stream ends.
@@ -67,6 +68,8 @@ func (w *paneWake) wake(id string) {
 func pollAfter(done <-chan struct{}, wake <-chan struct{}, r pollRates, woke *time.Time) bool {
 	d := r.normal
 	switch since := time.Since(*woke); {
+	case since < wakeSnap && r.snap > 0:
+		d = r.snap
 	case since < wakeBurst && r.burst > 0:
 		d = r.burst
 	case since < wakeFast:

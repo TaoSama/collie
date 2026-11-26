@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,11 +37,12 @@ func paneWheel(p Pane) bool {
 func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	mode := r.URL.Query().Get("mode")
+	useDiff := mode != "log" && r.URL.Query().Get("diff") == "1"
 	sse, ok := newSSE(w)
 	if !ok {
 		return
 	}
-	rates := pollRates{normal: 200 * time.Millisecond, quick: 50 * time.Millisecond, burst: 10 * time.Millisecond}
+	rates := pollRates{normal: 200 * time.Millisecond, quick: 50 * time.Millisecond, burst: 10 * time.Millisecond, snap: 2 * time.Millisecond}
 	if mode == "log" {
 		rates = pollRates{normal: 700 * time.Millisecond, quick: 100 * time.Millisecond}
 	}
@@ -48,12 +50,18 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 	wake, unsubscribe := s.wakes.subscribe(id)
 	defer unsubscribe()
 	var lastText string
+	var lastSentLines []string
 	var lastSize Rect
 	var wheel bool
 	var kind string // the pane's agent, "" for a shell
 	var sizeAt time.Time
+	var histAt time.Time
+	var histLines atomic.Int64
+	var histBusy atomic.Bool
+	var lastSentHist int
 	beat := time.Now()
 	for {
+		active := !woke.IsZero() && time.Since(woke) < wakeFast
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		var (
 			res ReadResult
@@ -62,7 +70,9 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 		if mode == "log" {
 			res, err = s.herdr.Read(ctx, id, "recent_unwrapped", "text", 600)
 		} else {
-			if time.Since(sizeAt) > 2*time.Second {
+			// Refresh pane dimensions/metadata on the first frame, and while
+			// idle — never mid-scroll, where two extra RPCs add tail latency.
+			if sizeAt.IsZero() || (!active && time.Since(sizeAt) > 3*time.Second) {
 				if sz, e := s.herdr.PaneSize(ctx, id); e == nil {
 					lastSize = sz
 				}
@@ -75,7 +85,23 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 				}
 				sizeAt = time.Now()
 			}
-			res, err = s.herdr.Read(ctx, id, "recent", "ansi", screenLines)
+			// Estimate total history lines asynchronously when idle so the
+			// screen scrollbar reflects real transcript proportion from frame 0.
+			if wheel && s.home != "" && !active && time.Since(histAt) > 4*time.Second && histBusy.CompareAndSwap(false, true) {
+				histAt = time.Now()
+				cols := lastSize.Width
+				go func(reqCtx context.Context) {
+					defer histBusy.Store(false)
+					if n := s.estimatePaneHistoryLines(reqCtx, id, cols); n > 0 {
+						histLines.Store(int64(n))
+					}
+				}(r.Context())
+			}
+			hedge := time.Duration(0)
+			if active {
+				hedge = 6 * time.Millisecond
+			}
+			res, err = s.herdr.ReadFast(ctx, id, "recent", "ansi", screenLines, hedge)
 		}
 		cancel()
 		if err != nil {
@@ -92,14 +118,45 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 					text, cursor = markScreenCursor(text, lastSize.Height, kind)
 					text = trimScreenBlankTail(text)
 				}
-				b, _ := json.Marshal(map[string]any{
-					"text": text, "revision": res.Revision, "truncated": res.Truncated,
+				frame := map[string]any{
+					"revision": res.Revision, "truncated": res.Truncated,
 					"cols": lastSize.Width, "rows": lastSize.Height, "cursor": cursor, "wheel": wheel, "kind": kind,
-				})
+				}
+				if h := int(histLines.Load()); h > 0 && wheel {
+					frame["hist"] = h
+					lastSentHist = h
+				}
+				sentDiff := false
+				if useDiff {
+					curLines := splitScreenLines(text)
+					if len(lastSentLines) > 0 {
+						shift, patch, patchBytes := computeScreenDiff(lastSentLines, curLines)
+						if len(patch) < len(curLines) && patchBytes*10 < len(text)*7 {
+							frame["shift"] = shift
+							frame["patch"] = patch
+							frame["n"] = len(curLines)
+							sentDiff = true
+						}
+					}
+					lastSentLines = curLines
+				}
+				if !sentDiff {
+					frame["text"] = text
+				}
+				b, _ := json.Marshal(frame)
 				if sse.send("frame", b) != nil {
 					return
 				}
 				beat = time.Now()
+			} else if wheel && mode != "log" {
+				if h := int(histLines.Load()); h > 0 && h != lastSentHist {
+					lastSentHist = h
+					b, _ := json.Marshal(map[string]any{"hist": h})
+					if sse.send("hist", b) != nil {
+						return
+					}
+					beat = time.Now()
+				}
 			}
 		}
 		if time.Since(beat) > 15*time.Second {
@@ -110,6 +167,105 @@ func (s *Server) streamPane(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func splitScreenLines(text string) []string {
+	raw := strings.ReplaceAll(text, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "")
+	if raw == "" {
+		return []string{""}
+	}
+	return strings.Split(raw, "\n")
+}
+
+// computeScreenDiff finds the vertical row shift between prev and cur that
+// maximizes exact line matches and returns only the differing [row, text] pairs.
+func computeScreenDiff(prev, cur []string) (bestShift int, patch [][2]any, patchBytes int) {
+	maxShift := len(cur) - 1
+	if maxShift > 32 {
+		maxShift = 32
+	}
+	bestMatches := -1
+	score := func(shift int) int {
+		m := 0
+		for r, line := range cur {
+			pr := r + shift
+			if pr >= 0 && pr < len(prev) && prev[pr] == line {
+				m++
+			}
+		}
+		return m
+	}
+	bestMatches = score(0)
+	for d := 1; d <= maxShift; d++ {
+		if m := score(-d); m > bestMatches {
+			bestMatches, bestShift = m, -d
+		}
+		if m := score(d); m > bestMatches {
+			bestMatches, bestShift = m, d
+		}
+	}
+	for r, line := range cur {
+		pr := r + bestShift
+		if pr < 0 || pr >= len(prev) || prev[pr] != line {
+			patch = append(patch, [2]any{r, line})
+			patchBytes += len(line) + 12
+		}
+	}
+	return bestShift, patch, patchBytes
+}
+
+// estimatePaneHistoryLines approximates the rendered line count of an agent's
+// transcript at cols width, for sizing the fullscreen screen-mode scrollbar
+// before the user has scrolled all the way up.
+func (s *Server) estimatePaneHistoryLines(parent context.Context, id string, cols int) int {
+	if cols <= 0 {
+		cols = 120
+	}
+	ctx, cancel := context.WithTimeout(parent, 1500*time.Millisecond)
+	defer cancel()
+	var info struct {
+		Agent agentDetail `json:"agent"`
+	}
+	if err := s.herdr.Call(ctx, "agent.get", map[string]any{"target": id}, &info); err != nil || info.Agent.Agent == nil {
+		return 0
+	}
+	cache := map[string]*transcript{}
+	tr := s.transcriptFor(id, id, info.Agent, cache)
+	if tr == nil {
+		return 0
+	}
+	tr.update()
+	msgs := tr.view()
+	if len(msgs) == 0 {
+		return 0
+	}
+	wrap := max(cols-6, 40)
+	countText := func(s string) int {
+		if s == "" {
+			return 0
+		}
+		rows := 0
+		for _, line := range strings.Split(s, "\n") {
+			n := len([]rune(line))
+			if n <= wrap {
+				rows++
+			} else {
+				rows += (n + wrap - 1) / wrap
+			}
+		}
+		return rows
+	}
+	total := 6 // startup banner / header margin
+	for _, m := range msgs {
+		total += 2
+		if m.Kind == "tool" {
+			total += 1 + min(countText(m.Output), 8)
+		} else {
+			total += countText(m.Text)
+		}
+	}
+	return total
 }
 
 // trimScreenBlankTail drops unpainted blank rows at the bottom of an ANSI

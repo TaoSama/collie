@@ -15,7 +15,7 @@
   // Back to the bottom: ctrl+End is Claude Code's and Codex's jump there;
   // agy ignores it and goes down with PageDown, which the other two do
   // nothing with at the bottom. A few, for a long way up.
-  const CTRL_END = "\x1b[1;5F", PAGE_DOWN = "\x1b[6~", HOME_PAGES = 4;
+  const CTRL_END = "\x1b[1;5F", PAGE_UP = "\x1b[5~", PAGE_DOWN = "\x1b[6~", HOME_PAGES = 4;
   // dy lines, toward older output when negative, at the middle of the pane.
   const report = (dy, cols, rows) =>
     `\x1b[<${dy < 0 ? UP : DOWN};${Math.ceil((cols || 2) / 2)};${Math.ceil((rows || 2) / 2)}M`.repeat(Math.abs(dy));
@@ -59,5 +59,5 @@
       drop() { owed = null; },
     };
   }
-  window.collieWheel = { report, tracker, sender, BURST };
+  window.collieWheel = { report, tracker, sender, BURST, PAGE_UP, HOME_SEQ: CTRL_END + PAGE_DOWN.repeat(HOME_PAGES) };
 })();

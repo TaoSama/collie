@@ -531,3 +531,73 @@ func TestPaneWheel(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeScreenDiffAndReadFastHedge(t *testing.T) {
+	prev := []string{"HDR", "L10", "L11", "L12", "L13", "L14", "L15", "FTR"}
+	cur := []string{"HDR", "L08", "L09", "L10", "L11", "L12", "L13", "FTR"}
+	shift, patch, _ := computeScreenDiff(prev, cur)
+	if shift != -2 {
+		t.Fatalf("shift = %d, want -2", shift)
+	}
+	// Reconstruct and verify bit-for-bit equality
+	got := make([]string, len(cur))
+	for r := range got {
+		if pr := r + shift; pr >= 0 && pr < len(prev) {
+			got[r] = prev[pr]
+		}
+	}
+	for _, p := range patch {
+		got[p[0].(int)] = p[1].(string)
+	}
+	if strings.Join(got, "\n") != strings.Join(cur, "\n") {
+		t.Fatalf("reconstructed = %v, want %v", got, cur)
+	}
+	if len(patch) != 4 { // HDR, L08, L09, FTR (4 of 8 matched!)
+		t.Fatalf("patch len = %d, want 4 (%v)", len(patch), patch)
+	}
+
+	// Verify ReadFast hedges a slow primary read and returns the fast hedge.
+	var calls atomic.Int32
+	h := &Herdr{
+		local: &Machine{
+			ID: "", Name: "test", Local: true, Online: true,
+			conn: &herdrConn{dial: func(ctx context.Context) (net.Conn, error) {
+				n := calls.Add(1)
+				c1, c2 := net.Pipe()
+				go func() {
+					defer c2.Close()
+					sc := bufio.NewScanner(c2)
+					if !sc.Scan() {
+						return
+					}
+					var req struct {
+						ID string `json:"id"`
+					}
+					json.Unmarshal(sc.Bytes(), &req)
+					if n == 1 {
+						select {
+						case <-time.After(150 * time.Millisecond):
+						case <-ctx.Done():
+							return
+						}
+					}
+					b, _ := json.Marshal(map[string]any{
+						"id":     req.ID,
+						"result": map[string]any{"read": map[string]any{"text": "hedged-ok", "revision": 9}},
+					})
+					c2.Write(append(b, '\n'))
+				}()
+				return c1, nil
+			}},
+		},
+		remote: map[string]*Machine{},
+	}
+	t0 := time.Now()
+	rr, err := h.ReadFast(context.Background(), "w1:p1", "recent", "ansi", 40, 8*time.Millisecond)
+	if err != nil {
+		t.Fatalf("ReadFast error: %v", err)
+	}
+	if rr.Text != "hedged-ok" || time.Since(t0) > 80*time.Millisecond {
+		t.Fatalf("ReadFast = %q in %v, want hedged-ok quickly", rr.Text, time.Since(t0))
+	}
+}

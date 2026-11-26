@@ -5344,13 +5344,41 @@
   let term = null;
   let size = { cols: 0, rows: 0 };
   let prevScreenLines = null;
+  let rawScreenLines = null;
   let pendingScreen = null;
   let screenFresh = true;
   let screenWheel = false; // the frame says: hand the wheel to the program (paneWheel)
+  let screenKind = "";
+  let screenCursor = false;
+  const screenCache = window.collieScreenCache.createScreenCache();
+  let scrollSyncTimer = null;
+  let topProbeTimer = null;
+  let pageUpBusy = false;
+  let pendingScrollPerf = null;
+  const screenPerfLog = (window.__collieScreenPerf = []);
   const wheelUp = window.collieWheel.tracker(); // how far that turned the program's view up
   // The reports go out a few at a time, in line with typed keys.
   const wheelOut = window.collieWheel.sender((pane, text) =>
     (sendChain = sendChain.then(() => postPane(pane, "text", { text })).catch((e) => toast(e.message))));
+  function cancelScreenScrollTimers() {
+    clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
+    clearTimeout(topProbeTimer); topProbeTimer = null;
+    pendingScrollPerf = null;
+    pageUpBusy = false;
+  }
+  function setScreenWheel(on) {
+    const want = !!on;
+    const v = $("#viewer");
+    if (want) v.dataset.wheel = "1"; else delete v.dataset.wheel;
+    if (screenWheel !== want) {
+      screenWheel = want;
+      fitTerm();
+    }
+  }
+  function recordScreenPerf(entry) {
+    screenPerfLog.push(entry);
+    if (screenPerfLog.length > 80) screenPerfLog.shift();
+  }
 
   // A plain shell has no conversation to show, so it opens on the screen.
   const isShell = () => { const v = find(current); return !!v && !v.is_agent; };
@@ -5387,11 +5415,18 @@
   }
   function resetScreen() {
     prevScreenLines = null;
+    rawScreenLines = null;
     pendingScreen = null;
     setTermLook(null);
     screenFresh = true;
-    screenWheel = false;
+    screenKind = "";
+    screenCursor = false;
+    setScreenWheel(false);
+    cancelScreenScrollTimers();
+    screenCache.reset();
     size = { cols: 0, rows: 0 };
+    const sb = $("#screen-sb");
+    if (sb) sb.hidden = true;
     hideJump();
     if (term) {
       term.reset();
@@ -5435,14 +5470,153 @@
       term.options.fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--mono");
     });
   }
+  function updateScreenScrollbar() {
+    const sbEl = $("#screen-sb"), thumb = $("#screen-sb-thumb");
+    if (!sbEl || !thumb) return;
+    if (!screenWheel || curMode() !== "screen") {
+      sbEl.hidden = true;
+      return;
+    }
+    const sb = screenCache.scrollbar();
+    if (!sb.visible) {
+      sbEl.hidden = true;
+      hideJump();
+      return;
+    }
+    sbEl.hidden = false;
+    const trackH = sbEl.clientHeight || 1;
+    const thumbH = Math.max(28, Math.min(trackH, Math.round(trackH * sb.thumbRatio)));
+    const maxTop = Math.max(0, trackH - thumbH);
+    thumb.style.height = thumbH + "px";
+    thumb.style.top = Math.round(maxTop * sb.ratio) + "px";
+    sbEl.dataset.ratio = sb.ratio.toFixed(3);
+    sbEl.dataset.cached = String(sb.cached);
+    sbEl.dataset.total = String(sb.total);
+    if (sb.atBottom) hideJump(); else $("#jump").hidden = false;
+  }
+
+  function sendScreenHome() {
+    if (!current) return;
+    cancelScreenScrollTimers();
+    wheelOut.drop();
+    const home = wheelUp.home();
+    const pane = home?.pane || current;
+    const text = home?.text || window.collieWheel.HOME_SEQ;
+    screenCache.returnToLive();
+    sendChain = sendChain.then(() => postPane(pane, "text", { text })).catch((e) => toast(e.message));
+    updateScreenScrollbar();
+  }
+
+  function sendScreenPageUp() {
+    if (!current || pageUpBusy) return;
+    pageUpBusy = true;
+    const pane = current;
+    wheelUp.scrolled(pane, -Math.max(10, (size.rows || 40) - 8));
+    sendChain = sendChain.then(() => postPane(pane, "text", { text: window.collieWheel.PAGE_UP }))
+      .catch((e) => toast(e.message))
+      .finally(() => { pageUpBusy = false; });
+  }
+
+  function armTopProbe() {
+    clearTimeout(topProbeTimer);
+    topProbeTimer = setTimeout(() => {
+      topProbeTimer = null;
+      if (screenCache.noteNoChangeAfterUp()) updateScreenScrollbar();
+    }, 240);
+  }
+
+  function scheduleAgentSync(syncDelta) {
+    clearTimeout(scrollSyncTimer);
+    if (!syncDelta || !current) return;
+    scrollSyncTimer = setTimeout(() => {
+      scrollSyncTimer = null;
+      if (!current || !screenWheel || curMode() !== "screen") return;
+      const st = screenCache.state();
+      if (st.atBottom) {
+        if (st.agentTop < Math.max(0, st.cached - (st.bodyRows || 1))) sendScreenHome();
+        return;
+      }
+      const delta = st.viewTop - st.agentTop;
+      if (!delta) return;
+      const ticks = Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / (st.linesPerTick || 1)));
+      wheelUp.scrolled(current, ticks);
+      wheelOut.scroll(current, ticks, size.cols, size.rows);
+      screenCache.noteAgentSync(ticks);
+      if (ticks < 0) armTopProbe();
+    }, 85);
+  }
+
+  function paintScreenLines(lines, cols, paneRows, cursor, { stick = false, savedTop = 0, perf = null } = {}) {
+    if (!term) return;
+    const el = $("#screen");
+    const rows = screenWheel ? Math.max(paneRows || 1, lines.length) : Math.max(1, lines.length);
+    const dimChanged = cols !== size.cols || paneRows !== size.rows;
+    if (dimChanged) size = { cols, rows: paneRows };
+    const full = !prevScreenLines || cols !== term.cols || rows < term.rows;
+    if (cols !== term.cols || rows !== term.rows) {
+      if (full) term.reset();
+      term.resize(cols, rows);
+    }
+    if (dimChanged) fitTerm();
+    let out = "";
+    for (let r = 0; r < rows; r++) {
+      const line = lines[r] ?? "";
+      if (full || prevScreenLines[r] !== line) out += `\x1b[${r + 1};1H\x1b[0m\x1b[2K${line}`;
+    }
+    // The frame saved the cursor (ESC 7) where the pane's is; an unchanged
+    // row keeps what it saved last time.
+    if (out) out = "\x1b[?25l\x1b[?7l" + out + (cursor ? "\x1b8\x1b[0m\x1b[?25h" : "");
+    prevScreenLines = lines.length === rows ? lines.slice() : Array.from({ length: rows }, (_, r) => lines[r] ?? "");
+    screenFresh = false;
+    const finishScroll = () => {
+      if (screenWheel) {
+        // Fullscreen agents fit inside #screen (no vertical bounce back to
+        // scrollHeight when scrollHeight - clientHeight < 40).
+        if (el.scrollHeight <= el.clientHeight + 2) el.scrollTop = 0;
+        updateScreenScrollbar();
+        return;
+      }
+      if (stick) {
+        el.scrollTop = el.scrollHeight;
+        hideJump();
+      } else {
+        el.scrollTop = savedTop;
+        if (screenNearBottom()) hideJump(); else $("#jump").hidden = false;
+      }
+    };
+    if (!out) { finishScroll(); return; }
+    term.write(out, () => {
+      finishScroll();
+      if (perf) {
+        const domMs = performance.now() - perf.t0;
+        requestAnimationFrame(() => {
+          finishScroll();
+          recordScreenPerf({
+            kind: screenKind,
+            hit: perf.hit,
+            domMs,
+            paintMs: performance.now() - perf.t0,
+            sseMs: perf.sseMs ?? 0,
+            cached: screenCache.state().cached,
+          });
+        });
+      } else {
+        requestAnimationFrame(finishScroll);
+      }
+    });
+  }
+
   // An agent drawing fullscreen keeps its history to itself, so once the
   // page can't scroll any further that way, the wheel or a finger's drag
-  // goes to it as mouse wheel reports (SGR, one per line) and it scrolls
-  // its own view; the next frames show where it went.
+  // scrolls the local frame cache immediately (< 5ms on hit) and syncs /
+  // prefetches the real agent with short SGR wheel reports.
   function forwardScroll() {
     const el = $("#screen");
     const lineH = () => term.options.fontSize * term.options.lineHeight;
-    const atEdge = (dy) => dy < 0 ? el.scrollTop <= 0 : el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
+    const atEdge = (dy) => {
+      if (screenWheel && el.scrollHeight <= el.clientHeight + 2) return true;
+      return dy < 0 ? el.scrollTop <= 0 : el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
+    };
     const on = () => screenWheel && curMode() === "screen";
     let rest = 0;
     // dy < 0 is toward older output.
@@ -5451,14 +5625,103 @@
       const n = Math.trunc(rest / lineH());
       if (!n) return;
       rest -= n * lineH();
-      wheelUp.scrolled(current, n);
-      wheelOut.scroll(current, n, size.cols, size.rows);
+      const t0 = performance.now();
+      const res = screenCache.scroll(n, t0);
+      if (res.renderLines) {
+        const st = screenCache.state();
+        paintScreenLines(res.renderLines, size.cols || term.cols, size.rows || term.rows, st.atBottom ? screenCursor : false, {
+          perf: { t0, hit: res.hit, sseMs: 0 },
+        });
+        updateScreenScrollbar();
+      }
+      if (res.goHome) {
+        sendScreenHome();
+        return;
+      }
+      if (res.sendTicks) {
+        clearTimeout(scrollSyncTimer);
+        scrollSyncTimer = null;
+        if (!res.hit) pendingScrollPerf = { t0, hit: false };
+        wheelUp.scrolled(current, res.sendTicks);
+        wheelOut.scroll(current, res.sendTicks, size.cols, size.rows);
+        if (res.sendTicks < 0) armTopProbe();
+      } else if (res.syncDelta) {
+        scheduleAgentSync(res.syncDelta);
+      }
     };
     el.addEventListener("wheel", (e) => {
       if (!on() || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY) || !atEdge(e.deltaY)) return;
       e.preventDefault();
       scrollPane(e.deltaMode === 1 ? e.deltaY * lineH() : e.deltaMode === 2 ? e.deltaY * el.clientHeight : e.deltaY);
     }, { passive: false });
+    // Real right-edge scrollbar: click track or drag thumb smoothly.
+    const sbEl = $("#screen-sb"), thumb = $("#screen-sb-thumb");
+    if (sbEl && thumb) {
+      let dragging = false, grabOff = 0, lastDragPageAt = 0;
+      const ratioFromY = (clientY) => {
+        const rect = sbEl.getBoundingClientRect();
+        const th = thumb.offsetHeight || 28;
+        const maxTop = Math.max(1, rect.height - th);
+        return Math.max(0, Math.min(1, (clientY - rect.top - grabOff) / maxTop));
+      };
+      const scrubTo = (ratio) => {
+        if (!on()) return;
+        const t0 = performance.now();
+        const res = screenCache.scrollToRatio(ratio, t0);
+        if (res.renderLines) {
+          paintScreenLines(res.renderLines, size.cols || term.cols, size.rows || term.rows, res.goHome ? screenCursor : false, {
+            perf: { t0, hit: true, sseMs: 0 },
+          });
+          updateScreenScrollbar();
+        }
+        if (res.goHome) {
+          sendScreenHome();
+        } else if (res.pageUp) {
+          clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
+          wheelOut.drop();
+          if (t0 - lastDragPageAt > 60) {
+            lastDragPageAt = t0;
+            sendScreenPageUp();
+            armTopProbe();
+          }
+        } else if (res.sendTicks) {
+          clearTimeout(scrollSyncTimer); scrollSyncTimer = null;
+          wheelUp.scrolled(current, res.sendTicks);
+          wheelOut.scroll(current, res.sendTicks, size.cols, size.rows);
+          armTopProbe();
+        } else if (res.syncDelta) {
+          scheduleAgentSync(res.syncDelta);
+        }
+      };
+      sbEl.addEventListener("pointerdown", (e) => {
+        if (!on() || e.button !== 0) return;
+        e.preventDefault();
+        const tr = thumb.getBoundingClientRect();
+        grabOff = (e.clientY >= tr.top && e.clientY <= tr.bottom) ? (e.clientY - tr.top) : (tr.height / 2);
+        dragging = true;
+        sbEl.classList.add("drag");
+        sbEl.setPointerCapture?.(e.pointerId);
+        scrubTo(ratioFromY(e.clientY));
+      });
+      sbEl.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        scrubTo(ratioFromY(e.clientY));
+      });
+      const endDrag = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        sbEl.classList.remove("drag");
+        try { sbEl.releasePointerCapture?.(e.pointerId); } catch {}
+      };
+      sbEl.addEventListener("pointerup", endDrag);
+      sbEl.addEventListener("pointercancel", endDrag);
+      sbEl.addEventListener("wheel", (e) => {
+        if (!on() || !e.deltaY) return;
+        e.preventDefault();
+        scrollPane(e.deltaMode === 1 ? e.deltaY * lineH() : e.deltaMode === 2 ? e.deltaY * el.clientHeight : e.deltaY);
+      }, { passive: false });
+    }
     // A drag goes one way: sideways stays the page's (a phone pans a wide
     // screen); up and down scroll the page first, the program after.
     let x0 = 0, y0 = 0, axis = null;
@@ -5504,13 +5767,24 @@
   function fitTerm() {
     if (!term || !size.cols) return;
     const el = $("#screen"), was = screenNearBottom();
-    const pad = parseFloat(getComputedStyle(el).paddingLeft) * 2;
-    const fitW = Math.floor(((el.clientWidth - pad) / size.cols / 0.602) * 2) / 2;
+    const cs = getComputedStyle(el);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const fitW = Math.floor(((el.clientWidth - padX) / size.cols / 0.602) * 2) / 2;
     const overview = store.get("term-overview", false);
-    const fs = narrowScreen.matches && !overview ? Math.min(14, Math.max(fitW, 11)) : Math.max(4.5, Math.min(14, fitW));
+    let fs = narrowScreen.matches && !overview ? Math.min(14, Math.max(fitW, 11)) : Math.max(4.5, Math.min(14, fitW));
+    // Fullscreen agents (screenWheel) own their scrollback: fit all pane rows
+    // inside #screen vertically too so native overflow never clips or bounces
+    // the top line on laptop viewports.
+    if (screenWheel && size.rows && (!narrowScreen.matches || overview) && el.clientHeight > padY + 40) {
+      const maxCellH = Math.floor((el.clientHeight - padY) / size.rows);
+      const fitH = Math.floor((maxCellH / (term.options.lineHeight + 0.04)) * 2) / 2;
+      if (fitH >= 8) fs = Math.min(fs, fitH);
+    }
     if (term.options.fontSize !== fs) {
       term.options.fontSize = fs;
-      if (was) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; hideJump(); });
+      if (was && !screenWheel) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; hideJump(); });
+      else if (screenWheel) requestAnimationFrame(() => { if (el.scrollHeight <= el.clientHeight + 2) el.scrollTop = 0; updateScreenScrollbar(); });
     }
     $("#term-fit").textContent = overview ? "放大" : "全览";
     $("#term-fit").hidden = !narrowScreen.matches || fitW >= 11;
@@ -5574,11 +5848,11 @@
     if (m === "chat") return openChat(id, restore);
     if (m === "screen") ensureTerm();
     let pendingRestore = restore && !restore.atBottom ? restore : null;
-    const part = "stream?mode=" + m;
+    const part = m === "screen" ? "stream?mode=screen&diff=1" : "stream?mode=" + m;
     openPaneStream(() => {
       const d = directOf(id);
       return d ? { es: new EventSource(directURL(d, id, part)), fallback: () => dropDirect(id) }
-        : { es: openES(paneURL(id, "stream") + "?mode=" + m) };
+        : { es: openES(paneURL(id, "stream") + "?mode=" + m + (m === "screen" ? "&diff=1" : "")) };
     }, ({ listen, ready, reopen, direct }) => {
       // Prefer the node when this browser can reach it directly.
       if (!direct) probeDirect(id).then((got) => { if (got) reopen(); });
@@ -5589,12 +5863,18 @@
         pendingRestore = null;
         ready();
       });
+      listen("hist", (e) => {
+        if (m !== "screen" || typeof screenCache === "undefined") return;
+        const h = JSON.parse(e.data).hist || 0;
+        if (screenCache.setHistHint(h)) updateScreenScrollbar();
+      });
       listen("gone", () => { $("#gone").hidden = false; wheelUp.forget(); closeStream(); });
     });
   }
   function closeStream() {
     stream?.close(); stream = null; setPaneRetry(false); term?.blur();
     resetEarlier($("#thread"), null);
+    if (typeof cancelScreenScrollTimers === "function") cancelScreenScrollTimers();
     wheelOut.drop();
     // Leaving the screen: an agent scrolled up from here goes back to the
     // bottom, after whatever is still on its way to it.
@@ -5604,12 +5884,15 @@
 
   function drawScreen(f, restore = null) {
     if (!term) return;
-    screenWheel = !!f.wheel;
+    const sseNow = performance.now();
+    setScreenWheel(!!f.wheel);
+    screenKind = f.kind || "";
+    screenCursor = !!f.cursor;
     const el = $("#screen");
     const stick = restore ? !!restore.atBottom : (screenFresh || screenNearBottom());
     setTermLook(f.kind);
-    const raw = (f.text || "").replace(/\r\n/g, "\n").replace(/\r/g, "");
-    const lines = raw ? raw.split("\n") : [""];
+    const decoded = window.collieScreenCache.applyFramePatch(rawScreenLines, f);
+    rawScreenLines = decoded;
     if (!screenFresh && term.hasSelection()) {
       pendingScreen = f;
       return;
@@ -5618,8 +5901,8 @@
     // page has history; a fullscreen program's frame is all there is.
     if (!stick && prevScreenLines && !screenWheel) {
       const check = Math.min(6, prevScreenLines.length);
-      const sameHead = lines.length >= prevScreenLines.length &&
-        prevScreenLines.slice(0, check).every((l, i) => lines[i] === l);
+      const sameHead = decoded.length >= prevScreenLines.length &&
+        prevScreenLines.slice(0, check).every((l, i) => decoded[i] === l);
       if (!sameHead) {
         pendingScreen = f;
         $("#jump").hidden = false;
@@ -5630,38 +5913,26 @@
     const savedTop = restore && !restore.atBottom ? restore.scrollTop : el.scrollTop;
     const cols = f.cols || size.cols || 120;
     const paneRows = f.rows || size.rows || 40;
-    const rows = Math.max(1, lines.length);
-    const dimChanged = cols !== size.cols || paneRows !== size.rows;
-    if (dimChanged) size = { cols, rows: paneRows };
-    const full = !prevScreenLines || cols !== term.cols || rows < term.rows;
-    if (cols !== term.cols || rows !== term.rows) {
-      if (full) term.reset();
-      term.resize(cols, rows);
-    }
-    if (dimChanged) fitTerm();
-    let out = "";
-    for (let r = 0; r < rows; r++) {
-      if (full || prevScreenLines[r] !== lines[r]) out += `\x1b[${r + 1};1H\x1b[0m\x1b[2K${lines[r]}`;
-    }
-    // The frame saved the cursor (ESC 7) where the pane's is; an unchanged
-    // row keeps what it saved last time.
-    if (out) out = "\x1b[?25l\x1b[?7l" + out + (f.cursor ? "\x1b8\x1b[0m\x1b[?25h" : "");
-    prevScreenLines = lines;
-    screenFresh = false;
-    const finishScroll = () => {
-      if (stick) {
-        el.scrollTop = el.scrollHeight;
-        hideJump();
-      } else {
-        el.scrollTop = savedTop;
-        if (screenNearBottom()) hideJump(); else $("#jump").hidden = false;
+    let lines = decoded;
+    let cursor = !!f.cursor;
+    let perf = null;
+    if (screenWheel) {
+      clearTimeout(topProbeTimer);
+      topProbeTimer = null;
+      const ing = screenCache.ingest(decoded, {
+        pane: current, kind: screenKind, cols, rows: paneRows, hist: f.hist || 0, now: sseNow,
+      });
+      lines = ing.renderLines;
+      cursor = ing.atBottom ? !!f.cursor : false;
+      if (pendingScrollPerf) {
+        perf = { t0: pendingScrollPerf.t0, hit: false, sseMs: sseNow - pendingScrollPerf.t0 };
+        pendingScrollPerf = null;
       }
-    };
-    if (!out) { finishScroll(); return; }
-    term.write(out, () => {
-      finishScroll();
-      requestAnimationFrame(finishScroll);
-    });
+    } else if (lines.length > 0) {
+      lines = lines.slice();
+      lines[0] = window.collieScreenCache.polishClaudeRow0(lines[0], screenKind);
+    }
+    paintScreenLines(lines, cols, paneRows, cursor, { stick, savedTop, perf });
   }
   function cleanLog(text) {
     return text.split("\n").map((l) => l.replace(/\s+$/, ""))
@@ -5681,6 +5952,7 @@
   }
   $("#screen").addEventListener("scroll", () => {
     if (curMode() !== "screen") return;
+    if (screenWheel) { updateScreenScrollbar(); return; }
     if (screenNearBottom()) {
       hideJump();
       if (pendingScreen) { const p = pendingScreen; pendingScreen = null; drawScreen(p); }
@@ -5695,6 +5967,12 @@
   }, { passive: true });
   $("#jump").addEventListener("click", () => {
     if (curMode() === "screen") {
+      if (screenWheel) {
+        const res = screenCache.scrollToRatio(1, performance.now());
+        if (res.renderLines) paintScreenLines(res.renderLines, size.cols || term.cols, size.rows || term.rows, screenCursor);
+        sendScreenHome();
+        return;
+      }
       const el = $("#screen");
       el.scrollTop = el.scrollHeight;
       hideJump();
@@ -7623,6 +7901,11 @@
   };
   function typeIntoPane(data) {
     if (!current) return;
+    if (screenWheel && curMode() === "screen") {
+      cancelScreenScrollTimers();
+      screenCache.returnToLive();
+      updateScreenScrollbar();
+    }
     if (SEQ[data]) return sendKeys([SEQ[data]]);
     if (data.length === 1 && data.charCodeAt(0) < 27) return sendKeys(["ctrl+" + String.fromCharCode(data.charCodeAt(0) + 96)]);
     sendText(data);
@@ -7654,6 +7937,11 @@
   $("#keys").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b || !current) return;
+    if (screenWheel && curMode() === "screen") {
+      cancelScreenScrollTimers();
+      screenCache.returnToLive();
+      updateScreenScrollbar();
+    }
     if (b.dataset.k) sendKeys([b.dataset.k]); else if (b.dataset.t) sendText(b.dataset.t);
   });
   $("#keys").addEventListener("mousedown", (e) => e.preventDefault());

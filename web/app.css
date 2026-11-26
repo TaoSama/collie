@@ -552,6 +552,22 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .viewer[data-mode="chat"] { background: var(--bg); }
 .viewer[data-mode="chat"] ~ .keys:not(.open) { display: none; }
 .screen { position: absolute; inset: 0; overflow: auto; overscroll-behavior-y: contain; overflow-anchor: none; scrollbar-gutter: stable; padding: 14px 16px 28px; outline: none; }
+.viewer[data-wheel="1"] > .screen { padding: 8px 20px 8px 16px; scrollbar-gutter: auto; }
+.viewer[data-wheel="1"] > .jump { right: 22px; }
+.screen-sb {
+  display: none; position: absolute; top: 6px; right: 2px; bottom: 6px; width: 14px; z-index: 6;
+  cursor: pointer; touch-action: none; user-select: none;
+}
+.viewer[data-mode="screen"][data-wheel="1"] > .screen-sb:not([hidden]) { display: block; }
+.screen-sb-thumb {
+  position: absolute; left: 50%; transform: translateX(-50%); width: 5px; min-height: 28px;
+  border-radius: 999px; background: color-mix(in srgb, var(--term-fg) 26%, transparent);
+  transition: width .12s, background-color .12s;
+}
+.screen-sb:hover .screen-sb-thumb, .screen-sb.drag .screen-sb-thumb {
+  width: 7px; background: color-mix(in srgb, var(--term-fg) 48%, transparent);
+}
+.screen-sb.drag .screen-sb-thumb { background: color-mix(in srgb, var(--term-fg) 64%, transparent); }
 /* The terminal is a character grid: a skin's tracking must not reach it. */
 .screen .xterm { letter-spacing: normal; }
 .screen .xterm { width: max-content; }

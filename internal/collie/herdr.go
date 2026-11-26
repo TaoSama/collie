@@ -11,10 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+var herdrReaderPool = sync.Pool{
+	New: func() any { return bufio.NewReaderSize(nil, 256*1024) },
+}
 
 // herdrConn is a minimal client for one herdr socket API: newline-delimited
 // JSON requests of the form {"id","method","params"} answered by
@@ -114,7 +119,12 @@ func (h *herdrConn) call(ctx context.Context, method string, params any) (json.R
 		return nil, err
 	}
 
-	r := bufio.NewReaderSize(conn, 256*1024)
+	r := herdrReaderPool.Get().(*bufio.Reader)
+	r.Reset(conn)
+	defer func() {
+		r.Reset(nil)
+		herdrReaderPool.Put(r)
+	}()
 	for {
 		line, err := r.ReadBytes('\n')
 		if err != nil {
@@ -259,6 +269,38 @@ func (h *Herdr) Read(ctx context.Context, paneID, source, format string, lines i
 	}
 	err := h.Call(ctx, "pane.read", p, &r)
 	return r.Read, err
+}
+
+// ReadFast runs an idempotent local pane.read with optional hedging: if herdr
+// hasn't answered within hedgeAfter (e.g. its occasional 100ms accept-loop
+// stall on a fresh socket), a second read is fired on a fresh connection and
+// the first response wins. Remote panes and zero hedgeAfter call Read directly.
+func (h *Herdr) ReadFast(ctx context.Context, paneID, source, format string, lines int, hedgeAfter time.Duration) (ReadResult, error) {
+	if hedgeAfter <= 0 || machineOf(paneID) != "" {
+		return h.Read(ctx, paneID, source, format, lines)
+	}
+	type resErr struct {
+		res ReadResult
+		err error
+	}
+	hctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ch := make(chan resErr, 2)
+	fire := func() {
+		r, e := h.Read(hctx, paneID, source, format, lines)
+		ch <- resErr{r, e}
+	}
+	go fire()
+	timer := time.NewTimer(hedgeAfter)
+	defer timer.Stop()
+	select {
+	case out := <-ch:
+		return out.res, out.err
+	case <-timer.C:
+		go fire()
+		out := <-ch
+		return out.res, out.err
+	}
 }
 
 func (h *Herdr) PaneSize(ctx context.Context, paneID string) (Rect, error) {

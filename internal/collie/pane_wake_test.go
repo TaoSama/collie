@@ -46,7 +46,11 @@ func TestPollAfterWakesOnInput(t *testing.T) {
 	if !pollAfter(done, wake, pollRates{normal: time.Hour, quick: time.Hour}, &time.Time{}) || time.Since(t0) > time.Second {
 		t.Fatal("a wake between polls was lost")
 	}
-	// Right after input it looks again quickly.
+	// Right after input it looks again quickly (snap and burst phases).
+	t0 = time.Now()
+	if !pollAfter(done, wake, pollRates{normal: time.Hour, quick: time.Hour, burst: time.Hour, snap: time.Millisecond}, &woke) || time.Since(t0) > time.Second {
+		t.Fatal("no snap look right after input")
+	}
 	t0 = time.Now()
 	if !pollAfter(done, wake, pollRates{normal: time.Hour, quick: time.Hour, burst: time.Millisecond}, &woke) || time.Since(t0) > time.Second {
 		t.Fatal("no quick look after input")

@@ -33,3 +33,9 @@ Codex 按它以为的终端配色：提示行、输入框的底色是终端背�
 - herdr 0.9.5 的 `send_keys` 没有 `home`、`end`、`delete`、`pageup`、`pagedown` 这些键名（报 `invalid_key`），屏幕模式里按这几个键原样以文字发出整个序列。
 - 只认 `agentKinds` 里的 agent（claude、codex、agy）且 scrollback 为 0：herdr 的 API 不告诉我们 pane 开没开鼠标上报，shell 收到这些报告会原样打出来。三种 agent 在行内模式下收到都会忽略，不会进输入框（Claude Code 2.1、Codex 0.172、agy 实测），所以行内但历史还不满一屏时误发也没事。别的 agent 没试过，不转发。
 - 代价随行数线性涨：一直在滚的满屏 shell，每帧要重画全部行（DOM 渲染器），帧也是整段发、SSE 不压缩。80 列带颜色的输出持续滚动时，从 500 行到 1000 行，每帧从约 63 KB 涨到约 126 KB，浏览器主线程占用约翻倍。没有输出时不发帧，没有影响。
+
+## 全屏 agent 滚动缓存、滚动条与低延迟（`web/screencache.js`、`internal/collie/server_terminal.go`）
+
+- **顶部卡住一行与回弹**：全屏 agent（`wheel: true`）如果 `fitTerm()` 只按列宽缩放而不按行高缩放，在 760–820px 高度窗口上 `#screen` 会纵向溢出 1–2 行（`0 < scrollHeight - clientHeight < 40`），导致 `screenNearBottom()` 永远为真，每来一帧 `finishScroll()` 就把 `scrollTop` 拉回底部，顶部第 0 行反复被切掉并吞掉一半滚轮。全屏模式下 `fitTerm()` 同时按 `cols` 与 `rows` 适配，且 `term.rows` 不低于 `paneRows`（避免 `trimScreenBlankTail` 触发 `term.reset()`）。
+- **各家 agent 的固定顶栏与底栏**：滚离底部后，Claude 会在第 0 行钉住一条 `48;2;55;55;55` 底色、`38;2;80;80;80` 低对比前景的提示栏，且在底部横线上方留 1 行空行间隔；Codex 在第 0 行钉住深灰提示栏并在输入框上方单独占一行画 `↓ Back to bottom · esc`；agy 在前 2 行钉住提示栏并在横线上方单独占一行画 `↓ N lines`。`web/screencache.js` 的 `segmentFrame` 把这些固定顶栏、底栏和独立滚动提示行与中间可滚动正文分开，只拼接正文行进缓存（避免把 `↓ Back to bottom`、`↓ N lines` 或空行间隔烤进历史），同时仅提亮 Claude 粘性顶栏里不可读的 `38;2;80;80;80` 前景，不改动 Codex 的任何颜色。
+- **herdr 100ms 尾延迟与 2ms 快轮询**：本机 `herdr server` 新建 Unix socket 连接偶发撞上 100ms accept/轮询槽。活跃输入期间（`wakeFast` 内），`streamPane` 跳过非首帧的 `PaneSize`/`Pane` 同步 RPC、在唤醒后前 35ms 用 2ms `snap` 间隔捕抓 agent 2–4ms 的重绘，并对只读幂等的本机 `pane.read` 做 6ms hedged read（`Herdr.ReadFast`，绝不对写操作 hedge），同时支持 `diff=1` 行移位增量帧，将冷未命中 SSE 延迟压到 ~5ms，本地缓存命中 + 向上预取压到 <10ms。
