@@ -87,11 +87,7 @@ class PushStream:
                         continue
                     if packet.sid:
                         await c.send_ack(ws, packet.sid)
-                    work = self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message, time.monotonic())
-                    # SID-only packets can also contain comments. Keep one of these
-                    # handoffs in flight while the hub is unavailable.
-                    if packet.cmd in (CMD_PUSH_DOC_FEED, CMD_PUSH_SID):
-                        await asyncio.wrap_future(work)
+                    self._pool.submit(self._push, packet.cmd, packet.payload, packet, on_message, time.monotonic())
             finally:
                 beat.cancel()
 

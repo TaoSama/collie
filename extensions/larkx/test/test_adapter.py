@@ -449,18 +449,14 @@ class Pushes(unittest.TestCase):
         f = self.feishu()
         out = []
 
-        def received(m):
-            out.append(m)
-            return True
-
-        f._deliver_doc_comments(self.feed(), received)
+        f._deliver_doc_comments(self.feed(), out.append)
         self.assertEqual(len(out), 1)
         m = out[0]
         self.assertEqual((m["id"], m["chat_id"], m["chat"], m["chat_kind"], m["sender_name"], m["owner"]),
                          ("doc:d1", "doc:f1", "周报", "doc", "甲", False))
         self.assertEqual(m["text"], "（评论了文档：https://example.feishu.cn/docx/abc）\n这里数字不对 `42`")
-        f._deliver_doc_comments(self.feed(status=2), received)
-        self.feishu()._deliver_doc_comments(self.feed(status=3), received)
+        f._deliver_doc_comments(self.feed(status=2), out.append)
+        self.feishu()._deliver_doc_comments(self.feed(status=3), out.append)
         self.assertEqual(len(out), 1, "repeated comments and other feed updates are not news")
         with self.assertRaises(lark.NotSent):
             f.client = FakeClient(answer("1"))
@@ -493,6 +489,60 @@ class Pushes(unittest.TestCase):
         ext._listen(types.SimpleNamespace(wait=lambda _: False))
         self.assertEqual(after_first, ["doc:d1", "doc:d1"], "retry without a push replay")
         self.assertEqual(attempts, after_first, "deduplicate after the hub accepts the comment")
+
+    def test_doc_comment_can_be_replayed_after_retries_exhausted(self):
+        from main import Extension
+        from peer import Error
+
+        for code in ("hub_unavailable", "timeout"):
+            with self.subTest(code=code):
+                ext, f = Extension(), self.feishu()
+                attempts, waits = [], []
+                offline = True
+
+                def call(method, params):
+                    attempts.append(params["message"]["id"])
+                    if offline:
+                        raise Error(code, "offline")
+
+                def wait(delay):
+                    waits.append(delay)
+                    return len(waits) > 3  # bounds the test even if the retry loop regresses
+
+                ext.peer = types.SimpleNamespace(call=call)
+                stop = types.SimpleNamespace(wait=wait)
+
+                def received(m):
+                    return ext._received(m, stop)
+
+                f._deliver_doc_comments(self.feed(), received)
+                self.assertEqual(waits, [2, 5, 15])
+                self.assertEqual(attempts, ["doc:d1"] * 4)
+                self.assertNotIn("doc:d1", f.recent)
+                offline = False
+                f._deliver_doc_comments(self.feed(status=2), received)
+                f._deliver_doc_comments(self.feed(status=2), received)
+                self.assertEqual(attempts, ["doc:d1"] * 5)
+
+    def test_doc_comment_replay_while_handoff_is_pending(self):
+        f = self.feishu()
+        started, release = threading.Event(), threading.Event()
+        attempts = []
+
+        def blocked(m):
+            attempts.append(m["id"])
+            started.set()
+            release.wait(2)
+
+        thread = threading.Thread(target=f._deliver_doc_comments, args=(self.feed(), blocked))
+        thread.start()
+        try:
+            self.assertTrue(started.wait(2))
+            f._deliver_doc_comments(self.feed(status=2), lambda m: attempts.append(m["id"]))
+        finally:
+            release.set()
+            thread.join()
+        self.assertEqual(attempts, ["doc:d1"])
 
     def test_frames(self):
         import gzip
@@ -532,12 +582,26 @@ class Session(unittest.TestCase):
 
         pkt = U.P.Packet(sid="s9", cmd=14004, payload=Pushes.feed()).SerializeToString()
         frame = U.P.Frame(payloadEncoding="gzip", payload=gzip.compress(pkt)).SerializeToString()
-        acks, got = [], []
+        chat = U.P.Frame(payload=U.P.Packet(sid="s10", cmd=6).SerializeToString()).SerializeToString()
+        acks, got, chat_progress = [], [], []
+        doc_started, release_doc, chat_delivered = threading.Event(), threading.Event(), threading.Event()
 
         async def serve(ws):
             await ws.send(frame)
+            await asyncio.to_thread(doc_started.wait, 2)
+            await ws.send(chat)
+            chat_progress.append(await asyncio.to_thread(chat_delivered.wait, 1))
+            release_doc.set()
             await ws.send(b"not a frame")
             await asyncio.sleep(0.3)
+
+        def received(m):
+            if m["id"] == "doc:d1":
+                doc_started.set()
+                release_doc.wait(3)
+            else:
+                chat_delivered.set()
+            got.append(m)
 
         class Client:
             async def heartbeat_loop(self, ws):
@@ -553,13 +617,16 @@ class Session(unittest.TestCase):
                 c.build_ws_url = lambda: "ws://127.0.0.1:%d" % port
                 f = Pushes().feishu()
                 f.client = c
-                await f._pushes._session(got.append)
+                f._pushes._messages = lambda _: [{"id": "m1"}]
+                f._pushes._deliver = lambda m, callback, _: callback(m)
+                await f._pushes._session(received)
                 await asyncio.sleep(0.2)
                 return f
 
         f = asyncio.run(main())
-        self.assertEqual(acks, ["s9"])
-        self.assertEqual([m["id"] for m in got], ["doc:d1"])
+        self.assertEqual(acks, ["s9", "s10"])
+        self.assertEqual(chat_progress, [True], "a blocked comment must not stall normal pushes")
+        self.assertCountEqual([m["id"] for m in got], ["doc:d1", "m1"])
         self.assertEqual(f._pushes._bad_frames, 0, "a bad frame is counted, then said and reset")
 
 
