@@ -276,26 +276,35 @@ func TestCodexReplayCorrupt(t *testing.T) {
 	}
 }
 
-// herdr may not know a codex session: its thread is found by the terminal
-// title ("<thread name> | <user>") in the session index, so an extension
-// chat's agent answers with its own words, not its screen.
 func TestTranscriptCodexByTitle(t *testing.T) {
-	codexCacheFixture(t)
-	home := t.TempDir()
-	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	id := "01a21669-6651-7a33-a746-8c631ff31b1a"
-	rollout := filepath.Join(home, ".codex", "sessions", "2026", "11", "26", "rollout-2026-11-26T13-52-13-"+id+".jsonl")
-	must(t, os.MkdirAll(filepath.Dir(rollout), 0o755))
-	must(t, os.WriteFile(rollout, []byte(zstRollout), 0o644))
-	must(t, os.WriteFile(filepath.Join(home, ".codex", "session_index.jsonl"), []byte(`{"id":"`+id+`","thread_name":"处理飞书私聊事件 #t1"}`+"\n"), 0o644))
-	codex := "codex"
-	tr := (&Server{home: home}).transcriptFor("k", "w1:p1", agentDetail{Agent: &codex, TerminalTitle: "处理飞书私聊事件 #t1 | me"}, map[string]*transcript{})
-	if tr == nil {
-		t.Fatal("not found by its title")
-	}
-	tr.update()
-	msgs := tr.view()
-	if len(msgs) == 0 || msgs[len(msgs)-1].Text != "Two files." {
-		t.Fatalf("its last reply: %+v", msgs)
+	for _, tc := range []struct {
+		name, index, cwd string
+		want             bool
+	}{
+		{"same directory", "id Topic", "/one", true},
+		{"different directory", "id Topic", "/two", false},
+		{"same title", "other Topic,id Topic", "/one", false},
+		{"renamed away", "id Topic,id Renamed", "/one", false},
+		{"old title reused", "other Topic,other Renamed,id Topic", "/one", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("CODEX_HOME", home)
+			rollout := filepath.Join(home, "sessions", "2026", "11", "26", "rollout-date-id.jsonl")
+			log := strings.Replace(zstRollout, `"payload":{}`, `"payload":{"cwd":"/one"}`, 1)
+			writeFiles(t, home, map[string]string{"sessions/2026/11/26/rollout-date-id.jsonl": log})
+			var index strings.Builder
+			for _, line := range strings.Split(tc.index, ",") {
+				id, name, _ := strings.Cut(line, " ")
+				fmt.Fprintf(&index, "{\"id\":%q,\"thread_name\":%q}\n", id, name)
+			}
+			must(t, os.WriteFile(filepath.Join(home, "session_index.jsonl"), []byte(index.String()), 0o644))
+			codex := "codex"
+			a := agentDetail{Agent: &codex, Cwd: &tc.cwd, TerminalTitle: "Topic | me"}
+			tr := (&Server{home: home}).transcriptFor("k", "w1:p1", a, map[string]*transcript{})
+			if (tr != nil) != tc.want || tr != nil && tr.path != rollout {
+				t.Fatalf("transcript = %+v, want match %t", tr, tc.want)
+			}
+		})
 	}
 }

@@ -98,7 +98,9 @@ func TestAgyPaneRestartDropsOldConversation(t *testing.T) {
 				return
 			}
 			res, err := f.handle(req.Method, req.Params)
-			if req.Method == "pane.process_info" {
+			if req.Method == "pane.process_info" && pid == -1 {
+				err = &HerdrError{Code: "unavailable", Message: "temporary failure"}
+			} else if req.Method == "pane.process_info" {
 				res, err = map[string]any{"process_info": map[string]any{
 					"foreground_processes": []map[string]any{{"pid": pid, "name": "agy", "argv": args}},
 				}}, nil
@@ -167,6 +169,8 @@ func TestAgyPaneRestartDropsOldConversation(t *testing.T) {
 		}
 	}
 	check("original process", oldLog, oldID)
+	pid = -1
+	check("temporary probe failure", oldLog, oldID)
 	pid = 102
 	check("restarted before the new log exists", "", "")
 	newLog := addLog(newID)

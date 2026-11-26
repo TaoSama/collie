@@ -3,6 +3,7 @@ package collie
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -134,5 +135,82 @@ func TestAgyDualTranscriptStaysIdle(t *testing.T) {
 	}
 	if !slices.Equal(historyEvents, []string{"reset", "patch"}) {
 		t.Fatalf("idle conversation sent history events %v, want one reset and one patch", historyEvents)
+	}
+}
+
+func TestPaneEarlierRejectsReplacedTranscript(t *testing.T) {
+	s, f, pane := chatServer(t, 0, "claude")
+	s.home = t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(s.home, ".claude"))
+	logPath := filepath.Join(claudeRoot(s.home), "projects", "test", "id.jsonl")
+	must(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	log := `{"type":"user","message":{"content":"same"}}` + "\n"
+	must(t, os.WriteFile(logPath, []byte(log), 0o600))
+	f.panes[pane].log = logPath
+
+	tr := newTranscript(logPath, "claude")
+	must(t, tr.load(t.Context(), nil, true))
+	var sync msgSync
+	first := sync.patch(tr)
+	if first.Generation == "" {
+		t.Fatal("live snapshot has no transcript generation")
+	}
+	page := func(generation string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/?before=40&generation="+generation, nil)
+		req.SetPathValue("id", pane)
+		w := httptest.NewRecorder()
+		s.paneEarlier(w, req)
+		return w
+	}
+	w := page(first.Generation)
+	var body transcriptPage
+	must(t, json.Unmarshal(w.Body.Bytes(), &body))
+	if w.Code != 200 || body.Generation != first.Generation {
+		t.Fatalf("page = %d %s", w.Code, w.Body)
+	}
+	must(t, os.Rename(logPath, logPath+".old"))
+	must(t, os.WriteFile(logPath, []byte(log), 0o600))
+	if got := page(first.Generation).Code; got != 409 {
+		t.Fatalf("stale page status = %d, want 409", got)
+	}
+	if !tr.update() {
+		t.Fatal("replacing the log with the same messages did not mark it changed")
+	}
+	if next := sync.patch(tr); next == nil || next.Generation == first.Generation || next.From != next.Base {
+		t.Fatalf("replacement patch = %+v", next)
+	}
+}
+
+func TestCodexLastReplyNeedsReportedSession(t *testing.T) {
+	s, f, pane := chatServer(t, 0, "codex")
+	s.home = t.TempDir()
+	t.Setenv("CODEX_HOME", s.home)
+	log := strings.Replace(zstRollout, `"payload":{}`, `"payload":{"cwd":"/tmp"}`, 1)
+	writeFiles(t, s.home, map[string]string{
+		"session_index.jsonl":                       `{"id":"id","thread_name":"Topic"}` + "\n",
+		"sessions/2026/11/26/rollout-date-id.jsonl": log,
+	})
+	f.panes[pane].title = "Topic | me"
+	w := &Worker{Name: "worker", PaneID: pane}
+	sp := &Super{s: s, transcripts: map[string]*transcript{}}
+	remoteStatus := func() int {
+		req := httptest.NewRequest("GET", "/?screen=0", nil)
+		req.SetPathValue("id", pane)
+		out := httptest.NewRecorder()
+		s.lastMessage(out, req)
+		return out.Code
+	}
+	if got := remoteStatus(); got != 404 {
+		t.Fatalf("title-only remote reply status = %d, want 404", got)
+	}
+	if got := sp.lastReply(t.Context(), w, 0, false); got != "" {
+		t.Fatalf("title-only local reply = %q", got)
+	}
+	f.panes[pane].log = "id.jsonl"
+	if got := remoteStatus(); got != 200 {
+		t.Fatalf("reported-session remote reply status = %d, want 200", got)
+	}
+	if got := sp.lastReply(t.Context(), w, 0, false); got != "Two files." {
+		t.Fatalf("reported-session local reply = %q", got)
 	}
 }

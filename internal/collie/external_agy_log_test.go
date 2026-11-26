@@ -3,8 +3,10 @@ package collie
 import (
 	"database/sql"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +74,25 @@ func TestLocateExternalAgyFindsUniqueNewWorkspaceLog(t *testing.T) {
 			}
 			s := &Server{home: home}
 			s.locateExternal(process, &proc{})
+			if tc.wantSession != "" {
+				process.ID, process.PID, process.CanTakeOver = "agy-test", 999999, true
+				externalCache.Lock()
+				previousList, previousAt := externalCache.list, externalCache.at
+				externalCache.list, externalCache.at = []*External{process}, time.Now()
+				externalCache.Unlock()
+				t.Cleanup(func() {
+					externalCache.Lock()
+					externalCache.list, externalCache.at = previousList, previousAt
+					externalCache.Unlock()
+				})
+				req := httptest.NewRequest("POST", "/", strings.NewReader("invalid body"))
+				req.SetPathValue("id", process.ID)
+				w := httptest.NewRecorder()
+				s.takeOverExternal(w, req)
+				if w.Code != 409 {
+					t.Errorf("heuristic match takeover status = %d, want 409", w.Code)
+				}
+			}
 			wantPath := ""
 			if tc.wantSession != "" {
 				wantPath = filepath.Join(root, first)

@@ -207,7 +207,7 @@ func (sp *Super) lastReply(ctx context.Context, w *Worker, most int, screen bool
 		var info struct {
 			Agent agentDetail `json:"agent"`
 		}
-		if sp.s.herdr.Call(ctx, "agent.get", map[string]any{"target": w.Name}, &info) == nil {
+		if sp.s.herdr.Call(ctx, "agent.get", map[string]any{"target": w.PaneID}, &info) == nil && info.Agent.replyTranscriptKnown(screen) {
 			if tr := sp.s.transcriptFor(w.Name, w.PaneID, info.Agent, sp.transcripts); tr != nil {
 				tr.update()
 				msgs := tr.view()

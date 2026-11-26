@@ -3,29 +3,33 @@ package collie
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
 // transcript incrementally parses an agent's JSONL session log.
 type transcript struct {
-	path    string
-	format  string // claude | codex | agy
-	offset  int64
-	msgs    []*Message
-	tools   map[string]*Message
-	pending []*Message // agy: tool calls waiting for their output, in order
-	lastID  string
-	dropped int       // messages trimmed off the front, so positions stay stable
-	partial bool      // offset may be mid-line: skip to the next line first
-	began   int64     // where reading started (0: the top of the log)
-	lineAt  int64     // where the line being parsed starts
-	asked   time.Time // agy: when the turn being read began
-	limit   int64     // stop reading here (0: at the end)
+	generation string
+	path       string
+	format     string // claude | codex | agy
+	offset     int64
+	msgs       []*Message
+	tools      map[string]*Message
+	pending    []*Message // agy: tool calls waiting for their output, in order
+	lastID     string
+	dropped    int       // messages trimmed off the front, so positions stay stable
+	partial    bool      // offset may be mid-line: skip to the next line first
+	began      int64     // where reading started (0: the top of the log)
+	lineAt     int64     // where the line being parsed starts
+	asked      time.Time // agy: when the turn being read began
+	limit      int64     // stop reading here (0: at the end)
 }
 
 const (
@@ -43,6 +47,26 @@ func transcriptPath(path, format string) string {
 		}
 	}
 	return path
+}
+
+// A byte cursor belongs to one source file. Appending to it keeps the same
+// generation. Replacing it or switching between short and full logs does not.
+func transcriptGeneration(path string, fi os.FileInfo) string {
+	st := fi.Sys().(*syscall.Stat_t)
+	key := fmt.Sprintf("%s:%d:%d", path, st.Dev, st.Ino)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+}
+
+func sourceGeneration(path, format string) string {
+	path = transcriptPath(path, format)
+	if format == "codex" {
+		path = codexRollout(strings.TrimSuffix(path, codexZstSuffix))
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return transcriptGeneration(path, fi)
 }
 
 func newTranscript(path, format string) *transcript {
@@ -83,13 +107,19 @@ func (t *transcript) update() bool {
 	}
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil || fi.Size() == t.offset {
+	if err != nil {
 		return false
 	}
-	if fi.Size() < t.offset { // rewritten
+	generation := transcriptGeneration(t.path, fi)
+	replaced := t.generation != "" && t.generation != generation || fi.Size() < t.offset
+	if replaced {
 		*t = *newTranscript(t.path, t.format)
 	}
-	return t.updateFile(f, fi.Size())
+	t.generation = generation
+	if !replaced && fi.Size() == t.offset {
+		return false
+	}
+	return t.updateFile(f, fi.Size()) || replaced
 }
 
 func (t *transcript) updateFile(f io.ReaderAt, size int64) bool {
@@ -143,18 +173,24 @@ func (t *transcript) openTailFile(f *os.File, size int64) {
 // (a tool call gets its output, a new message lands), so a long conversation
 // is not sent again on every line.
 type msgSync struct {
-	sent map[int]string // position → the message as last sent
+	sent       map[int]string // position → the message as last sent
+	generation string
 }
 
 type msgPatch struct {
-	Base    int        `json:"base"` // position of the first message in the view
-	From    int        `json:"from"` // position of msgs[0]
-	Msgs    []*Message `json:"msgs"`
-	Earlier int64      `json:"earlier,omitempty"` // cursor for older messages (see earlier)
+	Generation string     `json:"generation,omitempty"`
+	Base       int        `json:"base"` // position of the first message in the view
+	From       int        `json:"from"` // position of msgs[0]
+	Msgs       []*Message `json:"msgs"`
+	Earlier    int64      `json:"earlier,omitempty"` // cursor for older messages (see earlier)
 }
 
 // patch: what changed since the last call, or nil.
 func (m *msgSync) patch(t *transcript) *msgPatch {
+	if m.generation != t.generation {
+		m.sent = nil
+		m.generation = t.generation
+	}
 	view := t.view()
 	base := t.dropped + len(t.msgs) - len(view)
 	enc := make([]string, len(view))
@@ -182,7 +218,7 @@ func (m *msgSync) patch(t *transcript) *msgPatch {
 	for i, s := range enc {
 		m.sent[base+i] = s
 	}
-	return &msgPatch{Base: base, From: from, Msgs: append([]*Message{}, view[from-base:]...), Earlier: t.earlierCursor()}
+	return &msgPatch{Generation: t.generation, Base: base, From: from, Msgs: append([]*Message{}, view[from-base:]...), Earlier: t.earlierCursor()}
 }
 
 func (t *transcript) add(m *Message) { m.at = t.lineAt; t.msgs = append(t.msgs, m) }
@@ -252,6 +288,7 @@ func openTranscript(ctx context.Context, path, format string, progress func(tran
 }
 
 func (t *transcript) load(ctx context.Context, progress func(transcriptProgress), tail bool) error {
+	generation := sourceGeneration(t.path, t.format)
 	f, release, err := openTranscript(ctx, t.path, t.format, progress)
 	if err != nil {
 		return err
@@ -261,11 +298,15 @@ func (t *transcript) load(ctx context.Context, progress func(transcriptProgress)
 	if err != nil {
 		return err
 	}
+	if !compressedCodex(t.path, t.format) {
+		generation = transcriptGeneration(t.path, fi)
+	}
 	if tail {
 		t.openTailFile(f, fi.Size())
 	} else {
 		t.updateFile(f, fi.Size())
 	}
+	t.generation = generation
 	return nil
 }
 

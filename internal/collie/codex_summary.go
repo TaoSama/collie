@@ -3,6 +3,7 @@ package collie
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"os"
@@ -132,4 +133,34 @@ func scanCodexSummary(path string, checkTurn bool) (codexReplaySummary, error) {
 		summary.usage.Used, summary.usage.Window = 0, 0
 	}
 	return summary, nil
+}
+
+// codexRolloutCwd reads only the session metadata, including from cold rollouts.
+func codexRolloutCwd(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer closeCodexFile(f)
+	var r io.Reader = f
+	if compressedCodex(path, "codex") {
+		dec, err := openCodexDecoder(f)
+		if err != nil {
+			return ""
+		}
+		defer dec.Close()
+		r = dec
+	}
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 4096), 1<<20)
+	var header struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Cwd string `json:"cwd"`
+		} `json:"payload"`
+	}
+	if sc.Scan() && json.Unmarshal(sc.Bytes(), &header) == nil && header.Type == "session_meta" {
+		return header.Payload.Cwd
+	}
+	return ""
 }

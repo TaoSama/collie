@@ -222,12 +222,13 @@ func (s *Server) getTranscript(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": "读取会话记录失败"})
 		return
 	}
-	writeJSON(w, 200, transcriptPage{tr.view(), tr.earlierCursor()})
+	writeJSON(w, 200, transcriptPage{tr.view(), tr.earlierCursor(), tr.generation})
 }
 
 type transcriptPage struct {
-	Messages []*Message `json:"messages"`
-	Earlier  int64      `json:"earlier"`
+	Messages   []*Message `json:"messages"`
+	Earlier    int64      `json:"earlier"`
+	Generation string     `json:"generation,omitempty"`
 }
 
 func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, tr *transcript) {
@@ -253,7 +254,7 @@ func (s *Server) streamTranscript(w http.ResponseWriter, r *http.Request, tr *tr
 		send(map[string]string{"error": "读取会话记录失败"})
 		return
 	}
-	send(transcriptPage{tr.view(), tr.earlierCursor()})
+	send(transcriptPage{tr.view(), tr.earlierCursor(), tr.generation})
 }
 
 // earlierPage is how many older messages one "load earlier" brings.
@@ -265,15 +266,26 @@ func queryOffset(r *http.Request) int64 {
 }
 
 func writeEarlier(w http.ResponseWriter, r *http.Request, path, format string, before int64) {
+	generation := sourceGeneration(path, format)
+	want := r.URL.Query().Get("generation")
+	changed := func() { writeJSON(w, 409, map[string]string{"error": "会话记录已变化"}) }
+	if want != "" && want != generation {
+		changed()
+		return
+	}
 	msgs, cursor, err := readEarlier(r.Context(), path, format, before, earlierPage)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "读取更早的消息失败"})
 		return
 	}
+	if sourceGeneration(path, format) != generation {
+		changed()
+		return
+	}
 	if msgs == nil {
 		msgs = []*Message{}
 	}
-	writeJSON(w, 200, transcriptPage{msgs, cursor})
+	writeJSON(w, 200, transcriptPage{msgs, cursor, generation})
 }
 
 // externalEarlier: older messages of a session running elsewhere on this computer.

@@ -158,10 +158,32 @@ func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 		if !e.agySharedWorkspace && e.Cwd != "" && !e.Started.IsZero() {
 			started := e.Started.Truncate(time.Second) // ps reports elapsed time in whole seconds
 			if path := uniqueAgyTranscript(root, e.Cwd, started, agyWorkspaces(root), nil); path != "" {
+				e.agyCandidate = true
 				e.Session, e.path, e.format = agyLogID(path), path, "agy"
 			}
 		}
 	}
+}
+
+// Takeover rechecks the live process without using the workspace heuristic.
+func (s *Server) sameExternalAgy(ctx context.Context, e *External) bool {
+	procs, err := listProcs()
+	if err != nil {
+		return false
+	}
+	p := procs[e.PID]
+	if p == nil || externalKinds[p.name] != "agy" {
+		return false
+	}
+	var children []int
+	for _, child := range procs {
+		if child.ppid == p.pid && externalKinds[child.name] == "agy" {
+			children = append(children, child.pid)
+		}
+	}
+	current := &External{Kind: "agy"}
+	s.locateExternal(current, p, children...)
+	return current.Session == e.Session && !e.agyStarted.IsZero() && agyProcessStart(ctx, p.pid).Equal(e.agyStarted)
 }
 
 func realDir(path string) string {

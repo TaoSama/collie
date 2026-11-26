@@ -11,7 +11,7 @@ function section(from, to) {
 }
 const msg = (text) => ({ kind: "assistant", text });
 
-function fixture({ mode = "chat", random = 0.5, loadPage = async () => ({ messages: [msg("older")], earlier: 0 }) } = {}) {
+function fixture({ mode = "chat", random = 0.5, loadPage = async () => ({ messages: [msg("older")], earlier: 0, generation: "one" }) } = {}) {
   const sources = [], timers = new Map(), shown = [], events = new EventTarget();
   const document = Object.assign(new EventTarget(), { hidden: false });
   const nodes = { "#pane-reconnect": { textContent: "" }, "#thread": {}, "#gone": { hidden: true } };
@@ -29,7 +29,7 @@ function fixture({ mode = "chat", random = 0.5, loadPage = async () => ({ messag
     section("  function openChat(", "  // Threads on a"),
     section("  function applyPatch(", "  // What you sent shows"),
     section("  const earlierCursor =", "  // Any conversation scrolled"),
-    "({ open: () => openStream(), load: () => loadEarlier($('#thread')), switchTo(id) { closeStream(); resetChat(); current = id; openStream(); } })",
+    "({ open: () => openStream(), replace: () => openStream(), load: () => loadEarlier($('#thread')), switchTo(id) { closeStream(); resetChat(); current = id; openStream(); } })",
   ].join("\n"), {
     $: (s) => nodes[s], document, addEventListener: events.addEventListener.bind(events),
     navigator: { onLine: true }, Math: Object.assign(Object.create(Math), { random: () => random }),
@@ -81,7 +81,7 @@ test("chat retries a 503 with increasing jittered backoff and clears status on a
 
 test("a reconnect reset waits for the new chat snapshot and preserves paged history", async () => {
   const f = fixture();
-  f.sources[0].emit("patch", { base: 10, from: 10, earlier: 100, msgs: [msg("one"), msg("two")] });
+  f.sources[0].emit("patch", { base: 10, from: 10, earlier: 100, generation: "one", msgs: [msg("one"), msg("two")] });
   await f.runtime.load();
   f.sources[0].emit("error");
   f.runTimer();
@@ -89,20 +89,20 @@ test("a reconnect reset waits for the new chat snapshot and preserves paged hist
   fresh.emit("reset");
   fresh.emit("meta", { structured: true });
   assert.deepEqual(f.shown.at(-1), ["older", "one", "two"]);
-  fresh.emit("patch", { base: 0, from: 0, earlier: 200, msgs: [msg("two"), msg("three")] });
+  fresh.emit("patch", { base: 0, from: 0, earlier: 200, generation: "one", msgs: [msg("two"), msg("three")] });
   assert.deepEqual(f.shown.at(-1), ["older", "one", "two", "three"]);
 });
 
 test("an in-flight earlier page keeps its cursor across a shifted reconnect snapshot", async () => {
   let finish;
   const f = fixture({ loadPage: () => new Promise((resolve) => { finish = resolve; }) });
-  f.sources[0].emit("patch", { base: 10, from: 10, earlier: 100, msgs: [msg("one"), msg("two")] });
+  f.sources[0].emit("patch", { base: 10, from: 10, earlier: 100, generation: "one", msgs: [msg("one"), msg("two")] });
   const page = f.runtime.load();
   f.sources[0].emit("error");
   f.runTimer();
   f.sources[1].emit("reset");
-  f.sources[1].emit("patch", { base: 0, from: 0, earlier: 200, msgs: [msg("two"), msg("three")] });
-  finish({ messages: [msg("page in flight")], earlier: 0 });
+  f.sources[1].emit("patch", { base: 0, from: 0, earlier: 200, generation: "one", msgs: [msg("two"), msg("three")] });
+  finish({ messages: [msg("page in flight")], earlier: 0, generation: "one" });
   await page;
   assert.deepEqual(f.shown.at(-1), ["page in flight", "one", "two", "three"]);
 });
@@ -153,4 +153,35 @@ test("rapid A → B → A cancels retries and discards stale events even on the 
   assert.deepEqual(f.shown.at(-1), ["active"]);
   assert.equal(f.nodes["#gone"].hidden, true);
   assert.equal(f.timers.size, 0);
+});
+
+test("replacing a pane stream closes the previous source and ignores its events", () => {
+  const f = fixture({ mode: "log" });
+  f.runtime.replace();
+  f.sources[0].emit("frame", { text: "stale" });
+  f.sources[0].emit("gone");
+  assert.equal(f.sources[0].closed, true);
+  assert.equal(f.nodes["#gone"].hidden, true);
+  f.sources[1].emit("frame", { text: "current" });
+  assert.deepEqual(f.shown, ["current"]);
+});
+
+for (const generation of ["two", undefined]) {
+  test(`reconnect to transcript generation ${generation} drops overlapping old messages`, async () => {
+    const f = fixture();
+    const call = { kind: "tool", name: "list", input: "." };
+    f.sources[0].emit("patch", { base: 0, from: 0, earlier: 100, generation: "one", msgs: [call] });
+    await f.runtime.load();
+    f.sources[0].emit("error");
+    f.runTimer();
+    f.sources[1].emit("patch", { base: 0, from: 0, earlier: 100, generation, msgs: [call, msg("new")] });
+    assert.deepEqual(f.shown.at(-1), [undefined, "new"]);
+  });
+}
+
+test("a page resolved against a different transcript is ignored", async () => {
+  const f = fixture({ loadPage: async () => ({ generation: "two", messages: [msg("wrong page")] }) });
+  f.sources[0].emit("patch", { base: 0, from: 0, earlier: 100, generation: "one", msgs: [msg("current")] });
+  await f.runtime.load();
+  assert.deepEqual(f.shown.at(-1), ["current"]);
 });

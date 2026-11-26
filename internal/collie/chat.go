@@ -462,6 +462,12 @@ type agentDetail struct {
 	TerminalTitle string `json:"terminal_title"`
 }
 
+// A title can identify a likely replay for display. Replies leaving Collie
+// need a session or log reported by herdr.
+func (a agentDetail) replyTranscriptKnown(screen bool) bool {
+	return screen || deref(a.Agent) != "codex" || a.Session != nil && a.Session.Value != ""
+}
+
 // transcriptFor resolves (and caches) the transcript for the agent in a pane.
 func (s *Server) transcriptFor(key, pane string, a agentDetail, cache map[string]*transcript) *transcript {
 	kind := deref(a.Agent)
@@ -487,13 +493,7 @@ func (s *Server) transcriptFor(key, pane string, a agentDetail, cache map[string
 		return tr
 	}
 	if kind == "codex" && value == "" {
-		// herdr doesn't always know a codex session: its thread is named
-		// after the terminal title, "<thread name> | <user>".
-		t := a.TerminalTitle
-		if i := strings.LastIndex(t, " | "); i > 0 {
-			t = t[:i]
-		}
-		value = s.codexIDByName(strings.TrimSpace(t))
+		value = s.codexIDByTitle(a.TerminalTitle, deref(a.Cwd))
 	}
 	ck := key + "|" + kind + "|" + sessKind + ":" + value
 	if tr := cache[ck]; tr != nil {
@@ -541,7 +541,7 @@ func (s *Server) findTranscript(kind, sessKind, value, pane, cwd string) (path, 
 		}
 		root := s.codexHome()
 		for _, ext := range []string{".jsonl", ".jsonl" + codexZstSuffix} {
-			if m, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*"+value+ext)); len(m) > 0 {
+			if m, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*-"+value+ext)); len(m) > 0 {
 				if p := codexRollout(strings.TrimSuffix(m[len(m)-1], codexZstSuffix)); p != "" {
 					return p, "codex"
 				}
@@ -978,7 +978,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		if err == nil && kind != "" {
 			nextTr = s.transcriptFor(id, id, info.Agent, cache)
 		}
-		if nextTr != tr && (nextTr != nil || tr != nil && tr.format == "agy") {
+		if nextTr != tr {
 			tr, lastLog = nextTr, ""
 			if !send("reset", map[string]any{}) {
 				cancel()
@@ -1071,7 +1071,8 @@ func (s *Server) lastMessage(w http.ResponseWriter, r *http.Request) {
 	var info struct {
 		Agent agentDetail `json:"agent"`
 	}
-	if s.herdr.Call(r.Context(), "agent.get", map[string]any{"target": id}, &info) == nil {
+	screen := r.URL.Query().Get("screen") != "0"
+	if s.herdr.Call(r.Context(), "agent.get", map[string]any{"target": id}, &info) == nil && info.Agent.replyTranscriptKnown(screen) {
 		if tr := s.transcriptFor("last:"+id, id, info.Agent, map[string]*transcript{}); tr != nil {
 			if err := tr.load(r.Context(), nil, false); err != nil {
 				log.Printf("collie: read latest message: %v", err)
@@ -1085,7 +1086,7 @@ func (s *Server) lastMessage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if r.URL.Query().Get("screen") == "0" {
+	if !screen {
 		writeJSON(w, 404, map[string]any{"error": "no transcript"})
 		return
 	}

@@ -28,6 +28,7 @@ type fakeHerdr struct {
 
 type fakePane struct {
 	ws, name, kind, cwd string
+	title               string
 	// screen is what pane.read shows; ⇧← turns it into unfolded.
 	screen, unfolded string
 	sentKeys         []string
@@ -146,6 +147,9 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		}
 		if p.name != "" {
 			v["name"] = p.name
+		}
+		if p.title != "" {
+			v["terminal_title"] = p.title
 		}
 		if p.log != "" {
 			v["agent_session"] = map[string]any{"kind": "id", "value": strings.TrimSuffix(filepath.Base(p.log), ".jsonl")}
