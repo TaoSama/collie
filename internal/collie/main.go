@@ -127,7 +127,7 @@ func (s *Server) setSuper(sup *Super) {
 	s.herdr.onChange = func() {
 		sup.mu.Lock()
 		defer sup.mu.Unlock()
-		sup.changed()
+		sup.notifySubscribersLocked()
 	}
 }
 

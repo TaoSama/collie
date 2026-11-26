@@ -128,6 +128,10 @@ func newSuper(s *Server, dir string) (*Super, error) {
 // changed requires sp.mu to be held.
 func (sp *Super) changed() {
 	sp.dirty = true
+	sp.notifySubscribersLocked()
+}
+
+func (sp *Super) notifySubscribersLocked() {
 	for ch := range sp.subs {
 		select {
 		case ch <- struct{}{}:

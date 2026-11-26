@@ -49,6 +49,9 @@ func TestFleetNodeChangeWaitsForSuperSubscribers(t *testing.T) {
 			default:
 				t.Fatal("node change did not notify subscribers")
 			}
+			if sup.dirty {
+				t.Fatal("node change marked persisted state dirty")
+			}
 		})
 	}
 }
