@@ -162,7 +162,7 @@ func ensureInstalled(ctx context.Context, home string, m *ExtManifest) error {
 // this is the hub, otherwise downloaded from the hub with this node's token.
 func fetchPinned(ctx context.Context, home, url, want, dst string) error {
 	if rest, ok := strings.CutPrefix(url, marketSourceHub); ok {
-		local := filepath.Join(marketDir(home), "pkgs", filepath.FromSlash(rest))
+		local := filepath.Join(marketPackagesDir(home), filepath.FromSlash(rest))
 		if b, err := os.ReadFile(local); err == nil {
 			return writePinned(b, want, dst)
 		}

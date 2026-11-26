@@ -70,6 +70,10 @@ type marketIndex struct {
 
 func marketDir(home string) string { return filepath.Join(home, "market") }
 
+func marketPackagesDir(home string) string {
+	return filepath.Join(marketDir(home), "pkgs")
+}
+
 func validRepo(r string) bool {
 	o, n, ok := strings.Cut(r, "/")
 	return ok && o != "" && n != "" && !strings.ContainsAny(r, " ?#@:") && strings.Count(r, "/") == 1 && !strings.Contains(r, "..")
@@ -272,7 +276,7 @@ func (h *extHost) installFromMarket(ctx context.Context, repo, id string) (*ExtM
 	if b := h.manifest(id); b != nil && b.Market == nil {
 		return nil, fmt.Errorf("%s 和自带或本地的扩展同名", id)
 	}
-	base := filepath.Join(marketDir(h.home), "pkgs", id)
+	base := filepath.Join(marketPackagesDir(h.home), id)
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return nil, err
 	}
@@ -350,7 +354,7 @@ func (h *extHost) uninstall(ctx context.Context, id string, purge bool) error {
 	delete(h.sets, id)
 	h.saveSetsLocked()
 	h.mu.Unlock()
-	return os.RemoveAll(filepath.Join(marketDir(h.home), "pkgs", id))
+	return os.RemoveAll(filepath.Join(marketPackagesDir(h.home), id))
 }
 
 // purge asks the computer to delete the extension's folder there.
@@ -391,7 +395,7 @@ func readLineConn(r io.Reader) (string, error) {
 
 // loadMarketInstalled reads what was installed from marketplaces.
 func (h *extHost) loadMarketInstalled() {
-	metas, _ := filepath.Glob(filepath.Join(marketDir(h.home), "pkgs", "*", "*", ".market.json"))
+	metas, _ := filepath.Glob(filepath.Join(marketPackagesDir(h.home), "*", "*", ".market.json"))
 	for _, f := range metas {
 		dir := filepath.Dir(f)
 		m, err := readStrictManifest(filepath.Join(dir, "collie-extension.json"))

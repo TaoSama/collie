@@ -398,5 +398,5 @@ func (s *Server) extPackageFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "no such package file"})
 		return
 	}
-	http.ServeFile(w, r, filepath.Join(marketDir(s.ext.home), "pkgs", m.ID, m.Version, filepath.FromSlash(rel)))
+	http.ServeFile(w, r, filepath.Join(marketPackagesDir(s.ext.home), m.ID, m.Version, filepath.FromSlash(rel)))
 }
