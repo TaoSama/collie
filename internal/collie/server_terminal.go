@@ -159,21 +159,65 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if err := s.writePaneText(r, id, body.Text, body.Enter); err != nil {
+		fail(w, err)
+		return
+	}
+	s.wakes.wake(id)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) writePaneText(r *http.Request, id, text string, enter bool) error {
+	if n := strings.Count(text, "\x1b"); n > 0 {
+		s.logInterrupting(r, id, fmt.Sprintf("%d bytes holding %d Esc", len(text), n))
+	}
 	ctx := r.Context()
-	if n := strings.Count(body.Text, "\x1b"); n > 0 {
-		s.logInterrupting(r, id, fmt.Sprintf("%d bytes holding %d Esc", len(body.Text), n))
-	}
-	if body.Text != "" {
-		if err := s.herdr.SendText(ctx, id, body.Text); err != nil {
-			fail(w, err)
-			return
+	if text != "" {
+		if err := s.herdr.SendText(ctx, id, text); err != nil {
+			return err
 		}
 	}
-	if body.Enter {
-		if err := s.herdr.SendKeys(ctx, id, "enter"); err != nil {
-			fail(w, err)
-			return
-		}
+	if enter {
+		return s.herdr.SendKeys(ctx, id, "enter")
+	}
+	return nil
+}
+
+const paneSubmitRoute = "POST /api/panes/{id}/submit"
+
+// submitPane is the chat composer entry point. The executing server checks
+// the actual pane because the browser's list can lag behind a restart.
+func (s *Server) submitPane(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Text) == "" {
+		writeJSON(w, 400, map[string]any{"error": "empty prompt"})
+		return
+	}
+	id := r.PathValue("id")
+	ctx := r.Context()
+	pane, err := s.herdr.Pane(ctx, id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	switch {
+	case pane.ID == id && deref(pane.Agent) != "":
+		err = s.herdr.Prompt(ctx, id, body.Text)
+	case pane.ID == id && pane.Agent == nil && pane.DisplayAgent == nil && pane.AgentStatus == "unknown":
+		// herdr represents a plain terminal with no agent and status unknown.
+		err = s.writePaneText(r, id, body.Text, true)
+	default:
+		writeJSON(w, 409, map[string]any{"error": "无法确认这个终端的类型，请刷新会话"})
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
 	}
 	s.wakes.wake(id)
 	writeJSON(w, 200, map[string]any{"ok": true})

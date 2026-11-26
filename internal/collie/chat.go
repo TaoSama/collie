@@ -25,6 +25,8 @@ type Message struct {
 	Input   string   `json:"input,omitempty"`
 	Output  string   `json:"output,omitempty"`
 	Error   bool     `json:"error,omitempty"`
+	// ToolDone records a tool result even when it carried no displayable output.
+	ToolDone bool `json:"tool_done,omitempty"`
 	// TurnMS: this message ends a turn (Codex, agy) that took this long, so the
 	// steps before it can fold away once the turn is done.
 	TurnMS int64 `json:"turn_ms,omitempty"`
@@ -75,6 +77,12 @@ func clip(s string, n int) string {
 		cut--
 	}
 	return s[:cut] + " …"
+}
+
+func (m *Message) setToolResult(output string, failed bool) {
+	m.Output = clip(output, maxOutput)
+	m.Error = failed
+	m.ToolDone = m.Kind == "tool"
 }
 
 // update reads any complete lines appended since the last call. It reports
@@ -408,8 +416,7 @@ func (t *transcript) claudeLine(line []byte) bool {
 			switch b.Type {
 			case "tool_result":
 				if m := t.tools[b.ToolUseID]; m != nil {
-					m.Output = clip(textOf(b.Content), maxOutput)
-					m.Error = b.IsError
+					m.setToolResult(textOf(b.Content), b.IsError)
 					changed = true
 				}
 			case "text":
@@ -531,7 +538,7 @@ func (t *transcript) codexLine(line []byte) bool {
 		return true
 	case "function_call_output", "custom_tool_call_output":
 		if m := t.tools[p.CallID]; m != nil {
-			m.Output = clip(textOf(p.Output), maxOutput)
+			m.setToolResult(textOf(p.Output), false)
 			return true
 		}
 	}
@@ -613,8 +620,8 @@ func (t *transcript) agyLine(line []byte) bool {
 		}
 		m := t.pending[0]
 		t.pending = t.pending[1:]
-		m.Output = clip(agyOutput(e.Content), maxOutput)
-		m.Error = strings.Contains(e.Content, "exited with code") && !strings.Contains(e.Content, "exited with code 0")
+		failed := strings.Contains(e.Content, "exited with code") && !strings.Contains(e.Content, "exited with code 0")
+		m.setToolResult(agyOutput(e.Content), failed)
 		return true
 	case "ERROR_MESSAGE":
 		if strings.TrimSpace(e.Content) == "" {
@@ -1119,6 +1126,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 		lastLive          []byte
 		lastLog, lastMeta string
 		lastAsk           *Approval
+		lastAskSig        string
 		beat              = time.Now()
 		ms                msgSync
 		woke              time.Time
@@ -1220,11 +1228,15 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request) {
 			// A read that fails (a slow link to the node) keeps the card on
 			// screen: dropping it would take it away and bring it back.
 			if text, e := s.herdr.ReadAsk(ctx, id); e == nil {
-				a := parseApproval(text)
-				lastAsk = &a
+				a, asking := visibleApproval(text)
+				lastAsk, lastAskSig = &a, ""
+				if asking {
+					lastAskSig = askSig(a)
+				}
 			}
 			if lastAsk != nil {
 				live["approval"] = lastAsk
+				live["approval_sig"] = lastAskSig
 			}
 		} else {
 			lastAsk = nil

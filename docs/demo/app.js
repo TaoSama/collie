@@ -115,7 +115,8 @@
     if (v !== webBuild) offerReload();
   }
   function offerReload() {
-    if (!touched && !fleetUp && !$$("textarea").some((t) => t.value.trim())) { location.reload(); return; }
+    const hasDraft = $$("form.composer").some((form) => form._hasDraft?.());
+    if (!touched && !fleetUp && !hasDraft && !$$("textarea").some((t) => t.value.trim())) { location.reload(); return; }
     if (document.getElementById("update-bar")) return;
     const bar = document.createElement("button");
     bar.id = "update-bar"; bar.type = "button";
@@ -167,7 +168,7 @@
       if (r.hub) throw new Error(`${r.hub.name} 不认这个浏览器了，在「设备」里重新添加它`);
       showLogin(); throw new Error("unauthorized");
     }
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
     return r.hub ? tagIds(data, r.hub.key) : data;
   }
   // EventSource can't set headers: a remote hub takes its token in the URL.
@@ -1086,6 +1087,7 @@
       resetChat();
       resetScreen();
       renderHead();
+      $("#composer")._selectDraft();
       openStream(saved);
       if (!narrow()) $("#input").focus({ preventScroll: true });
     }
@@ -1175,11 +1177,17 @@
     decidedAt = null;
   }
   $("#decided button").addEventListener("click", hideDecided);
-  // A dialog answered from its card: the hub can't see which choice the keys
-  // were, so say it, and the decision reads "选了 X" afterwards.
-  function noteDecided(pane, label) {
-    if (!pane || hubOf(pane) || !label) return;
-    api("/api/super/decided", { body: { pane, choice: normMsg(label) } }).catch((err) => console.warn("noting the choice:", err));
+  async function answerCard(pane, sig, choice, refresh) {
+    if (sig) {
+      try {
+        await api("/api/super/decide", { body: { pane, sig, choice } });
+        await sleep(350);
+      } catch (err) {
+        if (err.status !== 409) throw err;
+        toast(err.message, "attn");
+      }
+    }
+    await refresh();
   }
   addEventListener("resize", () => { if (booted && !view && !narrow()) route(); });
 
@@ -1398,7 +1406,7 @@
   async function dismissPending(id) {
     if (!id || dismissedLocal.has(id)) return;
     dismissedLocal.add(id);
-    if (replyTo?.entry === id) setReply(null);
+    if (superDraft().reply?.entry === id) setReply(null);
     renderSide();
     if (view === "collie") renderSuper();
     try {
@@ -2019,7 +2027,7 @@
       const items = needs.map((a) => {
         const got = superAsks.get(a.pane_id);
         if (!got || Date.now() - got.at > 4000) loadSuperAsk(a.pane_id);
-        if (got?.a) return superAskHTML(got.a, a);
+        if (got?.a) return superAskHTML(got.a, a, got.sig);
         // Its dialog is still being read: a stand-in now would be swapped for the card a moment later.
         if (got?.a === undefined) return "";
         return `<a class="need" href="#/p/${encodeURIComponent(a.pane_id)}">
@@ -2126,28 +2134,39 @@
   async function loadSuperAsk(pane, force) {
     const prev = superAsks.get(pane);
     if ((prev?.loading || prev?.sending) && !force) return;
-    superAsks.set(pane, { ...prev, at: Date.now(), loading: true, sending: false });
-    let a = null, missed = false;
-    try { const r = await api(paneURL(pane, "ask")); a = r.asking ? r.approval : null; } catch { a = prev?.a || null; missed = !!prev?.missed; }
-    if (superAsks.get(pane)?.sending && !force) return;
+    const request = { ...prev, at: Date.now(), loading: true, sending: false };
+    superAsks.set(pane, request);
+    let a = null, sig = "", missed = false;
+    try {
+      const r = await api(paneURL(pane, "ask"));
+      if (r.asking) { a = r.approval; sig = r.sig; }
+    } catch (err) {
+      console.warn("reading the dialog:", err);
+      if (!force) { a = prev?.a || null; sig = prev?.sig; missed = !!prev?.missed; }
+    }
+    if (superAsks.get(pane) !== request) return;
     // One read that finds no dialog while the agent still waits (its screen
     // mid-redraw) keeps the card; it goes once a second read agrees.
-    if (!a && !force && prev?.a && !prev.missed) { a = prev.a; missed = true; }
-    superAsks.set(pane, { at: Date.now(), a, missed });
-    if ((force || JSON.stringify(a) !== JSON.stringify(prev?.a ?? null)) && view === "collie") renderSuper(force ? { force: true } : undefined);
+    if (!a && !force && prev?.a && !prev.missed) { a = prev.a; sig = prev.sig; missed = true; }
+    superAsks.set(pane, { at: Date.now(), a, sig, missed });
+    if (view === "collie" && (force || sig !== prev?.sig || JSON.stringify(a) !== JSON.stringify(prev?.a ?? null))) {
+      renderSuper(force ? { force: true } : undefined);
+    }
   }
   setInterval(() => { if (view === "collie" && state.agents.some((x) => x.status === "blocked")) renderSuper(); }, 4000);
-  function superAskHTML(a, agent) {
+  function superAskHTML(a, agent, sig) {
     const { q, blocks } = readDialog(a.question);
     const body = blocks.map((b) => b.code ? `<pre class="ctx-code">${esc(b.text)}</pre>` : `<p>${esc(b.text)}</p>`).join("");
-    const choices = a.choices || [];
-    return `<div class="ask" data-pane="${esc(agent.pane_id)}">
+    const choices = sig ? (a.choices || []) : [];
+    const needsSignature = !sig && a.choices?.length;
+    return `<div class="ask" data-pane="${esc(agent.pane_id)}" data-sig="${esc(sig || "")}">
       <div class="ask-head"><span class="dot blocked"></span><span class="who">${esc(title(agent))}</span><span>需要你确认</span><span class="spacer"></span>
         <a href="#/p/${encodeURIComponent(agent.pane_id)}">打开 →</a></div>
       <div class="ask-q"><div class="q">${esc(q)}</div>${body ? `<div class="ctx">${body}</div>` : ""}</div>
-      ${choices.length ? `<div class="choices">${choices.map((c, i) => `<button type="button" class="choice ${c.current ? "current" : ""}" data-choice="${i}">
+      ${choices.length ? `<div class="choices">${choices.map((c, i) => `<button type="button" class="choice ${c.current ? "current" : ""}" data-choice="${i}" data-label="${esc(c.label)}">
           <span class="n">${esc(c.text || i + 1)}</span><span class="l">${esc(c.label)}${c.desc ? `<span class="d">${esc(c.desc)}</span>` : ""}</span></button>`).join("")}</div>
         <div class="ask-keys"><button type="button" data-k="esc">Esc 取消</button></div>`
+      : needsSignature ? `<div class="ask-keys" role="status">正在核对选项…</div>`
       : `<div class="ask-keys"><button type="button" data-k="up">↑</button><button type="button" data-k="down">↓</button><button type="button" data-k="esc">Esc</button><button type="button" class="go" data-k="enter">确认 ↵</button></div>`}
     </div>`;
   }
@@ -2159,32 +2178,28 @@
     // Answering a stuck agent from here.
     const b = e.target.closest("button"), card = b?.closest(".ask[data-pane]");
     if (!card || card.dataset.busy) return;
-    const pane = card.dataset.pane;
-    let kind, body, label = "";
-    if (b.dataset.choice != null) {
-      const c = superAsks.get(pane)?.a?.choices?.[+b.dataset.choice];
-      if (!c) return;
-      label = c.label;
-      if (c.keys?.length) { kind = "keys"; body = { keys: c.keys }; }
-      else if (c.text) { kind = "text"; body = { text: c.text }; }
-      else { kind = "keys"; body = { keys: ["enter"] }; }
-    } else if (b.dataset.k) {
-      kind = "keys"; body = { keys: [b.dataset.k] };
-    } else return;
+    const pane = card.dataset.pane, choice = b.dataset.label, key = b.dataset.k;
+    if (choice == null && !key) return;
+    const previous = superAsks.get(pane);
+    if (previous?.sending) return;
+    const sending = { ...previous, sending: true, loading: false };
+    superAsks.set(pane, sending);
     card.dataset.busy = "1";
     card.style.opacity = ".5";
-    const cur = superAsks.get(pane);
-    if (cur) cur.sending = true;
     try {
-      await api(paneURL(pane, kind), { body });
-      noteDecided(pane, label);
-      await sleep(350);
-      await loadSuperAsk(pane, true);
+      if (choice != null) {
+        await answerCard(pane, card.dataset.sig, choice, () => loadSuperAsk(pane, true));
+      } else {
+        await api(paneURL(pane, "keys"), { body: { keys: [key] } });
+        await sleep(350);
+        await loadSuperAsk(pane, true);
+      }
     } catch (err) {
-      if (cur) cur.sending = false;
+      toast(err.message, "attn");
+    } finally {
+      if (superAsks.get(pane) === sending) sending.sending = false;
       delete card.dataset.busy;
       card.style.opacity = "";
-      toast(err.message, "attn");
     }
   });
 
@@ -2460,6 +2475,8 @@
     kSel._pick?.classList.toggle("changed", t.kind !== targetDefault.kind);
     renderAliasChip();
     renderModelChips();
+    $("#super-composer")._selectDraft();
+    if (runOpen) $("#run-composer")._selectDraft();
     $("#super-input")._slashPrefetch?.();
   }
   // This computer's aliases for this agent; none listed, no chip. The default
@@ -2546,12 +2563,17 @@
   };
 
   // Quoting one of Collie's messages: it rides along with what you send next.
-  let replyTo = null;
+  const superDraft = () => $("#super-composer")._selectDraft();
+  const drawReply = (draft) => {
+    const box = $("#re-draft"), reply = draft.reply;
+    box.hidden = !reply;
+    if (reply) $(".re-t", box).textContent = reLine(reply.text);
+  };
   const setReply = (e) => {
-    replyTo = e ? { entry: e.id, who: "Collie", text: e.text } : null;
-    const box = $("#re-draft");
-    box.hidden = !e;
-    if (e) { $(".re-t", box).textContent = reLine(e.text); $("#super-input").focus(); }
+    const draft = superDraft();
+    draft.reply = e ? { entry: e.id, who: "Collie", text: e.text } : null;
+    drawReply(draft);
+    if (e) $("#super-input").focus();
   };
   const reLine = (t) => plainLine(t);
   $("#re-draft button").addEventListener("click", () => setReply(null));
@@ -2562,8 +2584,8 @@
     if (e) setReply(e);
   });
 
-  async function sendSuper(text, re, restoreRe, ready = text) {
-    // Only what was picked here goes along; the hub fills in its current defaults.
+  async function sendSuper(text, re, ready = text, attachmentMachine) {
+    // The hub fills its defaults in, except files must follow the machine that has them.
     const t = targetNow(), p = target || {};
     const { model, effort } = modelNow(t);
     // Your message shows at once; the hub's copy takes its place when it arrives.
@@ -2576,7 +2598,7 @@
     try {
       text = mine.text = await ready;
       r = await api("/api/super/say", { body: { text, re: re?.entry || "",
-      machine: "machine" in p ? (t.machine || "local") : "",
+      machine: attachmentMachine ?? ("machine" in p ? (t.machine || "local") : ""),
       kind: "kind" in p ? t.kind : "",
       model: "model" in p || "kind" in p ? model : "",
       effort: "effort" in p || "kind" in p ? effort : "",
@@ -2584,7 +2606,6 @@
     } catch (err) {
       const idx = pendingSays.indexOf(mine);
       if (idx >= 0) pendingSays.splice(idx, 1);
-      if (restoreRe && re && !replyTo) setReply(chatEntries().find((x) => x.id === re.entry));
       renderSide();
       renderSuper({ force: true });
       throw err;
@@ -2610,10 +2631,10 @@
     grp.dataset.busy = "1";
     grp.querySelectorAll("button").forEach((x) => { x.disabled = true; });
     const id = grp.dataset.entry, text = b.dataset.opt;
-    if (replyTo?.entry === id) setReply(null);
+    if (superDraft().reply?.entry === id) setReply(null);
     const e = chatEntries().find((x) => x.id === id);
     try {
-      await sendSuper(text, e ? { entry: e.id, who: "Collie", text: e.text } : { entry: id, who: "Collie", text: "" }, false);
+      await sendSuper(text, e ? { entry: e.id, who: "Collie", text: e.text } : { entry: id, who: "Collie", text: "" });
     } catch (err) {
       // Not sent: the choices must work again even if the thread was not redrawn.
       delete grp.dataset.busy;
@@ -2640,11 +2661,18 @@
     if (ev.key === "Escape" && pendingOpen && !document.querySelector("dialog[open]")) { pendingOpen = false; renderPendingBar(); }
   });
 
-  bindComposer($("#super-composer"), $("#super-input"), async (draft, ready) => {
-    const re = replyTo;
-    setReply(null);
-    await sendSuper(draft, re, true, ready);
-  }, () => targetNow().machine, null, () => { const t = targetNow(); return slashCtx(t.machine, t.kind, "", false); });
+  bindComposer($("#super-composer"), $("#super-input"), async (draft, ready, owner, hasFiles) => {
+    const re = owner.reply;
+    owner.reply = null;
+    drawReply(owner);
+    try {
+      await sendSuper(draft, re, ready, hasFiles ? owner.machine || "local" : undefined);
+    } catch (err) {
+      owner.reply ||= re;
+      if (superDraft() === owner) drawReply(owner);
+      throw err;
+    }
+  }, () => targetNow().machine, null, () => { const t = targetNow(); return slashCtx(t.machine, t.kind, "", false); }, undefined, drawReply);
 
   // ───────────────────────────── tabs in a page
   // Picking a tab keeps where the last one was scrolled and opens the new one
@@ -3672,28 +3700,35 @@
   }
   async function openHist(hid, restore = null) {
     const el = $("#x-thread");
-    resetEarlier(el, null); el._msgs = null;
+    const opening = resetEarlier(el, null);
+    const mine = () => view === "ext" && extCur === "h:" + hid;
+    const stillOpening = () => mine() && el._earlier === opening;
+    el._msgs = null;
     el._restore = restore && !restore.atBottom ? restore : null;
     primeThread(el, "h:" + hid);
     if (!hist.some((h) => h.id === hid)) await loadHistory();
+    if (!stillOpening()) return;
     renderHistHead(hid);
     const h = hist.find((x) => x.id === hid);
     if (!h) { el.innerHTML = ""; el._restore = null; return; }
+    const q = new URLSearchParams({ kind: h.kind, session: h.session, cwd: h.cwd });
+    if (h.machine) q.set("machine", h.machine);
+    let r;
     try {
-      const q = new URLSearchParams({ kind: h.kind, session: h.session, cwd: h.cwd });
-      if (h.machine) q.set("machine", h.machine);
-      const r = await api("/api/transcript?" + q);
-      if (view === "ext" && extCur === "h:" + hid) {
-        resetEarlier(el, (c) => `/api/transcript?${q}&before=${c}`);
-        el._msgs = r.messages || []; el._liveEarlier = r.earlier || 0;
-        keepThread("h:" + hid, el._msgs);
-        el._redraw = () => { if (view === "ext" && extCur === "h:" + hid) drawThread(threadMsgs(el), el, "这个会话没有消息。"); };
-        el._redraw();
-      }
+      r = await api("/api/transcript?" + q);
     } catch (err) {
-      el._restore = null;
-      if (view === "ext" && extCur === "h:" + hid) el.innerHTML = `<div class="thread-empty">${esc(err.message)}</div>`;
+      if (stillOpening()) {
+        el._restore = null;
+        el.innerHTML = `<div class="thread-empty">${esc(err.message)}</div>`;
+      }
+      return;
     }
+    if (!stillOpening()) return;
+    resetEarlier(el, (c) => `/api/transcript?${q}&before=${c}`);
+    el._msgs = r.messages || []; el._liveEarlier = r.earlier || 0;
+    keepThread("h:" + hid, el._msgs);
+    el._redraw = () => { if (mine()) drawThread(threadMsgs(el), el, "这个会话没有消息。"); };
+    el._redraw();
   }
   const RESUME = { claude: (s) => ["--resume", s], codex: (s) => ["resume", s], agy: (s) => ["--conversation", s] };
   async function continueHist(hid) {
@@ -3969,6 +4004,7 @@
     stick($("#x-thread"), was);
   }
   function renderExtHead(gone) {
+    $("#x-composer")._selectDraft();
     extWorking(gone);
     if (extCur?.startsWith("h:")) return renderHistHead(extCur.slice(2));
     $("#x-tag").textContent = "只读";
@@ -4039,8 +4075,11 @@
   }, null, () => {
     const e = ext.find((x) => x.id === extCur);
     return e ? slashCtx(e.hub ? tagged(e.machine || "", e.hub) : e.machine, e.kind, e.cwd, false) : null;
-  });
-  function closeExt() { extStream?.close(); extStream = null; }
+  }, () => extCur);
+  function closeExt() {
+    extStream?.close(); extStream = null;
+    resetEarlier($("#x-thread"), null);
+  }
   $(".side-scroll").addEventListener("click", (ev) => {
     const v = ev.target.closest("[data-view]"), k = ev.target.closest("[data-kind]");
     const det = ev.target.closest("summary")?.parentElement, fold = det?.dataset.fold;
@@ -4257,36 +4296,44 @@
   async function openExt(id, restore = null) {
     closeExt();
     extCur = id;
+    $("#x-composer")._selectDraft();
     if (id.startsWith("h:")) return openHist(id.slice(2), restore);
     const el = $("#x-thread");
+    const opening = resetEarlier(el, (c) => `/api/external/${encodeURIComponent(id)}/earlier?before=${c}`);
     el._msgs = null;
     el._restore = restore && !restore.atBottom ? restore : null;
     primeThread(el, "x:" + id);
-    resetEarlier(el, (c) => `/api/external/${encodeURIComponent(id)}/earlier?before=${c}`);
     extSoonN = 0;
     if (!ext.some((e) => e.id === id)) await loadExternal();
-    renderExtHead();
     const mine = () => view === "ext" && extCur === id;
+    if (!mine() || el._earlier !== opening) return;
+    renderExtHead();
     // The stream drops when the hub restarts or the computer reconnects:
     // try again in a moment, keeping what is on screen.
     let tries = 0;
     const connect = () => {
       const es = extStream = openES(`/api/external/${encodeURIComponent(id)}/chat`);
+      const active = () => extStream === es && mine();
       es.addEventListener("meta", (ev) => {
+        if (!active()) return;
         tries = 0; extSoonN = 0;
         if (!ext.some((e) => e.id === id)) loadExternal();
-        if (mine() && !JSON.parse(ev.data).structured) el.innerHTML = `<div class="thread-empty">还没有找到这个会话的记录。</div>`;
+        if (!JSON.parse(ev.data).structured) el.innerHTML = `<div class="thread-empty">还没有找到这个会话的记录。</div>`;
       });
-      const show = (msgs) => { keepThread("x:" + id, msgs); if (mine()) { drawThread(withSending("x:" + id, msgs), el, "这个会话还没有消息。"); extWorking(); } };
+      const show = (msgs) => { keepThread("x:" + id, msgs); if (active()) { drawThread(withSending("x:" + id, msgs), el, "这个会话还没有消息。"); extWorking(); } };
       el._redraw = () => show(threadMsgs(el));
-      es.addEventListener("patch", (ev) => mine() && show(applyPatch(el, JSON.parse(ev.data))));
-      es.addEventListener("messages", (ev) => { el._msgs = null; el._older = null; show(JSON.parse(ev.data)); }); // an older computer
-      es.addEventListener("gone", () => { closeExt(); if (mine()) renderExtHead(true); });
+      es.addEventListener("patch", (ev) => active() && show(applyPatch(el, JSON.parse(ev.data))));
+      es.addEventListener("messages", (ev) => { // an older computer
+        if (!active()) return;
+        el._msgs = null; resetEarlier(el, el._earlier?.url);
+        show(JSON.parse(ev.data));
+      });
+      es.addEventListener("gone", () => { if (active()) { closeExt(); renderExtHead(true); } });
       es.onerror = () => {
-        if (es.readyState !== EventSource.CLOSED || extStream !== es || !mine()) return;
+        if (es.readyState !== EventSource.CLOSED || !active()) return;
         if (++tries > 20) { renderExtHead(true); return; }
         if (!el.querySelector(".msg")) el.innerHTML = `<div class="thread-empty">连不上那台电脑，正在重试…</div>`;
-        setTimeout(() => { if (extStream === es && mine()) connect(); }, Math.min(1000 * tries, 5000));
+        setTimeout(() => { if (active()) connect(); }, Math.min(1000 * tries, 5000));
       };
     };
     connect();
@@ -5230,6 +5277,7 @@
   }
   function closeStream() {
     stream?.close(); stream = null; term?.blur();
+    resetEarlier($("#thread"), null);
     // Leaving the screen: an agent scrolled up from here goes back to the
     // bottom, after whatever is still on its way to it.
     const home = wheelUp.home();
@@ -5343,7 +5391,7 @@
   // A pane on the computer this browser runs on can be reached at that
   // node's local port (direct.go) instead of through the hub: a keystroke
   // and its echo then stay on the machine. The hub offers it only to a
-  // browser at the node's address; whatever fails goes through the hub.
+  // browser at the node's address. A rejected token goes through the hub.
   const DIRECT_RETRY_MS = 5 * 60e3, DIRECT_TIMEOUT_MS = 3000;
   const directs = new Map(); // machine → { base, token, until } | { until } (none for now) | a probe
   const paneMachine = (id) => !id || hubOf(id) || !id.includes("@") ? "" : id.slice(id.lastIndexOf("@") + 1);
@@ -5389,6 +5437,8 @@
         if (res.status !== 401) throw new Error(data.error || res.statusText);
       } catch (err) {
         if (!(err instanceof TypeError) && err.name !== "TimeoutError") throw err; // the node answered: a real error
+        dropDirect(id);
+        throw new Error("无法确认终端已执行这次输入，请先检查终端", { cause: err });
       }
       dropDirect(id);
     }
@@ -5398,15 +5448,17 @@
   // ───────────────────────────── one agent: conversation
   let showRaw = false;
   function resetChat() {
-    $("#thread").innerHTML = "";
-    $("#thread").classList.remove("asking");
+    const th = $("#thread");
+    resetEarlier(th, th._earlier?.url);
+    th.innerHTML = "";
+    th.classList.remove("asking");
     $("#live").hidden = true;
     $("#live").innerHTML = "";
-    $("#thread")._sig = ""; $("#thread")._msgs = null; $("#thread")._blocks = null; $("#thread")._older = null; $("#thread")._restore = null; showRaw = false;
+    th._sig = ""; th._msgs = null; th._blocks = null; th._restore = null; showRaw = false;
   }
   function openChat(id, restore = null) {
-    stream = openES(paneURL(id, "chat"));
-    const alive = () => id === current && curMode() === "chat";
+    const es = stream = openES(paneURL(id, "chat"));
+    const alive = () => stream === es && id === current && curMode() === "chat";
     stream.addEventListener("reset", () => alive() && resetChat());
     const th = $("#thread");
     resetEarlier(th, (c) => paneURL(id, "earlier") + "?before=" + c);
@@ -5417,8 +5469,13 @@
     stream.addEventListener("patch", (e) => alive() && showPane(applyPatch(th, JSON.parse(e.data))));
     stream.addEventListener("messages", (e) => alive() && drawThread(withSending("p:" + id, JSON.parse(e.data)))); // an older computer
     stream.addEventListener("log", (e) => alive() && drawFallback(JSON.parse(e.data).text));
-    stream.addEventListener("live", (e) => alive() && drawLive(JSON.parse(e.data)));
-    stream.addEventListener("gone", () => { $("#gone").hidden = false; closeStream(); });
+    stream.addEventListener("live", (e) => {
+      if (!alive()) return;
+      const l = JSON.parse(e.data);
+      drawLive(l);
+      if (l.approval && l.approval_sig === undefined) refreshChatAsk(id); // an older computer
+    });
+    stream.addEventListener("gone", () => { if (alive()) { $("#gone").hidden = false; closeStream(); } });
   }
   // Threads on a .viewer.chatbg scroll the viewer around them.
   const scroller = (el) => el.closest(".viewer.chatbg") || el;
@@ -5437,7 +5494,7 @@
     let list = el._msgs, base = el._base;
     if (!list || p.from === p.base || p.from < base || p.from > base + list.length) {
       list = []; base = p.from;
-      el._older = null; // a fresh view: what was loaded before may not join it
+      resetEarlier(el, el._earlier?.url); // older pages may not join a fresh view
     }
     list = list.slice(0, p.from - base).concat(p.msgs);
     if (p.base > base) {
@@ -5508,32 +5565,41 @@
   }
   const earlierCursor = (el) => (el._older ? el._olderEarlier : el._liveEarlier) || 0;
   function resetEarlier(el, url) {
-    el._older = null; el._olderEarlier = 0; el._liveEarlier = 0; el._earlierURL = url;
-    el._loadMore = url && (() => { el._earlierFailed = false; if (earlierCursor(el) > 0) loadEarlier(el); });
+    el._older = null; el._olderEarlier = 0; el._liveEarlier = 0;
+    // Each opening or replacement has its own state, even for the same URL.
+    const earlier = el._earlier = { url, loading: false, failed: false };
+    el._loadMore = url && (() => { earlier.failed = false; loadEarlier(el, earlier); });
+    return earlier;
   }
 
   // Scrolled to the top of a conversation: fetch the page before the oldest
   // message shown, keeping the reader's place.
-  async function loadEarlier(el) {
-    if (el._loadingEarlier || !el._earlierURL) return;
+  async function loadEarlier(el, earlier = el._earlier) {
+    if (!earlier?.url || earlier !== el._earlier || earlier.loading || earlier.failed) return;
     const cursor = earlierCursor(el);
     if (!cursor) return;
-    el._loadingEarlier = true;
+    const matches = () => earlier === el._earlier && earlierCursor(el) === cursor;
+    earlier.loading = true;
     el._redraw?.();
     try {
-      const r = await api(el._earlierURL(cursor));
-      if (el._earlierURL && earlierCursor(el) === cursor) {
+      const r = await api(earlier.url(cursor));
+      if (matches()) {
         el._older = (r.messages || []).concat(el._older || []);
         el._olderEarlier = r.earlier || 0;
       }
     } catch (err) {
-      el._earlierFailed = true; // scrolling up tries again; nothing loops on its own
-      toast(err.message, "attn");
+      if (matches()) {
+        earlier.failed = true; // scrolling up tries again; nothing loops on its own
+        toast(err.message, "attn");
+      }
+    } finally {
+      earlier.loading = false;
+      if (earlier === el._earlier) {
+        const s = scroller(el), fromBottom = s.scrollHeight - s.scrollTop;
+        el._redraw?.();
+        s.scrollTop = s.scrollHeight - fromBottom;
+      }
     }
-    el._loadingEarlier = false;
-    const s = scroller(el), fromBottom = s.scrollHeight - s.scrollTop;
-    el._redraw?.();
-    s.scrollTop = s.scrollHeight - fromBottom;
   }
   // Any conversation scrolled to its top brings in the page before: each
   // thread says how (_loadMore), this one listener notices.
@@ -5570,15 +5636,14 @@
     catch (err) { toast(err.message, "attn"); }
     finally { b.disabled = false; }
   });
-  // An end-of-turn button answers by sending its label from this view's composer.
+  // An end-of-turn button sends its label without taking the draft or its files.
   document.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-act=ask-reply]");
     if (!b) return;
     const form = b.closest("section.view")?.querySelector("form.composer:not([hidden])");
-    const input = form?.querySelector("textarea");
-    if (!form || !input) { toast("这里没法发消息，去电脑上回答", "attn"); return; }
-    input.value = b.dataset.text;
-    form.requestSubmit();
+    if (!form?._sendText) { toast("这里没法发消息，去电脑上回答", "attn"); return; }
+    b.disabled = true;
+    form._sendText(b.dataset.text).finally(() => { b.disabled = false; });
   });
   // How long a turn took: "41s", "4m 41s", "1h 5m".
   const took = (ms) => {
@@ -5622,14 +5687,15 @@
           continue;
         }
         if (m.kind === "tool") {
-          // A run of tool calls reads as one quiet line; long runs fold away,
-          // keeping only the latest step in view.
+          // Keep the current work or a failure visible when the run folds.
           const start = i;
           i++;
           while (i < to && msgs[i].kind === "tool" && !(top && turns.has(i))) i++;
           const run = msgs.slice(start, i);
+          // Existing nodes only report output and errors.
+          const pending = (t) => !t.tool_done && !t.error && !t.output;
           const row = (t, k) => {
-            const cls = t.error ? "err" : (t.output ? "" : "pending");
+            const cls = t.error ? "err" : (pending(t) ? "pending" : "");
             return `<details class="tool ${cls}" data-i="${k}" ${open.has(String(k)) ? "open" : ""}>`
               + `<summary><span class="tname">${esc(t.name)}</span><span class="targ">${esc(t.input)}</span></summary>`
               + (t.output ? `<pre>${esc(t.output)}</pre>` : "") + `</details>`;
@@ -5641,11 +5707,16 @@
           }
           const key = "run" + start;
           const names = [...new Set(run.map((t) => t.name))].slice(0, 4).join("、");
-          const errs = run.filter((t) => t.error).length;
+          let runningIndex, failureIndex, errs = 0;
+          run.forEach((t, k) => {
+            if (pending(t)) runningIndex = k;
+            if (t.error) { failureIndex = k; errs++; }
+          });
+          const featured = runningIndex ?? failureIndex ?? run.length - 1;
           html += `<div class="tools"><details class="toolrun" data-i="${key}" ${open.has(key) ? "open" : ""}>
             <summary><span class="n">${run.length} 个步骤</span><span class="targ">${esc(names)}${errs ? ` · <b class="errs">${errs} 个出错</b>` : ""}</span></summary>
-            <div class="toolrun-body">${run.slice(0, -1).map((t, k) => row(t, start + k)).join("")}</div>
-          </details>${row(run[run.length - 1], i - 1)}</div>`;
+            <div class="toolrun-body">${run.map((t, k) => k === featured ? "" : row(t, start + k)).join("")}</div>
+          </details>${row(run[featured], start + featured)}</div>`;
           cut();
           continue;
         }
@@ -5684,7 +5755,8 @@
       return blocks;
     }
     const blocks = walk(msgs.length, true);
-    if (el._loadingEarlier) blocks.unshift(`<div class="earlier-row">加载中…</div>`);
+    const earlier = el._earlier;
+    if (earlier?.loading) blocks.unshift(`<div class="earlier-row">加载中…</div>`);
     const sig = blocks.join("");
     if (sig === el._sig) return;
     el._sig = sig;
@@ -5708,9 +5780,9 @@
     }
     // Too short to scroll, with more before it: there is no top to scroll
     // to, so bring the earlier page in now.
-    if (el._earlierURL && !el._loadingEarlier && !el._earlierFailed && earlierCursor(el) > 0) {
+    if (earlier?.url && !earlier.loading && !earlier.failed && earlierCursor(el) > 0) {
       const s = scroller(el);
-      if (s.scrollHeight <= s.clientHeight + 100) setTimeout(() => loadEarlier(el));
+      if (s.scrollHeight <= s.clientHeight + 100) setTimeout(() => loadEarlier(el, earlier));
     }
   }
 
@@ -5735,7 +5807,7 @@
       html = `<div class="live-working"><span class="dot working"></span><pre>${esc(l.tail)}</pre><span class="meta"></span></div>`;
     } else if (l.status === "blocked" && l.approval) {
       const v = find(current);
-      html = askHTML(l.approval, v ? title(v) : "agent");
+      html = askHTML(l.approval, v ? title(v) : "agent", l.approval_sig);
     }
     // Live updates arrive every second (the agent's clock ticks); redrawing
     // an unchanged card would make it jump. One that changes (the cursor
@@ -5819,45 +5891,52 @@
 
   // A calm decision sheet: the question as the title, the dialog's text
   // reflowed under it, the choices as a list.
-  function askHTML(a, who) {
+  function askHTML(a, who, sig) {
     const { q, blocks } = readDialog(a.question);
-    const choices = a.choices || [];
+    const choices = sig ? (a.choices || []) : [];
+    const needsSignature = !sig && a.choices?.length;
     const body = blocks.map((b) => b.code ? `<pre class="ctx-code">${esc(b.text)}</pre>` : `<p>${esc(b.text)}</p>`).join("");
-    return `<div class="ask">
+    return `<div class="ask" data-sig="${esc(sig || "")}">
       <div class="ask-head"><span class="dot blocked"></span><span class="who">${esc(who)}</span><span>需要你确认</span><span class="spacer"></span>
         <button data-raw>${showRaw ? "收起终端" : "查看终端"}</button></div>
       <div class="ask-q"><div class="q">${esc(q)}</div>${body ? `<div class="ctx">${body}</div>` : ""}</div>
       ${showRaw ? `<pre class="ask-raw">${esc(a.screen)}</pre>` : ""}
-      ${choices.length ? `<div class="choices">${choices.map((c, i) => `<button class="choice ${c.current ? "current" : ""}" data-choice="${i}">
+      ${choices.length ? `<div class="choices">${choices.map((c, i) => `<button class="choice ${c.current ? "current" : ""}" data-choice="${i}" data-label="${esc(c.label)}">
           <span class="n">${esc(c.text || i + 1)}</span><span class="l">${esc(c.label)}${c.desc ? `<span class="d">${esc(c.desc)}</span>` : ""}</span></button>`).join("")}</div>
         <div class="ask-keys"><button data-k="esc">Esc 取消</button></div>`
+      : needsSignature ? `<div class="ask-keys" role="status">正在核对选项…</div>`
       : `<div class="ask-keys"><button data-k="up">↑</button><button data-k="down">↓</button><button data-k="esc">Esc</button><button class="go" data-k="enter">确认 ↵</button></div>`}
     </div>`;
   }
 
+  async function refreshChatAsk(pane) {
+    const es = stream, live = lastLive;
+    try {
+      const r = await api(paneURL(pane, "ask"));
+      if (pane !== current || es !== stream || live !== lastLive || view !== "pane" || curMode() !== "chat") return;
+      drawLive(r.asking ? { status: "blocked", approval: r.approval, approval_sig: r.sig } : { status: "blocked" });
+    } catch (err) {
+      console.warn("reading the dialog:", err);
+    }
+  }
+
   $("#live").addEventListener("mousedown", (e) => { if (e.target.closest(".ask button")) e.preventDefault(); });
-  $("#live").addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (!b || !current) return;
+  $("#live").addEventListener("click", async (e) => {
+    const b = e.target.closest("button"), pane = current;
+    if (!b || !pane) return;
     if (b.hasAttribute("data-raw")) { showRaw = !showRaw; if (lastLive) drawLive(lastLive); return; }
-    const ask = b.closest(".ask");
-    if (ask?.dataset.busy) return;
-    let p;
-    if (b.dataset.choice != null) {
-      const c = lastLive?.approval?.choices?.[+b.dataset.choice];
-      if (!c) return;
-      if (c.keys?.length) p = sendKeys(c.keys);
-      else if (c.text) p = sendText(c.text);
-      else p = sendKeys(["enter"]);
-      const pane = current;
-      Promise.resolve(p).then(() => noteDecided(pane, c.label), () => {});
-    } else if (b.dataset.k) {
-      p = sendKeys([b.dataset.k]);
-    } else return;
-    if (ask) {
-      ask.dataset.busy = "1";
-      ask.style.opacity = ".5";
-      Promise.resolve(p).finally(() => setTimeout(() => { $("#live")._html = ""; }, 600));
+    const card = b.closest(".ask"), choice = b.dataset.label, key = b.dataset.k;
+    if (!card || card.dataset.busy || (choice == null && !key)) return;
+    card.dataset.busy = "1";
+    card.style.opacity = ".5";
+    try {
+      if (choice != null) await answerCard(pane, card.dataset.sig, choice, () => refreshChatAsk(pane));
+      else await sendKeys([key]);
+    } catch (err) {
+      toast(err.message, "attn");
+    } finally {
+      delete card.dataset.busy;
+      card.style.opacity = "";
     }
   });
 
@@ -7073,6 +7152,7 @@
     setRunW(Math.max(Math.min(store.get("runW", 0) || RUN_W, runMax()), RUN_MIN));
     if (runPane.hidden) { runPane.hidden = false; runSig = ""; runPane.offsetWidth; }
     $("#app").classList.add("has-run");
+    $("#run-composer")._selectDraft();
     markRunMore();
     renderRun({ focus, bottom: !focus });
     if (!touchMQ.matches) runInput.focus({ preventScroll: true });
@@ -7108,7 +7188,7 @@
     if (!runOpen) return;
     const root = runs.member.get(runOpen.anchor) || runOpen.root, t = runs.threads.get(root);
     if (!t) { closeRun(); return; }
-    if (runOpen.root !== root) { runOpen.root = root; markRunMore(); }
+    if (runOpen.root !== root) { runOpen.root = root; $("#run-composer")._selectDraft(); markRunMore(); }
     const { allEntries, pinIds, replyOpts } = drawn;
     let html = "", prevKey = "", prevRole = "";
     for (const e of [t.root, ...t.items]) {
@@ -7154,12 +7234,12 @@
     onEnd: () => store.set("runW", Math.round(runDragW)),
   });
   // Your reply goes on the run's latest message.
-  bindComposer($("#run-composer"), runInput, async (draft, ready) => {
+  bindComposer($("#run-composer"), runInput, async (draft, ready, owner, hasFiles) => {
     const t = runOpen && runs.threads.get(runOpen.root);
     if (!t) throw new Error("这串回复已经关上了");
     const last = [...t.items].reverse().find((x) => x.id) || t.root;
-    await sendSuper(draft, { entry: last.id, who: last.stub ? last.who : runWho(last), text: last.text }, false, ready);
-  }, () => targetNow().machine);
+    await sendSuper(draft, { entry: last.id, who: last.stub ? last.who : runWho(last), text: last.text }, ready, hasFiles ? owner.machine || "local" : undefined);
+  }, () => targetNow().machine, null, null, () => runOpen?.root);
 
   const md = createRenderer({
     fileLinkAttrs, filePattern: FILE_RE, imagePattern: IMG_EXT, thumbnailURL: (path) => thumbs.get(path),
@@ -7347,57 +7427,80 @@
       return file;
     }
   }
-  function bindFiles(form, machine) {
+  function bindFiles(form, selectDraft, visibleFiles) {
     const box = $(".files", form), picker = $('input[type="file"]', form);
-    form._files = [];
     const draw = () => {
-      box.hidden = !form._files.length;
-      box.innerHTML = form._files.map((f, i) => `<span class="file ${f.err ? "err" : f.path ? "" : "busy"}" title="${esc(f.err || f.path || "上传中…")}">
+      const files = visibleFiles();
+      box.hidden = !files.length;
+      box.innerHTML = files.map((f, i) => `<span class="file ${f.err ? "err" : f.path ? "" : "busy"}" title="${esc(f.err || f.path || "上传中…")}">
         ${f.thumb ? `<button type="button" class="fthumb" data-view="${i}" aria-label="${esc("预览 " + f.name)}" title="预览"><img src="${f.thumb}" alt=""></button>` : `<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>`}
         <span class="fn">${esc(f.name)}</span><span class="fs">${f.err ? "失败" : f.path ? fmtSize(f.size) : "上传中"}</span>
         ${f.err ? `<button type="button" data-retry="${i}" title="重新上传">${RETRY_SVG}</button>` : ""}<button type="button" data-rm="${i}" title="移除">×</button></span>`).join("");
     };
+    const cancelUpload = (f) => {
+      const ctl = f.abort;
+      f.abort = null;
+      ctl?.abort();
+    };
     const upload = (f) => {
       f.err = "";
       f.path = "";
-      // an edit uploads the picture again: the earlier upload is dropped
-      f.abort?.abort();
-      const ctl = f.abort = new AbortController(), m = machine();
-      f.done = shrinkImage(f.file, f.name).then((body) => {
-        const up = routeReq(`/api/uploads?name=${encodeURIComponent(body === f.file ? f.name : body.name)}${m ? "&machine=" + encodeURIComponent(m) : ""}`);
-        return fetch(up.url, {
+      // An edit starts a new upload for the same destination.
+      cancelUpload(f);
+      const ctl = f.abort = new AbortController(), { file, name, machine, hub } = f;
+      f.done = shrinkImage(file, name).then((body) => {
+        const up = routeReq("/api/uploads", undefined, hub);
+        const query = new URLSearchParams({ name: body === file ? name : body.name });
+        const node = hub ? untag(machine, hub) : machine;
+        if (node) query.set("machine", node);
+        return fetch(up.url + "?" + query, {
           method: "POST", body, signal: ctl.signal, credentials: up.hub ? "omit" : "same-origin",
           headers: up.hub ? { Authorization: "Bearer " + up.hub.token } : {},
         });
       }).then(async (res) => {
         const d = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(d.error || res.statusText);
-        if (f.abort === ctl) { f.path = d.path; seedImage(d.path, f.file, m); }
+        if (typeof d.path !== "string" || !d.path) throw new Error("电脑没有返回附件路径");
+        if (f.abort === ctl) { f.path = d.path; seedImage(d.path, file, machine); }
       }).catch((err) => { if (f.abort !== ctl) return; f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
     };
     // ready: every file in a message uploaded, the failed ones tried once
     // more; a retry clicked meanwhile is waited for too.
-    form._filesReady = async (files) => {
+    const ready = async (files) => {
       files.filter((f) => f.err).forEach(upload);
       do await Promise.all(files.map((f) => f.done));
       while (files.some((f) => !f.path && !f.err));
     };
-    const add = (list) => {
+    const add = (list, draft) => {
       for (const file of list) {
-        const f = { file, name: file.name || "粘贴的图片.png", size: file.size, thumb: file.type.startsWith("image/") ? URL.createObjectURL(file) : "" };
+        const f = {
+          file, name: file.name || "粘贴的图片.png", size: file.size,
+          thumb: file.type.startsWith("image/") ? URL.createObjectURL(file) : "",
+          machine: draft.machine, hub: draft.hub,
+        };
+        draft.files.push(f);
         upload(f);
-        form._files.push(f);
       }
       draw();
     };
     // "+" opens a menu: a photo taken now, pictures from the gallery, any file.
+    const bindPicker = (i) => {
+      i.addEventListener("change", () => {
+        const draft = i._draft || selectDraft();
+        i._draft = null;
+        add([...i.files], draft);
+        i.value = "";
+      });
+      i.addEventListener("cancel", () => { i._draft = null; });
+    };
     const input = (accept, capture) => {
       const i = Object.assign(document.createElement("input"), { type: "file", hidden: true, accept, multiple: !capture });
       if (capture) i.setAttribute("capture", capture);
-      i.addEventListener("change", () => { add([...i.files]); i.value = ""; });
+      bindPicker(i);
       form.append(i);
       return i;
     };
+    const pick = (i, draft) => { i._draft = draft; i.click(); };
     const camera = input("image/*", "environment"), photos = input("image/*");
     // Chrome on Android shows a box that takes any file as a chooser of
     // camera, camcorder and gallery. Its file picker API opens the system
@@ -7405,25 +7508,27 @@
     // type, which is no media type, leaves out the camera apps.
     const android = /Android/.test(navigator.userAgent);
     if (android) picker.accept = "application/octet-stream";
-    const pickFiles = () => {
-      if (!android || !window.showOpenFilePicker) { picker.click(); return; }
-      showOpenFilePicker({ multiple: true }).then((hs) => Promise.all(hs.map((h) => h.getFile()))).then(add, (err) => {
+    const pickFiles = (draft) => {
+      if (!android || !window.showOpenFilePicker) { pick(picker, draft); return; }
+      showOpenFilePicker({ multiple: true }).then((hs) => Promise.all(hs.map((h) => h.getFile()))).then((files) => add(files, draft), (err) => {
         if (err.name !== "AbortError") toast("打不开文件管理器：" + err.message, "attn");
       });
     };
-    const pickers = {
-      // a phone's camera comes from the file input; a computer's from the page
-      camera: () => touchMQ.matches ? camera.click() : takePhoto().then((f) => f && add([f]), (err) => toast("打不开摄像头：" + err.message, "attn")),
-      photos: () => photos.click(),
-      files: pickFiles,
-    };
-    $(".attach", form).addEventListener("click", (e) => openAttach(e.currentTarget, pickers));
-    picker.addEventListener("change", () => { add([...picker.files]); picker.value = ""; });
+    bindPicker(picker);
+    $(".attach", form).addEventListener("click", (e) => {
+      const draft = selectDraft();
+      openAttach(e.currentTarget, {
+        // The native file input opens a phone camera, the page handles desktops.
+        camera: () => touchMQ.matches ? pick(camera, draft) : takePhoto().then((f) => f && add([f], draft), (err) => toast("打不开摄像头：" + err.message, "attn")),
+        photos: () => pick(photos, draft),
+        files: () => pickFiles(draft),
+      });
+    });
     // A picture opens in the preview, where it can be edited: the edited one
     // takes its place (and is uploaded in its place), its source and edits
     // kept so it opens again where the editing stopped.
-    const edit = (f) => window.collieImageEditor.open(f.orig?.thumb || f.thumb, f.edits, (msg) => toast(msg, "attn")).then((r) => {
-        if (!r || !form._files.includes(f)) return null;
+    const edit = (f, draft) => window.collieImageEditor.open(f.orig?.thumb || f.thumb, f.edits, (msg) => toast(msg, "attn")).then((r) => {
+        if (!r || !draft.files.includes(f)) return null;
         if (!r.blob && !f.orig) return null; // never edited, nothing done
         f.edits = r.state;
         f.orig ||= { file: f.file, name: f.name, size: f.size, thumb: f.thumb, path: f.path };
@@ -7437,47 +7542,46 @@
           // all of it undone: the picture as it came
           const o = f.orig;
           Object.assign(f, { file: o.file, name: o.name, size: o.size, thumb: o.thumb });
-          if (o.path) { f.abort?.abort(); Object.assign(f, { path: o.path, err: "", done: Promise.resolve() }); } else upload(f);
+          if (o.path) { cancelUpload(f); Object.assign(f, { path: o.path, err: "", done: Promise.resolve() }); } else upload(f);
         }
         draw();
         return { url: f.thumb, alt: f.name };
       });
     const release = (f) => {
+      cancelUpload(f);
       if (f.thumb) URL.revokeObjectURL(f.thumb);
       if (f.orig && f.orig.thumb !== f.thumb) URL.revokeObjectURL(f.orig.thumb);
     };
     box.addEventListener("click", (e) => {
-      const shown = form._files[e.target.closest("[data-view]")?.dataset.view];
+      const draft = selectDraft(), files = draft.files;
+      const shown = files[e.target.closest("[data-view]")?.dataset.view];
       if (shown) {
-        const pics = form._files.filter((f) => f.thumb);
-        const items = pics.map((f) => ({ url: f.thumb, alt: f.name, edit: () => edit(f) }));
+        const pics = files.filter((f) => f.thumb);
+        const items = pics.map((f) => ({ url: f.thumb, alt: f.name, edit: () => edit(f, draft) }));
         openLightbox(items, pics.indexOf(shown));
         return;
       }
-      const again = form._files[e.target.closest("[data-retry]")?.dataset.retry];
+      const again = files[e.target.closest("[data-retry]")?.dataset.retry];
       if (again) { upload(again); draw(); return; }
       const i = e.target.closest("[data-rm]")?.dataset.rm;
       if (i == null) return;
-      const [f] = form._files.splice(+i, 1);
+      const [f] = files.splice(+i, 1);
       if (f) release(f);
       draw();
     });
     const ta = $("textarea", form);
     ta.addEventListener("paste", (e) => {
       const files = [...(e.clipboardData?.files || [])];
-      if (files.length) { e.preventDefault(); add(files); }
+      if (files.length) { e.preventDefault(); add(files, selectDraft()); }
     });
     form.addEventListener("dragover", (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); form.classList.add("drop"); } });
     form.addEventListener("dragleave", () => form.classList.remove("drop"));
     form.addEventListener("drop", (e) => {
       form.classList.remove("drop");
       if (!e.dataTransfer?.files?.length) return;
-      e.preventDefault(); add([...e.dataTransfer.files]);
+      e.preventDefault(); add([...e.dataTransfer.files], selectDraft());
     });
-    // A message being sent takes its files along; a failed one puts them back.
-    form._takeFiles = () => { const t = form._files; form._files = []; draw(); return t; };
-    form._restoreFiles = (files) => { form._files = files.concat(form._files); draw(); };
-    form._dropFiles = (files) => files.forEach(release);
+    return { draw, ready, release };
   }
   // Until its files are up, a message being sent shows them from the box's
   // own previews, under made-up paths only this page knows; forgetLocal
@@ -7500,9 +7604,9 @@
   }
   const forgetLocal = (ps) => ps.forEach((p) => { thumbs.delete(p); thumbMeta.delete(p); });
   const attachText = (text, paths) => (text.trim() ? text.trim() + "\n\n" : "") + "附件：\n" + paths.join("\n");
-  async function withFiles(form, files, text) {
+  async function withFiles(fileBox, files, text) {
     if (!files.length) return text;
-    await form._filesReady(files);
+    await fileBox.ready(files);
     if (files.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
     return attachText(text, files.map((f) => f.path));
   }
@@ -7532,8 +7636,29 @@
       + (rest.length ? `<span class="att">${rest.map((p) => `<a ${fileLinkAttrs(p, esc(p), esc(p))}>📎 ${esc(name(p))}</a>`).join("")}</span>` : "");
   }
 
-  function bindComposer(form, input, send, machine, onEmpty, slashOf) {
-    if (machine) bindFiles(form, machine);
+  function bindComposer(form, input, send, machine, onEmpty, slashOf, scope = () => "", onSelect) {
+    const drafts = new Map();
+    let active;
+    const selectDraft = form._selectDraft = () => {
+      const node = machine?.() || "", key = JSON.stringify([scope(), node]);
+      if (active?.key === key) return active;
+      if (!drafts.has(key)) {
+        drafts.set(key, {
+          key, machine: node, hub: hubOf(node), text: active ? "" : input.value,
+          files: [], restored: "", pending: 0, last: Promise.resolve(),
+        });
+      }
+      if (active) active.text = input.value;
+      active = drafts.get(key);
+      input.value = active.text;
+      grow(input);
+      fileBox?.draw();
+      onSelect?.(active);
+      return active;
+    };
+    const fileBox = machine && bindFiles(form, selectDraft, () => active.files);
+    form._hasDraft = () => [...drafts.values()].some((draft) =>
+      (draft !== active && draft.text.trim()) || draft.files.length || draft.pending || draft.reply);
     if (slashOf) input._slashPrefetch = bindSlash(input, slashOf);
     input.addEventListener("input", () => grow(input));
     const hint = () => { input.enterKeyHint = touchMQ.matches ? "enter" : "send"; };
@@ -7544,27 +7669,46 @@
       // "mod": Enter makes a new line and ⌘/Ctrl+Enter sends.
       if (prefs.sendKey() === "mod" ? mod : !mod) { e.preventDefault(); form.requestSubmit(); }
     });
-    // Sending never waits on the network: the box empties at once and
-    // send(draft, ready) shows the message; ready gives its final text (with
-    // the files' paths) once the ones before it are out. A failed message
-    // goes back into the box, in the order sent, ahead of anything typed since.
-    let last = Promise.resolve(), restored = 0;
+    // Show the message at once, then wait for earlier sends to this destination
+    // and for these files. Only the same draft can take a failed message back.
+    const queue = (owner, text, files, restore) => {
+      const ready = owner.last.then(() => withFiles(fileBox, files, text));
+      const shown = withLocalFiles(text, files);
+      const deliver = async () => send(shown.text, ready, owner, files.length > 0);
+      owner.pending++;
+      owner.last = Promise.all([ready, deliver()]).then(() => {
+        if (files.length) files.forEach(fileBox.release);
+      }, (err) => {
+        if (restore) {
+          const value = owner === active ? input.value : owner.text;
+          const head = value.startsWith(owner.restored) ? owner.restored : "";
+          const tail = value.slice(head.length).replace(/^\n/, "");
+          owner.restored = head ? head + "\n" + text : text;
+          owner.text = tail.trim() ? owner.restored + "\n" + tail : owner.restored;
+          owner.files = files.concat(owner.files);
+          if (owner === active) {
+            input.value = owner.text;
+            grow(input);
+            fileBox?.draw();
+          }
+        }
+        toast(err.message, "attn");
+      }).finally(() => {
+        owner.pending--;
+        forgetLocal(shown.local);
+      });
+      return owner.last;
+    };
+    form._sendText = (text) => queue(selectDraft(), text, [], false);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      if (!input.value.trim() && !form._files?.length) { onEmpty?.(); return; }
-      const draft = input.value, files = form._takeFiles?.() || [];
-      input.value = ""; grow(input); restored = 0;
-      const prev = last;
-      const ready = prev.then(() => withFiles(form, files, draft));
-      const shown = withLocalFiles(draft, files);
-      last = Promise.resolve(send(shown.text, ready)).finally(() => forgetLocal(shown.local)).then(() => form._dropFiles?.(files), (err) => {
-        const v = input.value, head = v.slice(0, restored), tail = v.slice(restored).replace(/^\n/, "");
-        const front = head ? head + "\n" + draft : draft;
-        input.value = tail.trim() ? front + "\n" + tail : front; grow(input);
-        restored = front.length;
-        if (files.length) form._restoreFiles(files);
-        toast(err.message, "attn");
-      });
+      const owner = selectDraft(), text = input.value, files = owner.files;
+      if (!text.trim() && !files.length) { onEmpty?.(); return; }
+      input.value = owner.text = owner.restored = "";
+      owner.files = [];
+      grow(input);
+      fileBox?.draw();
+      return queue(owner, text, files, true);
     });
   }
 
@@ -7572,23 +7716,19 @@
     const id = current;
     if (!id) throw new Error("没有选中会话");
     return trackSend("p:" + id, draft, ready, async (text) => {
-      let v = find(id);
-      if (!v) {
-        // The page may be behind (e.g. the hub restarted); look again before giving up.
-        try { setLocalState(await api("/api/state")); renderSide(); } catch {}
-        v = find(id) || { pane_id: id, is_agent: false };
-      }
       try {
-        if (v.is_agent) await api(`/api/agents/${encodeURIComponent(id)}/prompt`, { body: { text } });
-        else await api(paneURL(id, "text"), { body: { text, enter: true } });
+        await api(paneURL(id, "submit"), { body: { text } });
       } catch (err) {
         throw new Error(err.message.includes("blocked") ? "agent 正在等你确认，先处理上面的确认卡片" : err.message);
       }
     });
-  }, () => (current || "").includes("@") ? current.slice(current.lastIndexOf("@") + 1) : "", () => sendKeys(["enter"]), () => {
+  }, () => {
+    const id = current || "", at = id.lastIndexOf("@"), hub = hubOf(id);
+    return at >= 0 ? id.slice(at + 1) : hub ? tagged("", hub.key) : "";
+  }, () => sendKeys(["enter"]), () => {
     const v = find(current);
     return v?.is_agent ? slashCtx(v.machine, v.kind, v.cwd, true) : null;
-  });
+  }, () => current);
 
   // ───────────────────────────── menus
   document.addEventListener("click", (e) => {

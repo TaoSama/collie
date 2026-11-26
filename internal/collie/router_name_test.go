@@ -30,6 +30,7 @@ type fakePane struct {
 	ws, name, kind, cwd string
 	// screen is what pane.read shows; ⇧← turns it into unfolded.
 	screen, unfolded string
+	sentKeys         []string
 	// detection, when set, is what a "detection" read shows instead.
 	detection string
 	status    string // "" is idle
@@ -214,6 +215,11 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		return map[string]any{"read": map[string]any{"text": p.screen}}, nil
 	case "pane.send_keys":
 		p := f.panes[str("pane_id")]
+		if keys, ok := params["keys"].([]any); p != nil && ok {
+			for _, key := range keys {
+				p.sentKeys = append(p.sentKeys, fmt.Sprint(key))
+			}
+		}
 		if keys, _ := params["keys"].([]any); p != nil && len(keys) == 1 && keys[0] == "shift+left" && p.unfolded != "" {
 			p.screen = p.unfolded
 		}

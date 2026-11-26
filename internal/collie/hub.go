@@ -11,6 +11,7 @@ import (
 	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -71,11 +72,24 @@ func (s *Server) routed(h http.HandlerFunc) http.HandlerFunc {
 			h(w, r)
 			return
 		}
-		s.forward(w, r, machine, path, body)
+		var legacy http.HandlerFunc
+		if r.Pattern == paneSubmitRoute {
+			// Retain the submitted body in case the node predates this route.
+			var err error
+			body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+			if err != nil {
+				writeJSON(w, 400, map[string]any{"error": "invalid JSON body"})
+				return
+			}
+			legacy = h
+		}
+		s.forward(w, r, machine, path, body, legacy)
 	}
 }
 
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, machine, path string, body []byte) {
+var errMissingNodeRoute = errors.New("node does not serve this route")
+
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, machine, path string, body []byte, legacy http.HandlerFunc) {
 	client, err := s.herdr.Client(machine)
 	if err != nil {
 		writeJSON(w, 503, map[string]any{"error": "这台电脑现在不在线（" + machine + "）"})
@@ -98,6 +112,21 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, machine, path s
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			// Only a Go mux's route miss allows the legacy herdr path. A
+			// pane not found is JSON, and a lost response may hide a write.
+			const missing = "404 page not found\n"
+			if legacy != nil && resp.StatusCode == http.StatusNotFound &&
+				resp.Header.Get("Content-Type") == "text/plain; charset=utf-8" && resp.ContentLength == int64(len(missing)) {
+				b, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return err
+				}
+				if string(b) == missing {
+					return errMissingNodeRoute
+				}
+				resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(b))
+			}
 			if r.URL.Path == "/api/file" && r.URL.Query().Get("download") != "1" && r.URL.Query().Get("as") == "html" && resp.StatusCode == http.StatusOK && isHTMLPath(r.URL.Query().Get("path")) {
 				setHTMLSandboxHeaders(resp.Header)
 				return nil
@@ -117,6 +146,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, machine, path s
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, errMissingNodeRoute) {
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				legacy(w, r)
+				return
+			}
 			writeJSON(w, 502, map[string]any{"error": "转发到 " + machine + " 失败：" + err.Error()})
 		},
 	}

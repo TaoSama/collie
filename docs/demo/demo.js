@@ -133,7 +133,7 @@
   let routerStatus = "idle";
 
   // Conversations, by pane. Tool steps read as one quiet line in the app.
-  const tool = (name, input, output, error) => ({ kind: "tool", name, input, output, error });
+  const tool = (name, input, output, error) => ({ kind: "tool", name, input, output, error, tool_done: output != null || !!error });
   const chats = {
     "w2:p1@macbook": [
       { kind: "user", text: "[image:~/.collie/images/0d3a9e5c71b2f4e8a6c1.png]\n首页加一个暗色模式：跟随系统，右上角可以手动切换，记住用户的选择。参考这张图的配色。" },
@@ -196,6 +196,7 @@
   };
   const approvals = {
     "w3:p1": {
+      sig: "demo-run-orders-tests",
       title: "codex 想运行一条命令",
       question: "Codex 想在 shop-api 里跑一遍测试。\n\n    go test ./internal/orders/...\n\n允许运行这条命令吗？",
       choices: [{ label: "允许", keys: ["1"] }, { label: "允许，这个会话里不再问", keys: ["2"] }, { label: "不允许，告诉它怎么做", keys: ["3"] }],
@@ -349,7 +350,7 @@
   window.EventSource = FakeES;
   const liveOf = (id) => {
     const a = agents.find((x) => x.pane_id === id);
-    if (a?.status === "blocked" && approvals[id]) return { status: "blocked", approval: approvals[id] };
+    if (a?.status === "blocked" && approvals[id]) return { status: "blocked", approval: approvals[id], approval_sig: approvals[id].sig };
     return { status: a?.status || "idle", ...(a?.status === "working" ? lives[id] || {} : {}) };
   };
   const pushAll = () => {
@@ -726,7 +727,19 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       hub: { name: "devbox", home: "/home/alex", herdr: true, version: "v0.2.41", agents: ["claude", "codex", "agy"] }, addresses: ["http://192.168.1.20:7788"], latest: "v0.2.41",
     });
     if (p === "/api/pair/new") return json({ code: "DEMO2026", expires: new Date(Date.now() + 600000).toISOString(), kind: body.kind });
-    if ((m = /^\/api\/panes\/([^/]+)\/ask$/.exec(p))) { const id = decodeURIComponent(m[1]); return json(approvals[id] && agents.find((a) => a.pane_id === id)?.status === "blocked" ? { asking: true, approval: approvals[id] } : { asking: false }); }
+    if ((m = /^\/api\/panes\/([^/]+)\/ask$/.exec(p))) {
+      const id = decodeURIComponent(m[1]), approval = approvals[id];
+      return json(approval && agents.find((a) => a.pane_id === id)?.status === "blocked"
+        ? { asking: true, approval, sig: approval.sig } : { asking: false });
+    }
+    if (p === "/api/super/decide" && body.pane) {
+      const approval = approvals[body.pane];
+      if (!approval || approval.sig !== body.sig || !approval.choices.some((c) => c.label === body.choice)) {
+        return json({ error: "对话框变了，打开页面看看" }, 409);
+      }
+      answerApproval(body.pane);
+      return json({ ok: true, picked: body.choice });
+    }
     if ((m = /^\/api\/panes\/([^/]+)\/model$/.exec(p))) {
       const a = agents.find((x) => x.pane_id === decodeURIComponent(m[1]));
       if (a) a.run = [body.model || "", body.effort || ""];
@@ -740,6 +753,15 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if ((m = /^\/api\/agents\/([^/]+)\/prompt$/.exec(p))) {
       const t = decodeURIComponent(m[1]), id = agents.find((a) => a.pane_id === t || a.name === t)?.pane_id || t;
       promptPane(id, body.text || body.prompt || ""); return json({ ok: true });
+    }
+    if ((m = /^\/api\/panes\/([^/]+)\/submit$/.exec(p))) {
+      const id = decodeURIComponent(m[1]);
+      if (!agents.some((a) => a.pane_id === id) && !shells.some((a) => a.pane_id === id)) {
+        return json({ error: "找不到这个 pane" }, 404);
+      }
+      if (approvals[id]) return json({ error: "blocked" }, 409);
+      if (body.text) promptPane(id, body.text);
+      return json({ ok: true });
     }
     if ((m = /^\/api\/panes\/([^/]+)\/close$/.exec(p))) {
       const i = shells.findIndex((x) => x.pane_id === decodeURIComponent(m[1]));

@@ -1218,12 +1218,7 @@ func (s *Server) superAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "no running worker " + body.Worker})
 		return
 	}
-	label, err := sp.answerPane(r.Context(), wk.PaneID, "", byCollie, func(a Approval) (Choice, bool) {
-		if strings.EqualFold(strings.TrimSpace(body.Choice), "esc") {
-			return Choice{Label: "Esc", Keys: []string{"esc"}}, true
-		}
-		return pickChoice(a, body.Choice)
-	})
+	label, err := sp.answerPane(r.Context(), wk.PaneID, byCollie, dialogSelection{Choice: body.Choice})
 	var none noChoiceError
 	switch {
 	case errors.Is(err, errNotAsking):

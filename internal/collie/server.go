@@ -30,7 +30,8 @@ type Server struct {
 	port       int      // hub only: listening port, for addresses
 	publicURLs []string // hub only: addresses given with -url, shown first
 
-	agy agyBindings // Antigravity transcripts inferred for the local panes
+	agy     agyBindings // Antigravity transcripts inferred for the local panes
+	dialogs dialogSubmissions
 
 	aliases aliasBook    // hub only: launcher aliases each computer has
 	sysmon  *sysMonitor  // this computer's load and tokens; nil in tests
@@ -88,6 +89,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("GET /api/panes/{id}/last", wrap(s.lastMessage))
 	mux.Handle("GET /api/panes/{id}/logged", wrap(s.paneLogged))
 	mux.Handle("GET /api/panes/{id}/ask", wrap(s.paneAsk))
+	mux.Handle(paneSubmitRoute, wrap(s.submitPane))
 	mux.Handle("POST /api/panes/{id}/text", wrap(s.sendText))
 	mux.Handle("POST /api/panes/{id}/keys", wrap(s.sendKeys))
 	mux.Handle("POST /api/panes/{id}/model", wrap(s.switchModel))
@@ -122,6 +124,7 @@ func (s *Server) NodeRoutes() http.Handler {
 	mux := http.NewServeMux()
 	s.machineRoutes(mux, func(h http.HandlerFunc) http.Handler { return h })
 	mux.HandleFunc("POST /api/direct/token", s.mintDirect)
+	mux.HandleFunc("POST /api/panes/{id}/decide", s.paneDecide)
 	mux.HandleFunc("GET /api/watch", s.watchLists)
 	return mux
 }

@@ -94,10 +94,17 @@ func (sp *Super) linkBaseLocked() string {
 
 // askSig fingerprints a dialog by what it asks, not where its cursor is.
 func askSig(a Approval) string {
+	return approvalSignature(a, true)
+}
+
+func approvalSignature(a Approval, includeDescriptions bool) string {
 	h := sha1.New()
 	fmt.Fprintln(h, oneLine(a.Title), oneLine(a.Question))
 	for _, c := range a.Choices {
 		fmt.Fprintln(h, oneLine(c.Label))
+		if desc := oneLine(c.Desc); includeDescriptions && desc != "" {
+			fmt.Fprintln(h, "\x00"+desc)
+		}
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))[:12]
 }
@@ -303,36 +310,26 @@ type noChoiceError struct{ choices []string }
 
 func (noChoiceError) Error() string { return "no such choice" }
 
-// answerPane picks a choice on pane's dialog (the one fingerprinted sig, when
-// given) and records who did. It returns the label it picked.
-func (sp *Super) answerPane(ctx context.Context, pane, sig, by string, pick func(Approval) (Choice, bool)) (string, error) {
-	screen, err := sp.s.herdr.ReadAsk(ctx, pane)
+// answerPane picks a choice at the pane and records which dialog was answered.
+func (sp *Super) answerPane(ctx context.Context, pane, by string, selection dialogSelection) (string, error) {
+	picked, err := sp.s.submitPaneDialog(ctx, pane, selection)
 	if err != nil {
 		return "", err
 	}
-	a, asking := visibleApproval(screen)
-	if !asking {
-		return "", errNotAsking
-	}
-	if sig != "" && askSig(a) != sig {
-		return "", errNotAsking // another dialog took its place
-	}
-	c, ok := pick(a)
-	if !ok {
-		return "", noChoiceError{choiceLabels(a)}
-	}
-	if err := sp.choose(ctx, pane, c); err != nil {
-		return "", err
-	}
-	label := oneLine(c.Label)
 	sp.mu.Lock()
-	if name := sp.workerByPaneLocked(pane); name != "" {
-		sp.noteAnsweredLocked(sp.st.Workers[name])
+	last := sp.lastAskLocked(pane)
+	same := last != nil && (last.Ask.Sig == "" || last.Ask.Sig == picked.Sig)
+	if same || last == nil || last.Ask.Done != nil {
+		if name := sp.workerByPaneLocked(pane); name != "" {
+			sp.noteAnsweredLocked(sp.st.Workers[name])
+		}
 	}
-	sp.settleAskLocked(pane, label, by)
+	if same {
+		sp.settleAskLocked(pane, picked.Label, by)
+	}
 	sp.mu.Unlock()
 	sp.push.answered(pane)
-	return label, nil
+	return picked.Label, nil
 }
 
 // ---------------------------------------------------------------- API
@@ -397,6 +394,8 @@ func (s *Server) superDecide(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			code, out = 200, map[string]any{"ok": true, "picked": choice}
+		case (pane != "" && pane != d.Pane) || (sig != "" && sig != d.Sig):
+			code, out = 409, map[string]any{"error": "对话框已经变化"}
 		default:
 			pane, sig = d.Pane, d.Sig
 		}
@@ -413,21 +412,23 @@ func (s *Server) superDecide(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "id or pane?"})
 		return
 	}
-	picked, err := sp.answerPane(r.Context(), pane, sig, byYou, func(a Approval) (Choice, bool) {
-		for _, c := range a.Choices {
-			if strings.EqualFold(oneLine(c.Label), choice) {
-				return c, true
-			}
-		}
-		return Choice{}, false
-	})
+	if sig == "" {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "请刷新对话框后再选"})
+		return
+	}
+	picked, err := sp.answerPane(r.Context(), pane, byYou, dialogSelection{Sig: sig, Choice: choice})
 	if err != nil {
-		writeJSON(w, 409, map[string]any{"error": "对话框变了，打开页面看看：" + err.Error()})
+		var none noChoiceError
+		if errors.Is(err, errNotAsking) || errors.As(err, &none) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "对话框已经变化，请重新查看后再选"})
+		} else {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "选择结果未确认，请查看终端（" + err.Error() + "）"})
+		}
 		return
 	}
 	sp.mu.Lock()
 	if name := sp.workerByPaneLocked(pane); name != "" {
-		sp.addEntryLocked("event", sp.st.Workers[name].Thread, "你在通知上替 "+name+" 选了："+clip(picked, 80), name, "info")
+		sp.addEntryLocked("event", sp.st.Workers[name].Thread, "你替 "+name+" 选了："+clip(picked, 80), name, "info")
 	}
 	sp.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"ok": true, "picked": picked})

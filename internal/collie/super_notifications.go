@@ -17,7 +17,7 @@ func (sp *Super) queueNotifyLocked(e *Entry) {
 	n := notice{tone: e.Tone, text: e.Text, re: e.Re, options: e.Options, check: e.Check}
 	switch {
 	case e.Ask != nil: // a dialog's screen stays on the page
-		n.decision, n.task, n.options, n.pane = e.ID, entryTask(e), e.Ask.Choices, e.Ask.Pane
+		n.decision, n.task, n.options, n.pane, n.sig = e.ID, entryTask(e), e.Ask.Choices, e.Ask.Pane, e.Ask.Sig
 	case isDecision(e):
 		n.decision, n.task, n.summary = e.ID, entryTask(e), pendingSummary(e.Text, nil)
 	case e.Tone == toneRemind:
@@ -41,6 +41,7 @@ type notice struct {
 	link       string // set when it goes out
 	summary    string // a --opt/--check message's first line
 	pane       string // a dialog's pane
+	sig        string // the dialog shown when the notice was made
 	remind     string // the daily reminder: the oldest thing it lists
 }
 

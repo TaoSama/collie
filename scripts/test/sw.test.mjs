@@ -5,17 +5,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-function loadSW({ windows = [], maxActions = 2 } = {}) {
-  const handlers = {}, shown = [], fetched = [];
+function loadSW({ windows = [], maxActions = 2, status = 200 } = {}) {
+  const handlers = {}, shown = [], fetched = [], opened = [];
   const self = {
     addEventListener: (type, fn) => { handlers[type] = fn; },
-    clients: { matchAll: async () => windows, openWindow: async () => {} },
+    clients: { matchAll: async () => windows, openWindow: async (url) => opened.push(url) },
     registration: { showNotification: async (title, opts) => { shown.push({ title, ...opts }); } },
     Notification: { maxActions },
   };
   const ctx = {
     self, Notification: self.Notification, location: { origin: "https://c.example" }, caches: {}, URL, console,
-    fetch: async (url, init) => { fetched.push({ url, body: JSON.parse(init.body) }); return { ok: true }; },
+    fetch: async (url, init) => { fetched.push({ url, body: JSON.parse(init.body) }); return { ok: status === 200 }; },
   };
   vm.runInNewContext(readFileSync(new URL("../../web/sw.js", import.meta.url), "utf8"), ctx);
   const push = async (payload) => {
@@ -23,7 +23,7 @@ function loadSW({ windows = [], maxActions = 2 } = {}) {
     handlers.push({ data: { json: () => payload, text: () => JSON.stringify(payload) }, waitUntil: (p) => { done = p; } });
     await done;
   };
-  return { push, shown, fetched, ctx };
+  return { push, shown, fetched, opened, ctx };
 }
 
 const dialog = { title: "Collie", body: "readme 需要你选：Yes / No", tag: "w1:p1", hash: "#/d/e7", answer: { id: "e7" }, choices: ["Yes", "No"] };
@@ -40,6 +40,16 @@ test("a push shows the decision, with buttons that answer it", async () => {
   assert.equal(n.data.url, "https://c.example/#/d/e7");
   await sw.ctx.notificationClicked(n.data, "1");
   assert.deepEqual(sw.fetched, [{ url: "/api/super/decide", body: { id: "e7", choice: "No" } }]);
+});
+
+test("a notification conflict opens the live decision without resending", async () => {
+  const sw = loadSW({ status: 409 });
+  const answer = { id: "e7", pane: "w1:p1", sig: "previous-sig" };
+  await sw.push({ ...dialog, answer });
+  const { data } = sw.shown[0];
+  await sw.ctx.notificationClicked(data, "0");
+  assert.deepEqual(sw.fetched, [{ url: "/api/super/decide", body: { ...answer, choice: "Yes" } }]);
+  assert.deepEqual(sw.opened, [data.url]);
 });
 
 test("choices that don't all fit open the page instead", async () => {

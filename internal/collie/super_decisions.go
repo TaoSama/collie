@@ -75,22 +75,22 @@ func (sp *Super) answerTrust(ctx context.Context, pane, dir string) bool {
 	}
 	for _, c := range parseApproval(rr.Text).Choices {
 		if isTrustChoice(c.Label) {
-			return sp.choose(ctx, pane, c) == nil
+			return sp.s.herdr.chooseDialog(ctx, pane, c) == nil
 		}
 	}
 	return false
 }
 
-// choose answers a dialog in pane with one of its choices: cursor movement and
+// chooseDialog answers a dialog in pane with one of its choices: cursor movement and
 // Enter when the menu has a cursor, else its digit for a cursorless numbered menu.
-func (sp *Super) choose(ctx context.Context, pane string, c Choice) error {
+func (h *Herdr) chooseDialog(ctx context.Context, pane string, c Choice) error {
 	if len(c.Keys) > 0 {
-		return sp.s.herdr.SendKeys(ctx, pane, c.Keys...)
+		return h.SendKeys(ctx, pane, c.Keys...)
 	}
 	if c.Text != "" {
-		return sp.s.herdr.SendText(ctx, pane, c.Text)
+		return h.SendText(ctx, pane, c.Text)
 	}
-	return sp.s.herdr.SendKeys(ctx, pane, "enter")
+	return h.SendKeys(ctx, pane, "enter")
 }
 
 // pickChoice finds the choice the router named: its number as shown ("3"),

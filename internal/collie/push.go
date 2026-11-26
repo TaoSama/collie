@@ -357,8 +357,10 @@ func noticeNote(n notice) *pushNote {
 	}
 	if n.pane != "" { // a dialog: one per pane, as on the page
 		p.Tag = n.pane
-		if len(p.Choices) == 0 {
+		if len(p.Choices) == 0 || n.sig == "" {
 			p.Answer = nil
+		} else {
+			p.Answer["pane"], p.Answer["sig"] = n.pane, n.sig
 		}
 	} else {
 		p.Tag = "d:" + n.decision

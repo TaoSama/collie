@@ -80,6 +80,13 @@ func TestDialogDecisionNotifiesOnceAndLinks(t *testing.T) {
 	if e.Ask == nil || e.Ask.Pane != w.PaneID || len(e.Ask.Choices) != 2 {
 		t.Fatalf("no dialog decision recorded: %+v", e)
 	}
+	if len(sp.notifyBuf) != 1 {
+		t.Fatalf("expected one pending notice, got %d", len(sp.notifyBuf))
+	}
+	p := noticeNote(sp.notifyBuf[0])
+	if p == nil || p.Answer["id"] != e.ID || p.Answer["pane"] != w.PaneID || p.Answer["sig"] != e.Ask.Sig {
+		t.Fatalf("notification doesn't carry the displayed dialog: %+v", p)
+	}
 	sp.sendNotifications()
 	sent := got()
 	if len(sent) != 1 {
