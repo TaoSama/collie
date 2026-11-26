@@ -47,6 +47,14 @@ func cliCall(method, path string, body any) ([]byte, error) {
 	return cliDo(method, path, rd, -1, "application/json", 30*time.Second)
 }
 
+func cliPostResult(path string, body any) error {
+	b, err := cliCall(http.MethodPost, path, body)
+	if err == nil {
+		printResult(b)
+	}
+	return err
+}
+
 // cliDo makes one request to the hub; size is the body's length (-1 unknown).
 func cliDo(method, path string, rd io.Reader, size int64, contentType string, wait time.Duration) ([]byte, error) {
 	base, tok, err := cliTarget()
@@ -239,11 +247,7 @@ func cliReply(args []string) error {
 			return err
 		}
 	}
-	b, err := cliCall("POST", "/api/super/reply", body)
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/reply", body)
 }
 
 func cliSay(args []string) error {
@@ -255,11 +259,7 @@ func cliSay(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, err := cliCall("POST", "/api/super/say", map[string]any{"text": t})
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/say", map[string]any{"text": t})
 }
 
 func cliSpawn(args []string) error {
@@ -308,11 +308,7 @@ func cliSpawn(args []string) error {
 		}
 		body["alias"] = ""
 	}
-	b, err := cliCall("POST", "/api/super/spawn", body)
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/spawn", body)
 }
 
 func by() string {
@@ -332,11 +328,7 @@ func cliSend(args []string) error {
 		return fmt.Errorf("usage: collie send <worker> <text>")
 	}
 	to := fs.Arg(0)
-	b, err := cliCall("POST", "/api/super/send", map[string]any{"to": to, "text": strings.Join(fs.Args()[1:], " "), "thread": *thread})
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/send", map[string]any{"to": to, "text": strings.Join(fs.Args()[1:], " "), "thread": *thread})
 }
 
 func cliReport(args []string) error {
@@ -349,11 +341,7 @@ func cliReport(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, err := cliCall("POST", "/api/super/report", map[string]any{"worker": *worker, "pane": os.Getenv("HERDR_PANE_ID"), "text": t})
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/report", map[string]any{"worker": *worker, "pane": os.Getenv("HERDR_PANE_ID"), "text": t})
 }
 
 func cliSubscribe(args []string) error {
@@ -365,33 +353,21 @@ func cliSubscribe(args []string) error {
 	if fs.NArg() != 2 {
 		return fmt.Errorf("usage: collie subscribe [--off] <worker> <thread>")
 	}
-	b, err := cliCall("POST", "/api/super/subscribe", map[string]any{"worker": fs.Arg(0), "thread": fs.Arg(1), "off": *off})
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/subscribe", map[string]any{"worker": fs.Arg(0), "thread": fs.Arg(1), "off": *off})
 }
 
 func cliStop(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: collie stop <worker>")
 	}
-	b, err := cliCall("POST", "/api/super/stop", map[string]any{"worker": args[0]})
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/stop", map[string]any{"worker": args[0]})
 }
 
 func cliAnswer(args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: collie answer <worker> <choice number | label words | esc>")
 	}
-	b, err := cliCall("POST", "/api/super/answer", map[string]any{"worker": args[0], "choice": strings.Join(args[1:], " ")})
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/api/super/answer", map[string]any{"worker": args[0], "choice": strings.Join(args[1:], " ")})
 }
 
 func cliShow(args []string) error {
@@ -446,11 +422,7 @@ func cliTimer(args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: collie timer rm <id>")
 		}
-		b, err := cliCall("POST", "/api/super/timers/"+args[1]+"/delete", nil)
-		if err == nil {
-			printResult(b)
-		}
-		return err
+		return cliPostResult("/api/super/timers/"+args[1]+"/delete", nil)
 	case "add":
 		fs := flag.NewFlagSet("timer add", flag.ExitOnError)
 		thread := fs.String("thread", mainThread, "thread the timer fires into")
@@ -461,11 +433,7 @@ func cliTimer(args []string) error {
 		if fs.NArg() < 2 {
 			return fmt.Errorf(`usage: collie timer add [--thread T] [--to worker] "<every 2h | daily 09:00 | weekdays 09:00 | weekly mon,thu 09:00 | in 30m | at 2026-11-18 09:00>" <text>`)
 		}
-		b, err := cliCall("POST", "/api/super/timers", map[string]any{"spec": fs.Arg(0), "text": strings.Join(fs.Args()[1:], " "), "thread": *thread, "target": *to, "owner": by()})
-		if err == nil {
-			printResult(b)
-		}
-		return err
+		return cliPostResult("/api/super/timers", map[string]any{"spec": fs.Arg(0), "text": strings.Join(fs.Args()[1:], " "), "thread": *thread, "target": *to, "owner": by()})
 	}
 	return fmt.Errorf("unknown timer command %q", args[0])
 }
@@ -480,11 +448,7 @@ func cliHook(args []string) error {
 	if fs.NArg() < 2 {
 		return fmt.Errorf("usage: collie hook <source> <text>")
 	}
-	b, err := cliCall("POST", "/hooks/"+fs.Arg(0), map[string]any{"thread": *thread, "from": *from, "text": strings.Join(fs.Args()[1:], " ")})
-	if err == nil {
-		printResult(b)
-	}
-	return err
+	return cliPostResult("/hooks/"+fs.Arg(0), map[string]any{"thread": *thread, "from": *from, "text": strings.Join(fs.Args()[1:], " ")})
 }
 
 func orStr(a, b string) string {
