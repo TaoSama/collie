@@ -1804,7 +1804,7 @@
   }
   async function loadTasks() {
     taskAt = Date.now();
-    try { taskFiles = (await api("/api/super/memory")).files || []; taskErr = ""; }
+    try { taskFiles = (await api("/api/super/memory?area=tasks")).files || []; taskErr = ""; }
     catch (err) { taskErr = err.message; } // shown in the panel until a retry works
     renderTaskPanel();
   }

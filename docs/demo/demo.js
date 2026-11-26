@@ -634,6 +634,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       return json({ timers });
     }
     if (p === "/api/super/memory") {
+      if (method === "GET" && q.get("area") === "tasks") return json({ files: memory.files.filter((f) => /^tasks\/[^/]+\.md$/.test(f.name)) });
       if (method === "POST" && body.path) {
         const f = memory.files.find((x) => x.name === body.path);
         if (f) { f.text = body.text; f.size = new Blob([body.text]).size; f.mod = new Date().toISOString(); }

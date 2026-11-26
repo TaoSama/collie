@@ -1,10 +1,40 @@
 package collie
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestSuperMemoryTasks(t *testing.T) {
+	sp := &Super{dir: t.TempDir()}
+	dir := sp.memDir()
+	for name, body := range map[string]string{
+		"notes/note.md": "note", "tasks/active.md": "active",
+		"tasks/done/archived.md": "finished", "tasks/subdir.md/other.md": "other",
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp := httptest.NewRecorder()
+	(&Server{sup: sp}).superMemory(resp, httptest.NewRequest("GET", "/api/super/memory?area=tasks", nil))
+	var out struct {
+		Files []memFile `json:"files"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Files) != 1 || out.Files[0].Name != "tasks/active.md" || out.Files[0].Text != "active" {
+		t.Fatalf("tasks response = %s", resp.Body)
+	}
+}
 
 func TestDropIndexLine(t *testing.T) {
 	index := filepath.Join(t.TempDir(), "index.md")

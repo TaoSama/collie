@@ -34,6 +34,10 @@ func readMemFile(path string) *memFile {
 
 func (s *Server) superMemory(w http.ResponseWriter, r *http.Request) {
 	sp := s.sup
+	if r.URL.Query().Get("area") == "tasks" {
+		writeJSON(w, 200, map[string]any{"files": sp.taskMemFiles()})
+		return
+	}
 	dir := sp.routerDir()
 	upFront := sp.upFrontSize()
 	msgs := sp.messagesSize()
@@ -69,6 +73,30 @@ func (s *Server) superMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	out["dreams"] = dreams
 	writeJSON(w, 200, out)
+}
+
+func (sp *Super) taskMemFiles() []*memFile {
+	dir := filepath.Join(sp.memDir(), "tasks")
+	files := []*memFile{}
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != dir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(p, ".md") {
+			if f := readMemFile(p); f != nil {
+				f.Name = "tasks/" + f.Name
+				files = append(files, f)
+			}
+		}
+		return nil
+	})
+	return files
 }
 
 func (s *Server) superSaveMemory(w http.ResponseWriter, r *http.Request) {
