@@ -15,11 +15,19 @@ import (
 )
 
 type agyBinding struct {
-	pid      int
-	started  time.Time
-	checked  time.Time
-	path     string
-	previous []string // exclude older transcripts after a restart in the same second
+	pid       int
+	started   time.Time
+	checked   time.Time
+	path      string   // claim retained while a competing transcript makes the result ambiguous
+	sessionID string   // ID exposed by the latest lookup
+	previous  []string // exclude older transcripts after a restart in the same second
+}
+
+func (b agyBinding) session() (string, string) {
+	if b.sessionID == "" {
+		return "", ""
+	}
+	return b.path, b.sessionID
 }
 
 type agyBindings struct {
@@ -124,8 +132,7 @@ func (s *Server) agyPaneSession(ctx context.Context, pane, cwd, sessKind, value 
 	defer s.agy.Unlock()
 	b := s.agy.byPane[pane]
 	if b.checked.After(checked) {
-		// A lookup that started later has already observed this pane.
-		return "", ""
+		return b.session() // a later lookup has already observed this pane
 	}
 	if s.agy.byPane == nil {
 		s.agy.byPane = map[string]agyBinding{}
@@ -140,22 +147,22 @@ func (s *Server) agyPaneSession(ctx context.Context, pane, cwd, sessKind, value 
 		b.pid, b.started, b.path = pid, since, ""
 	}
 	b.checked = checked
+	b.sessionID = id
 	if id != "" {
 		b.path = s.agyLog(id)
-		s.agy.byPane[pane] = b
-		return b.path, id
+	} else {
+		path = s.guessAgy(root, pane, cwd, since, index, b.previous)
+		if b.path == "" {
+			b.path = path
+		}
+		// Keep the claim for this generation even if a second candidate
+		// makes it temporarily ambiguous.
+		if path != "" && path == b.path {
+			b.sessionID = agyLogID(path)
+		}
 	}
-	path = s.guessAgy(root, pane, cwd, since, index, b.previous)
-	if b.path == "" {
-		b.path = path
-	}
-	// A second candidate can appear after the initial match. Keep the prior
-	// claim for this generation, but stop exposing it while it is ambiguous.
 	s.agy.byPane[pane] = b
-	if path == "" || path != b.path {
-		return "", ""
-	}
-	return path, agyLogID(path)
+	return b.session()
 }
 
 func agyProcessStart(ctx context.Context, pid int) time.Time {
@@ -209,7 +216,6 @@ func (s *Server) agyForeground(ctx context.Context, pane string) (pid int, args 
 
 // guessAgy runs with s.agy held. Multiple candidates leave the pane unbound.
 func (s *Server) guessAgy(root, pane, cwd string, since time.Time, index map[string][]string, previous []string) string {
-	cwd = strings.TrimSuffix(filepath.Clean(cwd), "/")
 	claimed := map[string]bool{}
 	for _, p := range previous {
 		claimed[p] = true
@@ -219,6 +225,16 @@ func (s *Server) guessAgy(root, pane, cwd string, since time.Time, index map[str
 			claimed[binding.path] = true
 		}
 	}
+	return uniqueAgyTranscript(root, cwd, since, index, claimed)
+}
+
+// uniqueAgyTranscript is shared by pane and external session discovery.
+// The conversation must belong to this workspace and be new for the process.
+func uniqueAgyTranscript(root, cwd string, since time.Time, index map[string][]string, claimed map[string]bool) string {
+	if cwd == "" || since.IsZero() {
+		return ""
+	}
+	cwd = strings.TrimSuffix(filepath.Clean(cwd), "/")
 	var candidate string
 	for id, workspaces := range index {
 		if !slices.Contains(workspaces, cwd) || !agyValidLogID(id) {

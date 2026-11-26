@@ -62,7 +62,8 @@ func explicitExternalSession(kind string, argv []string) string {
 }
 
 // locateExternal ties a transcript to a process registration, an open log, or
-// an explicit resume argument. Other sessions can write in the same workspace.
+// an explicit resume argument. AGY can also match a new conversation in an
+// unshared workspace because its CLI doesn't keep the transcript open.
 func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 	launch := e.launch
 	if launch == nil && e.Kind == "agy" {
@@ -110,7 +111,11 @@ func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 			if err != nil || len(parts) != 4 || parts[0] == ".." || !strings.HasPrefix(parts[3], "rollout-") {
 				return ""
 			}
-			return codexLogID(path)
+			id, subagent := codexLogIdentity(path)
+			if subagent {
+				return "" // the CLI can write its own rollout and its subagents' at once
+			}
+			return id
 		}
 		if s, path, ambiguous := matchingWritableTranscript(p.pid, children, match); s != "" || ambiguous {
 			if s != "" {
@@ -120,12 +125,15 @@ func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 		}
 		if id != "" {
 			files, err := filepath.Glob(filepath.Join(sessions, "*", "*", "*", "rollout-*-"+id+".jsonl"))
-			if err == nil && len(files) == 1 && codexLogID(files[0]) == id {
-				e.Session, e.path, e.format = id, files[0], "codex"
+			if err == nil && len(files) == 1 {
+				if fileID, _ := codexLogIdentity(files[0]); fileID == id {
+					e.Session, e.path, e.format = id, files[0], "codex"
+				}
 			}
 		}
 	case "agy":
-		brain := filepath.Join(s.agyCLIHome(), "brain")
+		root := s.agyCLIHome()
+		brain := filepath.Join(root, "brain")
 		dir := cmp.Or(realDir(brain), brain)
 		const logPath = ".system_generated/logs/transcript.jsonl"
 		match := func(path string) string {
@@ -146,6 +154,13 @@ func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 			if f := filepath.Join(brain, id, logPath); isFile(f) {
 				e.Session, e.path, e.format = id, f, "agy"
 			}
+			return
+		}
+		if !e.agySharedWorkspace && e.Cwd != "" && !e.Started.IsZero() {
+			started := e.Started.Truncate(time.Second) // ps reports elapsed time in whole seconds
+			if path := uniqueAgyTranscript(root, e.Cwd, started, agyWorkspaces(root), nil); path != "" {
+				e.Session, e.path, e.format = agyLogID(path), path, "agy"
+			}
 		}
 	}
 }
@@ -158,30 +173,35 @@ func realDir(path string) string {
 	return dir
 }
 
-func codexLogID(path string) string {
+func codexLogIdentity(path string) (id string, subagent bool) {
 	if !isFile(path) {
-		return ""
+		return "", false
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 4096), 1<<20)
 	if !sc.Scan() {
-		return ""
+		return "", false
 	}
 	var m struct {
 		Type    string `json:"type"`
 		Payload struct {
-			ID string `json:"id"`
+			ID     string `json:"id"`
+			Source any    `json:"source"`
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(sc.Bytes(), &m); err != nil || m.Type != "session_meta" || !conversationRe.MatchString(m.Payload.ID) {
-		return ""
+		return "", false
 	}
-	return m.Payload.ID
+	// The source is a string for top-level CLI sessions and an object for
+	// subagents. Older rollouts may omit it.
+	source, _ := m.Payload.Source.(map[string]any)
+	_, subagent = source["subagent"]
+	return m.Payload.ID, subagent
 }
 
 func matchingWritableTranscript(pid int, children []int, match func(string) string) (session, path string, ambiguous bool) {
@@ -228,22 +248,28 @@ func writableProcessLogs(pid int) []string {
 			}
 		}
 	case "darwin":
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(ctx, "lsof", "-p", strconv.Itoa(pid), "-Ffan").Output()
-		if err != nil {
-			return nil
-		}
-		writable := false
-		for _, l := range strings.Split(string(out), "\n") {
-			switch {
-			case strings.HasPrefix(l, "f"):
-				writable = false
-			case l == "aw" || l == "au":
-				writable = true
-			case writable && strings.HasPrefix(l, "n") && strings.HasSuffix(l, ".jsonl"):
-				files = append(files, l[1:])
-			}
+		return lsofWritableProcessLogs(pid)
+	}
+	return files
+}
+
+func lsofWritableProcessLogs(pid int) []string {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "lsof", "-nP", "-p", strconv.Itoa(pid), "-Ffan").Output()
+	if err != nil {
+		return nil
+	}
+	var files []string
+	writable := false
+	for _, l := range strings.Split(string(out), "\n") {
+		switch {
+		case strings.HasPrefix(l, "f"):
+			writable = false
+		case l == "aw" || l == "au":
+			writable = true
+		case writable && strings.HasPrefix(l, "n") && strings.HasSuffix(l, ".jsonl"):
+			files = append(files, l[1:])
 		}
 	}
 	return files

@@ -552,6 +552,8 @@ func (sp *Super) tick(parent context.Context) {
 			}
 		}
 	}
+	// Persist the state that produced these triggers before sending them.
+	// The delivery journal alone cannot preserve an advanced timer or the ID sequence.
 	if !paused && len(deliveries) > 0 {
 		if err := sp.flushLocked(); err != nil {
 			log.Printf("save delivery queue: %v", err)

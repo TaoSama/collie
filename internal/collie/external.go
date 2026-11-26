@@ -57,11 +57,12 @@ type External struct {
 
 	path, format string
 	// startDir: where it was started, to resume it there (empty: Cwd).
-	startDir string
-	reg      *claudeReg
-	launch   *procLaunch // how its process was started; nil if unknown
-	desktop  bool        // listed from a desktop app's index (desktop.go)
-	via      string      // "app": a message goes through the Codex App's message bus
+	startDir           string
+	reg                *claudeReg
+	launch             *procLaunch // how its process was started; nil if unknown
+	desktop            bool        // listed from a desktop app's index (desktop.go)
+	via                string      // "app": a message goes through the Codex App's message bus
+	agySharedWorkspace bool        // more than one live AGY process uses this directory
 }
 
 type proc struct {
@@ -241,6 +242,12 @@ func (s *Server) externalSessions() []*External {
 		}
 	}
 	cwds := cwdOf(pids)
+	agyProcesses := make(map[string]int)
+	for _, p := range cands {
+		if externalKinds[p.name] == "agy" {
+			agyProcesses[cwds[p.pid]]++
+		}
+	}
 	now := time.Now()
 	list := []*External{}
 	// Claude registers each interactive process (maybe a wrapper's child).
@@ -269,6 +276,8 @@ func (s *Server) externalSessions() []*External {
 		}
 		if kind != "agy" {
 			e.launch = memoFor(p.pid, e.Started).launch
+		} else {
+			e.agySharedWorkspace = agyProcesses[e.Cwd] > 1
 		}
 		e.reg = regOf[p.pid]
 		s.locateExternal(e, p, children[p.pid]...)

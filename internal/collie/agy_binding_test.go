@@ -69,7 +69,22 @@ func TestAgyPaneRestartDropsOldConversation(t *testing.T) {
 	pane := f.add("w-agy-restart", "worker", "agy-restart", "agy", cwd)
 	pid, argv := 101, []string{"agy"}
 	h := newHerdr("", "test", t.TempDir())
-	h.local.conn.dial = func(context.Context) (net.Conn, error) {
+	type delayedLookup struct {
+		started chan<- struct{}
+		resume  <-chan struct{}
+	}
+	var delay *delayedLookup
+	h.local.conn.dial = func(ctx context.Context) (net.Conn, error) {
+		procPID, procArgv := pid, argv
+		if delayed := delay; delayed != nil {
+			delay = nil
+			close(delayed.started)
+			select {
+			case <-delayed.resume:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
 		client, server := net.Pipe()
 		go func(pid int, args []string) {
 			defer server.Close()
@@ -95,7 +110,7 @@ func TestAgyPaneRestartDropsOldConversation(t *testing.T) {
 			if err := json.NewEncoder(server).Encode(reply); err != nil {
 				t.Error(err)
 			}
-		}(pid, argv)
+		}(procPID, procArgv)
 		return client, nil
 	}
 	s := &Server{home: home, herdr: h}
@@ -116,14 +131,59 @@ func TestAgyPaneRestartDropsOldConversation(t *testing.T) {
 			t.Errorf("%s session exposed to title and actions = %s, want %s", label, strconv.Quote(got), strconv.Quote(wantID))
 		}
 	}
+	checkOverlap := func(t *testing.T, olderID, latestID, wantPath, wantID string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		started, resume := make(chan struct{}), make(chan struct{})
+		delay = &delayedLookup{started, resume}
+		argv = []string{"agy", "--conversation", olderID}
+		older := make(chan [2]string, 1)
+		go func() {
+			path, id := s.agyPaneSession(ctx, pane, cwd, "", "")
+			older <- [2]string{path, id}
+		}()
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("first lookup did not reach the delayed dial")
+		}
+		argv = []string{"agy"}
+		if latestID != "" {
+			argv = append(argv, "--conversation", latestID)
+		}
+		path, id := s.agyPaneSession(ctx, pane, cwd, "", "")
+		close(resume)
+		if path != wantPath || id != wantID {
+			t.Errorf("later lookup = (%q, %q), want (%q, %q)", path, id, wantPath, wantID)
+		}
+		select {
+		case got := <-older:
+			if got != [2]string{wantPath, wantID} {
+				t.Errorf("earlier lookup = (%q, %q), want latest result (%q, %q)", got[0], got[1], wantPath, wantID)
+			}
+		case <-ctx.Done():
+			t.Fatal("first lookup did not complete")
+		}
+	}
 	check("original process", oldLog, oldID)
 	pid = 102
 	check("restarted before the new log exists", "", "")
 	newLog := addLog(newID)
 	check("restarted with one new log", newLog, newID)
+	t.Run("overlapping lookups both return the latest binding", func(t *testing.T) {
+		checkOverlap(t, oldID, "", newLog, newID)
+	})
 	addLog(otherID)
 	check("another candidate appeared after the initial match", "", "")
+	t.Run("overlapping lookups both return an ambiguous result", func(t *testing.T) {
+		checkOverlap(t, newID, "", "", "")
+	})
 	pid = 103
 	argv = []string{"agy", "--conversation", newID}
 	check("explicitly resumed process", newLog, newID)
+	const missingID = "44444444-4444-4444-8444-444444444444"
+	t.Run("overlapping lookups keep an explicit ID without a transcript", func(t *testing.T) {
+		checkOverlap(t, newID, missingID, "", missingID)
+	})
 }
