@@ -291,6 +291,45 @@ func TestAgyDesktopSessionsTakeOverOnlyTheCLIs(t *testing.T) {
 	}
 }
 
+func TestAgyDesktopSessionsDoNotRouteCLIToApp(t *testing.T) {
+	agyServerCache.Lock()
+	agyServerCache.at = time.Now()
+	agyServerCache.ls = &agyServer{addr: "127.0.0.1:1", csrf: "test-token"}
+	agyServerCache.Unlock()
+	t.Cleanup(forgetAgyServer)
+
+	desktopCache.Lock()
+	desktopCache.at, desktopCache.app = time.Now(), false
+	desktopCache.rows = []desktopRow{
+		{id: "ag-cli-idle", kind: "agy", app: appAgyCLI, surface: surfaceCLI, session: "cli-idle", cwd: "/root"},
+		{id: "ag-cli-run", kind: "agy", app: appAgyCLI, surface: surfaceCLI, session: "cli-run", cwd: "/root", running: true},
+		{id: "ag-app-idle", kind: "agy", app: appAgy, session: "app-idle", cwd: "/root"},
+	}
+	desktopCache.Unlock()
+	t.Cleanup(forgetDesktopRows)
+
+	got := map[string]*External{}
+	for _, e := range (&Server{home: t.TempDir()}).desktopSessions(nil, nil, time.Now()) {
+		got[e.Session] = e
+	}
+	for _, tc := range []struct {
+		id       string
+		canSend  bool
+		via      string
+		readOnly string
+		takeOver bool
+	}{
+		{"cli-idle", false, "", "这个会话现在没在运行", true},
+		{"cli-run", false, "", "这个会话正在别处运行", false},
+		{"app-idle", true, "app", "", false},
+	} {
+		e := got[tc.id]
+		if e == nil || e.CanSend != tc.canSend || e.via != tc.via || e.ReadOnly != tc.readOnly || e.CanTakeOver != tc.takeOver {
+			t.Fatalf("session %s = %+v, want CanSend=%v via=%q ReadOnly=%q CanTakeOver=%v", tc.id, e, tc.canSend, tc.via, tc.readOnly, tc.takeOver)
+		}
+	}
+}
+
 func TestAgyDesktopRowsReadTheCLIsIndexWithoutTheApp(t *testing.T) {
 	home := t.TempDir()
 	add := agyIndexFixture(t, filepath.Join(home, ".gemini", "antigravity-cli"))

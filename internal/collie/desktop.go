@@ -164,11 +164,18 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			} else if d.waiting {
 				e.Status = "waiting"
 			}
-			if agyDesktopServer() != nil {
+			// The App's language server only loads conversations from its own
+			// store (~/.gemini/antigravity), not the CLI's (~/.gemini/antigravity-cli).
+			switch {
+			case d.surface == surfaceCLI:
+				if e.Live {
+					e.ReadOnly = "这个会话正在别处运行"
+				} else {
+					e.ReadOnly = "这个会话现在没在运行"
+				}
+			case agyDesktopServer() != nil:
 				e.CanSend, e.via = true, "app"
-			} else if d.surface == surfaceCLI {
-				e.ReadOnly = "这个会话现在没在运行"
-			} else {
+			default:
 				e.ReadOnly = "Antigravity 没有打开：打开它之后就能从这里发消息"
 			}
 			// `agy --conversation` resumes the CLI's own conversations, which
