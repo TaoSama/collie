@@ -61,11 +61,11 @@ func TestInboxDirectReplyFakeFeishuAndWeChat(t *testing.T) {
 	for _, c := range listRes.Convs {
 		byID[c.ID] = c
 	}
-	if byID["fake:g1"].SendAs != "self" || byID["fake:g1"].NoFooter {
-		t.Fatalf("fake Feishu send caps = %+v, want send_as=self no_footer=false", byID["fake:g1"])
+	if byID["fake:g1"].SendAs != "self" || byID["fake:g1"].SendMedia != "none" || byID["fake:g1"].NoFooter {
+		t.Fatalf("fake Feishu send caps = %+v, want send_as=self send_media=none no_footer=false", byID["fake:g1"])
 	}
-	if byID["fakew:wx1"].SendAs != "bot" || !byID["fakew:wx1"].NoFooter {
-		t.Fatalf("fake WeChat send caps = %+v, want send_as=bot no_footer=true", byID["fakew:wx1"])
+	if byID["fakew:wx1"].SendAs != "bot" || byID["fakew:wx1"].SendMedia != "all" || !byID["fakew:wx1"].NoFooter {
+		t.Fatalf("fake WeChat send caps = %+v, want send_as=bot send_media=all no_footer=true", byID["fakew:wx1"])
 	}
 
 	// 1) Direct human reply to closed Feishu chat: sent without AI footer, marked Human=true.
@@ -136,6 +136,71 @@ func TestInboxDirectReplyFakeFeishuAndWeChat(t *testing.T) {
 	if last.Human {
 		t.Fatalf("WeChat bot reply must not be marked Human=true: %+v", last)
 	}
+
+	// 4) Attachments: WeChat delivers uploaded image + file via channel.send; text-only fake Feishu refuses honestly; path traversal rejected.
+	upDir := filepath.Join(dir, "uploads", "20261127")
+	if err := os.MkdirAll(upDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pngPath := filepath.Join(upDir, "a1b2c3-shot.png")
+	pdfPath := filepath.Join(upDir, "d4e5f6-report.pdf")
+	if err := os.WriteFile(pngPath, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mediaReq, _ := json.Marshal(map[string]any{
+		"id":   "fakew:wx1",
+		"text": "附上截图和报告",
+		"files": []map[string]string{
+			{"path": pngPath, "name": "shot.png", "mime": "image/png"},
+			{"path": pdfPath, "name": "report.pdf", "mime": "application/pdf"},
+		},
+	})
+	rec = postReply(string(mediaReq))
+	if rec.Code != 200 {
+		t.Fatalf("WeChat media reply failed: %d %s", rec.Code, rec.Body)
+	}
+	wxSent, _ = os.ReadFile(filepath.Join(dir, "ext", "fakew", "data", "sent.jsonl"))
+	if !strings.Contains(string(wxSent), `"files":2`) {
+		t.Fatalf("fakew channel.send should receive 2 attachments: %s", wxSent)
+	}
+	wxMsgs = h.store.msgs("fakew:wx1", time.Time{})
+	last = wxMsgs[len(wxMsgs)-1]
+	if !strings.Contains(last.Text, "[图片]") || !strings.Contains(last.Text, "[文件] report.pdf") {
+		t.Fatalf("WeChat media reply message text missing attachment summary: %q", last.Text)
+	}
+
+	// Text-only extension refuses attachments honestly without creating a failed message.
+	feishuMediaReq, _ := json.Marshal(map[string]any{
+		"id":    "fake:g1",
+		"text":  "看图",
+		"files": []map[string]string{{"path": pngPath, "name": "shot.png", "mime": "image/png"}},
+	})
+	rec = postReply(string(feishuMediaReq))
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "只发文字") {
+		t.Fatalf("text-only extension should reject media with 400: %d %s", rec.Code, rec.Body)
+	}
+
+	// Path outside hub uploads/ is rejected.
+	outside := filepath.Join(dir, "secret.txt")
+	os.WriteFile(outside, []byte("nope"), 0o600)
+	badPathReq, _ := json.Marshal(map[string]any{
+		"id":    "fakew:wx1",
+		"files": []map[string]string{{"path": outside, "name": "secret.txt", "mime": "text/plain"}},
+	})
+	rec = postReply(string(badPathReq))
+	if rec.Code != 400 {
+		t.Fatalf("upload path outside uploads/ should be rejected with 400: %d %s", rec.Code, rec.Body)
+	}
+
+	// 5) WeChat rejects AI draft endpoint (WeChat only offers direct bot send & send to Collie).
+	draftRec := httptest.NewRecorder()
+	sp.s.inboxDraftStart(draftRec, httptest.NewRequest("POST", "/api/inbox/draft", strings.NewReader(`{"id":"fakew:wx1","hint":"帮回一下"}`)))
+	if draftRec.Code != 400 || !strings.Contains(draftRec.Body.String(), "不支持 AI 帮回") {
+		t.Fatalf("WeChat inboxDraftStart should return 400: %d %s", draftRec.Code, draftRec.Body)
+	}
 }
 
 func TestInboxDraftViaRouterNeverAutoSends(t *testing.T) {
@@ -150,10 +215,24 @@ func TestInboxDraftViaRouterNeverAutoSends(t *testing.T) {
 	h.store.mu.Unlock()
 	h.store.addMsg(InboxMsg{ID: "m1", Conv: c.ID, At: now.Add(-2 * time.Minute), SenderName: "赵六", Text: "@你 今晚 20:00 灰度帮忙盯下？"})
 
-	// Request AI draft (refining with shorter tone).
-	body := `{"id":"fake:g2","hint":"说我会在线盯监控","tone":"shorter","current_draft":"好的，今晚八点我会全程关注灰度情况并随时同步。"}`
+	// Request AI draft (refining with shorter tone + hub-uploaded image context).
+	upDir := filepath.Join(dir, "uploads", "20261127")
+	if err := os.MkdirAll(upDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	imgPath := filepath.Join(upDir, "ref.png")
+	if err := os.WriteFile(imgPath, []byte{0x89, 'P', 'N', 'G'}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reqBytes, _ := json.Marshal(map[string]any{
+		"id":            "fake:g2",
+		"hint":          "说我会在线盯监控",
+		"tone":          "shorter",
+		"current_draft": "好的，今晚八点我会全程关注灰度情况并随时同步。",
+		"files":         []string{imgPath},
+	})
 	rec := httptest.NewRecorder()
-	sp.s.inboxDraftStart(rec, httptest.NewRequest("POST", "/api/inbox/draft", strings.NewReader(body)))
+	sp.s.inboxDraftStart(rec, httptest.NewRequest("POST", "/api/inbox/draft", bytes.NewReader(reqBytes)))
 	if rec.Code != 200 {
 		t.Fatalf("POST /api/inbox/draft: %d %s", rec.Code, rec.Body)
 	}
@@ -182,8 +261,8 @@ func TestInboxDraftViaRouterNeverAutoSends(t *testing.T) {
 	if trig.Action != "respond" || trig.Thread != draftThreadPrefix+started.ID {
 		t.Fatalf("unexpected trigger routing: %+v", trig)
 	}
-	if !strings.Contains(trig.Text, "更简短") || !strings.Contains(trig.Text, "今晚 20:00 灰度") || !strings.Contains(trig.Text, "collie reply --thread "+draftThreadPrefix+started.ID) {
-		t.Fatalf("draft prompt missing context or reply command:\n%s", trig.Text)
+	if !strings.Contains(trig.Text, "更简短") || !strings.Contains(trig.Text, "今晚 20:00 灰度") || !strings.Contains(trig.Text, "collie reply --thread "+draftThreadPrefix+started.ID) || !strings.Contains(trig.Text, "ref.png") {
+		t.Fatalf("draft prompt missing context, attachment, or reply command:\n%s", trig.Text)
 	}
 	// Verify fromHuman prioritizes inbox-draft triggers.
 	if got := fromHuman([]*Trigger{trig}); len(got) != 1 {

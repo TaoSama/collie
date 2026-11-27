@@ -2531,6 +2531,7 @@ select.picked { display: none; }
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
   padding: 3px; border-radius: calc(10px * var(--round)); background: var(--bg-2); border: var(--bw) solid var(--line);
 }
+.conv-modes.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .conv-mode {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   height: 30px; padding: 0 8px; border: 0; border-radius: calc(7px * var(--round));
@@ -2556,15 +2557,23 @@ select.picked { display: none; }
   font-size: var(--fs-tiny); font-weight: var(--fw-medium); cursor: pointer; white-space: nowrap;
 }
 .conv-chip-btn:hover { background: var(--bg-3); color: var(--fg); }
-.conv-dock-row { display: flex; align-items: flex-end; gap: 8px; }
-.conv-input {
-  flex: 1; min-width: 0; min-height: 36px; max-height: 112px; padding: 7px 11px; resize: none;
-  border: var(--bw) solid var(--composer-line); border-radius: calc(10px * var(--round));
-  background: var(--bg); color: var(--fg); font: var(--fs-meta)/var(--lh-ui) var(--sans);
+.conv-cbox { border-radius: calc(12px * var(--round)); box-shadow: none; }
+.conv-cbox.drop { border-color: var(--accent); border-style: dashed; }
+.conv-cbox .files { padding: 8px 10px 2px; }
+.conv-cbox textarea {
+  width: 100%; border: 0; background: transparent; color: var(--fg); resize: none;
+  padding: 8px 12px 4px; min-height: 38px; max-height: 120px; font: var(--fs-meta)/var(--lh-ui) var(--sans);
 }
-.conv-input:focus { outline: none; border-color: var(--composer-focus); }
-.conv-input::placeholder { color: var(--t-hint); }
-.conv-act-btn { flex: none; height: 36px; padding: 0 12px; gap: 5px; white-space: nowrap; }
+.conv-cbox textarea:focus { outline: none; border-color: transparent; box-shadow: none; }
+.conv-cbox textarea::placeholder { color: var(--t-hint); }
+.conv-cbox .conv-draft-text { min-height: 78px; max-height: 150px; padding: 8px 12px 4px; border: 0; border-radius: 0; resize: vertical; }
+.conv-cbar { padding: 4px 8px 7px 6px; gap: 6px; flex-wrap: wrap; }
+.conv-media-warn {
+  margin: 0 10px 4px; padding: 5px 9px; border-radius: calc(7px * var(--round));
+  background: var(--attn-soft); color: var(--attn); font-size: var(--fs-tiny); line-height: var(--lh-ui);
+}
+.conv-media-warn[hidden] { display: none; }
+.conv-act-btn { flex: none; height: 32px; padding: 0 12px; gap: 5px; white-space: nowrap; }
 .conv-act-btn > svg { width: 14px; height: 14px; }
 /* AI draft review card inside the bottom dock */
 .conv-draft {

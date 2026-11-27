@@ -460,7 +460,9 @@
     const sendAs = c.send_as || (c.owner ? "bot" : "self");
     const canSend = sendAs !== "none";
     const botSend = sendAs === "bot";
+    const hasAI = canSend && !botSend && c.ext !== "wechat";
     const noFooter = !!c.no_footer || botSend;
+    const sendMedia = c.send_media || (c.ext === "larkx" ? "none" : (canSend ? "all" : "none"));
 
     // Surface failed/uncertain outbox items even when the AI switch is off (UX-33).
     const badOuts = Object.values(outs).filter((o) => o && (o.state === "failed" || o.state === "uncertain" || o.state === "expired"));
@@ -489,24 +491,33 @@
           <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : (m.ref && !m.human) ? "assistant" : ""}">${body}</div>${o ? outLine(o) : ""}</div></li>`;
     };
 
-    const mode = canSend ? (opts.composerMode || "reply") : "collie";
+    let mode = canSend ? (opts.composerMode || "reply") : "collie";
+    if (mode === "ai" && !hasAI) mode = "reply";
     const inputText = opts.inputText || "";
     const draft = opts.draft || null;
     const showUnreadBtn = !!unreadAnchor && unreadCount > 0;
     const ctxN = Math.min(msgs.length, 20);
     const replyTabLabel = botSend ? "机器人发送" : "我直接回复";
     const sendBtnLabel = botSend ? "以机器人发送" : `发送到${chName}`;
-    const confirmBtnLabel = botSend ? "以机器人确认发送" : `确认发送到${chName}`;
+    const confirmBtnLabel = `确认发送到${chName}`;
+    const attachBtn = `<button type="button" class="icon-btn attach" title="添加图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
 
     let dockBody = "";
     if (mode === "reply") {
       const replyHint = botSend
-        ? `${esc(chName)}仅支持以机器人「${esc(c.name || chName)}」身份发到你的${esc(chName)}（不能以你本人身份发送）`
+        ? `${esc(chName)}仅支持以机器人「${esc(c.name || chName)}」身份发到你的${esc(chName)}（不能以你本人身份发送，支持文字/图片/文件）`
         : `以你本人身份直接发送到${esc(chName)}，不带 AI 尾标`;
       dockBody = `<div class="conv-dock-hint">${logo(c.ext)}<span>${replyHint}</span></div>
-        <div class="conv-dock-row">
+        <div class="cbox conv-cbox" data-send-media="${esc(sendMedia)}">
+          <div class="files" hidden></div>
+          <div class="conv-media-warn" data-conv-media-warn hidden></div>
           <textarea class="conv-input" rows="1" data-conv-input placeholder="${botSend ? `以机器人身份发到你的${esc(chName)}…` : `回复「${esc(c.name || c.chat)}」…`}">${esc(inputText)}</textarea>
-          <button type="button" class="btn primary small conv-act-btn" data-conv-send-reply>${ico("send")}<span>${esc(sendBtnLabel)}</span></button>
+          <div class="cbar conv-cbar">
+            ${attachBtn}
+            <span class="spacer"></span>
+            <button type="button" class="btn primary small conv-act-btn" data-conv-send-reply>${ico("send")}<span>${esc(sendBtnLabel)}</span></button>
+          </div>
+          <input type="file" multiple hidden>
         </div>`;
     } else if (mode === "ai") {
       if (draft && draft.loading && !draft.text) {
@@ -519,32 +530,45 @@
       } else if (draft && draft.text) {
         dockBody = `<div class="conv-draft">
             <div class="conv-draft-head">
-              <span class="conv-draft-title">${ico("sparkles")}<b>AI 草稿</b><span class="muted">${botSend ? `确认后以机器人身份发到${esc(chName)}，尚未发出` : `确认后发往${esc(chName)}，尚未发出`}</span></span>
+              <span class="conv-draft-title">${ico("sparkles")}<b>AI 草稿</b><span class="muted">确认后发往${esc(chName)}，尚未发出</span></span>
               <div class="conv-draft-tools">
                 <button type="button" class="conv-chip-btn" data-conv-draft-refine="shorter" ${draft.loading ? "disabled" : ""}>${draft.loading ? "改写中…" : "更简短"}</button>
                 <button type="button" class="conv-chip-btn" data-conv-draft-refine="formal" ${draft.loading ? "disabled" : ""}>更正式</button>
                 <button type="button" class="icon-btn" data-conv-draft-cancel aria-label="取消草稿" title="放弃草稿">${ico("x")}</button>
               </div>
             </div>
-            <textarea class="conv-draft-text" rows="3" data-conv-draft-text aria-label="编辑 AI 起草的回复">${esc(draft.text)}</textarea>
-            <div class="conv-draft-foot">
-              ${noFooter ? `<span class="muted conv-draft-note">由 ${esc(draft.via || "Collie")} 起草</span>` : `<label class="conv-draft-opt"><input type="checkbox" data-conv-draft-footer ${draft.footer ? "checked" : ""}><span>附带 AI 代答尾标</span></label>`}
-              <div class="conv-draft-acts">
-                <button type="button" class="btn small ghost" data-conv-draft-cancel>放弃</button>
-                <button type="button" class="btn primary small" data-conv-draft-send ${draft.loading ? "disabled" : ""}>${ico("check")}<span>${esc(confirmBtnLabel)}</span></button>
+            <div class="cbox conv-cbox" data-send-media="${esc(sendMedia)}">
+              <div class="files" hidden></div>
+              <div class="conv-media-warn" data-conv-media-warn hidden></div>
+              <textarea class="conv-draft-text" rows="3" data-conv-draft-text aria-label="编辑 AI 起草的回复">${esc(draft.text)}</textarea>
+              <div class="cbar conv-cbar conv-draft-foot">
+                ${attachBtn}
+                ${noFooter ? `<span class="muted conv-draft-note">由 ${esc(draft.via || "Collie")} 起草</span>` : `<label class="conv-draft-opt"><input type="checkbox" data-conv-draft-footer ${draft.footer ? "checked" : ""}><span>附带 AI 代答尾标</span></label>`}
+                <span class="spacer"></span>
+                <div class="conv-draft-acts">
+                  <button type="button" class="btn small ghost" data-conv-draft-cancel>放弃</button>
+                  <button type="button" class="btn primary small" data-conv-draft-send ${draft.loading ? "disabled" : ""}>${ico("check")}<span>${esc(confirmBtnLabel)}</span></button>
+                </div>
               </div>
+              <input type="file" multiple hidden>
             </div>
           </div>`;
       } else {
-        dockBody = `<div class="conv-dock-hint">${ico("sparkles")}<span>AI 读取最近消息起草回复，由你审阅确认后再${botSend ? "以机器人身份" : ""}发送到${esc(chName)}</span></div>
+        dockBody = `<div class="conv-dock-hint">${ico("sparkles")}<span>AI 读取最近消息起草回复，由你审阅确认后再发送到${esc(chName)}</span></div>
           <div class="conv-quick-row">
             <button type="button" class="conv-chip-btn" data-conv-ai-quick="先回复收到，告知我会跟进">先回收到</button>
             <button type="button" class="conv-chip-btn" data-conv-ai-quick="说明正在排查，有进展同步">同步进展</button>
             <button type="button" class="conv-chip-btn" data-conv-ai-quick="礼貌说明改期到明天下午">礼貌改期</button>
           </div>
-          <div class="conv-dock-row">
-            <textarea class="conv-input" rows="1" data-conv-input placeholder="输入回复意图（留空则直接根据上下文起草）…">${esc(inputText)}</textarea>
-            <button type="button" class="btn primary small conv-act-btn" data-conv-draft-gen ${draft?.loading ? "disabled" : ""}>${ico("sparkles")}<span>${draft?.loading ? "起草中…" : "生成草稿"}</span></button>
+          <div class="cbox conv-cbox" data-send-media="draft">
+            <div class="files" hidden></div>
+            <textarea class="conv-input" rows="1" data-conv-input placeholder="输入回复意图（可点 + 附截图让 AI 参考，留空则直接起草）…">${esc(inputText)}</textarea>
+            <div class="cbar conv-cbar">
+              ${attachBtn}
+              <span class="spacer"></span>
+              <button type="button" class="btn primary small conv-act-btn" data-conv-draft-gen ${draft?.loading ? "disabled" : ""}>${ico("sparkles")}<span>${draft?.loading ? "起草中…" : "生成草稿"}</span></button>
+            </div>
+            <input type="file" multiple hidden>
           </div>`;
       }
     } else {
@@ -554,9 +578,15 @@
           <button type="button" class="conv-chip-btn" data-conv-collie-quick="根据会话里提到的报错和需求，帮我查一下相关代码">查相关代码</button>
           <button type="button" class="conv-chip-btn" data-conv-collie-quick="把会话里需要我处理的事情列个清单">提取待办</button>
         </div>
-        <div class="conv-dock-row">
+        <div class="cbox conv-cbox" data-send-media="all">
+          <div class="files" hidden></div>
           <textarea class="conv-input" rows="1" data-conv-input placeholder="让 Collie 总结、查代码或派活处理…">${esc(inputText)}</textarea>
-          <button type="button" class="btn primary small conv-act-btn" data-conv-send-collie>${ico("bot")}<span>发给 Collie</span></button>
+          <div class="cbar conv-cbar">
+            ${attachBtn}
+            <span class="spacer"></span>
+            <button type="button" class="btn primary small conv-act-btn" data-conv-send-collie>${ico("bot")}<span>发给 Collie</span></button>
+          </div>
+          <input type="file" multiple hidden>
         </div>`;
     }
 
@@ -596,9 +626,9 @@
         </div>
       </div>
       <div class="conv-dock" data-mode="${esc(mode)}">
-        <div class="conv-modes" role="tablist" aria-label="回复或处理方式">
+        <div class="conv-modes${hasAI ? "" : " two"}" role="tablist" aria-label="回复或处理方式">
           <button type="button" role="tab" class="conv-mode${mode === "reply" ? " on" : ""}" aria-selected="${mode === "reply"}" data-conv-mode="reply" ${canSend ? "" : "disabled title=\"该扩展不支持直接发送\""}>${ico("send")}<span>${esc(replyTabLabel)}</span></button>
-          <button type="button" role="tab" class="conv-mode${mode === "ai" ? " on" : ""}" aria-selected="${mode === "ai"}" data-conv-mode="ai" ${canSend ? "" : "disabled title=\"该扩展不支持直接发送\""}>${ico("sparkles")}<span>AI 帮回</span></button>
+          ${hasAI ? `<button type="button" role="tab" class="conv-mode${mode === "ai" ? " on" : ""}" aria-selected="${mode === "ai"}" data-conv-mode="ai">${ico("sparkles")}<span>AI 帮回</span></button>` : ""}
           <button type="button" role="tab" class="conv-mode${mode === "collie" ? " on" : ""}" aria-selected="${mode === "collie"}" data-conv-mode="collie">${ico("bot")}<span>发给 Collie</span></button>
         </div>
         <div class="conv-dock-body">${dockBody}</div>

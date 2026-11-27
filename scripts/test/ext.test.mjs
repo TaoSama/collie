@@ -149,7 +149,7 @@ test("convHTML renders chronological order, unread anchor + jump controls, human
   const m3Chunk = html.slice(html.indexOf('data-msg-id="m3"'));
   assert.match(m3Chunk, /AI 代答/);
 
-  // AI draft confirmation card shows refine buttons and footer checkbox on Feishu.
+  // AI draft confirmation card shows refine buttons, footer checkbox, and shared + attach button on Feishu.
   const aiHtml = ext.convHTML(larkDetail, "/ai", {
     composerMode: "ai",
     draft: { text: "收到，我会跟进。", footer: true, via: "Collie" },
@@ -158,18 +158,34 @@ test("convHTML renders chronological order, unread anchor + jump controls, human
   assert.match(aiHtml, /data-conv-draft-refine="formal"/);
   assert.match(aiHtml, /data-conv-draft-footer/);
   assert.match(aiHtml, /确认发送到飞书/);
+  assert.match(aiHtml, /class="cbox conv-cbox"/);
+  assert.match(aiHtml, /class="icon-btn attach"/);
+  assert.match(aiHtml, /data-conv-mode="ai"/);
 
-  // WeChat bot chat honestly labels bot identity and hides footer checkbox.
+  // Shared + attach button also present in reply, ai prompt, and collie modes.
+  assert.match(html, /class="cbox conv-cbox"/);
+  assert.match(html, /class="icon-btn attach"/);
+  const collieHtml = ext.convHTML(larkDetail, "/ai", { composerMode: "collie" });
+  assert.match(collieHtml, /class="cbox conv-cbox"/);
+  assert.match(collieHtml, /class="icon-btn attach"/);
+
+  // WeChat bot chat omits AI 帮回 tab completely (only 2 tabs), honestly labels bot identity, and includes + attach button.
   const wxDetail = {
-    conv: { id: "wechat:u1", ext: "wechat", chat: "u1", label: "微信", name: "微信ClawBot", kind: "dm", owner: true, send_as: "bot", no_footer: true, on: true },
+    conv: { id: "wechat:u1", ext: "wechat", chat: "u1", label: "微信", name: "微信ClawBot", kind: "dm", owner: true, send_as: "bot", send_media: "all", no_footer: true, on: true },
     msgs: [],
     outbox: {},
   };
   const wxHtml = ext.convHTML(wxDetail, "/ai", { composerMode: "reply" });
+  assert.match(wxHtml, /class="conv-modes two"/);
+  assert.doesNotMatch(wxHtml, /data-conv-mode="ai"/);
+  assert.doesNotMatch(wxHtml, /AI 帮回/);
   assert.match(wxHtml, /机器人发送/);
-  assert.match(wxHtml, /仅支持以机器人「微信ClawBot」身份发到你的微信（不能以你本人身份发送）/);
+  assert.match(wxHtml, /仅支持以机器人「微信ClawBot」身份发到你的微信（不能以你本人身份发送，支持文字\/图片\/文件）/);
   assert.match(wxHtml, /以机器人发送/);
-  const wxAiHtml = ext.convHTML(wxDetail, "/ai", { composerMode: "ai", draft: { text: "草稿", footer: false, via: "Collie" } });
-  assert.doesNotMatch(wxAiHtml, /data-conv-draft-footer/);
-  assert.match(wxAiHtml, /以机器人确认发送/);
+  assert.match(wxHtml, /class="cbox conv-cbox" data-send-media="all"/);
+  assert.match(wxHtml, /class="icon-btn attach"/);
+  // Even if composerMode="ai" is requested on WeChat, it falls back to reply mode.
+  const wxFallback = ext.convHTML(wxDetail, "/ai", { composerMode: "ai" });
+  assert.match(wxFallback, /data-mode="reply"/);
+  assert.doesNotMatch(wxFallback, /AI 帮回/);
 });

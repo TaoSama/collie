@@ -524,8 +524,8 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", icon_url: "ext-icons/workbench.svg", runtime: { feature: "workbench" },
       description: "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。" }, setting: { id: "workbench", enabled: true } }] };
   const inboxConvs = [
-    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "微信ClawBot", kind: "dm", last_at: ago(6), preview: "你: 好的，谢谢", on: true, owner: true, send_as: "bot", no_footer: true, handler: "collie" },
-    { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(2), preview: "陈敏: 好的，我先切 10% 流量看看报错率，大家准备好了群里吱一声。", unread: 11, at_me: true, on: false, handler: "agent" },
+    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "微信ClawBot", kind: "dm", last_at: ago(6), preview: "你: 好的，谢谢", on: true, owner: true, send_as: "bot", send_media: "all", no_footer: true, handler: "collie" },
+    { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(2), preview: "陈敏: 好的，我先切 10% 流量看看报错率，大家准备好了群里吱一声。", unread: 11, at_me: true, on: false, send_as: "self", send_media: "none", handler: "agent" },
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
     { id: "larkx:oc_7", ext: "larkx", chat: "oc_7", label: "飞书", name: "数据库值班群", kind: "group", last_at: ago(8), preview: "飞书日历: [日历] 发布复盘", unread: 2, on: false, handler: "agent" },
     { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
@@ -703,7 +703,13 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       return json({ setting: v?.setting, view: v });
     }
     if (/^\/api\/ext\/[^/]+\/login$/.test(p)) return json({ step: { done: true } });
-    if (p === "/api/inbox") return json({ convs: inboxConvs, trigger: extData.trigger || "/ai", read_back: {} });
+    if (p === "/api/uploads" && method === "POST") {
+      const name = (q.get("name") || "file").replace(/[^\w.\u4e00-\u9fff-]/g, "_");
+      const size = init.body?.size ?? init.body?.byteLength ?? 1024;
+      const tag = (++seq).toString(16).padStart(6, "0");
+      return json({ path: `/home/alex/.collie/uploads/20261127/${tag}-${name}`, name, size });
+    }
+    if (p === "/api/inbox") return json({ convs: inboxConvs.map((c) => ({ send_as: c.owner ? "bot" : "self", send_media: c.ext === "wechat" ? "all" : "none", ...c })), trigger: extData.trigger || "/ai", read_back: {} });
     if (p === "/api/inbox/read" && method === "POST") {
       const cs = inboxConvs.filter((x) => body.ids.includes(x.id));
       for (const c of cs) { c.unread = 0; c.at_me = false; }
@@ -713,31 +719,37 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       const c = inboxConvs.find((x) => x.id === body.id);
       if (c) for (const k of ["on", "anyone", "handler"]) if (body[k] != null) c[k] = body[k];
       if (c && body.seen) { c.unread = 0; c.at_me = false; }
-      return json({ conv: c });
+      return json({ conv: c ? { send_as: c.owner ? "bot" : "self", send_media: c.ext === "wechat" ? "all" : "none", ...c } : c });
     }
     if (p === "/api/inbox/conv") {
       const c = inboxConvs.find((x) => x.id === q.get("id"));
-      return json({ conv: c, msgs: inboxMsgs[c.id] || [], outbox: {} });
+      const conv = c ? { send_as: c.owner ? "bot" : "self", send_media: c.ext === "wechat" ? "all" : "none", ...c } : c;
+      return json({ conv, msgs: inboxMsgs[c.id] || [], outbox: {} });
     }
     if (p === "/api/inbox/reply" && method === "POST") {
       const c = inboxConvs.find((x) => x.id === body.id);
       if (!c) return json({ error: "找不到这个会话" }, 404);
       const text = String(body.text || "").trim();
-      if (!text) return json({ error: "消息不能为空" }, 400);
+      const files = Array.isArray(body.files) ? body.files : [];
+      if (!text && !files.length) return json({ error: "回复内容和附件不能都为空" }, 400);
+      if (files.length && c.ext === "larkx") return json({ error: "飞书扩展目前只发文字，暂不支持直接发送图片或文件" }, 400);
       const at = new Date().toISOString();
-      const withFooter = !!body.ai_footer && !c.no_footer && !c.owner;
-      const fullText = withFooter ? `${text}\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 3秒` : text;
+      const withFooter = !!body.ai_footer && !c.no_footer && !c.owner && !!text;
+      const fileSummary = files.map((f) => (String(f.mime || "").startsWith("image/") ? "[图片]" : `[文件] ${f.name || "附件"}`)).join(" ");
+      let fullText = withFooter ? `${text}\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 3秒` : text;
+      if (fileSummary) fullText = fullText ? `${fullText}\n${fileSummary}` : fileSummary;
       const ref = "out-" + (++seq);
       const human = !withFooter && !c.owner;
       const item = { id: "out:" + ref, conv: c.id, at, mine: true, human, ref, text: fullText };
       (inboxMsgs[c.id] ||= []).push(item);
       c.last_at = at;
-      c.preview = (human ? "你: " : "AI 代答: ") + text.split("\n")[0];
+      c.preview = (human ? "你: " : "AI 代答: ") + (text || fileSummary).split("\n")[0];
       c.unread = 0; c.at_me = false;
-      return json({ ok: true, ref, state: "sent", msg: item, conv: c });
+      return json({ ok: true, ref, state: "sent", msg: item, conv: { send_as: c.owner ? "bot" : "self", send_media: c.ext === "wechat" ? "all" : "none", ...c } });
     }
     if (p === "/api/inbox/draft" && method === "POST") {
       const c = inboxConvs.find((x) => x.id === body.id);
+      if (c?.owner || c?.ext === "wechat") return json({ error: "微信会话不支持 AI 帮回，请直接发送或发给 Collie" }, 400);
       const hint = String(body.hint || "").trim();
       const tone = String(body.tone || "");
       await wait(160);
