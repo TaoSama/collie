@@ -3296,6 +3296,7 @@
   let eventsSub = store.get("eventsSub", "events");
   if (autoTab === "threads") { autoTab = "events"; eventsSub = "threads"; store.set("autoTab", autoTab); }
   let autoTimer;
+  let larkThreadOpen = null;
   // 收件箱: the open conversation, its messages, search, composer and unread anchor; 接入: a sign-in.
   let inboxCur = "", inboxDetail = null, extLogin = null;
   let inboxQuery = "", inboxHelpOpen = false, inboxCfgOpen = false;
@@ -3660,12 +3661,22 @@
       else if (keepTop && !keepTop.atBottom) { markProgrammaticScroll(); body.scrollTop = keepTop.scrollTop; }
     };
     if (tab === "events") {
-      const sig = JSON.stringify([r, eventsSub, (autoData.inbox?.convs || []).filter((c) => c.ext === "wechat").map((c) => [c.id, c.name])]);
+      const lark = r.lark_threads || {};
+      const links = new Map(eventsSub === "threads" ? (r.threads || []).filter((th) => Object.hasOwn(lark, th.id)).map((th) => [
+        th.id, (th.subscribers || []).map((name) => workerHref(sup.workers.find((w) => w.name === name) || { name, created_at: th.last_at })),
+      ]) : []);
+      const sig = JSON.stringify([r, eventsSub, larkThreadOpen, [...links], (autoData.inbox?.convs || []).filter((c) => c.ext === "wechat").map((c) => [c.id, c.name])]);
       if (sig === body._sig) { if (restore) restoreSimpleScroll(body, restore); return; }
       body._sig = sig;
       const seg = `<div class="seg events-seg">${[["events", "事件"], ["threads", "线程"]].map(([k, l]) => `<button type="button" data-events-sub="${k}" class="${eventsSub === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
-      body.innerHTML = seg + (eventsSub === "threads" ? threadsHTML(r.threads || [], r.counts || {}) : inboxHTML(r.triggers || []));
+      const focus = document.activeElement?.closest("[data-lark-thread]");
+      const focusedLink = document.activeElement?.getAttribute("href");
+      body.innerHTML = seg + (eventsSub === "threads" ? threadsHTML(r.threads || [], r.counts || {}, lark, links) : inboxHTML(r.triggers || []));
       applyAfter();
+      if (focus) {
+        const row = body.querySelector(`[data-lark-thread="${CSS.escape(focus.dataset.larkThread)}"]`);
+        (focusedLink ? row?.querySelector(`a[href="${CSS.escape(focusedLink)}"]`) : row?.querySelector("button"))?.focus({ preventScroll: true });
+      }
     } else if (tab === "inbox") {
       syncInboxChrome();
       // Do not clobber active typing in the search bar or bottom composer on background poll.
@@ -3892,13 +3903,54 @@
         <span class="right">${when(t.at)}</span></li>`).join("") : `<li class="empty-row with-ico">${ico("inbox")}<div>还没有事件</div></li>`}</ul></div>`;
   }
 
+  function larkThreadRow(th, count, data, links) {
+    const open = larkThreadOpen?.id === th.id;
+    const label = [data.name, data.from, data.topic].filter(Boolean).join(" · ");
+    const detailId = "lark-thread-" + th.id;
+    const subscribers = th.subscribers || [];
+    const route = subscribers.length ? `订阅：${subscribers.map((name, i) => links[i]
+      ? `<a href="${esc(links[i])}">${esc(name)}</a>` : esc(name)).join("、")}` : "→ Collie";
+    const messages = larkThreadOpen?.messages;
+    const detail = !open ? "" : larkThreadOpen.error
+      ? `<div role="status">${esc(larkThreadOpen.error)}</div>`
+      : messages?.length ? messages.map((m) => `<div><div class="meta">${esc(m.from)} <span>${when(m.at)}</span></div><div class="text">${esc(m.text)}</div></div>`).join("")
+        : `<div role="status">${messages ? "暂无已记录的消息" : "正在读取…"}</div>`;
+    return `<li class="row lark-thread-row" data-lark-thread="${esc(th.id)}">
+      <span class="badge">${count}</span>
+      <div class="lark-thread-cell">
+        <div class="meta"><span class="lark-thread-name" title="${esc(label)}">飞书 · ${esc(label)}</span><span class="lark-thread-route">${route}</span></div>
+        <button type="button" class="icon-btn lark-thread-toggle" aria-expanded="${open}" aria-controls="${esc(detailId)}" aria-label="${esc((open ? "收起 " : "展开 ") + label)}">${ico("chevron-left")}</button>
+      </div>
+      <span class="right">${when(data.at || th.last_at)}</span>
+      <div id="${esc(detailId)}" class="lark-thread-detail" ${open ? "" : "hidden"}>
+        <div class="meta">已记录的消息<span>最近调度 ${when(th.last_at)}</span></div>${detail}
+      </div>
+    </li>`;
+  }
+
+  async function toggleLarkThread(id) {
+    const request = larkThreadOpen?.id === id ? null : { id };
+    larkThreadOpen = request;
+    drawAuto(autoData.triggers);
+    if (!request) return;
+    try {
+      request.messages = (await api("/api/inbox/lark-thread?id=" + encodeURIComponent(id))).messages || [];
+    } catch (err) {
+      request.error = err.message;
+    }
+    if (larkThreadOpen === request && view === "auto" && autoTab === "events" && eventsSub === "threads") drawAuto(autoData.triggers);
+  }
+
   // counts are each thread's total events from the DB; th.triggers holds only the latest.
-  function threadsHTML(ths, counts) {
+  function threadsHTML(ths, counts, lark, links) {
     return `<p class="panel-intro">同一个对话、Issue/PR 或群聊话题里的连续事件构成一条线程。Collie 派出的 agent 订阅线程后，后续事件直达它，不再经过 Collie。chat:main 始终由 Collie 自己处理。</p>
-      <div class="card"><ul class="rows">${ths.length ? ths.map((th) => `<li class="row">
-        <span class="badge">${counts[th.id] ?? th.triggers?.length ?? 0}</span>
-        <div><div class="meta"><b>${esc(wechatThreadName(th.id))}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Collie</span>"}</div></div>
-        <span class="right">${when(th.last_at)}</span></li>`).join("") : `<li class="empty-row with-ico">${ico("messages-square")}<div>还没有线程</div></li>`}</ul></div>`;
+      <div class="card"><ul class="rows">${ths.length ? ths.map((th) => {
+        const count = counts[th.id] ?? th.triggers?.length ?? 0;
+        if (Object.hasOwn(lark, th.id)) return larkThreadRow(th, count, lark[th.id], links.get(th.id) || []);
+        return `<li class="row"><span class="badge">${count}</span>
+          <div><div class="meta"><b>${esc(wechatThreadName(th.id))}</b>${th.subscribers?.length ? `<span>订阅：${esc(th.subscribers.join(", "))}</span>` : "<span>→ Collie</span>"}</div></div>
+          <span class="right">${when(th.last_at)}</span></li>`;
+      }).join("") : `<li class="empty-row with-ico">${ico("messages-square")}<div>还没有线程</div></li>`}</ul></div>`;
   }
 
   // ───────────────────────────── timers: picked, not typed
@@ -4536,6 +4588,17 @@
     if (e.target.closest("[data-sub-back]")) { e.preventDefault(); if (navCur > 0) history.back(); else location.hash = "#/auto"; return; }
     const a = e.target.closest("a[data-auto-tab]");
     if (a) { e.preventDefault(); autoTab = a.dataset.autoTab; store.set("autoTab", autoTab); if (location.hash !== "#/auto") location.hash = "#/auto"; else openAuto(); return; }
+    const thread = e.target.closest("[data-lark-thread]");
+    if (thread) {
+      const link = e.target.closest("a");
+      if (link) {
+        if (link.hash.startsWith("#/p/") && mode !== "chat" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) setMode("chat");
+      } else if (!e.target.closest(".lark-thread-detail")) {
+        thread.querySelector("button").focus({ preventScroll: true });
+        await toggleLarkThread(thread.dataset.larkThread);
+      }
+      return;
+    }
     const row = e.target.closest("[data-conv]");
     if (row && !e.target.closest("a")) {
       openInboxConv(row.dataset.conv);

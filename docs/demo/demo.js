@@ -248,8 +248,14 @@
     { id: "t33", source: "github", thread: "github:alex/shop-api#58", from: "octo-dev", action: "candidate", status: "delivered", text: "issue_comment: 分页最后一页有重复数据，能看一下吗？@collie", at: ago(40), targets: ["collie"] },
     { id: "t34", source: "timer", thread: "chat:main", from: "", action: "respond", status: "delivered", text: "每天 9 点：检查各个任务的进展，有卡住的告诉我", at: ago(60 * 3), targets: ["collie"] },
   ];
+  const larkThread = "ext:larkx:oc_1#m2";
+  const larkThreadMessages = [
+    { from: "你", at: ago(4), text: "帮我总结今天的讨论" },
+    { from: "AI 代答", at: ago(3), text: "周五评审，接口先冻结。张三负责发布说明。" },
+  ];
   const threads = [
     { id: "chat:main", triggers: triggers.filter((t) => t.thread === "chat:main"), subscribers: [], last_at: ago(6) },
+    { id: larkThread, triggers: ["t35"], subscribers: ["claude-1"], last_at: ago(3) },
     { id: "github:alex/shop-api#58", triggers: [triggers[2]], subscribers: ["codex-1"], last_at: ago(40) },
   ];
   // The workbench: pinned pages and shortcuts (web/workbench.js).
@@ -676,7 +682,10 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       return json({ query: rawQ, results: hits.slice(0, lim), total: hits.length, has_more: hits.length > lim });
     }
     if (p === "/api/super/lark") return json({ ready: true, who: "Alex" });
-    if (p === "/api/super/triggers") return json({ triggers, threads });
+    if (p === "/api/super/triggers") return json({ triggers, threads, lark_threads: {
+      [larkThread]: { name: "产品周会", topic: larkThreadMessages[0].text, from: "你", at: larkThreadMessages[1].at },
+    } });
+    if (p === "/api/inbox/lark-thread") return json({ messages: larkThreadMessages });
     if (p === "/api/ext/header-status") return json({ slots: [] });
     if (p === "/api/ext/settings") { Object.assign(extData, { trigger: body.trigger ?? extData.trigger, footer: body.footer ?? extData.footer }); return json({ trigger: extData.trigger, footer: extData.footer }); }
     if (p === "/api/ext") return json(extData);

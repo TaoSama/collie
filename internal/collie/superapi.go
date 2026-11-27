@@ -699,7 +699,6 @@ func (s *Server) superTriggers(w http.ResponseWriter, r *http.Request) {
 	sp := s.sup
 	sp.flush() // thread counts come from the DB
 	sp.mu.Lock()
-	defer sp.mu.Unlock()
 	ts := sp.st.Triggers
 	if len(ts) > 120 {
 		ts = ts[len(ts)-120:]
@@ -708,12 +707,17 @@ func (s *Server) superTriggers(w http.ResponseWriter, r *http.Request) {
 	for i := len(ts) - 1; i >= 0; i-- {
 		cp := *ts[i]
 		cp.Text = clip(cp.Text, 600)
+		cp.LarkText = ""
 		out = append(out, &cp)
 	}
-	ths := []*Thread{}
+	ths := make([]Thread, 0, len(sp.st.Threads))
 	for _, th := range sp.st.Threads {
-		ths = append(ths, th)
+		cp := *th
+		cp.Subscribers = append([]string(nil), th.Subscribers...)
+		cp.Triggers = append([]string(nil), th.Triggers...)
+		ths = append(ths, cp)
 	}
+	sp.mu.Unlock()
 	sort.Slice(ths, func(i, j int) bool { return ths[i].LastAt.After(ths[j].LastAt) })
 	if len(ths) > 40 {
 		ths = ths[:40]
@@ -728,7 +732,11 @@ func (s *Server) superTriggers(w http.ResponseWriter, r *http.Request) {
 		log.Printf("count thread triggers: %v", err)
 		counts = map[string]int{}
 	}
-	writeJSON(w, 200, map[string]any{"triggers": out, "threads": ths, "counts": counts})
+	result := map[string]any{"triggers": out, "threads": ths, "counts": counts}
+	if master, device := s.identity(r); s.ext != nil && (master || device != nil && device.Kind == "browser") {
+		result["lark_threads"] = s.larkThreadSummaries(ths)
+	}
+	writeJSON(w, 200, result)
 }
 
 // ---------------------------------------------------------------- timers

@@ -57,7 +57,7 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 		keep = !ours // Collie's own answer is already shown as sent.
 	}
 
-	var text string
+	var text, larkText string
 	if keep {
 		if request, ok := in.triggerRequest(m, c, request, triggered); ok {
 			var err error
@@ -65,6 +65,7 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 			if err != nil {
 				return InboxConv{}, nil, fmt.Errorf("read conversation context: %w", err)
 			}
+			larkText = request
 			c.setAsk(topic, func(a *ConvAsk) { a.AskMsg, a.AskAt, a.AskBy = in.ID, time.Now(), in.SenderName })
 			c.Handed = in.At
 			c.markRead()
@@ -109,6 +110,7 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 		if t != nil {
 			if c.Ext == larkxID {
 				t.LarkRequest = newLarkRequest(c, in)
+				t.LarkText = larkText
 			}
 			t.Alias = reqAlias
 			h.prepareConvDeliveryLocked(c, topic, t)

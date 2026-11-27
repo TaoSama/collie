@@ -1266,6 +1266,23 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .row .meta b { color: var(--t-secondary); font-weight: var(--fw-medium); font-family: var(--mono); overflow-wrap: anywhere; }
 .row .text { margin-top: 4px; font-size: var(--fs-meta); color: var(--fg); white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .row .right { font-size: var(--fs-small); color: var(--t-meta); white-space: nowrap; }
+.lark-thread-row { cursor: pointer; }
+.lark-thread-row:hover, .lark-thread-row:has(.lark-thread-detail:not([hidden])) { background: var(--bg-2); }
+.lark-thread-cell { display: flex; align-items: start; gap: 4px; }
+.lark-thread-cell > .meta { flex: 1; min-width: 0; flex-wrap: nowrap; align-items: baseline; }
+.lark-thread-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--t-secondary); }
+.lark-thread-route { flex: none; max-width: 65%; overflow-wrap: anywhere; }
+.lark-thread-route a { color: var(--info); text-underline-offset: 2px; }
+.lark-thread-toggle.icon-btn { width: 20px; height: 20px; flex: none; margin-block: -1px; }
+.lark-thread-toggle svg { width: 13px; height: 13px; transform: rotate(-90deg); }
+.lark-thread-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.lark-thread-detail { grid-column: 2 / -1; display: grid; gap: 8px; padding: 10px 0 3px; border-top: var(--bw) solid var(--line); cursor: auto; }
+.lark-thread-detail .text { display: block; margin-top: 1px; }
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  .lark-thread-cell > .meta { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .lark-thread-route { max-width: none; }
+  .lark-thread-detail { grid-column: 1 / -1; }
+}
 .row > .btn.ghost { margin-right: -10px; }
 .badge { font: var(--fw-medium) var(--fs-tiny)/1 var(--sans); padding: 4px 7px; border-radius: calc(6px * var(--round)); border: var(--bw) solid var(--line-2); color: var(--t-secondary); white-space: nowrap; }
 .badge.queued { border-color: var(--fg); color: var(--fg); }
