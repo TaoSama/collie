@@ -18,6 +18,7 @@ import (
 type fakeHerdrResume struct {
 	mu          sync.Mutex
 	startErr    *HerdrError
+	promptErr   *HerdrError
 	startKind   string
 	startArgs   []string
 	startCwd    string
@@ -68,6 +69,10 @@ func (f *fakeHerdrResume) dial(context.Context) (net.Conn, error) {
 				out = map[string]any{}
 			}
 		case "agent.prompt":
+			if f.promptErr != nil {
+				herr = f.promptErr
+				break
+			}
 			f.promptPane = str("target")
 			f.promptText = str("text")
 			f.paneStatus = "working"
@@ -196,5 +201,42 @@ func TestSendExternalViaHerdrNotReadyReturns202WithPane(t *testing.T) {
 	}
 	if !body.OK || body.PaneID != "wR1:p1" || body.Note == "" {
 		t.Fatalf("body = %+v, want ok + pane_id + note", body)
+	}
+}
+
+func TestSendExternalViaHerdrBlockedPromptReturnsFriendlyNote(t *testing.T) {
+	fakeAgentBins(t)
+	fh := &fakeHerdrResume{promptErr: &HerdrError{Code: "agent_blocked", Message: "blocked"}}
+	h := newHerdr("", "test", t.TempDir())
+	h.local.conn.dial = fh.dial
+	s := &Server{home: t.TempDir(), herdr: h}
+
+	externalCache.Lock()
+	externalCache.at = time.Now()
+	externalCache.list = []*External{{
+		ID: "ag-s1", Kind: "agy", Cwd: "/proj/demo", Surface: surfaceCLI,
+		Session: "11111111-1111-1111-1111-111111111111", CanSend: true, SendVia: "herdr", CanTakeOver: true, desktop: true,
+	}}
+	externalCache.Unlock()
+	t.Cleanup(forgetExternal)
+
+	r := httptest.NewRequest("POST", "/api/external/ag-s1/send", strings.NewReader(`{"text":"继续"}`))
+	r.SetPathValue("id", "ag-s1")
+	w := httptest.NewRecorder()
+	s.sendExternal(w, r)
+
+	if w.Code != 202 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		OK     bool   `json:"ok"`
+		PaneID string `json:"pane_id"`
+		Note   string `json:"note"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.OK || body.PaneID != "wR1:p1" || !strings.Contains(body.Note, "对话框") {
+		t.Fatalf("body = %+v, want ok + pane_id + dialog note", body)
 	}
 }

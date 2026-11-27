@@ -705,7 +705,12 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(1500 * time.Millisecond)
 		}
 		if err != nil {
-			writeJSON(w, 202, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias, "note": "已在 herdr 里继续，但这条消息发送失败：" + err.Error()})
+			note := "已在 herdr 里继续，但这条消息发送失败：" + err.Error()
+			var he *HerdrError
+			if errors.As(err, &he) && (he.Code == "agent_not_ready" || he.Code == "agent_blocked") {
+				note = "已在 herdr 里继续，但 agent 停在了一个对话框上，请处理后再发"
+			}
+			writeJSON(w, 202, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias, "note": note})
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias})
