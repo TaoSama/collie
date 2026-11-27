@@ -4396,33 +4396,51 @@
     }
     if (view === "auto" && autoTab === "hooks") { await fetchAuto("ext").catch(() => {}); drawAuto(autoData.settings); }
   }
+  const inboxCardActions = new Set();
   async function runInboxAction(el, { kind, actionId, sig, value = "", params = null }) {
     const card = el.closest(".im-card");
     const convId = card?.dataset.imConv || inboxCur;
     const msgId = card?.dataset.imMsg || "";
-    if (!convId || !msgId || !actionId || !sig) return;
+    const key = JSON.stringify([convId, msgId]);
+    if (!convId || !msgId || !actionId || !sig || inboxCardActions.has(key)) return;
+    inboxCardActions.add(key);
     const isBtn = el.tagName === "BUTTON";
     if (isBtn) busy(el);
     else el.disabled = true;
+    const priorView = inboxDetail?.msgs?.find((m) => m.id === msgId)?.view;
     try {
       const body = { id: convId, message_id: msgId, kind, action_id: actionId, sig };
       if (value) body.value = value;
       if (params && Object.keys(params).length) body.params = params;
       const res = await api("/api/inbox/action", { body });
       if (res.toast) toast(res.toast);
-      if (res.msg && inboxDetail?.msgs && convId === inboxCur) {
-        const idx = inboxDetail.msgs.findIndex((m) => m.id === res.msg.id);
-        if (idx >= 0) {
-          inboxDetail = { ...inboxDetail, msgs: inboxDetail.msgs.map((m, i) => i === idx ? { ...m, ...res.msg } : m) };
-          if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
-        }
-      }
+      if (convId !== inboxCur) return;
       inboxLoading = null;
-      await loadConv().catch(() => {});
-      if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
+      if (res.msg && inboxDetail?.msgs) {
+        inboxDetail = { ...inboxDetail, msgs: inboxDetail.msgs.map((m) => m.id === res.msg.id ? { ...m, ...res.msg } : m) };
+      } else {
+        await loadConv();
+      }
+      if (view !== "auto" || autoTab !== "inbox" || convId !== inboxCur) return;
+      const updated = inboxDetail?.msgs?.find((m) => m.id === msgId)?.view;
+      const bubble = $(`#inbox-detail [data-msg-id="${CSS.escape(msgId)}"] .conv-bubble`);
+      if (!bubble || !updated || JSON.stringify(updated) === JSON.stringify(priorView)) return;
+      // Update just the card while the normal inbox redraw is held by focus.
+      const focused = document.activeElement;
+      const restoreFocus = bubble.contains(focused);
+      bubble.innerHTML = collieInboxMessage.render(updated, { convId, msgId });
+      if (restoreFocus) {
+        const match = [...bubble.querySelectorAll("[data-im-id]")].find((node) =>
+          node.dataset.imId === focused.dataset.imId && node.dataset.imVal === focused.dataset.imVal);
+        const target = match || bubble.firstElementChild;
+        if (!match) target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      }
     } catch (err) {
       toast(err.message, "attn");
-      if (isBtn) { el.removeAttribute("aria-busy"); el.disabled = false; }
+    } finally {
+      inboxCardActions.delete(key);
+      if (isBtn) busy(el, false);
       else el.disabled = false;
     }
   }
