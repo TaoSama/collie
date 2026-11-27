@@ -7621,7 +7621,9 @@
     for (let j = 0, s = 0; j < msgs.length; j++) {
       if (msgs[j].kind === "user") s = j + 1;
       if (!msgs[j].turn_ms) continue;
-      const end = msgs[j].kind === "assistant" ? j : j + 1;
+      const kind = msgs[j].kind;
+      let end = kind === "assistant" || kind === "ask" ? j : j + 1;
+      if (kind === "ask" && end > s && msgs[end - 1].kind === "assistant") end--;
       if (end > s) turns.set(s, [end, msgs[j].turn_ms]);
       s = j + 1;
     }
