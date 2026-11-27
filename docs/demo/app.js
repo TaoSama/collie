@@ -3477,10 +3477,10 @@
     const restoreDraft = (via) => {
       const text = draft.text || currentDraft;
       inboxDraft = text ? { conv: id, text, loading: false, footer: draft.footer, via } : null;
-      drawAuto(autoData.inbox, null, true);
+      drawAuto(autoData.inbox);
     };
     inboxDraft = draft;
-    drawAuto(autoData.inbox, null, true);
+    drawAuto(autoData.inbox);
     const clock = setInterval(() => {
       if (active()) syncInboxDraftProgress();
       else clearInterval(clock);
@@ -3502,7 +3502,7 @@
         return;
       }
       inboxDraft = { conv: id, id: res.id || "", text: res.draft || "", loading: false, footer: draft.footer, via: res.via || "" };
-      drawAuto(autoData.inbox, null, true);
+      drawAuto(autoData.inbox);
     } catch (err) {
       if (!active()) return;
       restoreDraft();
@@ -3625,7 +3625,7 @@
         redrawHooks(restore);
         return;
       }
-      drawAuto(r, restore);
+      drawAuto(r, restore, true);
       if (tab === "settings") api("/api/super/lark?fresh").then((l) => { autoData.lark = l; showLarkWho(); }).catch(() => {});
     } catch (err) {
       if (stillOpen()) {
@@ -3642,7 +3642,7 @@
 
   // drawAuto shows r in the open tab, keeping the scroll and which folds are
   // open. Tabs with forms are left alone when the answer hasn't changed.
-  function drawAuto(r, restore = null, forceDock = false) {
+  function drawAuto(r, restore = null, fromPoll = false) {
     const body = $("#auto-body"), tab = autoTab;
     const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
     const applyAfter = () => {
@@ -3661,7 +3661,7 @@
       // Do not clobber active typing in the search bar or bottom composer on background poll.
       const active = document.activeElement;
       const typingSearch = active?.matches?.("[data-inbox-search]");
-      const typingDock = !forceDock && active?.matches?.("[data-conv-input], [data-conv-draft-text]");
+      const typingDock = fromPoll && active?.matches?.("[data-conv-input], [data-conv-draft-text]");
       const interactingCard = !!(active?.closest?.(".im-card") || pickOpen?.closest?.(".im-card"));
       const attachInInbox = !!(attachOpen && $("#inbox-detail")?.contains(attachOpen.btn));
       const uploadingInbox = !!(inboxCur && selectInboxFiles().files.some((f) => !f.path && !f.err));
