@@ -346,7 +346,7 @@
     const s = ch && SUBS.find(([k, , , , mixed]) => k === (sub || "") && (!mixed || ch.mixed));
     return { chs, ch, sub: s ? s[0] : "" };
   }
-  function inboxShown(r, channel, sub, query = "") {
+  function inboxShown(r, channel, sub, query = "", matches) {
     const p = inboxPlace(r, channel, sub);
     let list = p.on ? listed(r).filter((c) => c.on)
       : (p.ch ? p.ch.convs.filter(SUBS.find(([k]) => k === p.sub)[2]) : []);
@@ -354,7 +354,7 @@
     if (q) {
       list = list.filter((c) => {
         const hay = `${c.name || ""} ${c.chat || ""} ${c.preview || ""}`.toLowerCase();
-        return hay.includes(q);
+        return hay.includes(q) || matches?.has(c.id);
       });
     }
     return list;
@@ -397,9 +397,9 @@
     return `<div class="inbox-chips" role="toolbar" aria-label="筛选${esc(p.ch.label)}会话">${SUBS.map(chip).join("")}</div>`;
   }
 
-  function inboxListRowsHTML(r, cur, channel, sub, query = "") {
+  function inboxListRowsHTML(r, cur, channel, sub, query = "", matches) {
     const p = inboxPlace(r, channel, sub);
-    const shown = inboxShown(r, channel, sub, query);
+    const shown = inboxShown(r, channel, sub, query, matches);
     const q = String(query || "").trim();
     const row = (c) => {
       const n = c.unread > 0 ? c.unread : 0, kind = kindLabel(c);
@@ -426,14 +426,14 @@
     const introText = `打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。<br>交给专属 agent 时，/ai 后可加 alias 指定 agent，如 /ai agyn …；不写用默认`;
     if (!convs.length) return `<p class="panel-intro">${introText}</p><div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
     const p = inboxPlace(r, channel, sub);
-    const shown = inboxShown(r, channel, sub, query);
+    const shown = inboxShown(r, channel, sub, query, opts.matches);
     const unreadHere = shown.some((c) => c.unread > 0);
     const readAll = `<button type="button" class="btn small ghost inbox-read-all" data-inbox-read-all aria-label="全部已读" ${unreadHere ? "" : "disabled"} title="把这个列表里的会话都标为已读">${ico("check-check")}<span>全部已读</span></button>`;
     const helpBar = helpOpen ? `<div class="inbox-help-bar"><p>${introText}</p><button type="button" class="icon-btn" data-inbox-help aria-label="收起说明">${ico("x")}</button></div>` : "";
     const chLabel = p.on ? AI_HANDLED_LABEL : p.ch?.label || "";
     const search = `<div class="inbox-search">
         ${ico("search")}
-        <input type="search" value="${esc(query)}" placeholder="搜索${esc(chLabel)}会话或消息…" aria-label="搜索会话" data-inbox-search autocomplete="off" spellcheck="false">
+        <input type="search" value="${esc(query)}" placeholder="搜索${esc(chLabel)}会话或已保留消息…" aria-label="搜索会话" title="搜索会话名称、预览和 Collie 保留的消息正文" data-inbox-search autocomplete="off" spellcheck="false">
         <span class="inbox-search-meta"${query.trim() ? "" : " hidden"}><span class="inbox-search-cnt">${shown.length}</span><button type="button" class="inbox-search-clr" data-inbox-search-clear aria-label="清空搜索" title="清空搜索">${ico("x")}</button></span>
       </div>`;
     return `${helpBar}<div class="inbox-split ${cur ? "has-cur" : ""}">
@@ -441,7 +441,7 @@
         <div class="inbox-col">
           ${search}
           <div class="inbox-head">${subsHTML(p) || `<span class="inbox-head-t">${esc(chLabel)}<span class="muted">${shown.length}</span></span>`}${readAll}</div>
-          <div class="card inbox-list"><ul class="rows" id="inbox-rows">${inboxListRowsHTML(r, cur, channel, sub, query)}</ul></div>
+          <div class="card inbox-list"><ul class="rows" id="inbox-rows">${inboxListRowsHTML(r, cur, channel, sub, query, opts.matches)}</ul></div>
         </div>
         <div class="inbox-detail" id="inbox-detail">${detailHTML(cur, detail, r?.trigger, opts.detailOpts)}</div>
       </div>`;

@@ -3299,6 +3299,7 @@
   // 收件箱: the open conversation, its messages, search, composer and unread anchor; 接入: a sign-in.
   let inboxCur = "", inboxDetail = null, extLogin = null;
   let inboxQuery = "", inboxHelpOpen = false, inboxCfgOpen = false;
+  let inboxSearchTimer, inboxSearchRequest, inboxSearchMatches = new Set();
   let inboxMode = "reply", inboxDraft = null, inboxInput = "", inboxSentBanner = "";
   let inboxUnread = null; // { conv, anchorId, count } captured when opening a chat with unread messages
   let inboxNeedBottom = false;
@@ -3624,7 +3625,10 @@
         }
         return i > 0 ? request.catch(() => autoData[src]) : request;
       });
-      if (tab === "inbox" && inboxCur) requests.push(loadConv());
+      if (tab === "inbox") {
+        if (inboxCur) requests.push(loadConv());
+        if (!inboxSearchTimer && !inboxSearchRequest) refreshInboxSearch();
+      }
       const [r] = await Promise.all(requests);
       if (!stillOpen()) return;
       if (tab === "hooks") {
@@ -3684,7 +3688,7 @@
         const listTop = body._place === place ? body.querySelector(".inbox-list")?.scrollTop || 0 : 0;
         body._sig = sig; body._dsig = dsig; body._place = place;
         body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxChannel, inboxSubs[inboxChannel], {
-          query: inboxQuery, helpOpen: inboxHelpOpen, detailOpts: dOpts,
+          query: inboxQuery, matches: inboxSearchMatches, helpOpen: inboxHelpOpen, detailOpts: dOpts,
         });
         const list = body.querySelector(".inbox-list");
         if (list) list.scrollTop = listTop;
@@ -4550,7 +4554,7 @@
     if (b.dataset.eventsSub) { eventsSub = b.dataset.eventsSub; store.set("eventsSub", eventsSub); drawAuto(autoData.triggers); return; }
     if (b.hasAttribute("data-inbox-help")) { inboxHelpOpen = !inboxHelpOpen; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-inbox-search-clear")) {
-      inboxQuery = "";
+      setInboxQuery("");
       const inp = $("#auto-body [data-inbox-search]");
       if (inp) { inp.value = ""; inp.blur(); }
       $("#auto-body")._sig = "";
@@ -4560,7 +4564,7 @@
       inboxChannel = b.dataset.inboxChannel; store.set("inboxChannel", inboxChannel);
       // Clear stale detail if the open conversation does not belong to the new channel view (UX-07).
       if (inboxCur) {
-        const shownNow = collieExt.inboxShown(autoData.inbox, inboxChannel, inboxSubs[inboxChannel], inboxQuery);
+        const shownNow = collieExt.inboxShown(autoData.inbox, inboxChannel, inboxSubs[inboxChannel], inboxQuery, inboxSearchMatches);
         if (!shownNow.some((c) => c.id === inboxCur)) { inboxCur = ""; inboxDetail = null; inboxCfgOpen = false; }
       }
       syncInboxChrome();
@@ -4571,7 +4575,7 @@
       inboxSubs = { ...inboxSubs, [inboxChannel]: b.dataset.inboxSub }; store.set("inboxSubs", inboxSubs); drawAuto(autoData.inbox); return;
     }
     if (b.hasAttribute("data-inbox-read-all")) {
-      const r = autoData.inbox, ids = collieExt.inboxShown(r, inboxChannel, inboxSubs[inboxChannel], inboxQuery).filter((c) => c.unread > 0);
+      const r = autoData.inbox, ids = collieExt.inboxShown(r, inboxChannel, inboxSubs[inboxChannel], inboxQuery, inboxSearchMatches).filter((c) => c.unread > 0);
       const back = [...new Set(ids.filter((c) => r?.read_back?.[c.ext]).map((c) => c.label))];
       if (back.length && !(await ask({ title: `把 ${ids.length} 个会话标为已读？`, text: `${back.join("、")}里也会标为已读（接入里开着「同步为已读」）。`, ok: "全部已读" }))) return;
       busy(b);
@@ -4761,26 +4765,53 @@
       busy(b, false);
     }
   });
+  function drawInboxSearchRows() {
+    const r = autoData.inbox, ul = $("#inbox-rows");
+    if (!ul || !r) return;
+    const sub = inboxSubs[inboxChannel];
+    ul.innerHTML = collieExt.inboxListRowsHTML(r, inboxCur, inboxChannel, sub, inboxQuery, inboxSearchMatches);
+    const shown = collieExt.inboxShown(r, inboxChannel, sub, inboxQuery, inboxSearchMatches);
+    $("#auto-body .inbox-search-cnt").textContent = String(shown.length);
+    $("#auto-body .inbox-search-meta").hidden = !inboxQuery.trim();
+    $("#auto-body [data-inbox-read-all]").disabled = !shown.some((c) => c.unread > 0);
+  }
+  async function refreshInboxSearch() {
+    const query = inboxQuery.trim();
+    if (!query) return;
+    const request = inboxSearchRequest = new AbortController();
+    try {
+      const r = await api("/api/inbox/search?q=" + encodeURIComponent(query), { signal: request.signal });
+      if (request.signal.aborted) return;
+      const matches = new Set(r.matches);
+      if (matches.size === inboxSearchMatches.size && r.matches.every((id) => inboxSearchMatches.has(id))) return;
+      inboxSearchMatches = matches;
+      if (view === "auto" && autoTab === "inbox") drawInboxSearchRows();
+    } catch (err) {
+      if (!request.signal.aborted && view === "auto" && autoTab === "inbox") toast(err.message, "attn");
+    } finally {
+      if (inboxSearchRequest === request) inboxSearchRequest = null;
+    }
+  }
+  function setInboxQuery(query) {
+    inboxQuery = query;
+    inboxSearchRequest?.abort();
+    clearTimeout(inboxSearchTimer);
+    inboxSearchTimer = null;
+    inboxSearchMatches = new Set();
+    drawInboxSearchRows();
+    if (query.trim()) {
+      inboxSearchTimer = setTimeout(() => {
+        inboxSearchTimer = null;
+        refreshInboxSearch();
+      }, 200);
+    }
+  }
+
   // A setting changed and not yet saved: the save button says so, and the
   // page is not redrawn under it.
   $("#auto-body").addEventListener("input", (e) => {
     if (e.target.closest("[data-ext-config]")) e.target.closest(".ext-config")?.classList.add("dirty");
-    if (e.target.matches("[data-inbox-search]")) {
-      inboxQuery = e.target.value;
-      const r = autoData.inbox;
-      const ul = $("#inbox-rows");
-      if (ul && r) {
-        ul.innerHTML = collieExt.inboxListRowsHTML(r, inboxCur, inboxChannel, inboxSubs[inboxChannel], inboxQuery);
-        const shown = collieExt.inboxShown(r, inboxChannel, inboxSubs[inboxChannel], inboxQuery);
-        const meta = $("#auto-body .inbox-search-meta");
-        const cnt = $("#auto-body .inbox-search-cnt");
-        if (cnt) cnt.textContent = String(shown.length);
-        if (meta) meta.hidden = !inboxQuery.trim();
-        const readAllBtn = $("#auto-body [data-inbox-read-all]");
-        if (readAllBtn) readAllBtn.disabled = !shown.some((c) => c.unread > 0);
-        $("#auto-body")._sig = JSON.stringify([r, inboxCur, inboxChannel, inboxSubs, inboxQuery, inboxHelpOpen]);
-      }
-    }
+    if (e.target.matches("[data-inbox-search]")) setInboxQuery(e.target.value);
     if (e.target.matches("[data-conv-input]")) {
       inboxInput = e.target.value;
       e.target.style.height = "auto";

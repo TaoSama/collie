@@ -714,6 +714,12 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       return json({ path: `/home/alex/.collie/uploads/20261127/${tag}-${name}`, name, size });
     }
     if (p === "/api/inbox") return json({ convs: inboxConvs.map((c) => ({ send_as: c.owner ? "bot" : "self", send_media: c.ext === "wechat" ? "all" : "none", ...c })), trigger: extData.trigger || "/ai", read_back: {} });
+    if (p === "/api/inbox/search") {
+      const query = (q.get("q") || "").trim().toLowerCase();
+      const matches = query ? inboxConvs.filter((c) =>
+        inboxMsgs[c.id]?.some((m) => (c.on || m.ref) && m.text.toLowerCase().includes(query))).map((c) => c.id) : [];
+      return json({ matches });
+    }
     if (p === "/api/inbox/read" && method === "POST") {
       const cs = inboxConvs.filter((x) => body.ids.includes(x.id));
       for (const c of cs) { c.unread = 0; c.at_me = false; }
