@@ -28,12 +28,13 @@ test("hooksList places built-in extensions before marketplace and local extensio
       { manifest: { id: "000-local", name: "本地", local: true }, setting: { enabled: false } },
       { manifest: { id: "wechat", name: "微信", runtime: { builtin: "wechat" } }, setting: { enabled: true } },
       { manifest: { id: "larkx", name: "飞书", runtime: { command: "bin/larkx" } }, setting: { enabled: true } },
+      { manifest: { id: "usage", name: "订阅用量", runtime: { feature: "usage" } }, setting: { enabled: false } },
       { manifest: { id: "notes", name: "笔记", market: { repo: "o/r" } }, setting: { enabled: false } },
     ],
     machines: [],
   }, { convs: [] }, { markets: [] });
   const ids = [...html.matchAll(/href="#\/auto\/hooks\/ext\/([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(ids, ["larkx", "wechat", "workbench", "aster-statusline", "notes", "000-local"]);
+  assert.deepEqual(ids, ["usage", "larkx", "wechat", "workbench", "aster-statusline", "notes", "000-local"]);
 });
 
 test("extPage shows WeChat nickname and avatar controls beside it, and not on other extensions", () => {

@@ -47,7 +47,7 @@ func (s *Server) routed(h http.HandlerFunc) http.HandlerFunc {
 		}
 		var body []byte
 		switch {
-		case r.URL.Path == "/api/dirs", r.URL.Path == "/api/file", r.URL.Path == "/api/uploads", r.URL.Path == "/api/transcript", r.URL.Path == "/api/models", r.URL.Path == "/api/commands", r.URL.Path == "/api/trust", r.URL.Path == "/api/update", r.URL.Path == "/api/sysmon":
+		case r.URL.Path == "/api/dirs", r.URL.Path == "/api/file", r.URL.Path == "/api/uploads", r.URL.Path == "/api/transcript", r.URL.Path == "/api/models", r.URL.Path == "/api/commands", r.URL.Path == "/api/trust", r.URL.Path == "/api/update", r.URL.Path == "/api/sysmon", r.URL.Path == "/api/sub-usage", r.URL.Path == "/api/sub-usage/inventory", r.URL.Path == "/api/sub-usage/probe":
 			machine = r.URL.Query().Get("machine")
 			if r.URL.Path == "/api/update" {
 				// The hub already knows the latest release; a node that reaches

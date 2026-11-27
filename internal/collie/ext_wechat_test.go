@@ -157,7 +157,7 @@ func TestExtViewsOrderBuiltinsBeforeMarket(t *testing.T) {
 	for i, v := range views {
 		got[i] = v.Manifest.ID
 	}
-	want := []string{"larkx", "wechat", "workbench", "aaa-market", "zzz-market", "000-local"}
+	want := []string{"usage", "larkx", "wechat", "workbench", "aaa-market", "zzz-market", "000-local"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("views order = %v, want %v", got, want)
 	}

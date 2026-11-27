@@ -91,10 +91,10 @@ type ExtManifest struct {
 	iconType string
 }
 
-// declarative: nothing to run, only declarations (a 工作台 module): on is
-// enough, no program starts.
+// declarative: nothing to run as an external process (a built-in feature or a
+// 工作台 module): on is enough, no subprocess starts.
 func (m *ExtManifest) declarative() bool {
-	return len(m.Runtime.Command) == 0 && m.Runtime.Builtin == "" && m.Contributes.Connector.ID == ""
+	return m.Runtime.Feature != "" || (len(m.Runtime.Command) == 0 && m.Runtime.Builtin == "" && m.Contributes.Connector.ID == "")
 }
 
 // ExtAction is one action an extension offers agents.
@@ -292,7 +292,7 @@ const (
 // featureWorkbench: the 工作台, an extension turned on in 接入.
 const featureWorkbench = "workbench"
 
-var extFeatures = map[string]bool{featureWorkbench: true}
+var extFeatures = map[string]bool{featureWorkbench: true, featureUsage: true}
 
 var extIDRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
@@ -325,6 +325,14 @@ func (m *ExtManifest) validate() error {
 	case m.Runtime.Feature != "":
 		if !extFeatures[m.Runtime.Feature] || m.ID != m.Runtime.Feature || m.Local || m.Market != nil || len(m.Runtime.Command) > 0 || m.Runtime.Builtin != "" {
 			return fmt.Errorf("feature %q: only Collie's own (%v), built in, under the same id", m.Runtime.Feature, extFeatures)
+		}
+		for _, a := range m.Contributes.Connector.Actions {
+			if !extIDRe.MatchString(strings.ReplaceAll(a.Name, "_", "-")) || a.Description == "" {
+				return fmt.Errorf("action %q needs a lower-case name and a description", a.Name)
+			}
+		}
+		if len(m.Contributes.Connector.Actions) > 0 && !m.has(capActions) {
+			return fmt.Errorf("actions need the actions capability")
 		}
 		return nil
 	case m.declarative():

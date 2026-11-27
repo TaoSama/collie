@@ -34,8 +34,16 @@ func (s *Server) extActions(w http.ResponseWriter, r *http.Request) {
 		if !v.Setting.Enabled || len(m.Contributes.Connector.Actions) == 0 {
 			continue
 		}
-		out = append(out, actionView{Ext: m.ID, Name: m.Name, Machine: s.sup.machineLabel(v.Setting.Machine),
-			Actions: m.Contributes.Connector.Actions, NoWrites: v.Setting.NoWrites, Running: v.Proc != nil && v.Proc.State == extRunning})
+		machine := s.sup.machineLabel(v.Setting.Machine)
+		running := v.Proc != nil && v.Proc.State == extRunning
+		if m.Runtime.Feature != "" {
+			running = v.Setting.Enabled
+			if m.Runtime.Feature == featureUsage {
+				machine = "所有在线电脑"
+			}
+		}
+		out = append(out, actionView{Ext: m.ID, Name: m.Name, Machine: machine,
+			Actions: m.Contributes.Connector.Actions, NoWrites: v.Setting.NoWrites, Running: running})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ext < out[j].Ext })
 	writeJSON(w, 200, map[string]any{"extensions": out})
@@ -81,7 +89,7 @@ func (h *extHost) do(ctx context.Context, id, name string, args map[string]any) 
 	switch {
 	case a == nil:
 		return nil, extproto.Errorf(errRefused, "%s has no action %q (collie ext list)", id, name)
-	case !set.Enabled || r == nil:
+	case !set.Enabled || (r == nil && m.Runtime.Feature == ""):
 		return nil, extproto.Errorf(errRefused, "%s is off: turn it on in 自动化 → 接入", id)
 	case !a.Readonly && set.NoWrites:
 		return nil, extproto.Errorf(errRefused, "%s's actions that change something are turned off in 接入", id)
@@ -91,6 +99,18 @@ func (h *extHost) do(ctx context.Context, id, name string, args map[string]any) 
 	}
 	if err := a.checkArgs(args); err != nil {
 		return nil, extproto.Errorf(extproto.ErrInvalidParams, "%v", err)
+	}
+	if m.Runtime.Feature == featureUsage {
+		ctx, cancel := context.WithTimeout(ctx, a.wait())
+		defer cancel()
+		started := time.Now()
+		out, err := h.doUsageAction(ctx, name, args)
+		h.audit(id, name, time.Since(started), err)
+		if err != nil {
+			return nil, err
+		}
+		out.Untrusted = a.Untrusted
+		return out, nil
 	}
 	ref, err := newRef()
 	if err != nil {

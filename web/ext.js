@@ -26,12 +26,17 @@
   function init(h) { esc = h.esc; when = h.when; md = h.md; workerHref = h.workerHref; }
 
   // Where an extension is, in four words (and what to do next).
-  const declarative = (m) => !m.runtime?.command && !m.runtime?.builtin && !m.contributes?.connector?.id;
+  const declarative = (m) => !!m.runtime?.feature || (!m.runtime?.command && !m.runtime?.builtin && !m.contributes?.connector?.id);
   const needsLogin = (m) => !!m.contributes?.connector?.login;
   function stateOf(v) {
     const m = v.manifest;
     if (!v.setting.enabled) return { key: "off", dot: "asleep", label: "未开启", text: "未开启" };
-    if (declarative(m)) return { key: "on", dot: "online", label: "已开启", text: "已开启（不需要运行程序）", ok: true };
+    if (declarative(m)) {
+      if (v.status?.state === "ok") {
+        return { key: "on", dot: "online", label: "运行中", text: "已开启" + (v.status.account ? " · " + v.status.account : ""), ok: true };
+      }
+      return { key: "on", dot: "online", label: "已开启", text: "已开启（不需要运行程序）", ok: true };
+    }
     if (v.problem && !v.proc) return { key: "error", dot: "blocked", label: "出错", text: "连不上它所在的电脑：" + v.problem };
     const p = v.proc || { state: "starting" };
     if (p.state === "error") return { key: "error", dot: "blocked", label: "出错", text: p.error || "启动失败" };
@@ -132,7 +137,7 @@
 
   // 接入: one line per extension, then the shared settings, the
   // marketplaces and the webhooks, each a page of its own.
-  const extRank = (m) => (m?.market ? 1 : m?.local ? 2 : 0);
+  const extRank = (m) => (m?.id === "usage" ? -1 : m?.market ? 1 : m?.local ? 2 : 0);
   const skelRow = (small = false) => `<div class="row skel-row" aria-hidden="true"><span class="skel-box${small ? " sm" : ""}"></span><div class="skel-lines"><span class="skel-line"></span><span class="skel-line short"></span></div><span class="right"><span class="skel-pill"></span></span></div>`;
   const loadStatus = (text) => `<div class="skel-status" role="status"><span class="spinner small" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
   const errBox = (msg, src) => `<div class="skel-err"><p class="ext-warn bad">${esc(msg)}</p><button type="button" class="btn small" data-auto-retry="${esc(src)}">重试</button></div>`;
@@ -210,7 +215,7 @@
       </div></div>
       ${v.proc?.logs?.length ? `<div class="card"><details class="ext-logs"><summary class="card-h">${cardTitle("scroll-text", "最近日志")}</summary><pre>${esc(v.proc.logs.join("\n"))}</pre></details></div>` : ""}
       <div class="card" data-ext="${esc(m.id)}"><div class="form ext-danger">
-        ${on ? danger("data-ext-disable", "关闭扩展", "只是暂停收发，数据和登录都还在。") : `<button type="button" class="btn small" data-ext-enable>开启</button><small class="muted">开启后开始收发。</small>`}
+        ${on ? danger("data-ext-disable", "关闭扩展", m.runtime?.feature ? "关闭后立即停用该功能，配置会保留。" : "只是暂停收发，数据和登录都还在。") : `<button type="button" class="btn small" data-ext-enable>开启</button><small class="muted">${m.runtime?.feature ? "开启后立即生效。" : "开启后开始收发。"}</small>`}
         ${on && st.ok && needsLogin(m) ? danger("data-ext-logout", "退出登录", "会清掉登录状态，之后要重新登录。") : ""}
         ${m.market ? danger("data-ext-uninstall", "卸载", "停掉它，删掉它的设置和安装包。") : ""}
       </div></div>`;
@@ -258,7 +263,7 @@
         ? `<div class="card">${errBox("读取扩展市场失败：" + state.error, "markets")}</div>`
         : `<div class="card market" aria-busy="true"><div class="card-h market-h"><span class="skel-box sm" aria-hidden="true"></span><div class="market-t skel-lines"><span class="skel-line"></span><span class="skel-line short"></span></div></div><div class="rows">${skelRow(true)}${skelRow(true)}</div>${loadStatus("正在读取扩展市场…")}</div>`;
     return `${pageHead("扩展市场")}
-      <div class="market-bar"><p class="ext-desc">飞书、微信和工作台是自带的，其他扩展从市场安装。市场就是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。</p>
+      <div class="market-bar"><p class="ext-desc">订阅用量、飞书、微信和工作台是自带的，其他扩展从市场安装。市场就是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。</p>
         ${mr && ms.length ? `<button class="btn small" data-market-refresh>${ico("refresh-cw")}刷新</button>` : ""}</div>
       ${body}
       <div class="card"><div class="card-h">${cardTitle("plus", "添加市场")}</div>

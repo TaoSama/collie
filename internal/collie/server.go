@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -43,6 +44,10 @@ type Server struct {
 
 	wbDomain string  // hub only: modules kept by the hub open at <proxy host>.<wbDomain> (-wb-domain)
 	wbGate   *wbGate // hub only: the way into those modules
+
+	subUsageMu  sync.Mutex
+	subUsage    *subUsageCollector // per-machine local subscription usage collector
+	subUsageAgg *subUsageHub       // hub only: multi-machine subscription usage aggregator
 }
 
 func (s *Server) Routes() http.Handler {
@@ -105,6 +110,9 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("GET /api/commands", wrap(s.listCommands))
 	mux.Handle("GET /api/aliases", wrap(s.getAliases))
 	mux.Handle("GET /api/sysmon", wrap(s.getSysmon))
+	mux.Handle("GET /api/sub-usage", wrap(s.getSubUsage))
+	mux.Handle("GET /api/sub-usage/inventory", wrap(s.getSubUsageInventory))
+	mux.Handle("GET /api/sub-usage/probe", wrap(s.getSubUsageProbe))
 	mux.Handle("POST /api/trust", wrap(s.trustFolder))
 	mux.Handle("GET /api/router/files", wrap(s.getRouterFiles))
 	mux.Handle("POST /api/router/files", wrap(s.putRouterFiles))

@@ -2017,6 +2017,7 @@
     agy: GLYPHS.agy,
     antigravity: GLYPHS.agy,
     gemini: '<svg viewBox="0 0 24 24"><path fill="#4E86F7" stroke="none" d="M12 2c.6 5.2 4.8 9.4 10 10-5.2.6-9.4 4.8-10 10-.6-5.2-4.8-9.4-10-10 5.2-.6 9.4-4.8 10-10z"/></svg>',
+    machine: ico("monitor"),
   };
   const canHoverHeaderStatus = () => matchMedia("(hover: hover) and (pointer: fine)").matches && !narrow();
   function clearHeaderStatusTimers() {

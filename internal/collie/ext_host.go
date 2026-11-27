@@ -600,6 +600,8 @@ func extSortRank(m *ExtManifest) int {
 	switch {
 	case m == nil:
 		return 3
+	case m.ID == featureUsage:
+		return -1
 	case m.Market != nil:
 		return 1
 	case m.Local:
@@ -642,6 +644,11 @@ func (h *extHost) view(id string) extView {
 		v.Secrets = append(v.Secrets, k)
 	}
 	sort.Strings(v.Secrets)
+	if id == featureUsage && v.Setting.Enabled && h.s != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		v.Status = h.usageStatus(ctx)
+		cancel()
+	}
 	if r != nil {
 		r.mu.Lock()
 		p, st := r.proc, r.status
@@ -671,7 +678,7 @@ func (h *extHost) Call(ctx context.Context, id, method string, params any) (json
 	return out, nil
 }
 
-const extHeaderStatusWait = 8 * time.Second
+const extHeaderStatusWait = 12 * time.Second
 
 // headerStatusSlot is one enabled header_status extension's current reading
 // for the session header bar.
@@ -707,6 +714,16 @@ func (h *extHost) headerStatuses(ctx context.Context, model string, fresh bool) 
 	slots := make([]headerStatusSlot, len(targets))
 	var wg sync.WaitGroup
 	for i, t := range targets {
+		if t.man.Runtime.Feature == featureUsage {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				cctx, cancel := context.WithTimeout(ctx, extHeaderStatusWait)
+				defer cancel()
+				slots[idx] = h.usageHeaderStatus(cctx, model, fresh)
+			}(i)
+			continue
+		}
 		slot := headerStatusSlot{
 			ID:      t.man.ID,
 			Name:    t.man.Name,

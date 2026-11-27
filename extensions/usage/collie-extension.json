@@ -1,0 +1,73 @@
+{
+  "manifest_version": 1,
+  "id": "usage",
+  "name": "订阅用量",
+  "label": "用量",
+  "version": "0.1.0",
+  "icon": "icon.svg",
+  "description": "汇总所有在线电脑上本机登录的 Agent 订阅额度（Claude Code、Codex、Antigravity），先按账号去重再由单台机器只读查询，在会话页顶部标题栏与抽屉中展示剩余额度、重置时间与今日用量。凭证仅在各台电脑本地只读使用，不外传也不主动刷新。默认关闭。",
+  "runtime": {"feature": "usage"},
+  "contributes": {
+    "connector": {
+      "id": "usage",
+      "capabilities": ["status", "header_status", "actions"],
+      "actions": [
+        {
+          "name": "subscription_usage",
+          "description": "查询所有在线电脑上已登录的 Agent 订阅额度、重置时间与今日 Token 统计（只读）。",
+          "readonly": true,
+          "params": {
+            "model": {"type": "string", "title": "模型名（可选，用于优先聚焦对应订阅）"},
+            "fresh": {"type": "boolean", "title": "忽略缓存立即刷新"}
+          }
+        },
+        {
+          "name": "set_header_focus",
+          "description": "切换并持久化顶部标题栏展示的订阅（auto 跟随当前会话模型、all 全部订阅、或指定 claude/codex/antigravity）。",
+          "readonly": true,
+          "params": {
+            "focus": {"type": "string", "title": "目标订阅（auto / all / claude / codex / antigravity）"}
+          }
+        }
+      ]
+    }
+  },
+  "configuration": {
+    "type": "object",
+    "properties": {
+      "percent_mode": {
+        "type": "string",
+        "title": "额度百分比口径",
+        "default": "remaining",
+        "enum": ["remaining", "used"],
+        "x-labels": ["显示剩余比例", "显示已用比例"]
+      },
+      "show_tokens": {
+        "type": "boolean",
+        "title": "显示今日用量统计",
+        "description": "在标题栏次行和抽屉中汇总各在线电脑今日的本地 Token 与缓存命中率。",
+        "default": true
+      },
+      "dedupe_accounts": {
+        "type": "boolean",
+        "title": "按账号去重读取",
+        "description": "同一订阅账号在多台电脑登录时仅选一台机器查询额度，再映射回各机器显示，避免重复请求。",
+        "default": true
+      },
+      "refresh_s": {
+        "type": "integer",
+        "title": "缓存刷新间隔（秒）",
+        "description": "hub 汇总各订阅额度的最小间隔（60–600 秒，默认 300）。",
+        "default": 300
+      }
+    }
+  },
+  "permissions": {
+    "network": [
+      "api.anthropic.com",
+      "chatgpt.com",
+      "daily-cloudcode-pa.googleapis.com",
+      "cloudcode-pa.googleapis.com"
+    ]
+  }
+}

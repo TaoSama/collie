@@ -39,6 +39,30 @@ type tokenReport struct {
 	Minute    int64   `json:"minute"`     // unix time of Recent's last minute
 }
 
+// tokenDayStats summarizes today's local transcript token & cache activity.
+type tokenDayStats struct {
+	Tokens     int64 `json:"tokens,omitempty"`
+	Requests   int64 `json:"requests,omitempty"`
+	CacheRead  int64 `json:"cache_read,omitempty"`
+	CacheWrite int64 `json:"cache_write,omitempty"`
+	CacheInput int64 `json:"cache_input,omitempty"`
+}
+
+type minuteStats struct {
+	tokens     int64
+	requests   int64
+	cacheRead  int64
+	cacheWrite int64
+	cacheInput int64
+}
+
+type seenUsage struct {
+	tokens     int64
+	cacheRead  int64
+	cacheWrite int64
+	cacheInput int64
+}
+
 // A lineParser counts one transcript line through add.
 type lineParser func(m *tokenMeter, line []byte, f *meterFile, from time.Time)
 
@@ -57,13 +81,21 @@ type tokenMeter struct {
 	walked time.Time
 
 	mu      sync.Mutex
-	minutes map[int64]int64  // unix minute → tokens
-	seen    map[string]int64 // reply → tokens counted so far
-	seenAt  map[string]int64 // reply → its unix time, to forget it
+	minutes map[int64]int64       // unix minute → tokens
+	mstats  map[int64]minuteStats // unix minute → detailed stats
+	seen    map[string]seenUsage  // reply → usage counted so far
+	seenAt  map[string]int64      // reply → its unix time, to forget it
 }
 
 func newTokenMeter(home string) *tokenMeter {
-	return &tokenMeter{home: home, files: map[string]*meterFile{}, minutes: map[int64]int64{}, seen: map[string]int64{}, seenAt: map[string]int64{}}
+	return &tokenMeter{
+		home:    home,
+		files:   map[string]*meterFile{},
+		minutes: map[int64]int64{},
+		mstats:  map[int64]minuteStats{},
+		seen:    map[string]seenUsage{},
+		seenAt:  map[string]int64{},
+	}
 }
 
 // scan reads what changed since the last scan. The first one reads the
@@ -147,22 +179,44 @@ func (m *tokenMeter) read(p string, f *meterFile, from time.Time) {
 	}
 }
 
-func (m *tokenMeter) add(key string, at time.Time, tokens int64, from time.Time) {
+func (m *tokenMeter) add(key string, at time.Time, tokens, cacheRead, cacheWrite, cacheInput int64, from time.Time) {
 	if tokens <= 0 || at.Before(from) {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	minKey := at.Unix() / 60 * 60
+	ms := m.mstats[minKey]
 	if prev, ok := m.seen[key]; ok {
-		if tokens <= prev {
+		if tokens <= prev.tokens {
 			return
 		}
-		tokens, m.seen[key] = tokens-prev, tokens
+		dt := tokens - prev.tokens
+		dcr := max(int64(0), cacheRead-prev.cacheRead)
+		dcw := max(int64(0), cacheWrite-prev.cacheWrite)
+		dci := max(int64(0), cacheInput-prev.cacheInput)
+		m.seen[key] = seenUsage{
+			tokens:     tokens,
+			cacheRead:  max(prev.cacheRead, cacheRead),
+			cacheWrite: max(prev.cacheWrite, cacheWrite),
+			cacheInput: max(prev.cacheInput, cacheInput),
+		}
+		m.minutes[minKey] += dt
+		ms.tokens += dt
+		ms.cacheRead += dcr
+		ms.cacheWrite += dcw
+		ms.cacheInput += dci
 	} else {
-		m.seen[key] = tokens
+		m.seen[key] = seenUsage{tokens: tokens, cacheRead: cacheRead, cacheWrite: cacheWrite, cacheInput: cacheInput}
+		m.minutes[minKey] += tokens
+		ms.tokens += tokens
+		ms.requests++
+		ms.cacheRead += cacheRead
+		ms.cacheWrite += cacheWrite
+		ms.cacheInput += cacheInput
 	}
+	m.mstats[minKey] = ms
 	m.seenAt[key] = at.Unix()
-	m.minutes[at.Unix()/60*60] += tokens
 }
 
 // claudeLine: an assistant line's usage, the most its message's lines say.
@@ -189,7 +243,9 @@ func (m *tokenMeter) claudeLine(line []byte, _ *meterFile, from time.Time) {
 		return
 	}
 	u := v.Message.Usage
-	m.add("c:"+v.Message.ID, v.Timestamp, u.Input+u.CacheWrite+u.CacheRead+u.Output, from)
+	total := u.Input + u.CacheWrite + u.CacheRead + u.Output
+	cacheIn := u.Input + u.CacheWrite + u.CacheRead
+	m.add("c:"+v.Message.ID, v.Timestamp, total, u.CacheRead, u.CacheWrite, cacheIn, from)
 }
 
 // codexLine: a token_count whose running total moved counts its last reply.
@@ -207,7 +263,10 @@ func (m *tokenMeter) codexLine(line []byte, f *meterFile, from time.Time) {
 					Tokens int64 `json:"total_tokens"`
 				} `json:"total_token_usage"`
 				Last struct {
-					Tokens int64 `json:"total_tokens"`
+					Input      int64 `json:"input_tokens"`
+					CacheRead  int64 `json:"cached_input_tokens"`
+					CacheWrite int64 `json:"cache_write_input_tokens"`
+					Tokens     int64 `json:"total_tokens"`
 				} `json:"last_token_usage"`
 			} `json:"info"`
 		} `json:"payload"`
@@ -220,7 +279,8 @@ func (m *tokenMeter) codexLine(line []byte, f *meterFile, from time.Time) {
 		return
 	}
 	f.total = total
-	m.add("x:"+v.Timestamp.Format(time.RFC3339Nano), v.Timestamp, v.Payload.Info.Last.Tokens, from)
+	last := v.Payload.Info.Last
+	m.add("x:"+v.Timestamp.Format(time.RFC3339Nano), v.Timestamp, last.Tokens, last.CacheRead, last.CacheWrite, last.Input, from)
 }
 
 // forget drops minutes and replies older than from, and files not written
@@ -237,6 +297,7 @@ func (m *tokenMeter) forget(from time.Time) {
 	for t := range m.minutes {
 		if t < cut-60 {
 			delete(m.minutes, t)
+			delete(m.mstats, t)
 		}
 	}
 	for k, t := range m.seenAt {
@@ -245,6 +306,24 @@ func (m *tokenMeter) forget(from time.Time) {
 			delete(m.seen, k)
 		}
 	}
+}
+
+func (m *tokenMeter) todayDetail(now time.Time) tokenDayStats {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	y, mo, d := now.Date()
+	midnight := time.Date(y, mo, d, 0, 0, 0, 0, now.Location()).Unix()
+	var out tokenDayStats
+	for t, ms := range m.mstats {
+		if t >= midnight {
+			out.Tokens += ms.tokens
+			out.Requests += ms.requests
+			out.CacheRead += ms.cacheRead
+			out.CacheWrite += ms.cacheWrite
+			out.CacheInput += ms.cacheInput
+		}
+	}
+	return out
 }
 
 func (m *tokenMeter) report(now time.Time) tokenReport {
