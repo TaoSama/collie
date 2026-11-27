@@ -49,6 +49,7 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("GET /api/inbox", s.inboxList)
 	api("GET /api/inbox/conv", s.inboxConv)
 	api("GET /api/inbox/media", s.inboxMedia)
+	api("POST /api/inbox/action", s.inboxAction)
 	api("POST /api/inbox/conv", s.inboxSetConv)
 	api("POST /api/inbox/read", s.inboxRead)
 	api("POST /api/inbox/reply", s.inboxReply)

@@ -81,10 +81,47 @@
 .im-columns > * { flex: 1 1 8em; min-width: 0; align-content: start; }
 .im-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
 .im-field:not(.short) { grid-column: 1 / -1; }
-.im-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.im-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .im-content .im-action { justify-self: start; max-width: 100%; height: auto; min-height: 30px; white-space: normal; text-decoration: none; }
+.im-select, .im-picker, .im-input {
+  max-width: 100%;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: var(--bw) solid var(--line-2);
+  border-radius: var(--btn-radius, calc(7px * var(--round)));
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--btn-fs, var(--fs-meta));
+}
+.im-select:disabled, .im-picker:disabled, .im-input:disabled { opacity: .55; cursor: not-allowed; }
+.im-form { display: grid; gap: 8px; min-width: 0; }
+.im-field-input { display: grid; gap: 4px; font-size: var(--fs-meta); color: var(--t-secondary); }
 .im-mention { color: var(--info); }
-.im-event-time { font-variant-numeric: tabular-nums; }
+.im-event-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.im-event-time { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.im-event-time > svg { width: 14px; height: 14px; flex: none; color: var(--t-icon); }
+.im-conflict {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, var(--bg));
+}
+.im-cal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: var(--bw) solid var(--line);
+}
+.im-rsvp-lab { color: var(--t-secondary); font-size: var(--fs-meta); }
+.im-rsvp-val { font-size: var(--fs-meta); font-weight: var(--fw-medium); }
+.im-rsvp-select, .im-cal-foot > .pick { min-height: 28px; height: 28px; padding: 0 8px 0 10px; font-weight: var(--fw-medium); }
 .im-system { color: var(--t-secondary); font-size: var(--fs-meta); }
 .im-image { display: block; min-height: 1.5em; max-width: 100%; max-height: 300px; object-fit: contain; border-radius: calc(6px * var(--round)); }
 .im-image.im-sticker { max-width: 140px; max-height: 140px; border: 0; }

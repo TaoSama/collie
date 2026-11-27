@@ -13,18 +13,21 @@ log = logging.getLogger("larkx")
 CMD_PUSH_MESSAGES = 6
 CMD_PUSH_SID = 6000  # only sids: the packets are pulled by them
 CMD_PUSH_DOC_FEED = 14004  # comments, replies and mentions in cloud documents
+CMD_PUSH_CALENDARS = (1020003, 1020015, 1020030)  # calendar sync / shared event / RSVP attendee updates
 BAD_FRAME_EVERY = 600
 UP_AFTER = 5  # seconds a websocket stays open before it counts as up
 
 
 class PushStream:
-    def __init__(self, U, mu, get_client, deliver, deliver_doc_comments, signed_out=lambda: True):
+    def __init__(self, U, mu, get_client, deliver, deliver_doc_comments, signed_out=lambda: True,
+                 on_calendar_change=None):
         self.U = U
         self._mu = mu
         self._get_client = get_client
         self._deliver = deliver
         self._deliver_doc_comments = deliver_doc_comments
         self._signed_out = signed_out  # Feishu confirms the session is gone (not just unreachable)
+        self._on_calendar_change = on_calendar_change
         self._loop = None
         self._task = None
         self._bad_frames, self._bad_warned = 0, 0.0
@@ -123,10 +126,13 @@ class PushStream:
                 sids = list(dict.fromkeys(x for x in [packet.sid] + [str(n) for n in packet.compactedSids] if x))
                 pulled = (self._get_client().api("improto.PullPacketsBySidsRequest", {"sids": sids}) or {}).get("packets") or {}
                 for p in pulled.values():
-                    if int(p.get("cmd") or 0) in (CMD_PUSH_MESSAGES, CMD_PUSH_DOC_FEED):
-                        self._push(int(p["cmd"]), p.get("payload") or b"", None, on_message, got)
+                    pcmd = int(p.get("cmd") or 0)
+                    if pcmd in (CMD_PUSH_MESSAGES, CMD_PUSH_DOC_FEED) or pcmd in CMD_PUSH_CALENDARS:
+                        self._push(pcmd, p.get("payload") or b"", None, on_message, got)
             elif cmd == CMD_PUSH_DOC_FEED:
                 self._deliver_doc_comments(payload, on_message)
+            elif cmd in CMD_PUSH_CALENDARS and self._on_calendar_change is not None:
+                self._on_calendar_change()
         except Exception as e:
             log.warning("push %s: %s", cmd, e)
 

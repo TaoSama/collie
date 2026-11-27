@@ -33,6 +33,7 @@ const (
 	MChannelSend    = "channel.send"
 	MInboxRecent    = "connector.inbox.recent"
 	MInboxMedia     = "connector.inbox.media"
+	MInboxAction    = "connector.inbox.action"
 )
 
 // Methods and events the extension sends.
@@ -218,6 +219,7 @@ type Message struct {
 	Unsupported []string     `json:"unsupported,omitempty"`
 	Preview     string       `json:"preview,omitempty"`
 	View        *MessageView `json:"view,omitempty"`
+	Updated     bool         `json:"updated,omitempty"` // in-place update of an existing message (e.g. card state changed)
 }
 
 // MessageView carries readable content independently of the text used for requests.
@@ -230,16 +232,35 @@ type MessageView struct {
 	Start    string        `json:"start,omitempty"`
 	End      string        `json:"end,omitempty"`
 	AllDay   bool          `json:"all_day,omitempty"`
+	Conflict bool          `json:"conflict,omitempty"` // calendar: overlaps another busy event
+	Status   string        `json:"status,omitempty"`   // calendar: needs_action | accept | decline | tentative | cancelled | removed
+	Action   string        `json:"action,omitempty"`   // calendar: interactive action id, signed by hub into Sig
+	Sig      string        `json:"sig,omitempty"`      // hub HMAC signature authorizing POST /api/inbox/action
 	Nodes    []MessageNode `json:"nodes,omitempty"`
 }
 
 type MessageNode struct {
-	Kind     string        `json:"kind"`
-	Text     string        `json:"text,omitempty"`
-	Tone     string        `json:"tone,omitempty"`
-	URL      string        `json:"url,omitempty"`
-	Key      string        `json:"key,omitempty"` // source-specific attachment key, converted to a hub URL
-	Children []MessageNode `json:"children,omitempty"`
+	Kind        string          `json:"kind"`
+	Text        string          `json:"text,omitempty"`
+	Tone        string          `json:"tone,omitempty"`
+	URL         string          `json:"url,omitempty"`
+	Key         string          `json:"key,omitempty"` // source-specific attachment key, converted to a hub URL
+	Action      string          `json:"action,omitempty"`
+	Sig         string          `json:"sig,omitempty"`
+	Value       string          `json:"value,omitempty"`
+	Placeholder string          `json:"placeholder,omitempty"`
+	Name        string          `json:"name,omitempty"`
+	Disabled    bool            `json:"disabled,omitempty"`
+	Options     []MessageOption `json:"options,omitempty"`
+	Children    []MessageNode   `json:"children,omitempty"`
+}
+
+type MessageOption struct {
+	Text   string `json:"text"`
+	Value  string `json:"value,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Action string `json:"action,omitempty"`
+	Sig    string `json:"sig,omitempty"`
 }
 
 type InboxRecentRequest struct {
@@ -254,6 +275,20 @@ type InboxMediaRequest struct {
 	ChatID    string `json:"chat_id"`
 	MessageID string `json:"message_id"`
 	Key       string `json:"key"`
+}
+
+type InboxActionRequest struct {
+	ChatID    string            `json:"chat_id"`
+	MessageID string            `json:"message_id"`
+	ActionID  string            `json:"action_id"`
+	Kind      string            `json:"kind,omitempty"`
+	Value     string            `json:"value,omitempty"`
+	Params    map[string]string `json:"params,omitempty"`
+}
+
+type InboxActionResult struct {
+	Toast   string   `json:"toast,omitempty"`
+	Message *Message `json:"message,omitempty"`
 }
 
 type Receive struct {

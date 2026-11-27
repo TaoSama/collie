@@ -354,6 +354,36 @@ func (st *extStore) addMsg(m InboxMsg) {
 	}
 }
 
+func (st *extStore) updateMsgView(conv, id, text string, view *extproto.MessageView) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.updateMsgViewLocked(conv, id, text, view)
+}
+
+func (st *extStore) updateMsgViewLocked(conv, id, text string, view *extproto.MessageView) {
+	var raw string
+	if err := st.db.QueryRow(`SELECT data FROM ext_msgs WHERE conv = ? AND id = ?`, conv, id).Scan(&raw); err != nil {
+		return
+	}
+	var m InboxMsg
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return
+	}
+	if view != nil {
+		m.View = view
+	}
+	if text != "" {
+		m.Text = text
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return
+	}
+	if _, err := st.db.Exec(`UPDATE ext_msgs SET data = ? WHERE conv = ? AND id = ?`, string(b), conv, id); err != nil {
+		log.Printf("ext: update message: %v", err)
+	}
+}
+
 func (st *extStore) hasMsg(conv, id string) bool {
 	var n int
 	if err := st.db.QueryRow(`SELECT COUNT(*) FROM ext_msgs WHERE conv = ? AND id = ?`, conv, id).Scan(&n); err != nil {

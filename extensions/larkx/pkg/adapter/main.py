@@ -86,6 +86,11 @@ class Extension:
         if method == "connector.inbox.media":
             return self._backend().history.media(params.get("chat_id") or "", params.get("message_id") or "",
                                                  params.get("key") or "")
+        if method == "connector.inbox.action":
+            try:
+                return self._backend().inbox_action(params)
+            except Exception as e:
+                raise peer.Error("internal", str(e))
         if method == "connector.read.state":
             return {"chats": self._backend().unread(params.get("chats") or [])}
         if method == "connector.read.mark":

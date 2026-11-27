@@ -22,6 +22,7 @@ import (
 const (
 	capInboxRecent  = "inbox_recent"
 	inboxRecentWait = 8 * time.Second
+	inboxActionWait = 15 * time.Second
 	inboxMediaMost  = 20 << 20
 )
 
@@ -114,6 +115,9 @@ func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message,
 		if i, ok := ids[m.ID]; ok {
 			if stored[i].Ref == "" && m.View != nil {
 				stored[i].View = m.View
+				if m.Text != "" {
+					stored[i].Text = m.Text
+				}
 			}
 			stored[i].Avatar = m.SenderAvatar
 			continue
@@ -142,9 +146,20 @@ func (s *Server) inboxMediaSig(conv, mid, key, kind string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+func (s *Server) inboxActionSig(conv, mid, kind, actionID string) string {
+	mac := hmac.New(sha256.New, []byte("collie-inbox-action\n"+s.token))
+	fmt.Fprintf(mac, "%q %q %q %q", conv, mid, kind, actionID)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func (s *Server) inboxMediaURLs(conv string, m *InboxMsg) {
 	if m.View == nil {
 		return
+	}
+	if m.View.Kind == "calendar" && m.View.Action != "" {
+		m.View.Sig = s.inboxActionSig(conv, m.ID, "calendar", m.View.Action)
+	} else {
+		m.View.Sig = ""
 	}
 	var walk func([]extproto.MessageNode)
 	walk = func(nodes []extproto.MessageNode) {
@@ -166,10 +181,79 @@ func (s *Server) inboxMediaURLs(conv string, m *InboxMsg) {
 					n.URL = ""
 				}
 			}
+			if n.Action != "" && !n.Disabled {
+				n.Sig = s.inboxActionSig(conv, m.ID, "card", n.Action)
+			} else {
+				n.Sig = ""
+			}
+			for j := range n.Options {
+				opt := &n.Options[j]
+				if opt.Action != "" {
+					opt.Sig = s.inboxActionSig(conv, m.ID, "card", opt.Action)
+				} else {
+					opt.Sig = ""
+				}
+			}
 			walk(n.Children)
 		}
 	}
 	walk(m.View.Nodes)
+}
+
+func (s *Server) inboxAction(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID        string            `json:"id"`
+		MessageID string            `json:"message_id"`
+		Kind      string            `json:"kind"`
+		ActionID  string            `json:"action_id"`
+		Sig       string            `json:"sig"`
+		Value     string            `json:"value"`
+		Params    map[string]string `json:"params"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	c, ok := s.ext.store.conv(body.ID)
+	if !ok || (body.Kind != "card" && body.Kind != "calendar") || body.MessageID == "" || body.ActionID == "" ||
+		!hmac.Equal([]byte(body.Sig), []byte(s.inboxActionSig(body.ID, body.MessageID, body.Kind, body.ActionID))) {
+		writeJSON(w, 403, map[string]any{"error": "无效的卡片操作"})
+		return
+	}
+	run := s.ext.run(c.Ext)
+	if run == nil || !run.man.has(capInboxRecent) || !run.running() {
+		writeJSON(w, 503, map[string]any{"error": "扩展暂不可用"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), inboxActionWait)
+	defer cancel()
+	var res extproto.InboxActionResult
+	req := extproto.InboxActionRequest{
+		ChatID: c.Chat, MessageID: body.MessageID, ActionID: body.ActionID,
+		Kind: body.Kind, Value: body.Value, Params: body.Params,
+	}
+	if err := run.call(ctx, extproto.MInboxAction, req, &res); err != nil {
+		log.Printf("ext %s: inbox action: %v", c.Ext, err)
+		writeJSON(w, 502, map[string]any{"error": err.Error()})
+		return
+	}
+	out := map[string]any{"ok": true}
+	if res.Toast != "" {
+		out["toast"] = res.Toast
+	}
+	if res.Message != nil && res.Message.ID != "" {
+		m := res.Message
+		if c.On {
+			s.ext.store.updateMsgView(c.ID, m.ID, m.Text, m.View)
+		}
+		mine := m.Owner != nil && *m.Owner
+		im := InboxMsg{
+			ID: m.ID, Conv: c.ID, At: parseAt(m.At), Sender: m.Sender, SenderName: m.SenderName,
+			Avatar: s.senderAvatarPath(c.ID, m.SenderAvatar), Mine: mine, Text: m.Text, View: m.View,
+		}
+		s.inboxMediaURLs(c.ID, &im)
+		out["msg"] = im
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) inboxMedia(w http.ResponseWriter, r *http.Request) {

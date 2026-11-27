@@ -3629,16 +3629,17 @@
       const active = document.activeElement;
       const typingSearch = active?.matches?.("[data-inbox-search]");
       const typingDock = active?.matches?.("[data-conv-input], [data-conv-draft-text]");
+      const interactingCard = !!(active?.closest?.(".im-card") || pickOpen?.closest?.(".im-card"));
       const attachInInbox = !!(attachOpen && $("#inbox-detail")?.contains(attachOpen.btn));
       const uploadingInbox = !!(inboxCur && selectInboxFiles().files.some((f) => !f.path && !f.err));
-      const lockDock = typingDock || attachInInbox || uploadingInbox;
+      const lockDock = typingDock || interactingCard || attachInInbox || uploadingInbox;
       const dOpts = inboxDetailOpts();
       const sig = JSON.stringify([r, inboxCur, inboxChannel, inboxSubs, inboxQuery, inboxHelpOpen]);
       const dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger, dOpts]);
       const msgs = body.querySelector(".conv-msgs");
       const atBottom = msgs && (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight <= 48);
       const prevTop = msgs ? msgs.scrollTop : 0;
-      if (sig !== body._sig && !typingSearch && !attachInInbox && !uploadingInbox) {
+      if (sig !== body._sig && !typingSearch && !interactingCard && !attachInInbox && !uploadingInbox) {
         // The list keeps its place while it shows the same channel, filter and query.
         const place = JSON.stringify([inboxChannel, inboxSubs[inboxChannel], inboxQuery]);
         const listTop = body._place === place ? body.querySelector(".inbox-list")?.scrollTop || 0 : 0;
@@ -4355,6 +4356,67 @@
     }
     if (view === "auto" && autoTab === "hooks") { await fetchAuto("ext").catch(() => {}); drawAuto(autoData.settings); }
   }
+  async function runInboxAction(el, { kind, actionId, sig, value = "", params = null }) {
+    const card = el.closest(".im-card");
+    const convId = card?.dataset.imConv || inboxCur;
+    const msgId = card?.dataset.imMsg || "";
+    if (!convId || !msgId || !actionId || !sig) return;
+    const isBtn = el.tagName === "BUTTON";
+    if (isBtn) busy(el);
+    else el.disabled = true;
+    try {
+      const body = { id: convId, message_id: msgId, kind, action_id: actionId, sig };
+      if (value) body.value = value;
+      if (params && Object.keys(params).length) body.params = params;
+      const res = await api("/api/inbox/action", { body });
+      if (res.toast) toast(res.toast);
+      if (res.msg && inboxDetail?.msgs && convId === inboxCur) {
+        const idx = inboxDetail.msgs.findIndex((m) => m.id === res.msg.id);
+        if (idx >= 0) {
+          inboxDetail = { ...inboxDetail, msgs: inboxDetail.msgs.map((m, i) => i === idx ? { ...m, ...res.msg } : m) };
+          if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
+        }
+      }
+      inboxLoading = null;
+      await loadConv().catch(() => {});
+      if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
+    } catch (err) {
+      toast(err.message, "attn");
+      if (isBtn) { el.removeAttribute("aria-busy"); el.disabled = false; }
+      else el.disabled = false;
+    }
+  }
+  $("#auto-body").addEventListener("change", (e) => {
+    const ov = e.target.closest("select.im-overflow");
+    if (ov) {
+      const opt = ov.selectedOptions?.[0];
+      ov.selectedIndex = 0;
+      if (!opt) return;
+      if (opt.dataset.url) { window.open(opt.dataset.url, "_blank", "noopener,noreferrer"); return; }
+      if (opt.dataset.imId && opt.dataset.imSig) {
+        runInboxAction(ov, { kind: "card", actionId: opt.dataset.imId, sig: opt.dataset.imSig, value: opt.dataset.imVal || "" });
+      }
+      return;
+    }
+    const ctrl = e.target.closest("select[data-im-act], input[data-im-act]");
+    if (!ctrl || ctrl.closest("form[data-im-form]")) return;
+    const val = ctrl.type === "datetime-local" ? ctrl.value.replace("T", " ") : ctrl.value;
+    if (!val) return;
+    runInboxAction(ctrl, { kind: ctrl.dataset.imAct, actionId: ctrl.dataset.imId, sig: ctrl.dataset.imSig, value: val });
+  });
+  $("#auto-body").addEventListener("submit", (e) => {
+    const form = e.target.closest("form[data-im-form]");
+    if (!form) return;
+    e.preventDefault();
+    const btn = e.submitter?.matches?.("button[data-im-act]") ? e.submitter : form.querySelector("button[type=submit][data-im-act]");
+    if (!btn) return;
+    const fv = {};
+    for (const [k, v] of new FormData(form).entries()) fv[k] = String(v);
+    runInboxAction(btn, {
+      kind: btn.dataset.imAct, actionId: btn.dataset.imId, sig: btn.dataset.imSig,
+      params: { form_value: JSON.stringify(fv) },
+    });
+  });
   $("#auto-body").addEventListener("click", async (e) => {
     if (e.target.closest("[data-sub-back]")) { e.preventDefault(); if (navCur > 0) history.back(); else location.hash = "#/auto"; return; }
     const a = e.target.closest("a[data-auto-tab]");
@@ -4366,6 +4428,15 @@
     }
     const b = e.target.closest("button");
     if (!b) return;
+    if (b.dataset.imAct) {
+      if (b.type === "submit" && b.closest("form[data-im-form]")) return;
+      const params = b.dataset.imName && b.dataset.imVal ? { [b.dataset.imName]: b.dataset.imVal } : null;
+      runInboxAction(b, {
+        kind: b.dataset.imAct, actionId: b.dataset.imId, sig: b.dataset.imSig,
+        value: params ? "" : (b.dataset.imVal || ""), params,
+      });
+      return;
+    }
     if (b.dataset.eventsSub) { eventsSub = b.dataset.eventsSub; store.set("eventsSub", eventsSub); drawAuto(autoData.triggers); return; }
     if (b.hasAttribute("data-inbox-help")) { inboxHelpOpen = !inboxHelpOpen; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-inbox-search-clear")) {

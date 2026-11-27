@@ -4,6 +4,7 @@ import collections
 import threading
 import time
 
+import actions
 import message_view
 
 RECENT_COUNT = 12
@@ -18,6 +19,8 @@ def message_at(msg):
 
 
 class History:
+    message_at = staticmethod(message_at)
+
     def __init__(self, adapter):
         self.adapter = adapter
         self.lock = threading.Lock()
@@ -35,6 +38,14 @@ class History:
         with self.lock:
             self.cache.pop(chat, None)
             self.active.pop(chat, None)
+
+    def invalidate_calendars(self):
+        with self.lock:
+            for chat in list(self.cache):
+                msgs = self.cache[chat][1]
+                if any((m.get("view") or {}).get("kind") == "calendar" for m in msgs):
+                    self.cache.pop(chat, None)
+                    self.active.pop(chat, None)
 
     def recent(self, chat):
         if not chat.isdigit():
@@ -69,21 +80,27 @@ class History:
         positions = list(range(max(0, last - RECENT_COUNT + 1), last + 1))
         result = adapter.client.api("messages.PullMessagesByPositionsRequest", {"chatId": chat, "positions": positions}) or {}
         messages = []
+        cal_pairs = []
         for _, raw in sorted((result.get("messages") or {}).items(), key=lambda kv: int(kv[0])):
             msg = message_view.decode(adapter.U, raw, chat)
             if not msg["msg_id"] or str(msg["chat_id"]) != chat:
                 continue
             sender = str(msg["from_id"] or "")
-            view, preview = message_view.describe(adapter.U, msg, emojis=adapter.emojis)
+            view, preview = message_view.describe(adapter.U, msg, emojis=adapter.emojis, me=adapter.me)
             data = msg["content_data"] or {}
             text = preview
             if msg["msg_type"] in (message_view.TEXT, message_view.POST):
                 text = adapter._written(sender, data)[0]
             is_system = msg["msg_type"] == message_view.SYSTEM
-            messages.append(dict(id=str(msg["msg_id"]), chat_id=chat, sender=sender, text=text, preview=preview,
-                                 sender_name="" if is_system else adapter.user_name(sender, chat),
-                                 owner=not is_system and bool(adapter.me) and sender == adapter.me,
-                                 at=message_at(msg), view=view))
+            entry = dict(id=str(msg["msg_id"]), chat_id=chat, sender=sender, text=text, preview=preview,
+                         sender_name="" if is_system else adapter.user_name(sender, chat),
+                         owner=not is_system and bool(adapter.me) and sender == adapter.me,
+                         at=message_at(msg), view=view)
+            messages.append(entry)
+            if view and view.get("kind") == "calendar":
+                cal_pairs.append((msg, entry))
+        if cal_pairs:
+            actions.enrich_calendars(adapter, cal_pairs)
         with self.lock:
             replies = list(self.topic_replies.get(chat, ()))
         ids = {m["id"] for m in messages}

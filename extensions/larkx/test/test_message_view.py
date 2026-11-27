@@ -207,6 +207,207 @@ class MessageViewTest(unittest.TestCase):
         emoji_calls = [c for c in f.client.calls if c[0] == "reactions.PullEmojiResourcesV2Request"]
         self.assertEqual(len(emoji_calls), 1, "emoji map is cached across lookups")
 
+    def test_richtext_card_buttons_select_overflow_picker_and_action_exec(self):
+        """RichText cards expose POST callbacks, OPEN_URL buttons, select menus, pickers, and execute actionv2."""
+        from unittest import mock
+        import actions
+
+        card = U.L.entities.CardContent(type=2, cardVersion=2)
+        rt = card.richtext
+        rt.elementIds.extend(["p1", "sel1", "sel2", "ov1", "dp1"])
+        p1 = rt.elements.dictionary["p1"]
+        p1.tag = E.P
+        p1.childIds.extend(["b1", "b2"])
+        b1 = rt.elements.dictionary["b1"]
+        b1.tag = E.BUTTON
+        b1.property = E.ButtonProperty(actionId="act_ok", mode="primary").SerializeToString()
+        b1.childIds.append("t1")
+        rt.elements.dictionary["t1"].tag = E.TEXT
+        rt.elements.dictionary["t1"].property = E.TextProperty(content="Approve").SerializeToString()
+        b2 = rt.elements.dictionary["b2"]
+        b2.tag = E.BUTTON
+        b2.property = E.ButtonProperty(actionId="act_url", mode="default").SerializeToString()
+        b2.childIds.append("t2")
+        rt.elements.dictionary["t2"].tag = E.TEXT
+        rt.elements.dictionary["t2"].property = E.TextProperty(content="View Doc").SerializeToString()
+
+        sel1 = rt.elements.dictionary["sel1"]
+        sel1.tag = E.SELECTMENU
+        sp1 = E.SelectMenuProperty(type=1, actionId="act_mute", placeHolder="Ack and Mute")
+        sp1.options.add(text="Mute 30m", value="30")
+        sel1.property = sp1.SerializeToString()
+
+        sel2 = rt.elements.dictionary["sel2"]
+        sel2.tag = E.SELECTMENU
+        sel2.property = E.SelectMenuProperty(type=2, actionId="act_person", placeHolder="选人").SerializeToString()
+
+        ov1 = rt.elements.dictionary["ov1"]
+        ov1.tag = E.OVERFLOWMENU
+        op = E.OverflowMenuProperty(actionId="act_ov")
+        op.options.add(text="更多", value="m1", optionActionId="act_ok")
+        ov1.property = op.SerializeToString()
+
+        dp1 = rt.elements.dictionary["dp1"]
+        dp1.tag = E.DATEPICKER
+        dp1.property = E.DatePickerProperty(actionId="act_date", placeHolder="选日期", initialDate="2026-11-30").SerializeToString()
+
+        a_ok = card.actions["act_ok"]
+        a_ok.url = "https://internal-api.feishu.cn/lark/card/api/actionv2"
+        a_ok.method = 2
+        a_ok.requiredParameters.needUserId = True
+        a_ok.requiredParameters.needMessageId = True
+        a_ok.parameters.parameters["action_id"] = "act_ok"
+        a_ok.parameters.parameters["refresh_token"] = "tok1"
+        a_url = card.actions["act_url"]
+        a_url.method = 4
+        a_url.openUrl.url = "https://example.com/doc"
+        for k in ("act_mute", "act_date"):
+            a = card.actions[k]
+            a.url = "https://internal-api.feishu.cn/lark/card/api/actionv2"
+            a.method = 2
+            a.parameters.parameters["action_id"] = k
+
+        wire = {"id": "9001", "chatId": "123", "type": 14, "content": card.SerializeToString(), "createTime": 1795700000}
+        msg = message_view.decode(U, wire, "123")
+        view, _ = message_view.describe(U, msg)
+        act_row, s_static, s_person, ov, dp = view["nodes"]
+        self.assertEqual(act_row["kind"], "actions")
+        self.assertEqual(act_row["children"][0], {"kind": "button", "text": "Approve", "action": "act_ok", "tone": "primary"})
+        self.assertEqual(act_row["children"][1], {"kind": "button", "text": "View Doc", "url": "https://example.com/doc"})
+        self.assertEqual((s_static["kind"], s_static["action"], s_static["options"]),
+                         ("select", "act_mute", [{"text": "Mute 30m", "value": "30"}]))
+        self.assertTrue(s_person["disabled"])
+        self.assertEqual(s_person["tone"], "person")
+        self.assertEqual(ov["options"][0]["action"], "act_ok")
+        self.assertEqual((dp["kind"], dp["action"], dp["value"]), ("date", "act_date", "2026-11-30"))
+
+        # Execute POST actionv2 and verify refreshed card
+        done_card = U.L.entities.CardContent(type=2, cardVersion=2)
+        done_card.richtext.CopyFrom(richtext.build(U.L, "You have approved the request."))
+        done_wire = dict(wire, content=done_card.SerializeToString(), updateTime=1795700010)
+
+        class Client:
+            auth = type("A", (), {
+                "cookies": {"session": "s"}, "csrf_token": "csrf1",
+                "region": type("R", (), {"locale": "zh_CN", "web_origin": "https://open-dev.feishu.cn"})(),
+            })()
+            pulls = 0
+
+            def api(self, method, params):
+                if method == "messages.PullMessagesByIdsRequest":
+                    self.pulls += 1
+                    return {"messages": {"9001": wire if self.pulls == 1 else done_wire}}
+                return {}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client, f.me = Client(), "u_me"
+        f.user_name = lambda uid, chat: "云文档助手"
+        posted = {}
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self): return {"code": 0, "toast": {"content": "已批准"}}
+
+        def fake_post(url, **kw):
+            posted["url"] = url
+            posted["json"] = kw["json"]
+            return FakeResp()
+
+        with mock.patch("requests.post", side_effect=fake_post), mock.patch.object(actions, "CARD_REFRESH_WAITS", (0,)):
+            res = f.inbox_action({"chat_id": "123", "message_id": "9001", "action_id": "act_mute", "kind": "card", "value": "30"})
+        self.assertEqual(posted["url"], "https://internal-api.feishu.cn/lark/card/api/actionv2")
+        self.assertEqual(posted["json"]["common"], {"uid": "u_me", "mid": "9001"})
+        self.assertEqual(posted["json"]["action"], {"action_id": "act_mute", "selected_option": "30"})
+        self.assertEqual(res["toast"], "已批准")
+        self.assertIn("approved", res["message"]["preview"])
+
+    def test_calendar_conflict_rsvp_and_external_sync(self):
+        """Calendar cards enrich live RSVP + conflict, reply via API, and invalidate on calendar WS push."""
+        ev = U.L.entities.ShareCalendarEventContent()
+        ev.calendarEvent.uniqueKey = "uk-1"
+        ev.calendarEvent.summary = "数据回流评审"
+        ev.calendarEvent.start = 1796036400
+        ev.calendarEvent.end = 1796040000
+        ev.calendarEvent.startTimezone = "Asia/Shanghai"
+        ev.calendarEvent.selfAttendeeStatus = 1
+        wire = {"id": "7001", "chatId": "123", "type": 16, "fromId": "u1", "content": ev.SerializeToString(), "createTime": 1795700000}
+
+        rsvp = U.L.entities.GeneralCalendarContent(calendarType=4)
+        rsvp.rsvpCardInfo.basicEventInfo.summary = "背屏需求评审"
+        rsvp.rsvpCardInfo.basicEventInfo.uid = "uk-2"
+        rsvp.rsvpCardInfo.basicEventInfo.startTime = 1796043600
+        rsvp.rsvpCardInfo.basicEventInfo.endTime = 1796047200
+        rsvp_wire = {"id": "7002", "chatId": "123", "type": 18, "fromId": "u1", "content": rsvp.SerializeToString(), "createTime": 1795700001}
+
+        class Client:
+            status = 2
+            replied = []
+
+            def api(self, method, params):
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"123": {"lastVisibleMessagePosition": 1}}}
+                if method == "messages.PullMessagesByPositionsRequest":
+                    return {"messages": {"0": wire, "1": rsvp_wire}}
+                if method == "messages.PullMessagesByIdsRequest":
+                    return {"messages": {"7001": wire}}
+                if method == "calendars.GetUserPrimaryCalendarRequest":
+                    return {"calendar": {"id": "my_cal"}}
+                if method == "calendarevents.MGetCalendarEventsWithKeyRequest":
+                    return {"calendarEvents": [
+                        {"uniqueKey": "uk-1", "originalTime": 0, "selfAttendeeStatus": self.status, "start": 1796036400, "end": 1796040000},
+                        {"uniqueKey": "uk-2", "originalTime": 0, "selfAttendeeStatus": 1, "start": 1796043600, "end": 1796047200},
+                    ]}
+                if method == "calendarevents.QueryInstanceRequest":
+                    return {
+                        "calendarEventInstance": [
+                            {"eventRefId": "e_other", "beginTime": 1796036400, "endTime": 1796040000},
+                            {"eventRefId": "e_self", "beginTime": 1796036400, "endTime": 1796040000},
+                        ],
+                        "events": {
+                            "e_other": {"uniqueKey": "uk-conflict", "selfAttendeeStatus": 2, "isFree": False},
+                            "e_self": {"uniqueKey": "uk-1", "selfAttendeeStatus": self.status, "isFree": False},
+                        },
+                    }
+                if method == "calendarevents.ReplyCalendarEventInvitationRequest":
+                    self.replied.append(params)
+                    self.status = 4  # DECLINE
+                    return {}
+                return {}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client, f.me = Client(), "u_me"
+        f.user_name = lambda uid, chat: "赵雨彤"
+        rows = f.history.recent("123")
+        self.assertEqual(rows[0]["view"]["status"], "accept")
+        self.assertTrue(rows[0]["view"]["conflict"])
+        self.assertEqual(rows[0]["view"]["action"], "cal:uk-1:0")
+        self.assertEqual(rows[1]["view"]["title"], "背屏需求评审")
+        self.assertEqual(rows[1]["view"]["status"], "needs_action")
+        self.assertNotIn("conflict", rows[1]["view"])
+
+        # Reply via inbox_action
+        res = f.inbox_action({"chat_id": "123", "message_id": "7001", "action_id": "cal:uk-1:0", "kind": "calendar", "value": "decline"})
+        self.assertEqual(f.client.replied[0]["replyType"], 2)
+        self.assertEqual(f.client.replied[0]["calendarEventKey"]["calendarId"], "my_cal")
+        self.assertEqual(res["message"]["view"]["status"], "decline")
+
+        # Calendar WS sync push invalidates cached chat
+        f.history.recent("123")
+        self.assertIn("123", f.history.cache)
+        f._pushes._push(1020003, b"", None, lambda _: None)
+        self.assertNotIn("123", f.history.cache)
+
+        # Card update push marks updated=True
+        f.chat_info = lambda c: {"name": "云文档助手"}
+        f.folded = lambda c: None
+        f.dm_picture = lambda c: ""
+        f.peer = lambda c, k="": ("u1", "云文档助手")
+        f.dm_name = lambda c, p, s="": "云文档助手"
+        card_update = {"msg_id": "m_card", "chat_id": "123", "from_id": "u1", "msg_type": 14, "chat_type": 1,
+                       "create_time": 1000, "update_time": 1020, "content_data": {"cardDesc": "已通过"}}
+        out = f.normalize(card_update)
+        self.assertTrue(out.get("updated"))
+
 
 if __name__ == "__main__":
     unittest.main()

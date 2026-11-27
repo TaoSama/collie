@@ -41,6 +41,61 @@
     row: ["tr", ""], cell: ["td", ""],
   };
 
+  function actionAttrs(n, kind = "card") {
+    if (!n.action || !n.sig || n.disabled) return "";
+    return ` data-im-act="${esc(kind)}" data-im-id="${esc(n.action)}" data-im-sig="${esc(n.sig)}"` +
+      (n.name ? ` data-im-name="${esc(n.name)}"` : "") +
+      (n.value ? ` data-im-val="${esc(n.value)}"` : "");
+  }
+
+  function renderSelect(n) {
+    const opts = Array.isArray(n.options) ? n.options : [];
+    const ph = esc(n.placeholder || (n.tone === "person" ? "选择成员" : "请选择"));
+    const act = actionAttrs(n);
+    const title = n.tone === "person" ? ' title="选人组件请在飞书中使用"' : (!act && !n.name ? ' title="在飞书中使用此操作"' : "");
+    const disabled = n.disabled || (!act && !n.name) ? " disabled" : "";
+    const nameAttr = n.name ? ` name="${esc(n.name)}"` : "";
+    const cur = String(n.value || "");
+    const hasCur = cur && opts.some((o) => String(o?.value ?? "") === cur);
+    const items = [
+      `<option value=""${hasCur ? "" : " selected"} disabled>${ph}</option>`,
+      ...opts.map((o) => {
+        const v = String(o?.value ?? ""), l = esc(o?.text || v);
+        return `<option value="${esc(v)}"${v === cur && hasCur ? " selected" : ""}>${l}</option>`;
+      }),
+    ].join("");
+    return `<select class="im-select"${act}${nameAttr}${disabled}${title} aria-label="${ph}">${items}</select>`;
+  }
+
+  function renderOverflow(n) {
+    const opts = (Array.isArray(n.options) ? n.options : []).filter((o) => o && (o.text || o.value));
+    if (!opts.length) return "";
+    const anyLive = opts.some((o) => httpURL(o.url) || (o.action && o.sig));
+    const items = [
+      `<option value="" selected disabled>更多操作…</option>`,
+      ...opts.map((o, i) => {
+        const u = httpURL(o.url);
+        const label = esc(o.text || o.value);
+        if (u) return `<option value="${i}" data-url="${esc(u)}">${label}</option>`;
+        if (o.action && o.sig) {
+          return `<option value="${i}" data-im-id="${esc(o.action)}" data-im-sig="${esc(o.sig)}" data-im-val="${esc(o.value || "")}">${label}</option>`;
+        }
+        return `<option value="${i}" disabled>${label}</option>`;
+      }),
+    ].join("");
+    return `<select class="im-select im-overflow"${anyLive ? "" : ' disabled title="在飞书中使用此操作"'} aria-label="更多操作">${items}</select>`;
+  }
+
+  function renderPicker(n) {
+    const type = n.kind === "time" ? "time" : n.kind === "datetime" ? "datetime-local" : "date";
+    const act = actionAttrs(n);
+    const disabled = n.disabled || (!act && !n.name) ? " disabled" : "";
+    const nameAttr = n.name ? ` name="${esc(n.name)}"` : "";
+    const val = n.kind === "datetime" ? String(n.value || "").replace(" ", "T").slice(0, 16) : String(n.value || "");
+    const ph = esc(n.placeholder || (type === "time" ? "选择时间" : type === "datetime-local" ? "选择日期时间" : "选择日期"));
+    return `<input type="${type}" class="im-picker" value="${esc(val)}"${act}${nameAttr}${disabled} aria-label="${ph}"${disabled ? ' title="在飞书中使用此操作"' : ""}>`;
+  }
+
   function nodes(values, depth = 0) {
     if (!Array.isArray(values) || depth > 20) return "";
     return values.slice(0, 400).map((n) => {
@@ -72,10 +127,28 @@
         }
         case "button": {
           const url = httpURL(n.url), label = inner || "打开";
-          const cls = `btn small im-action${/^primary(?:_|$)/.test(n.tone) ? " primary" : ""}`;
-          return url ? external(url, label, cls)
-            : `<button type="button" class="${cls}" disabled title="在飞书中使用此操作">${label}</button>`;
+          const tone = /^primary(?:_|$)/.test(n.tone) ? " primary" : /^danger(?:_|$)/.test(n.tone) ? " danger" : "";
+          const cls = `btn small im-action${tone}`;
+          if (url && !n.disabled) return external(url, label, cls);
+          const act = actionAttrs(n);
+          if (act) {
+            const btype = n.name === "submit" ? "submit" : "button";
+            return `<button type="${btype}" class="${cls}"${act}>${label}</button>`;
+          }
+          return `<button type="button" class="${cls}" disabled title="在飞书中使用此操作">${label}</button>`;
         }
+        case "select": return renderSelect(n);
+        case "overflow": return renderOverflow(n);
+        case "date":
+        case "time":
+        case "datetime": return renderPicker(n);
+        case "input": {
+          const ph = esc(n.placeholder || ""), val = esc(n.value || "");
+          const nameAttr = n.name ? ` name="${esc(n.name)}"` : "";
+          const lab = text ? `<span>${text}</span>` : "";
+          return `<label class="im-field-input">${lab}<input type="text" class="im-input"${nameAttr} value="${val}" placeholder="${ph}"${n.disabled ? " disabled" : ""}></label>`;
+        }
+        case "form": return `<form class="im-form" data-im-form>${nodes(n.children, depth + 1)}</form>`;
         case "image":
         case "file": return media(n);
         default: return inner;
@@ -85,20 +158,55 @@
 
   function eventTime(view) {
     if (!view.start) return "";
-    const format = (value, allDay) => {
+    const format = (value, allDay, withWeekday) => {
       if (allDay && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
       const date = new Date(value);
-      return Number.isFinite(+date) ? new Intl.DateTimeFormat("zh-CN", {
-        month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit",
-      }).format(date) : "";
+      if (!Number.isFinite(+date)) return "";
+      const opts = withWeekday
+        ? { month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" }
+        : { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" };
+      return new Intl.DateTimeFormat("zh-CN", opts).format(date);
     };
-    const start = format(view.start, view.all_day), end = format(view.end || "", view.all_day);
+    const start = format(view.start, view.all_day, true);
     if (!start) return "";
-    return `<div class="im-event-time"><time datetime="${esc(view.start)}">${esc(start)}</time>${end && end !== start
-      ? ` – <time datetime="${esc(view.end)}">${esc(end)}</time>` : ""}${view.all_day ? " · 全天" : ""}</div>`;
+    const sDate = new Date(view.start), eDate = view.end ? new Date(view.end) : null;
+    const sameDay = eDate && Number.isFinite(+sDate) && Number.isFinite(+eDate) &&
+      sDate.getFullYear() === eDate.getFullYear() && sDate.getMonth() === eDate.getMonth() && sDate.getDate() === eDate.getDate();
+    const end = view.end
+      ? (sameDay && !view.all_day
+        ? new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(eDate)
+        : format(view.end, view.all_day, false))
+      : "";
+    const clock = window.collieIcons?.svg ? window.collieIcons.svg("clock") : "";
+    const conflict = view.conflict ? `<span class="im-conflict">与已有日程冲突</span>` : "";
+    return `<div class="im-event-row"><span class="im-event-time">${clock}<time datetime="${esc(view.start)}">${esc(start)}</time>${end && end !== start
+      ? ` – <time datetime="${esc(view.end)}">${esc(end)}</time>` : ""}${view.all_day ? " · 全天" : ""}</span>${conflict}</div>`;
   }
 
-  function render(view) {
+  const RSVP_OPTS = [["accept", "接受"], ["decline", "拒绝"], ["tentative", "待定"]];
+  const RSVP_LABELS = Object.fromEntries(RSVP_OPTS);
+
+  function calendarFooter(view) {
+    const st = String(view.status || "");
+    if (st === "cancelled" || st === "removed") {
+      return `<div class="im-cal-foot"><span class="im-note">日程已取消</span></div>`;
+    }
+    const interactive = !!(view.action && view.sig);
+    if (Object.hasOwn(RSVP_LABELS, st)) {
+      if (!interactive) {
+        return `<div class="im-cal-foot"><span class="im-rsvp-lab">已回复</span><span class="im-rsvp-val">${RSVP_LABELS[st]}</span></div>`;
+      }
+      const opts = RSVP_OPTS.map(([v, l]) => `<option value="${v}"${v === st ? " selected" : ""}>${l}</option>`).join("");
+      return `<div class="im-cal-foot"><span class="im-rsvp-lab">已回复</span><select class="im-select im-rsvp-select" data-pick="compact" data-im-act="calendar" data-im-id="${esc(view.action)}" data-im-sig="${esc(view.sig)}" aria-label="修改日程回复">${opts}</select></div>`;
+    }
+    if (!interactive) return "";
+    const btns = RSVP_OPTS.map(([v, l]) =>
+      `<button type="button" class="btn small im-action${v === "accept" ? " primary" : ""}" data-im-act="calendar" data-im-id="${esc(view.action)}" data-im-sig="${esc(view.sig)}" data-im-val="${v}">${l}</button>`
+    ).join("");
+    return `<div class="im-cal-foot"><div class="im-actions">${btns}</div></div>`;
+  }
+
+  function render(view, ctx = {}) {
     const body = nodes(view.nodes);
     if (view.kind === "system") return `<div class="im-system">${body}</div>`;
     if (view.kind === "media") return `<div class="im-content im-attachments">${body}</div>`;
@@ -109,9 +217,12 @@
     const header = title || view.subtitle ? `<header class="im-heading"><strong>${url && title ? external(url, title) : title}</strong>${
       view.subtitle ? `<span>${esc(view.subtitle)}</span>` : ""}</header>` : "";
     const time = isEvent ? eventTime(view) : "";
+    const foot = isEvent ? calendarFooter(view) : "";
     const cls = isCard ? "im-card" : isEvent ? "im-card im-calendar" : "im-post";
-    return `<div class="im-content ${cls}" data-tone="${tone}">${header}${body || time
-      ? `<div class="im-body">${time}${body}</div>` : ""}</div>`;
+    const attrs = (isCard || isEvent) && ctx.convId && ctx.msgId
+      ? ` data-im-conv="${esc(ctx.convId)}" data-im-msg="${esc(ctx.msgId)}"` : "";
+    return `<div class="im-content ${cls}" data-tone="${tone}"${attrs}>${header}${body || time || foot
+      ? `<div class="im-body">${time}${body}${foot}</div>` : ""}</div>`;
   }
 
   // Older hub rows may contain a serialized payload clipped halfway through.

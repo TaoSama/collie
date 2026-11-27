@@ -1472,3 +1472,68 @@ func TestInboxEmojiURLs(t *testing.T) {
 		t.Fatalf("non-https emoji URL should be stripped: %q", kids[1].URL)
 	}
 }
+
+func TestInboxActionSigningAndUpdatedMessage(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	m := h.manifest("fake")
+	now := time.Now()
+	if err := h.incoming(m, incomingMsg{
+		Chat: "c1", ChatName: "云文档助手", ChatKind: "dm", ID: "m1", Sender: "bot", SenderName: "云文档助手",
+		Text: "[卡片] 待审批", At: now, Live: true,
+		View: &extproto.MessageView{
+			Kind: "card", Title: "待审批",
+			Nodes: []extproto.MessageNode{{Kind: "button", Text: "Approve", Action: "act_1"}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.store.update("fake:c1", func(c *InboxConv) { c.On = true })
+	h.store.addMsg(InboxMsg{
+		ID: "m1", Conv: "fake:c1", At: now, Sender: "bot", SenderName: "云文档助手", Text: "[卡片] 待审批",
+		View: &extproto.MessageView{
+			Kind: "card", Title: "待审批",
+			Nodes: []extproto.MessageNode{{Kind: "button", Text: "Approve", Action: "act_1"}},
+		},
+	})
+
+	// Action signing on card button + calendar RSVP.
+	msg := h.store.msgs("fake:c1", time.Time{})[0]
+	sp.s.inboxMediaURLs("fake:c1", &msg)
+	if msg.View.Nodes[0].Sig == "" {
+		t.Fatal("card action button should be signed")
+	}
+	cal := InboxMsg{
+		ID: "m2", Conv: "fake:c1",
+		View: &extproto.MessageView{Kind: "calendar", Title: "评审", Action: "cal:uk1:0", Status: "accept", Conflict: true},
+	}
+	sp.s.inboxMediaURLs("fake:c1", &cal)
+	if cal.View.Sig == "" {
+		t.Fatal("calendar action should be signed")
+	}
+
+	// Bad signature rejected with 403.
+	rec := httptest.NewRecorder()
+	sp.s.inboxAction(rec, httptest.NewRequest("POST", "/api/inbox/action",
+		strings.NewReader(`{"id":"fake:c1","message_id":"m1","kind":"card","action_id":"act_1","sig":"bad"}`)))
+	if rec.Code != 403 {
+		t.Fatalf("bad sig: got %d, want 403", rec.Code)
+	}
+
+	// Updated message replaces stored view in-place without increasing unread count.
+	before, _ := h.store.conv("fake:c1")
+	if err := h.incoming(m, incomingMsg{
+		Chat: "c1", ID: "m1", Sender: "bot", SenderName: "云文档助手",
+		Text: "[卡片] 已通过", At: now, Live: true, Updated: true,
+		View: &extproto.MessageView{Kind: "card", Title: "已通过", Nodes: []extproto.MessageNode{{Kind: "text", Text: "You have approved."}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := h.store.conv("fake:c1")
+	if after.Unread != before.Unread {
+		t.Fatalf("updated message must not bump unread: %d -> %d", before.Unread, after.Unread)
+	}
+	stored := h.store.msgs("fake:c1", time.Time{})
+	if len(stored) != 1 || stored[0].View == nil || stored[0].View.Title != "已通过" {
+		t.Fatalf("stored message view should update in place: %+v", stored)
+	}
+}

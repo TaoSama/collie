@@ -492,7 +492,7 @@
       const bot = ai && c.owner, pic = bot ? c.avatar : m.avatar;
       const name = bot ? c.name : ai ? "" : m.mine ? "你" : m.sender_name || "";
       const card = rich && (m.view.kind === "card" || m.view.kind === "calendar" || m.view.kind === "media");
-      const body = rich ? collieInboxMessage.render(m.view) : (m.ref && !m.human) ? md(m.text) : esc(text);
+      const body = rich ? collieInboxMessage.render(m.view, { convId: c.id, msgId: m.id }) : (m.ref && !m.human) ? md(m.text) : esc(text);
       return `${dayEl}${unreadEl}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}" data-msg-id="${esc(m.id || "")}">
         ${mine ? "" : `<span class="conv-ava${SQUARE.has(c.ext) ? " sq" : ""}" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${pic ? `<img class="inbox-pic" src="${esc(pic)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}
         <div class="conv-body">${head ? `<div class="meta">${name ? `<b>${esc(name)}</b>` : ""}${ai ? `<span class="conv-ai">${ico("bot")}AI 代答</span>` : ""}<time title="${esc(when(m.at))}">${esc(clock(m.at))}</time></div>` : ""}

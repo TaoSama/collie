@@ -76,3 +76,51 @@ test("renders inline emojis through hub proxy and stickers without bubble border
   });
   assert.match(sticker, /<img class="im-image im-sticker" src="\/api\/inbox\/media\?[^"]+" alt="表情包"/);
 });
+
+test("renders interactive card buttons, selects, pickers, forms, and calendar RSVP dropdown", () => {
+  const card = render({
+    kind: "card", title: "报警处理",
+    nodes: [
+      { kind: "actions", children: [
+        { kind: "button", text: "Approve", tone: "primary", action: "act_1", sig: "sig_1" },
+        { kind: "button", text: "Reject", action: "act_2", sig: "sig_2" },
+      ] },
+      { kind: "select", placeholder: "Ack and Mute", action: "act_sel", sig: "sig_sel", options: [
+        { text: "Mute 30m", value: "30" }, { text: "Mute 1h", value: "60" },
+      ] },
+      { kind: "select", placeholder: "选人", tone: "person", disabled: true },
+      { kind: "overflow", options: [{ text: "详情", url: "https://example.com/a" }, { text: "忽略", action: "act_ov", sig: "sig_ov", value: "ig" }] },
+      { kind: "date", action: "act_d", sig: "sig_d", value: "2026-11-30" },
+      { kind: "form", children: [
+        { kind: "input", name: "reason", placeholder: "备注" },
+        { kind: "button", text: "提交", name: "submit", action: "act_f", sig: "sig_f" },
+      ] },
+    ],
+  }, { convId: "larkx:c1", msgId: "m1" });
+  assert.match(card, /data-im-conv="larkx:c1" data-im-msg="m1"/);
+  assert.match(card, /data-im-act="card" data-im-id="act_1" data-im-sig="sig_1">Approve<\/button>/);
+  assert.match(card, /<select class="im-select" data-im-act="card" data-im-id="act_sel" data-im-sig="sig_sel"/);
+  assert.match(card, /title="选人组件请在飞书中使用"/);
+  assert.match(card, /class="im-select im-overflow".*data-url="https:\/\/example\.com\/a"/);
+  assert.match(card, /type="date" class="im-picker" value="2026-11-30"/);
+  assert.match(card, /<form class="im-form" data-im-form>.*name="reason".*type="submit"/);
+
+  const calReplied = render({
+    kind: "calendar", title: "数据回流评审", start: "2026-11-30T11:00:00Z", end: "2026-11-30T12:00:00Z",
+    conflict: true, status: "accept", action: "cal:uk1:0", sig: "sig_cal",
+  }, { convId: "larkx:c2", msgId: "m2" });
+  assert.match(calReplied, /与已有日程冲突/);
+  assert.match(calReplied, /已回复.*<select class="im-select im-rsvp-select" data-pick="compact" data-im-act="calendar" data-im-id="cal:uk1:0" data-im-sig="sig_cal".*<option value="accept" selected>接受<\/option>/);
+
+  const calPending = render({
+    kind: "calendar", title: "切RTA需求", start: "2026-11-30T09:30:00Z", end: "2026-11-30T10:00:00Z",
+    status: "needs_action", action: "cal:uk2:0", sig: "sig_cal2",
+  }, { convId: "larkx:c2", msgId: "m3" });
+  assert.doesNotMatch(calPending, /与已有日程冲突/);
+  assert.match(calPending, /data-im-act="calendar".*data-im-val="accept">接受<\/button>/);
+  assert.match(calPending, /data-im-val="decline">拒绝<\/button>/);
+  assert.match(calPending, /data-im-val="tentative">待定<\/button>/);
+
+  const calCancelled = render({ kind: "calendar", title: "已取消会议", start: "2026-11-30T09:30:00Z", status: "cancelled" });
+  assert.match(calCancelled, /日程已取消/);
+});

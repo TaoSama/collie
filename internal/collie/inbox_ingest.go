@@ -21,6 +21,12 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 	defer store.mu.Unlock()
 
 	id := convID(m.ID, in.Chat)
+	if in.Updated {
+		if prev := store.convs[id]; prev != nil && prev.On {
+			store.updateMsgViewLocked(id, in.ID, in.Text, in.View)
+		}
+		return InboxConv{}, nil, nil
+	}
 	c := inboxConversation(m, in, store.convs[id])
 	// The switch is about other people's messages: your own trigger word
 	// works in any conversation.

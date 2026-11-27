@@ -13,6 +13,7 @@ import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import actions
 import history
 import message_view
 import richtext
@@ -201,9 +202,10 @@ class Feishu:
         self.pending_docs = set()  # comments being handed to the hub
         self.own_cids = collections.OrderedDict()  # what this adapter sent: its echo is not news
         self._mu = threading.Lock()
-        self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self._deliver_doc_comments, self.signed_out)
-        self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.history = history.History(self)
+        self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self._deliver_doc_comments,
+                                  self.signed_out, on_calendar_change=self.history.invalidate_calendars)
+        self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
         self.self_mention = True  # @自己唤起: @-mentioning yourself is a request
         self.ignored = False  # 来源策略 ignores this extension: nothing gets marked
@@ -211,6 +213,7 @@ class Feishu:
         self.marked = collections.OrderedDict()  # message ids already marked as being worked on
         self.msg_chat = collections.OrderedDict()  # message id -> its chat, for the unread @ list
         self._emojis = None  # (expires, {emoji_key: (label, url)})
+        self._primary_cal = None  # cached primary calendar id
 
     # Signing in.
 
@@ -261,7 +264,7 @@ class Feishu:
 
     def logout(self):
         self.stop()
-        self.client, self.me, self.self_chat, self._emojis = None, "", "", None
+        self.client, self.me, self.self_chat, self._emojis, self._primary_cal = None, "", "", None, None
 
     # Receiving.
 
@@ -333,13 +336,19 @@ class Feishu:
         with self._mu:
             if msg.get("cid") and msg["cid"] in self.own_cids:
                 return None
+            seen_before = mid in self.recent
         root = str(msg.get("root_id") or "")
         root = "" if root == "0" else root
         out = {"id": mid, "chat_id": chat, "sender": sender, "owner": bool(self.me) and sender == self.me}
+        created, updated = int(msg.get("create_time") or 0), int(msg.get("update_time") or 0)
+        if seen_before or (mtype == message_view.CARD and created and updated > created):
+            out["updated"] = True
         data = msg.get("content_data") or {}
-        view, preview = message_view.describe(self.U, msg, emojis=self.emojis)
+        view, preview = message_view.describe(self.U, msg, emojis=self.emojis, me=self.me)
         if view:
             out["view"] = view
+            if view.get("kind") == "calendar":
+                actions.enrich_calendars(self, [(msg, out)])
         if preview:
             out["preview"] = preview
         if mtype in (richtext.MSG_POST, MSG_TEXT):
@@ -644,6 +653,20 @@ class Feishu:
         text, mention = self._written(self.me, msg.get("content_data") or {})
         if mention or is_request(text, self.trigger):
             self.mark_working(str(msg["msg_id"]), got)
+
+    def inbox_action(self, params):
+        """Runs a card button/menu/picker callback or calendar RSVP as the signed-in person."""
+        if self.client is None:
+            raise NotSent("没有登录")
+        return actions.execute(
+            self,
+            params.get("chat_id") or "",
+            params.get("message_id") or "",
+            params.get("action_id") or "",
+            kind=params.get("kind") or "",
+            value=params.get("value") or "",
+            params=params.get("params") or {},
+        )
 
     def emojis(self):
         """Emoji key -> (zh-CN label, CDN https URL), kept a day; {} when unavailable."""

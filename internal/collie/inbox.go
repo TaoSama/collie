@@ -50,6 +50,7 @@ type incomingMsg struct {
 	View                     *extproto.MessageView
 	At                       time.Time
 	Live                     bool // not history being caught up
+	Updated                  bool // in-place update of an existing message (e.g. card state changed)
 	Unsupported              []string
 	Files                    []string // saved on the hub
 }
@@ -140,7 +141,7 @@ func (h *extHost) received(r *extRun, m extproto.Message) error {
 		at = time.Now()
 	}
 	in := incomingMsg{Chat: m.ChatID, ChatName: m.Chat, ChatKind: m.ChatKind, Muted: m.Muted, Folded: m.Folded, Tags: m.ChatTags, AtMe: m.AtMe, Avatar: m.ChatAvatar, ID: m.ID, Sender: m.Sender,
-		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Mention: m.Mention, Topic: m.Thread, Text: m.Text, Quote: m.Quote, At: at, Live: true,
+		SenderName: m.SenderName, Owner: m.Owner != nil && *m.Owner, Mention: m.Mention, Topic: m.Thread, Text: m.Text, Quote: m.Quote, At: at, Live: true, Updated: m.Updated,
 		Unsupported: m.Unsupported, Preview: m.Preview, View: m.View}
 	for _, b := range append(append([]extproto.Blob(nil), m.Images...), m.Files...) {
 		p, err := saveBlob(b)
@@ -227,7 +228,7 @@ func inboxConversation(m *ExtManifest, in incomingMsg, previous *InboxConv) Inbo
 			c.Preview = line
 		}
 	}
-	if !in.fromYou() && in.Live && time.Since(in.At) < extFresh {
+	if !in.Updated && !in.fromYou() && in.Live && time.Since(in.At) < extFresh {
 		c.Unread++    // history caught up on isn't news
 		c.AppUnread++ // until the app says how many it counts
 		c.AtMe = c.AtMe || in.AtMe
