@@ -46,7 +46,11 @@ App 的 `~/.gemini/antigravity/conversation_summaries.db` 也列出 CLI 起的�
 
 ## 一轮做完折成「已工作 Xm Ys」
 
-Codex 和 Antigravity 每几步就插一句过程消息，连续的工具调用很少超过 3 个，「N 个步骤」那种按连续工具合并的折叠收不起来，所以按轮折叠：解析时给一轮的最后一条消息标上 `turn_ms`，前端把它之前、上一条用户消息之后的过程收成一行（`drawThread`）。Codex 用日志里 `event_msg` 的 `task_complete.duration_ms`；Antigravity 没有轮结束的记录，把「有内容、不调用工具的 `PLANNER_RESPONSE`」当作结束，从 `USER_INPUT` 的 `created_at` 算起。被中断的轮没有 `task_complete`，不折叠。
+Codex 和 Antigravity 每几步就插一句过程消息，连续的工具调用很少超过 3 个。按轮折叠时，解析器给一轮的最后一条消息标上 `turn_ms`，前端把这一轮的过程消息和工具调用收成一行（`drawThread`）。最终回复和轮末交互卡片留在折叠外。
+
+- Codex 用日志里 `event_msg` 的 `task_complete.duration_ms`。被中断的轮没有 `task_complete`，过程保持展开。
+- Antigravity 把有内容且未调用工具的 `PLANNER_RESPONSE` 当作结束，从 `USER_INPUT` 的 `created_at` 算起。
+- Claude 用主会话日志中 `type: "system"`、`subtype: "turn_duration"` 的 `durationMs`。带 `isSidechain: true` 的子代理记录会被跳过。进行中、中断或缺少这条记录的旧轮次保持展开。
 
 ## Codex 一周没动的会话文件会被压成 .zst
 
