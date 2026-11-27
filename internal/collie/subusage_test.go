@@ -379,8 +379,8 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 					t.Fatalf("top summary row %q must not display machine sublabel, got %q", r.Label, r.Sublabel)
 				}
 				if r.Label == "Codex" && r.Value == "Credits 48,158" {
-					if r.Tone != "" {
-						t.Fatalf("top Codex credit tone = %q, want empty (normal text color)", r.Tone)
+					if r.Tone != "muted" {
+						t.Fatalf("top Codex credit tone = %q, want muted (same color as reset time)", r.Tone)
 					}
 					sawCodexTopCredit = true
 				}

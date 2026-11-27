@@ -1273,6 +1273,7 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 			} else {
 				if creditText != "" {
 					row.Value = creditText
+					row.Tone = "muted"
 				}
 				for _, w := range p.Windows {
 					if w.JustReset {
