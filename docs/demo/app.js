@@ -9741,6 +9741,16 @@
   navigator.mediaDevices?.addEventListener?.("devicechange", checkCamera);
   touchMQ.addEventListener("change", checkCamera);
   let attachOpen = null; // { btn, pickers }
+  function positionAttach() {
+    if (!attachOpen) return;
+    const { btn } = attachOpen;
+    if (!btn.isConnected || !btn.offsetParent) { closeAttach(); return; }
+    const r = btn.getBoundingClientRect(), w = attachPop.offsetWidth, h = attachPop.offsetHeight;
+    const v = window.visualViewport, topMin = v ? Math.max(0, v.offsetTop) : 0, botMax = topMin + (v ? v.height : innerHeight);
+    attachPop.style.left = Math.min(Math.max(8, r.left), innerWidth - w - 8) + "px";
+    // above the box, or below the button when there is no room above it
+    attachPop.style.top = (r.top - h - 6 >= topMin + 8 ? r.top - h - 6 : Math.min(r.bottom + 6, botMax - h - 8)) + "px";
+  }
   function openAttach(btn, pickers) {
     if (attachOpen?.btn === btn) { closeAttach(true); return; }
     closeAttach();
@@ -9749,10 +9759,7 @@
     attachOpen = { btn, pickers };
     attachPop.hidden = false;
     btn.setAttribute("aria-expanded", "true");
-    const r = btn.getBoundingClientRect(), w = attachPop.offsetWidth, h = attachPop.offsetHeight;
-    attachPop.style.left = Math.min(Math.max(8, r.left), innerWidth - w - 8) + "px";
-    // above the box, or below the button when there is no room above it
-    attachPop.style.top = (r.top - h - 6 >= 8 ? r.top - h - 6 : Math.min(r.bottom + 6, innerHeight - h - 8)) + "px";
+    positionAttach();
     $(".po:not([disabled])", attachPop)?.focus({ preventScroll: true });
   }
   function closeAttach(refocus) {
@@ -9776,8 +9783,10 @@
     else if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); closeAttach(true); }
   });
   document.addEventListener("pointerdown", (e) => { if (attachOpen && !attachPop.contains(e.target) && !attachOpen.btn.contains(e.target)) closeAttach(); });
-  addEventListener("resize", () => closeAttach());
-  document.addEventListener("scroll", (e) => { if (attachOpen && !attachPop.contains(e.target)) closeAttach(); }, true);
+  // Only close when an ancestor containing the button scrolls: blurring the
+  // textarea on a phone re-shows .crew / .d-head and auto-scrolls the sibling
+  // message list, which must not dismiss the menu right after it opens.
+  document.addEventListener("scroll", (e) => { if (attachOpen && e.target instanceof Element && e.target.contains(attachOpen.btn)) closeAttach(); }, true);
   // A photo from a computer's camera: its picture live, 拍照 keeps a frame.
   const camDlg = $("#cam"), camVideo = $("#cam video");
   let camDone = null;
@@ -10403,6 +10412,7 @@
     }
     document.documentElement.classList.toggle("kb-open", kb);
     if ($("#toasts")?.childElementCount) syncToastPos();
+    if (attachOpen) positionAttach();
   }
   window.visualViewport?.addEventListener("resize", setVH);
   window.visualViewport?.addEventListener("scroll", setVH);

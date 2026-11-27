@@ -170,3 +170,90 @@ test("an end-of-turn reply sends only its label and keeps the current draft", as
   assert.equal(input.value, "message in progress");
   assert.match(box.innerHTML, /draft\.txt/);
 });
+
+test("attach menu stays open on sibling scroll and repositions across keyboard resize", () => {
+  class FakeElement {
+    constructor() {
+      this.listeners = new Map();
+      this.style = {};
+      this.hidden = false;
+      this.isConnected = true;
+      this.offsetParent = {};
+      this.offsetWidth = 168;
+      this.offsetHeight = 152;
+      this.attrs = {};
+      this.children = [];
+    }
+    setAttribute(k, v) { this.attrs[k] = v; }
+    addEventListener(type, cb) { this.listeners.set(type, [...(this.listeners.get(type) || []), cb]); }
+    emit(type, ev = {}) { for (const cb of this.listeners.get(type) || []) cb({ preventDefault() {}, stopPropagation() {}, ...ev }); }
+    contains(node) { return node === this || this.children.some((c) => c.contains?.(node)); }
+    focus() {}
+  }
+  const attachSrc = section('  // The "+" menu of a message box.', "  // A photo from a computer's camera:");
+  const docListeners = new Map();
+  const winListeners = new Map();
+  const vvListeners = new Map();
+  let pop;
+  const item = new FakeElement();
+  const btn = new FakeElement();
+  let rect = { left: 21, top: 450, bottom: 482 };
+  btn.getBoundingClientRect = () => rect;
+  const viewer = new FakeElement();
+  const ancestor = new FakeElement();
+  ancestor.children.push(btn);
+  const visualViewport = {
+    height: 500, offsetTop: 0, scale: 1,
+    addEventListener(t, cb) { vvListeners.set(t, [...(vvListeners.get(t) || []), cb]); },
+  };
+  const docEl = {
+    style: { setProperty() {} },
+    classList: { contains: () => false, toggle() {} },
+  };
+  const context = vm.createContext({
+    Element: FakeElement,
+    innerWidth: 390,
+    innerHeight: 500,
+    AT_BOTTOM_PX: 48,
+    window: { visualViewport },
+    navigator: {},
+    touchMQ: { matches: true, addEventListener() {} },
+    document: {
+      documentElement: docEl,
+      activeElement: null,
+      body: { append(el) { pop = el; } },
+      createElement() { return new FakeElement(); },
+      querySelectorAll: () => [],
+      addEventListener(t, cb) { docListeners.set(t, [...(docListeners.get(t) || []), cb]); },
+    },
+    addEventListener(t, cb) { winListeners.set(t, [...(winListeners.get(t) || []), cb]); },
+    $: (sel, root) => (root === pop ? item : null),
+    $$: () => [],
+    closePick() {},
+    closeCtx() {},
+    syncToastPos() {},
+  });
+  const setVHSrc = section("  function setVH()", "  setVH();");
+  vm.runInContext(attachSrc + "\n" + setVHSrc + "\nglobalThis.openAttach = openAttach;", context);
+
+  context.openAttach(btn, { camera() {}, photos() {}, files() {} });
+  assert.equal(pop.hidden, false);
+  assert.equal(pop.style.top, "292px");
+
+  // Sibling message scroller auto-scrolling on blur must not close the menu.
+  for (const cb of docListeners.get("scroll") || []) cb({ target: viewer });
+  assert.equal(pop.hidden, false);
+
+  // Virtual keyboard dismissal resizes viewport and moves button down: menu stays open and tracks button.
+  context.innerHeight = 844;
+  visualViewport.height = 844;
+  rect = { left: 21, top: 790, bottom: 822 };
+  for (const cb of winListeners.get("resize") || []) cb({});
+  for (const cb of vvListeners.get("resize") || []) cb({});
+  assert.equal(pop.hidden, false);
+  assert.equal(pop.style.top, "632px");
+
+  // Scrolling an ancestor that contains the button still closes the menu.
+  for (const cb of docListeners.get("scroll") || []) cb({ target: ancestor });
+  assert.equal(pop.hidden, true);
+});
