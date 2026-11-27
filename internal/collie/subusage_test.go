@@ -217,8 +217,14 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 	h.cat[featureUsage] = usageMan
 	h.mu.Unlock()
 
+	if !h.setting(featureUsage).Enabled || !h.featureOn(featureUsage) {
+		t.Fatal("usage extension must be enabled by default")
+	}
+	if _, err := h.configure(featureUsage, func(x *ExtSetting) { x.Enabled = false }); err != nil {
+		t.Fatal(err)
+	}
 	if slots := h.headerStatuses(context.Background(), "claude-opus-4", false); len(slots) != 0 {
-		t.Fatalf("usage extension must be off by default, got slots: %+v", slots)
+		t.Fatalf("disabled usage extension must not return header slots, got: %+v", slots)
 	}
 	if _, err := h.do(context.Background(), featureUsage, "subscription_usage", nil); err == nil {
 		t.Fatal("expected action call to be refused when usage extension is off")
@@ -619,5 +625,86 @@ func TestSubUsageProxyConfigAndForwarding(t *testing.T) {
 	res := c.probeOne(context.Background(), "claude", "", proxySrv.URL)
 	if proxyHits.Load() != 1 || res.Account == nil || res.Account.Status != "ok" || len(res.Account.Windows) != 1 {
 		t.Fatalf("proxy probe failed: hits=%d res=%+v", proxyHits.Load(), res)
+	}
+}
+
+func TestSubUsageDefaultEnabledAndPersistedFalse(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("COLLIE_HOME", dir)
+	db, err := openDB(filepath.Join(dir, "herd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	st, err := loadState(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{herdr: newHerdr("", "test", dir), home: dir}
+	sp := &Super{s: srv, db: db, dir: dir, bin: "collie", st: st, subs: map[chan struct{}]bool{}}
+	srv.sup = sp
+
+	// 1. Fresh install (no ext_settings saved): usage is enabled by default, others stay off.
+	h := newExtHost(srv, sp, dir)
+	srv.ext = h
+	srv.localSubUsageCollector().home = t.TempDir()
+	if !h.setting(featureUsage).Enabled || !h.featureOn(featureUsage) {
+		t.Fatalf("fresh install: expected usage enabled by default, got %+v", h.setting(featureUsage))
+	}
+	if v := h.view(featureUsage); !v.Setting.Enabled {
+		t.Fatalf("fresh install: expected usage view enabled by default, got %+v", v.Setting)
+	}
+	for _, id := range []string{featureWorkbench, "larkx", "wechat"} {
+		if h.manifest(id) != nil && h.setting(id).Enabled {
+			t.Fatalf("fresh install: expected %q disabled by default", id)
+		}
+	}
+
+	// 2. Explicitly persist enabled=false with existing config via standard HTTP API.
+	const wantProxy = "host1=socks5h://127.0.0.1:1080"
+	postExt := func(payload string) {
+		t.Helper()
+		req := httptest.NewRequest("POST", "/api/ext/usage", strings.NewReader(payload))
+		req.SetPathValue("id", featureUsage)
+		rec := httptest.NewRecorder()
+		srv.extConfigure(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("POST /api/ext/usage %s: status %d body=%s", payload, rec.Code, rec.Body.String())
+		}
+	}
+	postExt(fmt.Sprintf(`{"enabled":false,"config":{"proxy_url":%q}}`, wantProxy))
+
+	// 3. Reload a fresh extHost from the same DB: persisted false MUST NOT be overwritten by default-on.
+	h2 := newExtHost(srv, sp, dir)
+	srv.ext = h2
+	got := h2.setting(featureUsage)
+	if got.Enabled || h2.featureOn(featureUsage) {
+		t.Fatalf("reloaded host: persisted enabled=false was overwritten: %+v", got)
+	}
+	if got.Config["proxy_url"] != wantProxy {
+		t.Fatalf("reloaded host: proxy_url = %v, want %q", got.Config["proxy_url"], wantProxy)
+	}
+	if slots := h2.headerStatuses(context.Background(), "claude-opus-4", false); len(slots) != 0 {
+		t.Fatalf("reloaded host: disabled usage returned header slots: %+v", slots)
+	}
+	if _, err := h2.do(context.Background(), featureUsage, "subscription_usage", nil); err == nil {
+		t.Fatal("reloaded host: disabled usage should refuse actions")
+	}
+
+	// 4. Config-only update without enabled field preserves persisted false.
+	postExt(fmt.Sprintf(`{"config":{"proxy_url":%q,"refresh_s":180}}`, wantProxy))
+	gotAfterCfg := h2.setting(featureUsage)
+	if gotAfterCfg.Enabled {
+		t.Fatalf("config-only update flipped persisted false to true: %+v", gotAfterCfg)
+	}
+	if gotAfterCfg.Config["proxy_url"] != wantProxy {
+		t.Fatalf("config-only update lost proxy_url: %+v", gotAfterCfg.Config)
+	}
+
+	// 5. Non-feature extensions cannot set defaults.enabled=true.
+	bad := fakeManifest("badext", "actions")
+	bad.Defaults.Enabled = true
+	if err := bad.validate(); err == nil {
+		t.Fatal("expected non-feature manifest with defaults.enabled=true to fail validation")
 	}
 }

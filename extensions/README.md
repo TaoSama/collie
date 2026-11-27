@@ -90,7 +90,7 @@ COLLIE_HOME/ext/<id>/
 | `contributes.channel` | 是 | 回复怎么发：`format`（`markdown` 原样发）、`max_text`（Collie 不切分，只用来提示）、`kinds`（接受的发送类型）、`no_footer`（`true` 时回复不带尾标；只给一看就是 bot 的渠道用，如微信） |
 | `configuration` | 否 | 配置表单，见第 6 节 |
 | `permissions.network` | 否 | 它会访问的域名，**只展示不强制**（第 7 节） |
-| `defaults` | 否 | `machine`：`hub` / `router`（Router 所在电脑）/ `ask`（没有默认，打开前必须由人选电脑，用于后端只在某一台电脑上的扩展）；`handler`：新会话默认交给 `collie` 还是专属 `agent`；`conversations`：新会话默认 `off`（不处理）还是 `owner`（只处理绑定人的会话） |
+| `defaults` | 否 | `enabled`：仅内置功能扩展（`runtime.feature`）可用，设为 `true` 时未配置过默认开启（已显式保存的开关优先）；`machine`：`hub` / `router`（Router 所在电脑）/ `ask`（没有默认，打开前必须由人选电脑，用于后端只在某一台电脑上的扩展）；`handler`：新会话默认交给 `collie` 还是专属 `agent`；`conversations`：新会话默认 `off`（不处理）还是 `owner`（只处理绑定人的会话） |
 
 `capabilities` 决定 Collie 调用哪些方法：
 

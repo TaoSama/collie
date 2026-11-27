@@ -152,8 +152,13 @@ func (h *extHost) settingLocked(id string) ExtSetting {
 		return x
 	}
 	x := ExtSetting{ID: id}
-	if m := h.cat[id]; m != nil && m.Defaults.Machine == machineRouter {
-		x.Machine = h.sp.routerOn()
+	if m := h.cat[id]; m != nil {
+		if m.Defaults.Enabled && m.Runtime.Feature != "" {
+			x.Enabled = true
+		}
+		if m.Defaults.Machine == machineRouter {
+			x.Machine = h.sp.routerOn()
+		}
 	}
 	return h.pinLocked(x)
 }
@@ -252,7 +257,7 @@ func (h *extHost) wakeMachine(machine string) {
 	}
 }
 
-// featureOn: that part of Collie is turned on in 接入 (off until it is).
+// featureOn: that part of Collie is enabled (by default or turned on in 接入).
 func (h *extHost) featureOn(name string) bool {
 	return h != nil && h.setting(name).Enabled
 }

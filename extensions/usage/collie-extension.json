@@ -5,8 +5,9 @@
   "label": "用量",
   "version": "0.1.0",
   "icon": "icon.svg",
-  "description": "汇总所有在线电脑上本机登录的 Agent 订阅额度（Claude Code、Codex、Antigravity），先按账号去重再由单台机器只读查询，在会话页顶部标题栏与抽屉中展示剩余额度、重置时间与今日用量。凭证仅在各台电脑本地只读使用，不外传也不主动刷新。默认关闭。",
+  "description": "汇总所有在线电脑上本机登录的 Agent 订阅额度（Claude Code、Codex、Antigravity），先按账号去重再由单台机器只读查询，在会话页顶部标题栏与抽屉中展示剩余额度、重置时间与今日用量。凭证仅在各台电脑本地只读使用，不外传也不主动刷新。默认开启。",
   "runtime": {"feature": "usage"},
+  "defaults": {"enabled": true},
   "contributes": {
     "connector": {
       "id": "usage",

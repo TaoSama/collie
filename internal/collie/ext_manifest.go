@@ -74,6 +74,7 @@ type ExtManifest struct {
 		Network []string `json:"network,omitempty"`
 	} `json:"permissions"`
 	Defaults struct {
+		Enabled       bool   `json:"enabled,omitempty"`       // built-in feature extensions only
 		Machine       string `json:"machine,omitempty"`       // hub | router | ask
 		Handler       string `json:"handler,omitempty"`       // collie | agent
 		Conversations string `json:"conversations,omitempty"` // off | owner
@@ -314,6 +315,9 @@ func (m *ExtManifest) validate() error {
 				return fmt.Errorf("config %s: x-read-back is a boolean's", k)
 			}
 		}
+	}
+	if m.Defaults.Enabled && m.Runtime.Feature == "" {
+		return fmt.Errorf("defaults.enabled is only allowed for built-in feature extensions")
 	}
 	switch {
 	case m.ManifestVersion != 1:
