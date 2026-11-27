@@ -8,7 +8,7 @@ import re
 
 # RichTextElement.Tag
 TAG_TEXT, TAG_IMG, TAG_P, TAG_AT, TAG_A, TAG_B, TAG_I, TAG_U = 1, 2, 3, 5, 6, 7, 8, 9
-TAG_EMOTION, TAG_LINK, TAG_MEDIA, TAG_DOCS = 10, 17, 18, 22
+TAG_EMOTION, TAG_LINK, TAG_MEDIA, TAG_LI = 10, 17, 18, 28
 TAG_QUOTE, TAG_CODE, TAG_CODE_BLOCK, TAG_CODE_BLOCK_V2 = 29, 30, 31, 37
 MSG_POST = 2
 
@@ -188,7 +188,7 @@ def build(L, markdown, footer=""):
     return rt
 
 
-PLACEHOLDERS = {TAG_IMG: "[图片]", TAG_EMOTION: "[表情]", TAG_MEDIA: "[视频]", TAG_DOCS: "[文档]"}
+PLACEHOLDERS = {TAG_IMG: "[图片]", TAG_EMOTION: "[表情]", TAG_MEDIA: "[视频]"}
 
 
 def at_users(L, rich):
@@ -240,6 +240,8 @@ def to_text(L, rich, drop_at=""):
             return at.content or "@"
         if t == TAG_P:
             return kids + "\n"
+        if t == TAG_LI:
+            return "- " + kids.rstrip("\n") + "\n"
         if t == TAG_QUOTE:
             return "".join("> " + line + "\n" for line in kids.rstrip("\n").split("\n"))
         if t == TAG_CODE:

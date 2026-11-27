@@ -101,6 +101,29 @@ class Build(unittest.TestCase):
         text = richtext.to_text(U.L, protobuf_to_dict(rt))
         self.assertEqual(text, "第一行 `c`\n> 引\n```\nx\n```\n> " + FOOTER)
 
+    def test_docs_container_and_list(self):
+        """Feishu's rich editor wraps posts in a DOCS (22) root element; it must not prepend [文档] or glue list items."""
+        rt = U.L.entities.RichText()
+        els = rt.elements.dictionary
+        els["1"].tag = E.DOCS
+        els["1"].childIds.extend(["2", "4"])
+        els["2"].tag = E.P
+        els["2"].childIds.append("3")
+        els["3"].tag, els["3"].property = E.TEXT, E.TextProperty(content="/ai 整理文档").SerializeToString()
+        els["4"].tag = E.UL
+        els["4"].childIds.extend(["5", "7"])
+        els["5"].tag = E.LI
+        els["5"].childIds.append("6")
+        els["6"].tag, els["6"].property = E.A, E.AnchorProperty(href="https://example.com/1", textContent="https://example.com/1").SerializeToString()
+        els["7"].tag = E.LI
+        els["7"].childIds.append("8")
+        els["8"].tag, els["8"].property = E.A, E.AnchorProperty(href="https://example.com/2", textContent="https://example.com/2").SerializeToString()
+        rt.elementIds.append("1")
+
+        text = richtext.to_text(U.L, protobuf_to_dict(rt))
+        self.assertEqual(text, "/ai 整理文档\n- https://example.com/1\n- https://example.com/2")
+        self.assertTrue(lark.is_request(text, "/ai"))
+
 
 class FakeClient:
     def __init__(self, answer):
