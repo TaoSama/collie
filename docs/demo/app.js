@@ -5775,6 +5775,11 @@
   const updateRow = (have, latest, cmd, note, id, name) => isOld(have, latest)
     ? `<div class="update-cmd"><p class="pair-hint">有新版本 ${esc(latest)}。<button class="btn small primary" data-update="${esc(id)}" data-name="${esc(name)}">更新到 ${esc(latest)}</button></p><p class="pair-hint muted">点了没反应的话，在这台电脑上运行${note ? "（" + esc(note) + "）" : ""}：</p><div class="code"><span>${esc(cmd)}</span><button class="icon-btn" data-copy="${esc(cmd)}" title="复制"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></div>` : "";
 
+  const versionBar = (r) => {
+    const have = r.hub?.version || "", latest = r.latest || "";
+    return `<div class="mc-ver-bar"><span>当前版本<span class="mono">${esc(have || "—")}</span></span><span>最新版本<span class="mono">${esc(latest || "—")}</span></span>${isOld(have, latest) ? '<span class="pill attn">有新版本</span>' : ""}</div>`;
+  };
+
   // Update all: every computer behind the latest release, one at a time and
   // the hub last (its restart drops this page for a moment). Each has to come
   // back on the new release before the next one starts; a failure stops there
@@ -6019,7 +6024,7 @@
   // What each tab shows, from /api/devices (the hubs tab needs none: other
   // hubs are this browser's own list).
   const DEV_VIEW = {
-    machines: (r) => `${fleetUpBar(r)}<div class="mc-list" id="dev-machines">${machineCards(r)}</div>`,
+    machines: (r) => `${versionBar(r)}${fleetUpBar(r)}<div class="mc-list" id="dev-machines">${machineCards(r)}</div>`,
     connect: (r) => devPairing(r) + devHubs() + devBrowsers(r),
   };
   function devBrowsers(r) {
