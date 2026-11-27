@@ -50,6 +50,7 @@ var codexNames struct {
 	sync.Mutex
 	path   string
 	mod    time.Time
+	size   int64
 	m      map[string]string
 	byName map[string]string
 }
@@ -103,7 +104,7 @@ func (s *Server) loadCodexNames() bool {
 	}
 	codexNames.Lock()
 	defer codexNames.Unlock()
-	if path == codexNames.path && fi.ModTime().Equal(codexNames.mod) {
+	if path == codexNames.path && fi.ModTime().Equal(codexNames.mod) && fi.Size() == codexNames.size {
 		return true
 	}
 	f, err := os.Open(path)
@@ -133,7 +134,7 @@ func (s *Server) loadCodexNames() bool {
 			byName[name] = id
 		}
 	}
-	codexNames.path, codexNames.mod, codexNames.m, codexNames.byName = path, fi.ModTime(), m, byName
+	codexNames.path, codexNames.mod, codexNames.size, codexNames.m, codexNames.byName = path, fi.ModTime(), fi.Size(), m, byName
 	return true
 }
 

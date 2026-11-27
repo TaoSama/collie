@@ -736,6 +736,8 @@ class Protocol(unittest.TestCase):
         self.proc = subprocess.Popen([sys.executable, os.path.join(self.pkg, "adapter", "main.py")], env=env,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self.secret = None
+        self.secret_gate = None
+        self.secret_loaded = threading.Event()
         self.received = []
         self.fail_receive = False
         self.events = []
@@ -745,6 +747,8 @@ class Protocol(unittest.TestCase):
         self.n = 0
 
     def tearDown(self):
+        if self.secret_gate is not None:
+            self.secret_gate.set()
         self.proc.stdin.close()
         self.proc.wait(10)
         self.proc.stdout.close()
@@ -753,8 +757,19 @@ class Protocol(unittest.TestCase):
         for line in self.proc.stdout:
             f = json.loads(line)
             if f.get("method"):
+                if f["method"] == "connector.secrets.load" and self.secret_gate is not None:
+                    gate = self.secret_gate
+
+                    def finish(req=f, ev=gate):
+                        self.secret_loaded.set()
+                        ev.wait(20)
+                        self.write({"id": req["id"], "result": {"data": self.secret or ""}})
+
+                    threading.Thread(target=finish, daemon=True).start()
+                    continue
                 res = {}
                 if f["method"] == "connector.secrets.load":
+                    self.secret_loaded.set()
                     res = {"data": self.secret or ""}
                 elif f["method"] == "connector.secrets.save":
                     self.secret = f["params"]["data"]
@@ -883,6 +898,47 @@ class Protocol(unittest.TestCase):
             time.sleep(0.05)
         with open(pfile) as f:
             self.assertEqual(json.load(f), {})
+
+    def test_send_not_ready_while_restoring_then_wakes_outbox(self):
+        """A send arriving while larkx is restoring returns not_ready (not not_signed_in), then outbox wakes on sign-in."""
+        saved = {"region": "feishu", "cookies": {"session": "example"}, "user_id": "u_me", "unreachable_once": True}
+        self.secret = base64.b64encode(json.dumps(saved).encode()).decode()
+        self.call("initialize", {"protocol": 1, "extension": {"id": "larkx", "version": "0.4.23", "data_dir": self.data}, "config": {}})
+
+        send = {"ref": "orestore1", "chat": "c_dm", "text": "恢复后再发\n\n" + FOOTER, "footer": FOOTER, "kind": "answer"}
+        err = self.call("channel.send", send)["error"]
+        self.assertEqual(err["code"], "not_ready")
+        self.assertFalse(os.path.exists(os.path.join(self.data, "fake-posts.jsonl")))
+
+        self.until("outbox woken after sign-in", lambda: any(
+            e.get("event") == "connector.changed" and (e.get("params") or {}).get("scope") == "outbox"
+            for e in self.events
+        ) and self.status().get("account") == "示例账号")
+
+        res = self.call("channel.send", send)
+        self.assertEqual(res["result"], {"message_id": "m_sent_1"})
+
+        self.call("connector.logout")
+        err_after = self.call("channel.send", dict(send, ref="orestore2"))["error"]
+        self.assertEqual(err_after["code"], "not_signed_in")
+
+    def test_send_not_ready_while_loading_secrets_then_not_signed_in(self):
+        """While secrets.load is in flight, send returns not_ready; once startup finishes without credentials, it returns not_signed_in."""
+        self.secret_gate = threading.Event()
+        self.call("initialize", {"protocol": 1, "extension": {"id": "larkx", "version": "0.4.23", "data_dir": self.data}, "config": {}})
+        self.assertTrue(self.secret_loaded.wait(10))
+
+        send = {"ref": "oload1", "chat": "c_dm", "text": "测试", "kind": "answer"}
+        self.assertEqual(self.call("channel.send", send)["error"]["code"], "not_ready")
+        self.assertNotEqual(self.status()["state"], "not_signed_in")
+
+        self.secret_gate.set()
+        self.until("outbox woken after startup", lambda: any(
+            e.get("event") == "connector.changed" and (e.get("params") or {}).get("scope") == "outbox"
+            for e in self.events
+        ))
+        self.assertEqual(self.status()["state"], "not_signed_in")
+        self.assertEqual(self.call("channel.send", send)["error"]["code"], "not_signed_in")
 
 if __name__ == "__main__":
     unittest.main()

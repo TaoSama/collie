@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
-
-	"github.com/TaoSama/collie/internal/extproto"
 )
 
 func splitFirstWord(s string) (word, rest string) {
@@ -276,18 +274,28 @@ func (h *extHost) saveConvBrief(c InboxConv, t *Trigger) (string, error) {
 	return t.Text, nil
 }
 
+func (h *extHost) convLabel(id string) string {
+	if c, ok := h.store.conv(id); ok && c.Name != "" {
+		return c.Name
+	}
+	return id
+}
+
 func (h *extHost) failConvStart(conv InboxConv, t *Trigger, reason string) {
+	label := conv.Name
+	if label == "" {
+		label = h.convLabel(conv.ID)
+	}
 	sp := h.sp
 	sp.mu.Lock()
 	failed := sp.updateDeliveryLocked([]*Trigger{t}, nil, func(t *Trigger) { t.Status = "failed" })
 	if failed {
+		sp.addEntryLocked("event", mainThread, fmt.Sprintf("没能为外部会话「%s」（%s）启动专属助手：%s", label, conv.ID, reason), t.ID, "error")
 		sp.changed()
 	}
 	sp.mu.Unlock()
 	if failed {
-		if _, err := h.sendOut(t.Thread, "没能启动 agent："+reason, extproto.KindProgress, runInfo{}, t.ID); err != nil {
-			log.Printf("ext: report dedicated agent startup failure in %s: %v", conv.ID, err)
-		}
+		log.Printf("ext: dedicated agent startup failed for %s: %s", conv.ID, reason)
 	}
 }
 

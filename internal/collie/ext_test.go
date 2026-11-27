@@ -607,6 +607,72 @@ func TestLarkxFake(t *testing.T) {
 		strings.Contains(string(posts), pending.Text) {
 		t.Fatal("a blocked reply reached Feishu or the fixture log could not be read")
 	}
+
+	// Restart larkx with a slow restore (unreachable_once) while a Router reply
+	// is waiting in the outbox on a closed conversation with a subscribed worker:
+	// the initial retry on $proc.state=running must see not_ready (not fail with
+	// not_signed_in), and the outbox wake after restore must deliver it.
+	if _, err := h.configure("larkx", func(x *ExtSetting) { x.Enabled = false }); err != nil {
+		t.Fatal(err)
+	}
+	secretsFile := filepath.Join(dir, "ext", "larkx", "secrets.json")
+	rawSecrets, err := os.ReadFile(secretsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allSecrets map[string]string
+	if err := json.Unmarshal(rawSecrets, &allSecrets); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(allSecrets["larkx"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(decoded, &saved); err != nil {
+		t.Fatal(err)
+	}
+	saved["unreachable_once"] = true
+	reencoded, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allSecrets["larkx"] = base64.StdEncoding.EncodeToString(reencoded)
+	if err := writePrivate(secretsFile, allSecrets); err != nil {
+		t.Fatal(err)
+	}
+	h.store.update("larkx:c_dm", func(c *InboxConv) { c.On = false; c.Worker = "larkx-sub" })
+	sp.mu.Lock()
+	sp.st.Workers["larkx-sub"] = &Worker{Name: "larkx-sub", Thread: "ext:larkx:c_dm", Status: "done", Conv: "larkx:c_dm"}
+	sp.threadLocked("ext:larkx:c_dm").Subscribers = []string{"larkx-sub"}
+	sp.mu.Unlock()
+	reply = httptest.NewRecorder()
+	sp.s.superReply(reply, httptest.NewRequest("POST", "/api/super/reply", strings.NewReader(
+		`{"thread":"ext:larkx:c_dm","text":"重启恢复后照常发出"}`)))
+	if reply.Code != 200 {
+		t.Fatalf("superReply while larkx restarting = %d: %s", reply.Code, reply.Body.String())
+	}
+	var sentResp struct {
+		OK   bool   `json:"ok"`
+		Sent string `json:"sent"`
+	}
+	if err := json.Unmarshal(reply.Body.Bytes(), &sentResp); err != nil || !sentResp.OK || sentResp.Sent == "" {
+		t.Fatalf("unexpected superReply response: %s", reply.Body.String())
+	}
+	if _, err := h.configure("larkx", func(x *ExtSetting) { x.Enabled = true }); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "pending router reply delivered after larkx restore", func() bool {
+		got := h.store.out(sentResp.Sent)
+		if got != nil && got.State == extproto.DeliveryFailed {
+			t.Fatalf("pending reply failed during startup restore: %+v", got)
+		}
+		return got != nil && got.State == extproto.DeliverySent
+	})
+	if posts, err := os.ReadFile(filepath.Join(dir, "ext", "larkx", "data", "fake-posts.jsonl")); err != nil ||
+		!strings.Contains(string(posts), "重启恢复后照常发出") {
+		t.Fatalf("restored reply did not reach fake Feishu: %v", err)
+	}
 }
 
 // An action extension: a pasted key to sign in, the computer to be picked

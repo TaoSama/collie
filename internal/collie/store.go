@@ -73,7 +73,8 @@ type Worker struct {
 	Ended      bool       `json:"ended,omitempty"`
 	// Session is its agent's conversation id, kept after it stops so a later
 	// `spawn --resume` can carry on where it left off.
-	Session string `json:"session,omitempty"`
+	Session       string `json:"session,omitempty"`
+	CompletionSeq uint64 `json:"completion_seq,omitempty"`
 	// Conv is the extension conversation it answers ("" for other workers):
 	// each turn's last message goes back there instead of to the Router.
 	Conv string `json:"conv,omitempty"`

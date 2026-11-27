@@ -188,6 +188,7 @@ type Agent struct {
 	Ready         bool    `json:"interactive_ready"`
 	LaunchPending bool    `json:"launch_pending"`
 	StateSeq      uint64  `json:"state_change_seq"`
+	CompletionSeq uint64  `json:"completion_seq"`
 	TerminalTitle string  `json:"terminal_title_stripped"`
 	Session       *struct {
 		Kind  string `json:"kind"`

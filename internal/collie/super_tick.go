@@ -14,11 +14,12 @@ import (
 )
 
 type liveAgent struct {
-	Pane    string
-	Status  string
-	Ready   bool
-	Kind    string
-	Session string
+	Pane          string
+	Status        string
+	Ready         bool
+	Kind          string
+	Session       string
+	CompletionSeq uint64
 }
 
 var uuidRe = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
@@ -67,7 +68,7 @@ func (sp *Super) byName(list []Agent) map[string]liveAgent {
 		case routerName:
 			continue // another agent took the name the Router could not have
 		}
-		la := liveAgent{Pane: a.PaneID, Status: a.AgentStatus, Ready: a.Ready, Kind: deref(a.Agent)}
+		la := liveAgent{Pane: a.PaneID, Status: a.AgentStatus, Ready: a.Ready, Kind: deref(a.Agent), CompletionSeq: a.CompletionSeq}
 		if a.Session != nil {
 			la.Session = sessionID(a.Session.Kind, a.Session.Value)
 		}
@@ -178,7 +179,11 @@ func (sp *Super) tick(parent context.Context) {
 			w.Session = a.Session
 			sp.dirty = true
 		}
-		prev := w.Status
+		prev, prevComp := w.Status, w.CompletionSeq
+		if a.CompletionSeq > 0 && a.CompletionSeq != w.CompletionSeq {
+			w.CompletionSeq = a.CompletionSeq
+			sp.dirty = true
+		}
 		if a.Status == "blocked" && now.Sub(sp.lastAnswer[a.Pane]) < 2*time.Second {
 			continue // give a just-answered dialog a moment to clear (or show the next one)
 		}
@@ -194,10 +199,15 @@ func (sp *Super) tick(parent context.Context) {
 				fin = append(fin, finished{w, true})
 			case a.Status == "working":
 				w.ResumeAt = time.Time{} // it got going again: a message, the human, or Collie's own nudge
-			case prev == "working" && (a.Status == "done" || a.Status == "idle"):
+			case (prev == "working" && (a.Status == "done" || a.Status == "idle")) ||
+				(prev != "done" && prev != "blocked" && a.Status == "done"):
 				if now.Sub(w.ReportAt) > 90*time.Second {
 					fin = append(fin, finished{w, false})
 				}
+			}
+		} else if a.Status == "done" && prevComp > 0 && a.CompletionSeq > prevComp {
+			if now.Sub(w.ReportAt) > 90*time.Second {
+				fin = append(fin, finished{w, false})
 			}
 		}
 		if !paused && sp.resumeDueLocked(w, a.Status, now) {

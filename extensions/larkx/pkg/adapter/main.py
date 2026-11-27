@@ -57,6 +57,7 @@ class Extension:
         self.pending_wake = threading.Event()
         self.trigger = ""
         self.ignored = False
+        self.starting = False
         self.restoring = False  # kept credentials, Feishu not reached yet: 正在连接, not 未登录
 
     # Host -> extension.
@@ -112,6 +113,8 @@ class Extension:
         threading.Thread(target=self._flush_loop, daemon=True).start()
         if self.pending:
             self.pending_wake.set()
+        with self.mu:
+            self.starting = True
         threading.Thread(target=self.start, daemon=True).start()
         return {"protocol": PROTOCOL, "id": ID, "version": self.version}
 
@@ -119,7 +122,7 @@ class Extension:
         with self.mu:
             if self.backend is None:
                 return {"state": "error", "error": self.loading}
-            if not self.account and self.restoring:
+            if not self.account and (self.starting or self.restoring):
                 # Signed in before and not told otherwise: Feishu is only slow to answer.
                 return {"state": "ok", "detail": {"phase": "正在连接飞书"}}
             if not self.account:
@@ -170,9 +173,11 @@ class Extension:
             self.backend.logout()
         with self.mu:
             self.account, self.link, self.expired = "", "", ""
+            self.starting, self.restoring = False, False
             self.pending = {}
         self._save_pending({})
         self.changed()
+        self.wake_outbox()
         self.peer.call("connector.secrets.delete", {"contribution": ID})
         return {}
 
@@ -182,7 +187,12 @@ class Extension:
             raise peer.Error("invalid_params", "a send needs ref and chat")
         if p.get("images") or p.get("files"):
             raise peer.Error("cannot_send", "飞书扩展目前只发文字")
-        if self.backend is None or not self.account:
+        with self.mu:
+            starting = self.starting or self.restoring
+            backend, account = self.backend, self.account
+        if not account and starting:
+            raise peer.Error("not_ready", "飞书正在启动连接")
+        if backend is None or not account:
             raise peer.Error("not_signed_in", "飞书没有登录")
         with self.mu:  # checked and claimed at once: two calls with one ref post once
             done = self.sent.get(ref)
@@ -198,7 +208,7 @@ class Extension:
             text = text.rstrip()[:-len(footer)].rstrip()
         lark = self.lark
         try:
-            mid = self.backend.post(chat, text, footer, p.get("reply_to") or "")
+            mid = backend.post(chat, text, footer, p.get("reply_to") or "")
         except lark.NotSent as e:
             self._mark(ref, None)
             raise peer.Error("cannot_send", str(e))
@@ -363,47 +373,50 @@ class Extension:
 
     def start(self):
         try:
-            backend = self._load()
-        except Exception as e:
-            log.error("%s", e)
-            with self.mu:
-                self.loading = str(e) if isinstance(e, deps.DepsError) else "启动失败：%s" % e
-            self.loaded.set()
-            self.changed()
-            return
-        backend.trigger, backend.ignored = self.trigger, self.ignored
-        backend.self_mention, backend.group_topics = self.self_mention, self.group_topics
-        with self.mu:
-            self.backend = backend
-        self.loaded.set()
-        saved = self._saved()
-        with self.mu:
-            self.restoring = bool(saved)
-        tries = 0
-        while saved:
             try:
-                self._signed_in(backend.restore(saved))
-                break
-            except self.lark.Expired as e:
-                log.warning("kept sign-in no longer valid: %s", str(e).splitlines()[0])
+                backend = self._load()
+            except Exception as e:
+                log.error("%s", e)
                 with self.mu:
-                    self.expired = "expired"
-                break
-            except OSError as e:  # Feishu not reached (requests' errors are OSErrors too): the sign-in stands
-                wait = RESTORE_WAITS[tries] if tries < len(RESTORE_WAITS) else RESTORE_RETRY
-                tries += 1
-                log.warning("Feishu not reached, trying again in %ds: %s", wait, self.lark.short_reason(str(e)))
-                if self.stop.wait(wait):
+                    self.loading = str(e) if isinstance(e, deps.DepsError) else "启动失败：%s" % e
+                self.loaded.set()
+                return
+            backend.trigger, backend.ignored = self.trigger, self.ignored
+            backend.self_mention, backend.group_topics = self.self_mention, self.group_topics
+            with self.mu:
+                self.backend = backend
+            self.loaded.set()
+            saved = self._saved()
+            with self.mu:
+                self.restoring = bool(saved)
+            tries = 0
+            while saved:
+                try:
+                    self._signed_in(backend.restore(saved))
                     break
-            except Exception as e:  # a fault here, not Feishu: say so instead of waiting on the network forever
-                log.exception("signing in again failed")
-                with self.mu:
-                    self.loading = "登录出错：%s" % e
-                    self.backend = None
-                break
-        with self.mu:
-            self.restoring = False
-        self.changed()
+                except self.lark.Expired as e:
+                    log.warning("kept sign-in no longer valid: %s", str(e).splitlines()[0])
+                    with self.mu:
+                        self.expired = "expired"
+                    break
+                except OSError as e:  # Feishu not reached (requests' errors are OSErrors too): the sign-in stands
+                    wait = RESTORE_WAITS[tries] if tries < len(RESTORE_WAITS) else RESTORE_RETRY
+                    tries += 1
+                    log.warning("Feishu not reached, trying again in %ds: %s", wait, self.lark.short_reason(str(e)))
+                    if self.stop.wait(wait):
+                        break
+                except Exception as e:  # a fault here, not Feishu: say so instead of waiting on the network forever
+                    log.exception("signing in again failed")
+                    with self.mu:
+                        self.loading = "登录出错：%s" % e
+                        self.backend = None
+                    break
+        finally:
+            with self.mu:
+                self.starting = False
+                self.restoring = False
+            self.changed()
+            self.wake_outbox()
 
     def _load(self):
         fake = os.environ.get("COLLIE_LARKX_FAKE") == "1"
@@ -442,9 +455,11 @@ class Extension:
         self.backend.stop()
         with self.mu:
             self.account, self.expired, self.link = account, "", ""
+            self.starting, self.restoring = False, False
         self.stop = threading.Event()
         threading.Thread(target=self._listen, args=(self.stop,), daemon=True).start()
         self.changed()
+        self.wake_outbox()
 
     def _listen(self, stop):
         try:
@@ -480,6 +495,9 @@ class Extension:
 
     def changed(self):
         self.peer.notify("connector.changed", {"contribution": ID, "scope": "status"})
+
+    def wake_outbox(self):
+        self.peer.notify("connector.changed", {"contribution": ID, "scope": "outbox"})
 
 
 def main():

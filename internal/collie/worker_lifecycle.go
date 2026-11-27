@@ -104,7 +104,7 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		// If this turn was drafting a reply for the inbox UI, capture it into
 		// the draft box and never auto-send to Feishu/WeChat.
 		if d := sp.s.ext.activeWorkerDraft(w.Name); d != nil {
-			text := sp.lastReply(ctx, w, 0, false)
+			text := sp.convLastReply(ctx, w)
 			if msg := sp.workerAgentError(ctx, w, text); msg != "" {
 				sp.s.ext.completeDraft(d.ID, "", "agent 出错："+msg)
 			} else if strings.TrimSpace(text) == "" {
@@ -116,15 +116,19 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		}
 		// An extension conversation's agent: its turn's last message is the
 		// answer, sent back to that chat, not a report for the Router.
-		// Only its own words go out: never the screen, which may be the
-		// task it was given.
-		text, kind := sp.lastReply(ctx, w, 0, false), extproto.KindAnswer
+		// Only its own words go out: never the screen, and never Collie's
+		// internal errors (which stay in Collie for the human).
+		text := sp.convLastReply(ctx, w)
+		label := sp.s.ext.convLabel(w.Conv)
 		if msg := sp.workerAgentError(ctx, w, text); msg != "" {
-			text = "（agent 出错，没能完成：" + msg + "）"
-		} else if text == "" {
-			text, kind = "（没取到 agent 的回答：找不到它的会话记录。请在 Collie 里看 "+w.Name+"。）", extproto.KindProgress
+			sp.notifyConvError(w, fmt.Sprintf("专属助手 %s（%s）出错，未发回外部会话：%s", w.Name, label, msg))
+			return
 		}
-		if _, err := sp.s.ext.sendOut(w.Thread, text, kind, sp.workerRunInfo(w), ""); err != nil {
+		if text == "" {
+			sp.notifyConvError(w, fmt.Sprintf("没取到专属助手 %s（%s）的回答（找不到会话记录），未发回外部会话。请在 Collie 里查看 %s。", w.Name, label, w.Name))
+			return
+		}
+		if _, err := sp.s.ext.sendOut(w.Thread, text, extproto.KindAnswer, sp.workerRunInfo(w), ""); err != nil {
 			log.Printf("worker %s: send the answer back: %v", w.Name, err)
 		}
 		return
@@ -183,6 +187,37 @@ func agentStopLine(screen, summary string) string {
 	return ""
 }
 
+var (
+	convReplyRetries = 3
+	convReplyWait    = 500 * time.Millisecond
+)
+
+func (sp *Super) notifyConvError(w *Worker, text string) {
+	log.Printf("worker %s: %s", w.Name, text)
+	sp.mu.Lock()
+	sp.addEntryLocked("event", mainThread, text, w.Name, "error")
+	sp.mu.Unlock()
+}
+
+// convLastReply reads a dedicated worker's last message, retrying briefly
+// when the transcript isn't indexed yet (e.g. Codex writing session_index.jsonl
+// right after task_complete).
+func (sp *Super) convLastReply(ctx context.Context, w *Worker) string {
+	for i := 0; ; i++ {
+		if text := sp.lastReply(ctx, w, 0, false); text != "" {
+			return text
+		}
+		if i >= convReplyRetries || sp.workerAgentError(ctx, w, "") != "" {
+			return ""
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(convReplyWait):
+		}
+	}
+}
+
 func (sp *Super) lastAssistant(ctx context.Context, w *Worker) string {
 	return sp.lastReply(ctx, w, 1200, true)
 }
@@ -200,9 +235,16 @@ func (sp *Super) lastReply(ctx context.Context, w *Worker, most int, screen bool
 	if pane, machine := split(w.PaneID); machine != "" {
 		// Its transcript lives on that computer: ask its node.
 		if c, err := sp.s.herdr.Client(machine); err == nil {
-			u := "http://node/api/panes/" + url.PathEscape(pane) + "/last"
+			q := url.Values{}
 			if !screen {
-				u += "?screen=0"
+				q.Set("screen", "0")
+			}
+			if w.Session != "" {
+				q.Set("session", w.Session)
+			}
+			u := "http://node/api/panes/" + url.PathEscape(pane) + "/last"
+			if encoded := q.Encode(); encoded != "" {
+				u += "?" + encoded
 			}
 			req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
 			if resp, err := c.Do(req); err == nil {
@@ -220,7 +262,10 @@ func (sp *Super) lastReply(ctx context.Context, w *Worker, most int, screen bool
 		var info struct {
 			Agent agentDetail `json:"agent"`
 		}
-		if sp.s.herdr.Call(ctx, "agent.get", map[string]any{"target": w.PaneID}, &info) == nil && info.Agent.replyTranscriptKnown(screen) {
+		if sp.s.herdr.Call(ctx, "agent.get", map[string]any{"target": w.PaneID}, &info) == nil {
+			if info.Agent.Session == nil && w.Session != "" {
+				info.Agent.Session = &agentSession{Kind: "id", Value: w.Session}
+			}
 			if tr := sp.s.transcriptFor(w.Name, w.PaneID, info.Agent, sp.transcripts); tr != nil {
 				tr.update()
 				msgs := tr.view()

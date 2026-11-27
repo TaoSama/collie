@@ -457,22 +457,18 @@ func agyOutput(s string) string {
 
 // ---------------------------------------------------------------- locating
 
-type agentDetail struct {
-	Agent   *string `json:"agent"`
-	Status  string  `json:"agent_status"`
-	Cwd     *string `json:"cwd"`
-	Session *struct {
-		Kind  string `json:"kind"`
-		Value string `json:"value"`
-	} `json:"agent_session"`
-	TerminalTitle         string `json:"terminal_title"`
-	TerminalTitleStripped string `json:"terminal_title_stripped"`
+type agentSession struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
 }
 
-// A title can identify a likely replay for display. Replies leaving Collie
-// need a session or log reported by herdr.
-func (a agentDetail) replyTranscriptKnown(screen bool) bool {
-	return screen || deref(a.Agent) != "codex" || a.Session != nil && a.Session.Value != ""
+type agentDetail struct {
+	Agent                 *string       `json:"agent"`
+	Status                string        `json:"agent_status"`
+	Cwd                   *string       `json:"cwd"`
+	Session               *agentSession `json:"agent_session"`
+	TerminalTitle         string        `json:"terminal_title"`
+	TerminalTitleStripped string        `json:"terminal_title_stripped"`
 }
 
 // transcriptFor resolves (and caches) the transcript for the agent in a pane.
@@ -1079,7 +1075,12 @@ func (s *Server) lastMessage(w http.ResponseWriter, r *http.Request) {
 		Agent agentDetail `json:"agent"`
 	}
 	screen := r.URL.Query().Get("screen") != "0"
-	if s.herdr.Call(r.Context(), "agent.get", map[string]any{"target": id}, &info) == nil && info.Agent.replyTranscriptKnown(screen) {
+	if s.herdr.Call(r.Context(), "agent.get", map[string]any{"target": id}, &info) == nil {
+		if info.Agent.Session == nil {
+			if sess := strings.TrimSpace(r.URL.Query().Get("session")); sess != "" {
+				info.Agent.Session = &agentSession{Kind: "id", Value: sess}
+			}
+		}
 		if tr := s.transcriptFor("last:"+id, id, info.Agent, map[string]*transcript{}); tr != nil {
 			if err := tr.load(r.Context(), nil, false); err != nil {
 				log.Printf("collie: read latest message: %v", err)

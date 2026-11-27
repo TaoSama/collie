@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,5 +195,193 @@ func TestOutboxWakeRetriesNotReadySend(t *testing.T) {
 	waitFor(t, "pending send retried by the outbox event", func() bool {
 		got := h.store.out(o.Ref)
 		return got.State == extproto.DeliverySent && got.MessageID == "message"
+	})
+}
+
+func TestRouterReplyToClosedExtThreadWithSubscriberRetriesAfterNotReady(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	m := fakeManifest(larkxID, "receive")
+	h.cat[larkxID] = m
+	r := &extRun{h: h, man: m, proc: extProcState{State: extRunning}, pull: make(chan struct{}, 1)}
+	h.mu.Lock()
+	h.runs[larkxID] = r
+	h.mu.Unlock()
+
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	ready := make(chan struct{})
+	firstTry := make(chan struct{}, 1)
+	r.peer = extproto.NewPeer(client, client, "h", nil, nil)
+	remote := extproto.NewPeer(server, server, "p", func(_ context.Context, method string, _ json.RawMessage) (any, error) {
+		if method != extproto.MChannelSend {
+			t.Errorf("unexpected request %s", method)
+		}
+		select {
+		case firstTry <- struct{}{}:
+		default:
+		}
+		select {
+		case <-ready:
+			return extproto.SendResult{MessageID: "lark-msg-1"}, nil
+		default:
+			return nil, extproto.Errorf(extproto.ErrNotReady, "starting")
+		}
+	}, nil)
+	go r.peer.Serve(t.Context())
+	go remote.Serve(t.Context())
+
+	conv := larkxID + ":c_dm"
+	thread := "ext:" + conv
+	h.store.mu.Lock()
+	h.store.convs[conv] = &InboxConv{ID: conv, Ext: larkxID, Chat: "c_dm", On: false, Handler: handlerAgent, Worker: "larkx-sub"}
+	h.store.mu.Unlock()
+	sp.mu.Lock()
+	sp.st.Workers["larkx-sub"] = &Worker{Name: "larkx-sub", Thread: thread, Status: "done", Conv: conv}
+	sp.threadLocked(thread).Subscribers = []string{"larkx-sub"}
+	sp.mu.Unlock()
+
+	rec := httptest.NewRecorder()
+	sp.s.superReply(rec, httptest.NewRequest("POST", "/api/super/reply", strings.NewReader(
+		`{"thread":"`+thread+`","text":"六方分工表已建好"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("superReply = %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		OK   bool   `json:"ok"`
+		Sent string `json:"sent"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || !resp.OK || resp.Sent == "" {
+		t.Fatalf("unexpected superReply response: %s", rec.Body.String())
+	}
+	<-firstTry
+	if got := h.store.out(resp.Sent); got == nil || got.State != outPending {
+		t.Fatalf("send should remain pending on not_ready, got %+v", got)
+	}
+
+	close(ready)
+	r.event(extproto.EChanged, json.RawMessage(`{"scope":"outbox"}`))
+	waitFor(t, "router reply delivered after outbox wake", func() bool {
+		got := h.store.out(resp.Sent)
+		return got != nil && got.State == extproto.DeliverySent && got.MessageID == "lark-msg-1"
+	})
+}
+
+func TestConvWorkerInternalErrorsStayInCollie(t *testing.T) {
+	oldRetries, oldWait := convReplyRetries, convReplyWait
+	convReplyRetries, convReplyWait = 1, time.Millisecond
+	t.Cleanup(func() { convReplyRetries, convReplyWait = oldRetries, oldWait })
+
+	sp, h, _ := newExtTestHub(t)
+	s, f, pane := chatServer(t, 0, "codex")
+	s.home = t.TempDir()
+	t.Setenv("CODEX_HOME", s.home)
+	sp.s.herdr = s.herdr
+	sp.s.home = s.home
+	sp.transcripts = map[string]*transcript{}
+
+	conv := larkxID + ":c_dm"
+	thread := "ext:" + conv
+	h.store.mu.Lock()
+	h.store.convs[conv] = &InboxConv{ID: conv, Ext: larkxID, Chat: "c_dm", Name: "杜俊达"}
+	h.store.mu.Unlock()
+
+	w := &Worker{Name: "larkx-5edd68", Kind: "codex", Thread: thread, PaneID: pane, Conv: conv, Status: "done"}
+
+	// 1. Missing transcript must notify Collie (chat:main) and never send to the external chat.
+	f.panes[pane].title = "codex | me"
+	sp.workerSettled(t.Context(), w, false)
+	if outs := h.store.outs("conv = ?", conv); len(outs) != 0 {
+		t.Fatalf("missing transcript leaked %d message(s) to external chat: %+v", len(outs), outs)
+	}
+	sp.mu.Lock()
+	entries := append([]*Entry(nil), sp.st.Entries...)
+	sp.mu.Unlock()
+	if len(entries) != 1 || entries[0].Thread != mainThread || entries[0].Tone != "error" || !strings.Contains(entries[0].Text, "杜俊达") {
+		t.Fatalf("expected error notice in chat:main, got %+v", entries)
+	}
+
+	// 2. Startup failure (failConvStart) must notify Collie (chat:main) and never send to the external chat.
+	trig := &Trigger{ID: "t1", Thread: thread, Status: "queued"}
+	sp.mu.Lock()
+	sp.st.Triggers = append(sp.st.Triggers, trig)
+	sp.mu.Unlock()
+	h.failConvStart(InboxConv{ID: conv, Ext: larkxID, Chat: "c_dm", Name: "杜俊达"}, trig, "hub 不跑 agent")
+	if outs := h.store.outs("conv = ?", conv); len(outs) != 0 {
+		t.Fatalf("failConvStart leaked %d message(s) to external chat: %+v", len(outs), outs)
+	}
+	sp.mu.Lock()
+	entries = append([]*Entry(nil), sp.st.Entries...)
+	sp.mu.Unlock()
+	if len(entries) != 2 || entries[1].Thread != mainThread || entries[1].Tone != "error" || !strings.Contains(entries[1].Text, "hub 不跑 agent") {
+		t.Fatalf("expected startup failure notice in chat:main, got %+v", entries)
+	}
+}
+
+func TestConvLastReplyRetriesUntilCodexIndexAppears(t *testing.T) {
+	oldRetries, oldWait := convReplyRetries, convReplyWait
+	convReplyRetries, convReplyWait = 5, 10*time.Millisecond
+	t.Cleanup(func() { convReplyRetries, convReplyWait = oldRetries, oldWait })
+
+	s, f, pane := chatServer(t, 0, "codex")
+	s.home = t.TempDir()
+	t.Setenv("CODEX_HOME", s.home)
+	log := strings.Replace(zstRollout, `"payload":{}`, `"payload":{"cwd":"/tmp"}`, 1)
+	writeFiles(t, s.home, map[string]string{
+		"sessions/2026/11/26/rollout-date-id.jsonl": log,
+	})
+	f.panes[pane].title = "Topic | me"
+	sp := &Super{s: s, transcripts: map[string]*transcript{}}
+	w := &Worker{Name: "larkx-59c4de", Kind: "codex", PaneID: pane, Conv: "larkx:c_dm"}
+
+	go func() {
+		time.Sleep(15 * time.Millisecond)
+		_ = os.WriteFile(filepath.Join(s.home, "session_index.jsonl"), []byte(`{"id":"id","thread_name":"Topic"}`+"\n"), 0o600)
+	}()
+
+	if got := sp.convLastReply(t.Context(), w); got != "Two files." {
+		t.Fatalf("convLastReply = %q, want Two files.", got)
+	}
+}
+
+func TestFastTurnBetweenTicksSettlesWorker(t *testing.T) {
+	s, f, pane := chatServer(t, 0, "codex")
+	s.home = t.TempDir()
+	t.Setenv("CODEX_HOME", s.home)
+	log := strings.Replace(zstRollout, `"payload":{}`, `"payload":{"cwd":"/tmp"}`, 1)
+	writeFiles(t, s.home, map[string]string{
+		"session_index.jsonl":                       `{"id":"id","thread_name":"Topic"}` + "\n",
+		"sessions/2026/11/26/rollout-date-id.jsonl": log,
+	})
+	f.panes[pane].name = "larkx-fast"
+	f.panes[pane].title = "Topic | me"
+	f.panes[pane].status = "done"
+
+	sp, h, _ := newExtTestHub(t)
+	sp.s.herdr = s.herdr
+	sp.s.home = s.home
+	sp.transcripts = map[string]*transcript{}
+
+	conv := larkxID + ":c_fast"
+	thread := "ext:" + conv
+	h.store.mu.Lock()
+	h.store.convs[conv] = &InboxConv{ID: conv, Ext: larkxID, Chat: "c_fast", Name: "王思宇"}
+	h.store.mu.Unlock()
+	w := &Worker{Name: "larkx-fast", Kind: "codex", Thread: thread, PaneID: pane, Conv: conv, Status: "idle", CreatedAt: time.Now()}
+	sp.mu.Lock()
+	sp.st.Workers[w.Name] = w
+	sp.mu.Unlock()
+
+	// Fast turn went idle -> working -> done between ticks: must settle and enqueue reply.
+	sp.tick(t.Context())
+	waitFor(t, "fast turn reply queued", func() bool {
+		outs := h.store.outs("conv = ?", conv)
+		return len(outs) == 1 && strings.Contains(outs[0].Text, "Two files.")
 	})
 }

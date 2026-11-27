@@ -206,7 +206,7 @@ func paneEarlierRejectsReplacement(t *testing.T, rewrite bool) {
 	}
 }
 
-func TestCodexLastReplyNeedsReportedSession(t *testing.T) {
+func TestCodexLastReplyUsesUniqueTitleAndRejectsDuplicates(t *testing.T) {
 	s, f, pane := chatServer(t, 0, "codex")
 	s.home = t.TempDir()
 	t.Setenv("CODEX_HOME", s.home)
@@ -218,25 +218,46 @@ func TestCodexLastReplyNeedsReportedSession(t *testing.T) {
 	f.panes[pane].title = "Topic | me"
 	w := &Worker{Name: "worker", PaneID: pane}
 	sp := &Super{s: s, transcripts: map[string]*transcript{}}
-	remoteStatus := func() int {
-		req := httptest.NewRequest("GET", "/?screen=0", nil)
+	remote := func(query string) (int, string) {
+		req := httptest.NewRequest("GET", "/?"+query, nil)
 		req.SetPathValue("id", pane)
 		out := httptest.NewRecorder()
 		s.lastMessage(out, req)
-		return out.Code
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(out.Body.Bytes(), &body)
+		return out.Code, body.Text
 	}
-	if got := remoteStatus(); got != 404 {
-		t.Fatalf("title-only remote reply status = %d, want 404", got)
-	}
-	if got := sp.lastReply(t.Context(), w, 0, false); got != "" {
-		t.Fatalf("title-only local reply = %q", got)
-	}
-	f.panes[pane].log = "id.jsonl"
-	if got := remoteStatus(); got != 200 {
-		t.Fatalf("reported-session remote reply status = %d, want 200", got)
+	// Unique non-generic title + matching cwd resolves even when herdr does not report agent_session.
+	if code, text := remote("screen=0"); code != 200 || text != "Two files." {
+		t.Fatalf("unique-title remote reply = (%d, %q), want (200, Two files.)", code, text)
 	}
 	if got := sp.lastReply(t.Context(), w, 0, false); got != "Two files." {
-		t.Fatalf("reported-session local reply = %q", got)
+		t.Fatalf("unique-title local reply = %q, want Two files.", got)
+	}
+
+	// Duplicate title in session_index.jsonl must NOT guess when agent_session is absent.
+	writeFiles(t, s.home, map[string]string{
+		"session_index.jsonl": `{"id":"id","thread_name":"Topic"}` + "\n" + `{"id":"id2","thread_name":"Topic"}` + "\n",
+	})
+	if code, _ := remote("screen=0"); code != 404 {
+		t.Fatalf("duplicate-title remote reply status = %d, want 404", code)
+	}
+	if got := sp.lastReply(t.Context(), w, 0, false); got != "" {
+		t.Fatalf("duplicate-title local reply = %q, want empty", got)
+	}
+
+	// Persisted session fallback (query param / w.Session) or herdr-reported session still resolves.
+	if code, text := remote("screen=0&session=id"); code != 200 || text != "Two files." {
+		t.Fatalf("session-fallback remote reply = (%d, %q), want (200, Two files.)", code, text)
+	}
+	f.panes[pane].log = "id.jsonl"
+	if code, text := remote("screen=0"); code != 200 || text != "Two files." {
+		t.Fatalf("reported-session remote reply = (%d, %q), want (200, Two files.)", code, text)
+	}
+	if got := sp.lastReply(t.Context(), w, 0, false); got != "Two files." {
+		t.Fatalf("reported-session local reply = %q, want Two files.", got)
 	}
 }
 

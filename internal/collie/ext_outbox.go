@@ -295,8 +295,10 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 		log.Printf("ext %s: send %s: %v", r.man.ID, o.Ref, err)
 		return false
 	case extproto.IsCode(err, extproto.ErrUncertain):
+		log.Printf("ext %s: send %s uncertain: %v", r.man.ID, o.Ref, err)
 		o.State, o.Reason, o.DoneAt = extproto.DeliveryUncertain, err.Error(), time.Now()
 	default:
+		log.Printf("ext %s: send %s failed: %v", r.man.ID, o.Ref, err)
 		o.State, o.Reason, o.DoneAt = extproto.DeliveryFailed, err.Error(), time.Now()
 	}
 	h.store.putOutIf(o, outPending)
