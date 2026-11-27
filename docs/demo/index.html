@@ -95,9 +95,12 @@
       <button class="icon-btn" id="local-app-x" title="不再提示"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <footer class="side-foot">
-      <a class="foot-status" href="#/devices" id="nav-devices" title="设备">
-        <span class="conn" id="conn"></span><span class="update-note" id="update-note" hidden>有新版</span><span id="herdr-status" class="muted">connecting…</span>
-      </a>
+      <div class="foot-devices">
+        <a class="foot-status" href="#/devices" id="nav-devices">
+          <span class="conn" id="conn"></span><span class="update-note" id="update-note" hidden>有新版</span><span id="herdr-status" class="muted">connecting…</span>
+        </a>
+        <div class="version-tip" id="version-tip" role="tooltip" hidden></div>
+      </div>
       <a class="icon-btn" href="#/wb" id="nav-wb" title="工作台" aria-label="工作台">
         <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
       </a>

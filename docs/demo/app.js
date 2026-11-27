@@ -5860,6 +5860,84 @@
   };
   const RELEASE = /^v\d+\.\d+\.\d+$/;
   const isOld = (have, latest) => RELEASE.test(have || "") && RELEASE.test(latest || "") && cmpVer(have.slice(1), latest.slice(1)) < 0;
+  const versionFoot = $(".foot-devices");
+  const versionAnchor = $("#nav-devices");
+  const versionTip = $("#version-tip");
+  const versionTipDelay = 300;
+  const versionCacheMs = 60 * 1000;
+  let versionTimer, versionRequest, versionCache, versionCachedAt = 0;
+  let versionHovered = false, versionFocused = false, versionDismissed = false;
+
+  const versionTipWanted = () => !touchMQ.matches && !versionDismissed && (versionHovered || versionFocused);
+  function hideVersionTip() {
+    clearTimeout(versionTimer);
+    versionTip.hidden = true;
+    versionAnchor.removeAttribute("aria-describedby");
+  }
+  function renderVersionTip(have, latest) {
+    const number = (v) => `<span class="mono">${esc(v || "—")}</span>`;
+    if (have && have === latest) return `<span>已是最新</span> ${number(have)}`;
+    const old = isOld(have, latest);
+    return `<span class="version-tip-version">当前 ${number(have)}</span>
+      <span aria-hidden="true">${old ? "→" : "·"}</span>
+      <span class="version-tip-version">最新 ${number(latest)}</span>
+      ${old ? '<span class="version-tip-new">有新版</span>' : ""}`;
+  }
+  async function showVersionTip() {
+    if (!versionTipWanted()) return;
+    try {
+      if (!versionCache || Date.now() - versionCachedAt >= versionCacheMs) {
+        versionRequest ??= api("/api/devices").then((r) => {
+          versionCache = { have: r.hub?.version, latest: r.latest };
+          versionCachedAt = Date.now();
+        }).finally(() => { versionRequest = null; });
+        await versionRequest;
+      }
+      if (!versionTipWanted() || !(versionCache.have || versionCache.latest)) return;
+      versionTip.innerHTML = renderVersionTip(versionCache.have, versionCache.latest);
+      versionTip.hidden = false;
+      versionAnchor.setAttribute("aria-describedby", versionTip.id);
+    } catch (error) {
+      hideVersionTip();
+      console.warn("Could not read the computer versions", error);
+    }
+  }
+  versionFoot.addEventListener("pointerenter", (e) => {
+    if (touchMQ.matches || e.pointerType === "touch") return;
+    versionHovered = true;
+    if (!versionFocused) versionDismissed = false;
+    clearTimeout(versionTimer);
+    versionTimer = setTimeout(showVersionTip, versionTipDelay);
+  });
+  versionFoot.addEventListener("pointerleave", () => {
+    versionHovered = false;
+    if (!versionFocused) hideVersionTip();
+  });
+  versionAnchor.addEventListener("focus", () => {
+    if (!versionAnchor.matches(":focus-visible")) return;
+    versionFocused = true;
+    versionDismissed = false;
+    clearTimeout(versionTimer);
+    showVersionTip();
+  });
+  versionAnchor.addEventListener("blur", () => {
+    versionFocused = false;
+    if (!versionHovered) hideVersionTip();
+  });
+  versionAnchor.addEventListener("click", () => {
+    versionDismissed = true;
+    hideVersionTip();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !versionTipWanted()) return;
+    versionDismissed = true;
+    hideVersionTip();
+  });
+  touchMQ.addEventListener("change", (e) => {
+    if (!e.matches) return;
+    versionHovered = versionFocused = false;
+    hideVersionTip();
+  });
   async function checkUpdates() {
     try {
       const r = await api("/api/version");
