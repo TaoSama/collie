@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -255,5 +257,76 @@ func TestLarkCredentialsBlockBeforeOutbox(t *testing.T) {
 		if e.Thread != mainThread || !strings.Contains(e.Text, c.ID) || strings.Contains(e.Text, secret) {
 			t.Fatal("the private notice should identify the conversation and omit the message")
 		}
+	}
+}
+
+func TestLarkInboxReplyChecksBeforeKeepingFiles(t *testing.T) {
+	sp, h, dir := newExtTestHub(t)
+	m := fakeManifest(larkxID, "receive")
+	h.cat[larkxID] = m
+	sp.s.token, sp.s.publicURLs = "test-token", []string{"https://hub.example"}
+	t.Cleanup(func() {
+		if _, err := h.configure(larkxID, func(s *ExtSetting) { s.Enabled = false }); err != nil {
+			t.Error(err)
+		}
+	})
+	login(t, startExt(t, h, larkxID))
+	c, _, err := h.fileIncoming(m, incomingMsg{Chat: "send", At: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secret := "sk-" + strings.Repeat("Ab9", 13)
+	for _, test := range []struct {
+		name, text, footer, filename string
+	}{
+		{"body", secret, "", "out.txt"},
+		{"footer", "safe", secret, "out.txt"},
+		{"filename", "safe", "", secret + ".txt"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sp.mu.Lock()
+			sp.st.Settings.ExtFooter = test.footer
+			sp.mu.Unlock()
+			if _, err := h.sendInboxReply(c, test.text, true, runInfo{}, []sendFile{{Name: test.filename, Data: "aGk="}}); !errors.Is(err, errLarkCredential) {
+				t.Fatalf("expected credentials error, got %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "ext-outbox")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a blocked reply touched the outbox directory: %v", err)
+			}
+			if len(h.store.outs("conv = ?", c.ID)) != 0 || len(h.store.msgs(c.ID, time.Time{})) != 0 || len(sp.st.Entries) != 0 {
+				t.Fatal("a blocked direct reply saved a record or sent a duplicate notice")
+			}
+		})
+	}
+
+	id := strings.Repeat("a", 32)
+	staged, ok := h.stagedPath(id)
+	if !ok {
+		t.Fatal("invalid fixture upload ID")
+	}
+	if err := os.MkdirAll(filepath.Dir(staged), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(staged, extFileInlineMost+1); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shared send path turns the large file into a link before appending
+	// the requested footer, even when the caller supplied no text.
+	out, err := h.sendInboxReply(c, "", true, runInfo{}, []sendFile{{Name: "large.txt", ID: id}})
+	if err != nil || out.State != extproto.DeliverySent || len(out.Files) != 1 {
+		t.Fatalf("the generated link should be sent: %v", err)
+	}
+	link := out.Files[0].Link
+	if !strings.Contains(link, "&sig=") || out.Footer == "" || !strings.Contains(out.Text, link+"\n\n"+out.Footer) {
+		t.Fatal("the signed link should appear before the AI footer")
+	}
+	sent := sentLines(dir, larkxID)
+	if len(sent) != 1 || sent[0]["text"] != out.Text || sent[0]["files"] != float64(0) {
+		t.Fatal("the extension did not receive the link in place of the file")
 	}
 }

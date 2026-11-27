@@ -229,6 +229,32 @@ func (h *extHost) sendInboxReply(c InboxConv, text string, aiFooter bool, ri run
 		return nil, err
 	}
 	o := &OutboxItem{Ref: ref, Conv: c.ID, Kind: extproto.KindAnswer, State: outPending, At: time.Now()}
+	footer := ""
+	if aiFooter {
+		if m := h.manifest(c.Ext); m == nil || !m.Contributes.Channel.NoFooter {
+			vars := map[string]string{
+				"agent": ri.Agent, "model": ri.Model, "effort": ri.Effort, "machine": ri.Machine, "worker": ri.Worker,
+				"ctx": ri.Ctx, "time": time.Now().Format("15:04"), "by": "你", "elapsed": "—",
+			}
+			for k, v := range vars {
+				if v == "" {
+					vars[k] = "默认"
+					if k == "by" || k == "ctx" || k == "worker" || k == "machine" {
+						vars[k] = "—"
+					}
+				}
+			}
+			footer = renderFooter(h.footer(), vars)
+		}
+	}
+	if err := h.checkLarkSend(c, o, false, text, footer); err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		if err := h.checkLarkSend(c, o, false, f.Name); err != nil {
+			return nil, err
+		}
+	}
 	if len(files) > 0 {
 		if m := h.manifest(c.Ext); m == nil || !m.has(capSend) {
 			return nil, fmt.Errorf("%s扩展目前只发文字", extLabelOrID(m, c.Ext))
@@ -254,27 +280,12 @@ func (h *extHost) sendInboxReply(c InboxConv, text string, aiFooter bool, ri run
 			text += "文件太大，发下载链接（24 小时内有效）：\n" + strings.Join(links, "\n")
 		}
 	}
-	full, footer := text, ""
-	if aiFooter && text != "" {
-		if m := h.manifest(c.Ext); m == nil || !m.Contributes.Channel.NoFooter {
-			vars := map[string]string{
-				"agent": ri.Agent, "model": ri.Model, "effort": ri.Effort, "machine": ri.Machine, "worker": ri.Worker,
-				"ctx": ri.Ctx, "time": time.Now().Format("15:04"), "by": "你", "elapsed": "—",
-			}
-			for k, v := range vars {
-				if v == "" {
-					vars[k] = "默认"
-					if k == "by" || k == "ctx" || k == "worker" || k == "machine" {
-						vars[k] = "—"
-					}
-				}
-			}
-			footer = renderFooter(h.footer(), vars)
-			full += "\n\n" + footer
-		}
+	full := text
+	if text == "" {
+		footer = ""
 	}
-	if err := h.checkLarkSend(c, o, false, full); err != nil {
-		return nil, err
+	if footer != "" {
+		full += "\n\n" + footer
 	}
 	o.Text, o.Footer = full, footer
 	human := !aiFooter && !c.Owner
