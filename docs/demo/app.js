@@ -2558,9 +2558,11 @@
       const quote = (e) => {
         const q = e.re;
         if (!q) return "";
-        if (q.entry && q.entry === lastUser && !sinceUser) return "";
-        if (q.entry && q.entry === lastCollie && !sinceCollie) return "";
-        if (q.worker && q.worker === lastEvent) return "";
+        if (e.role !== "user") {
+          if (q.entry && q.entry === lastUser && !sinceUser) return "";
+          if (q.entry && q.entry === lastCollie && !sinceCollie) return "";
+          if (q.worker && q.worker === lastEvent) return "";
+        }
         const pane = q.worker && paneOf(q.worker), past = q.worker && !pane ? workerHist(q.worker, e.at) : null;
         const attr = q.entry ? `href="#" data-goto="${esc(q.entry)}"` : pane ? `href="#/p/${encodeURIComponent(pane)}"` : past ? `href="#/h/${encodeURIComponent(past.id)}"` : "";
         return quoteLine(q, attr);
@@ -3161,27 +3163,155 @@
     return t;
   };
 
-  // Quoting one of Collie's messages: it rides along with what you send next.
-  const superDraft = () => $("#super-composer")._selectDraft();
-  const drawReply = (draft) => {
-    const box = $("#re-draft"), reply = draft.reply;
+  // Quoting a message: rides along with what you send next, in Collie's chat and agent sessions.
+  const QUOTE_MAX = 160;
+  const reLine = (t) => plainLine(t);
+  const clipQuote = (t) => {
+    const s = reLine(t).trim();
+    return s.length > QUOTE_MAX ? s.slice(0, QUOTE_MAX - 1) + "…" : s;
+  };
+  const withQuotePrefix = (text, re) => {
+    if (!re || !re.text) return text;
+    const head = `> 引用 ${re.who || "对方"}：${clipQuote(re.text)}`;
+    return text.trim() ? `${head}\n\n${text}` : head;
+  };
+  const drawDraftQuote = (box, draft) => {
+    if (!box) return;
+    const reply = draft?.reply;
     box.hidden = !reply;
-    if (reply) $(".re-t", box).textContent = reLine(reply.text);
+    if (reply) {
+      $(".re-who", box).textContent = reply.who || "Collie";
+      $(".re-t", box).textContent = reLine(reply.text);
+    }
+  };
+  const superDraft = () => $("#super-composer")._selectDraft();
+  const drawReply = (draft) => drawDraftQuote($("#re-draft"), draft);
+  const drawPaneReply = (draft) => drawDraftQuote($("#pane-re-draft"), draft);
+  const drawExtReply = (draft) => drawDraftQuote($("#x-re-draft"), draft);
+  const drawRunReply = (draft) => drawDraftQuote($("#run-re-draft"), draft);
+  const focusComposerInput = (input) => {
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    const end = input.value.length;
+    try { input.setSelectionRange?.(end, end); } catch {}
   };
   const setReply = (e) => {
     const draft = superDraft();
-    draft.reply = e ? { entry: e.id, who: "Collie", text: e.text } : null;
+    draft.reply = e ? { entry: e.id || e.entry || "", who: e.who || (e.role === "user" ? "你" : "Collie"), text: e.text } : null;
     drawReply(draft);
-    if (e) $("#super-input").focus();
+    if (e) focusComposerInput($("#super-input"));
   };
-  const reLine = (t) => plainLine(t);
+  const setComposerReply = (formSel, boxSel, inputSel, q) => {
+    const draft = $(formSel)._selectDraft();
+    draft.reply = q ? { entry: q.entry || "", who: q.who || "对方", text: q.text } : null;
+    drawDraftQuote($(boxSel), draft);
+    if (q) focusComposerInput($(inputSel));
+  };
   $("#re-draft button").addEventListener("click", () => setReply(null));
+  $("#pane-re-draft button").addEventListener("click", () => setComposerReply("#composer", "#pane-re-draft", "#input", null));
+  $("#x-re-draft button").addEventListener("click", () => setComposerReply("#x-composer", "#x-re-draft", "#x-input", null));
+  $("#run-re-draft button").addEventListener("click", () => setComposerReply("#run-composer", "#run-re-draft", "#run-input", null));
   document.addEventListener("click", (ev) => {
     const b = ev.target.closest(".re-btn[data-re]");
     if (!b) return;
     const e = chatEntries().find((x) => x.id === b.dataset.re);
     if (e) setReply(e);
   });
+
+  // Long-press a message in Collie's own conversations: quote straight into the composer and focus it.
+  const QUOTE_AGENT_NAME = { claude: "Claude", codex: "Codex", agy: "Antigravity", antigravity: "Antigravity" };
+  function extractMsgText(msgEl) {
+    const clone = msgEl.cloneNode(true);
+    clone.querySelectorAll(".re, .msg-acts, .reply-opts, .run-more, .pin-ind, .thumbs, .att, .md-code-bar").forEach((n) => n.remove());
+    return (clone.innerText || clone.textContent || "").trim();
+  }
+  function quoteInfoFor(msgEl) {
+    const th = msgEl.closest("#super-thread, #run-thread, #thread, #x-thread");
+    if (!th) return null;
+    if (th.id === "super-thread" || th.id === "run-thread") {
+      const id = msgEl.dataset.id || "";
+      const e = id && chatEntries().find((x) => x.id === id);
+      const who = e ? (e.role === "user" ? "你" : "Collie") : (msgEl.classList.contains("user") ? "你" : "Collie");
+      const text = e ? e.text : extractMsgText(msgEl);
+      if (!text.trim()) return null;
+      if (th.id === "run-thread") {
+        return { input: $("#run-input"), apply: () => setComposerReply("#run-composer", "#run-re-draft", "#run-input", { entry: e?.id || "", who, text }) };
+      }
+      return { input: $("#super-input"), apply: () => setReply({ id: e?.id || "", who, text }) };
+    }
+    if (th.id === "x-thread") {
+      if ($("#x-composer")?.hidden) return null;
+      const extItem = ext.find((x) => x.id === extCur);
+      const agentWho = extItem ? (QUOTE_AGENT_NAME[extItem.kind] || extItem.name || "Agent") : "Agent";
+      const who = msgEl.classList.contains("user") ? "你" : agentWho;
+      const text = extractMsgText(msgEl);
+      if (!text.trim()) return null;
+      return { input: $("#x-input"), apply: () => setComposerReply("#x-composer", "#x-re-draft", "#x-input", { who, text }) };
+    }
+    if (th.id === "thread") {
+      const v = find(current);
+      const agentWho = v ? (QUOTE_AGENT_NAME[v.kind] || title(v) || "Agent") : "Agent";
+      const who = msgEl.classList.contains("user") ? "你" : agentWho;
+      const text = extractMsgText(msgEl);
+      if (!text.trim()) return null;
+      return { input: $("#input"), apply: () => setComposerReply("#composer", "#pane-re-draft", "#input", { who, text }) };
+    }
+    return null;
+  }
+  const MSG_HOLD_MS = 480;
+  const MSG_HOLD_IGNORE = "a, button, input, textarea, select, summary, .thumb, img, .md-code-copy, .reply-opt, .reply-ack, .re, .msg-acts, .run-more, .ask-card";
+  let msgHold = null;
+  const dropMsgHold = () => { if (msgHold?.t) clearTimeout(msgHold.t); if (msgHold) msgHold.t = 0; };
+  document.addEventListener("pointerdown", (ev) => {
+    msgHold = null;
+    if (!ev.isPrimary) return;
+    if (ev.pointerType === "mouse" && ev.button !== 0) return;
+    const msgEl = ev.target.closest?.(":is(#super-thread, #run-thread, #thread, #x-thread) .msg");
+    if (!msgEl || ev.target.closest?.(MSG_HOLD_IGNORE)) return;
+    if (window.getSelection?.()?.toString().trim()) return;
+    const info = quoteInfoFor(msgEl);
+    if (!info) return;
+    const isTouch = ev.pointerType === "touch";
+    const slop = isTouch ? 10 : 6;
+    const sc = msgEl.closest(".viewer, .thread");
+    const holdState = msgHold = { x: ev.clientX, y: ev.clientY, slop, isTouch, sc, scrollTop: sc ? sc.scrollTop : 0, fired: false, focusInput: null, t: 0 };
+    holdState.t = setTimeout(() => {
+      if (msgHold !== holdState) return;
+      if (!isTouch && window.getSelection?.()?.toString().trim()) { msgHold = null; return; }
+      holdState.fired = true;
+      holdState.focusInput = info.input;
+      if (isTouch) window.getSelection?.()?.removeAllRanges?.();
+      info.apply();
+    }, MSG_HOLD_MS);
+  }, true);
+  document.addEventListener("pointermove", (ev) => {
+    if (msgHold && !msgHold.fired && Math.hypot(ev.clientX - msgHold.x, ev.clientY - msgHold.y) > msgHold.slop) {
+      dropMsgHold(); msgHold = null;
+    }
+  }, true);
+  document.addEventListener("pointerup", () => {
+    const h = msgHold;
+    dropMsgHold();
+    if (h?.fired) setTimeout(() => { if (msgHold === h) msgHold = null; }, 80);
+  }, true);
+  document.addEventListener("pointercancel", () => { dropMsgHold(); msgHold = null; }, true);
+  document.addEventListener("scroll", (ev) => {
+    if (msgHold && !msgHold.fired && msgHold.sc && ev.target === msgHold.sc && Math.abs(ev.target.scrollTop - msgHold.scrollTop) > 8) {
+      dropMsgHold(); msgHold = null;
+    }
+  }, true);
+  document.addEventListener("touchend", (ev) => {
+    if (!msgHold?.fired) return;
+    ev.preventDefault();
+    focusComposerInput(msgHold.focusInput);
+  }, { capture: true, passive: false });
+  document.addEventListener("click", (ev) => {
+    if (msgHold?.fired) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      msgHold = null;
+    }
+  }, true);
 
   async function sendSuper(text, re, ready = text, attachmentMachine) {
     // The hub fills its defaults in, except files must follow the machine that has them.
@@ -5527,24 +5657,36 @@
       }
     }
   }
-  bindComposer($("#x-composer"), $("#x-input"), (draft, ready) => {
+  bindComposer($("#x-composer"), $("#x-input"), async (draft, ready, owner) => {
     const e = ext.find((x) => x.id === extCur);
     if (!e) throw new Error("这个会话已经结束了");
     const eSel = $("#x-effort");
     const effort = eSel && !eSel.hidden && !eSel.disabled ? eSel.value : "";
-    return trackSend("x:" + e.id, draft, ready, async (text) => {
-      const body = effort ? { text, effort } : { text };
-      const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body });
-      if (r.note) toast(r.note, "attn");
-      loadExternal();
-    });
+    const re = owner?.reply;
+    if (re) { owner.reply = null; drawExtReply(owner); }
+    const shown = re ? withQuotePrefix(draft, re) : draft;
+    const sendReady = re ? Promise.resolve(ready).then((t) => withQuotePrefix(t, re)) : ready;
+    try {
+      await trackSend("x:" + e.id, shown, sendReady, async (text) => {
+        const body = effort ? { text, effort } : { text };
+        const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body });
+        if (r.note) toast(r.note, "attn");
+        loadExternal();
+      });
+    } catch (err) {
+      if (re) {
+        owner.reply ||= re;
+        if ($("#x-composer")._selectDraft?.() === owner) drawExtReply(owner);
+      }
+      throw err;
+    }
   }, () => { // files go to the computer it runs on (through its hub, if another)
     const e = ext.find((x) => x.id === extCur);
     return e?.hub ? tagged(e.machine || "", e.hub) : e?.machine || "";
   }, null, () => {
     const e = ext.find((x) => x.id === extCur);
     return e ? slashCtx(e.hub ? tagged(e.machine || "", e.hub) : e.machine, e.kind, e.cwd, false) : null;
-  }, () => extCur);
+  }, () => extCur, (d) => drawExtReply(d));
   function closeExt() {
     extStream?.close(); extStream = null;
     resetEarlier($("#x-thread"), null);
@@ -9701,13 +9843,24 @@
     onMove: (x, max) => setRunW(runDragW = Math.max(Math.min(innerWidth - besideW("run") - x, max), RUN_MIN)),
     onEnd: () => store.set("runW", Math.round(runDragW)),
   });
-  // Your reply goes on the run's latest message.
+  // Your reply goes on the chosen quote, or the run's latest message.
   bindComposer($("#run-composer"), runInput, async (draft, ready, owner, hasFiles) => {
     const t = runOpen && runs.threads.get(runOpen.root);
     if (!t) throw new Error("这串回复已经关上了");
+    const picked = owner?.reply;
+    if (picked) { owner.reply = null; drawRunReply(owner); }
     const last = [...t.items].reverse().find((x) => x.id) || t.root;
-    await sendSuper(draft, { entry: last.id, who: last.stub ? last.who : runWho(last), text: last.text }, ready, hasFiles ? owner.machine || "local" : undefined);
-  }, () => targetNow().machine, null, null, () => runOpen?.root);
+    const re = picked || { entry: last.id, who: last.stub ? last.who : runWho(last), text: last.text };
+    try {
+      await sendSuper(draft, re, ready, hasFiles ? owner.machine || "local" : undefined);
+    } catch (err) {
+      if (picked) {
+        owner.reply ||= picked;
+        if ($("#run-composer")._selectDraft?.() === owner) drawRunReply(owner);
+      }
+      throw err;
+    }
+  }, () => targetNow().machine, null, null, () => runOpen?.root, (d) => drawRunReply(d));
 
   const md = createRenderer({
     fileLinkAttrs, filePattern: FILE_RE, imagePattern: IMG_EXT, thumbnailURL: (path) => thumbs.get(path),
@@ -10114,13 +10267,20 @@
   // A user message's attachments: images as thumbnails, other files by name
   // (not server paths).
   const linkUserFiles = (escaped) => escaped.replace(FILE_RE, (_, pre, p) => `${pre}<a ${fileLinkAttrs(unesc(p), p, "打开这个文件")}>${p}</a>`);
+  const QUOTE_PREFIX_RE = /^> 引用 ([^：\n]{1,40})：([^\n]+)(?:\n\n|\n|$)/;
   function userText(t) {
+    let quote = "";
+    const qm = QUOTE_PREFIX_RE.exec(t);
+    if (qm) {
+      quote = quoteLine({ who: qm[1], text: qm[2] });
+      t = t.slice(qm[0].length);
+    }
     const i = t.lastIndexOf("附件：\n");
-    if (i < 0) return withImages(linkUserFiles(esc(t)));
+    if (i < 0) return quote + withImages(linkUserFiles(esc(t)));
     const paths = t.slice(i + 4).split("\n").map((p) => p.trim()).filter(Boolean);
     const imgs = paths.filter((p) => IMG_EXT.test(p)), rest = paths.filter((p) => !IMG_EXT.test(p));
     const name = (p) => p.split("/").pop().replace(/^[0-9a-f]{6}-/, "");
-    return withImages(linkUserFiles(esc(t.slice(0, i).trimEnd())))
+    return quote + withImages(linkUserFiles(esc(t.slice(0, i).trimEnd())))
       + (imgs.length ? `<span class="thumbs">${imgs.map(thumbBtn).join("")}</span>` : "")
       + (rest.length ? `<span class="att">${rest.map((p) => `<a ${fileLinkAttrs(p, esc(p), esc(p))}>📎 ${esc(name(p))}</a>`).join("")}</span>` : "");
   }
@@ -10201,23 +10361,35 @@
     });
   }
 
-  bindComposer($("#composer"), $("#input"), (draft, ready) => {
+  bindComposer($("#composer"), $("#input"), async (draft, ready, owner) => {
     const id = current;
     if (!id) throw new Error("没有选中会话");
-    return trackSend("p:" + id, draft, ready, async (text) => {
-      try {
-        await api(paneURL(id, "submit"), { body: { text } });
-      } catch (err) {
-        throw new Error(err.message.includes("blocked") ? "agent 正在等你确认，先处理上面的确认卡片" : err.message);
+    const re = owner?.reply;
+    if (re) { owner.reply = null; drawPaneReply(owner); }
+    const shown = re ? withQuotePrefix(draft, re) : draft;
+    const sendReady = re ? Promise.resolve(ready).then((t) => withQuotePrefix(t, re)) : ready;
+    try {
+      await trackSend("p:" + id, shown, sendReady, async (text) => {
+        try {
+          await api(paneURL(id, "submit"), { body: { text } });
+        } catch (err) {
+          throw new Error(err.message.includes("blocked") ? "agent 正在等你确认，先处理上面的确认卡片" : err.message);
+        }
+      });
+    } catch (err) {
+      if (re) {
+        owner.reply ||= re;
+        if ($("#composer")._selectDraft?.() === owner) drawPaneReply(owner);
       }
-    });
+      throw err;
+    }
   }, () => {
     const id = current || "", at = id.lastIndexOf("@"), hub = hubOf(id);
     return at >= 0 ? id.slice(at + 1) : hub ? tagged("", hub.key) : "";
   }, () => sendKeys(["enter"]), () => {
     const v = find(current);
     return v?.is_agent ? slashCtx(v.machine, v.kind, v.cwd, true) : null;
-  }, () => current);
+  }, () => current, (d) => drawPaneReply(d));
 
   // ───────────────────────────── menus
   document.addEventListener("click", (e) => {
