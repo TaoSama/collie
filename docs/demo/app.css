@@ -2897,7 +2897,7 @@ select.picked { display: none; }
 .hs-row-metric { flex: none; display: inline-flex; align-items: center; font-size: var(--fs-tiny); padding-top: 1px; }
 .hs-row-metric .hs-bar { width: 32px; height: 4px; }
 .hs-row-metric .hs-lab { color: var(--t-meta); }
-.hs-row-metric .hs-val { font-size: var(--fs-tiny); }
+.hs-row-metric .hs-val { font-family: inherit; font-size: var(--fs-tiny); }
 .hs-meters { display: grid; gap: 5px; font-size: var(--fs-small); }
 .hs-meters .hs-item { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; white-space: nowrap; }
 .hs-meters .hs-lab { min-width: 3.4em; flex: none; color: var(--t-meta); font-size: var(--fs-tiny); font-weight: var(--fw-medium); }
