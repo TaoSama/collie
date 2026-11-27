@@ -250,6 +250,8 @@ type MessageNode struct {
 	Value       string          `json:"value,omitempty"`
 	Placeholder string          `json:"placeholder,omitempty"`
 	Name        string          `json:"name,omitempty"`
+	Meta        string          `json:"meta,omitempty"`
+	UpdatedAt   string          `json:"updated_at,omitempty"`
 	Disabled    bool            `json:"disabled,omitempty"`
 	Options     []MessageOption `json:"options,omitempty"`
 	Children    []MessageNode   `json:"children,omitempty"`

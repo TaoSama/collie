@@ -524,7 +524,7 @@ def _has_emotion(E, rich):
     return any(obj(el).get("tag") in (E.EMOTION, "EMOTION") for el in els.values())
 
 
-def describe(U, msg, emojis=None, me=""):
+def describe(U, msg, emojis=None, me="", force_post=False):
     """Return (view, preview) from the same content. Plain messages can use their existing text."""
     kind, data = msg.get("msg_type"), obj(msg.get("content_data"))
     sender_locked = kind == CARD and data.get("extra") == 1 and bool(me) and str(msg.get("from_id") or "") == str(me)
@@ -565,7 +565,7 @@ def describe(U, msg, emojis=None, me=""):
     if kind in (POST, TEXT):
         rich = obj(data.get("richText"))
         has_em = _has_emotion(tree.E, rich)
-        if kind == TEXT and not has_em and not any(rich.get(k) for k in ("imageIds", "markdownIds")):
+        if kind == TEXT and not force_post and not has_em and not any(rich.get(k) for k in ("imageIds", "markdownIds")):
             return None, ""
         title = content(data.get("title"))
         nodes = tree.rich(rich)
@@ -592,7 +592,7 @@ def decode(U, raw, chat=""):
     summary, data = D.decode_message_content(kind, body)
     # The published decoder omits this type and exposes only the bytes for a shared event.
     full = {GENERAL_EVENT: U.L.entities.GeneralCalendarContent, SHARED_EVENT: U.L.entities.ShareCalendarEventContent,
-            CARD: U.L.entities.CardContent}.get(kind)
+            CARD: U.L.entities.CardContent, TEXT: U.L.entities.TextContent, POST: U.L.entities.PostContent}.get(kind)
     if full is not None:
         parsed = full()
         try:
@@ -604,4 +604,5 @@ def decode(U, raw, chat=""):
                 from_id=raw.get("fromId"), chat_id=raw.get("chatId") or raw.get("channelId") or chat,
                 root_id=raw.get("rootId"), parent_id=raw.get("parentId"), cid=raw.get("cid"),
                 create_time=raw.get("createTime"), update_time=raw.get("updateTime"),
-                content=summary, content_data=data)
+                content=summary, content_data=data,
+                url_previews=raw.get("urlPreviewHangPointMap") or {})

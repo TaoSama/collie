@@ -5,6 +5,7 @@ import threading
 import time
 
 import actions
+import link_preview
 import message_view
 
 RECENT_COUNT = 12
@@ -123,6 +124,7 @@ class History:
         info = adapter.chats_now([chat]).get(chat) or {}
         messages = []
         cal_pairs = []
+        link_pairs = []
         for raw in self._pull_raw(chat, info):
             msg = message_view.decode(adapter.U, raw, chat)
             if not msg["msg_id"] or str(msg["chat_id"]) != chat:
@@ -141,8 +143,12 @@ class History:
             messages.append(entry)
             if view and view.get("kind") == "calendar":
                 cal_pairs.append((msg, entry))
+            elif msg["msg_type"] in (message_view.TEXT, message_view.POST):
+                link_pairs.append((msg, entry))
         if cal_pairs:
             actions.enrich_calendars(adapter, cal_pairs)
+        if link_pairs:
+            link_preview.enrich_links(adapter, link_pairs)
         with self.lock:
             replies = list(self.topic_replies.get(chat, ()))
         ids = {m["id"] for m in messages}

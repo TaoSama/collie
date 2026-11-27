@@ -15,6 +15,7 @@ from pathlib import Path
 
 import actions
 import history
+import link_preview
 import message_view
 import richtext
 from lark_ws import PushStream
@@ -367,6 +368,8 @@ class Feishu:
         else:
             text = preview
         out["text"] = text
+        if mtype in (richtext.MSG_POST, MSG_TEXT):
+            link_preview.enrich_links(self, [(msg, out)])
         with self._mu:
             quoted = self.recent.get(str(msg.get("parent_id") or ""))
         if quoted:

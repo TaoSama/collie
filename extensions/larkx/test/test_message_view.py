@@ -466,6 +466,160 @@ class MessageViewTest(unittest.TestCase):
         out = f.normalize(card_update)
         self.assertTrue(out.get("updated"))
 
+    def test_link_preview_embedded_doc_and_meego_cards_and_inline_list(self):
+        """Feishu doc & Meego links prefer embedded data, batch-fetch read-only previews, cache, and preserve text."""
+        def text_msg_with_links(items, mid, hang_points=None, doc_entity=None):
+            rt = U.L.entities.RichText()
+            for idx, (kind, val) in enumerate(items):
+                eid = str(idx + 1)
+                rt.elementIds.append(eid)
+                el = rt.elements.dictionary[eid]
+                if kind == "text":
+                    el.tag = E.TEXT
+                    el.property = E.TextProperty(content=val).SerializeToString()
+                else:
+                    el.tag = E.A
+                    el.property = E.AnchorProperty(href=val, textContent=val, content=val).SerializeToString()
+            tc = U.L.entities.TextContent(richText=rt)
+            if doc_entity:
+                for k, (title, dtype) in doc_entity.items():
+                    ref = tc.docEntity.elementEntityRef[k]
+                    ref.title = title
+                    ref.docType = dtype
+            wire = {"id": mid, "chatId": "123", "type": 4, "fromId": "5",
+                    "content": tc.SerializeToString(), "createTime": 1795700000}
+            if hang_points:
+                wire["urlPreviewHangPointMap"] = hang_points
+            return wire
+
+        sheet_url = "https://bytedance.larkoffice.com/sheets/NvwJsg4qlhK3uct1h4Kc13dHn8b?sheet=y2SnN9"
+        wiki_url = "https://bytedance.larkoffice.com/wiki/En30wusn3ipAnlkQSPAckay6nGh"
+        emb_url = "https://bytedance.larkoffice.com/docx/EmbDocToken123"
+        meego_issue = "https://meego.larkoffice.com/flowco/issue/detail/7402919043?parentUrl=%2Fflowco"
+        meego_view = "https://meego.larkoffice.com/flowco/issueView/3rIEbvROR?scope=workspaces"
+        meego_list_urls = [f"https://meego.larkoffice.com/flowco/issue/detail/740000000{i}" for i in range(1, 5)]
+
+        # m0: embedded DocEntity (should NOT call PullDocByURLsRequest for emb_url)
+        m0 = text_msg_with_links([("link", emb_url)], "900", doc_entity={"1": ("消息自带标题", 8)})
+        # m1: standalone Feishu sheet + wiki via PullDocByURLsRequest
+        m1 = text_msg_with_links([("text", "请看进度 "), ("link", sheet_url), ("text", " 和 "), ("link", wiki_url)], "901")
+        # m2: standalone Meego issueView via urlPreviewHangPointMap
+        m2 = text_msg_with_links([("link", meego_view)], "902",
+                                 hang_points={"1": {"url": meego_view, "previewId": "pid_view"}})
+        # m3: 4 Meego issues in one message (> MAX_CARDS -> inline rich links, no card explosion)
+        list_items = [("text", "待修复：\n")]
+        list_hp = {}
+        for i, u in enumerate(meego_list_urls):
+            eid = str(len(list_items) + 1)
+            list_items.append(("link", u))
+            list_hp[eid] = {"url": u, "previewId": f"pid_i{i + 1}"}
+            list_items.append(("text", "\n"))
+        m3 = text_msg_with_links(list_items, "903", hang_points=list_hp)
+        # m4: single Meego issue (card mode)
+        m4 = text_msg_with_links([("link", meego_issue)], "904",
+                                 hang_points={"1": {"url": meego_issue, "previewId": "pid_issue"}})
+
+        class Client:
+            calls = []
+
+            def api(self, method, params):
+                self.calls.append((method, params))
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"123": {"lastVisibleMessagePosition": 4}}}
+                if method == "messages.PullMessagesByPositionsRequest":
+                    return {"messages": {"0": m0, "1": m1, "2": m2, "3": m3, "4": m4}}
+                if method == "chats.PullChatChattersByIDsRequest":
+                    return {"chatters": {}}
+                if method == "docs.PullDocByURLsRequest":
+                    return {"docs": {
+                        sheet_url: {"docType": 2, "name": "冷启动降级进度表", "ownerName": "皇凤伟", "updateTime": 1795797244},
+                        wiki_url: {"docType": 8, "name": "启动入口保障双日会", "ownerName": "崔一鸣", "updateTime": 1795753128},
+                    }}
+                if method == "url_preview.GetPreviewRequest":
+                    entities = {
+                        "pid_view": {
+                            "i18nTitleKey": "title",
+                            "localeI18nTemplates": {"title": {"i18nTemplates": {"en_us": " [View] A项目缺陷视图"}}},
+                            "previewBody": {"components": {"elements": {
+                                "common-meego-header-0-0": {"header": {"title": "IssuesView · Flowco"}},
+                                "common-text-width-lineheight-text-custom-0-0": {"text": {"text": "项1"}},
+                                "common-text-width-lineheight-text-custom-1-0": {"text": {"text": "项2"}},
+                            }}},
+                        },
+                        "pid_issue": {
+                            "i18nTitleKey": "title",
+                            "localeI18nTemplates": {"title": {"i18nTemplates": {"en_us": " [Issues] 【iOS】未染色"}}},
+                            "previewBody": {"components": {"elements": {
+                                "common-meego-header-0": {"header": {"title": "Issues · Flowco"}},
+                                "common-tag-tags-0-0-0-1": {"tagList": {"tags": ["P1"]}},
+                                "common-tag-tags-0-1-0-2": {"tagList": {"tags": ["OPEN"]}},
+                            }}},
+                        },
+                    }
+                    for i in range(1, 5):
+                        entities[f"pid_i{i}"] = {
+                            "i18nTitleKey": "title",
+                            "localeI18nTemplates": {"title": {"i18nTemplates": {"en_us": f" [Issues] 缺陷 {i}"}}},
+                            "previewBody": {"components": {"elements": {
+                                "common-meego-header-0": {"header": {"title": "Issues · Flowco"}},
+                                "common-tag-tags-0-0-0-1": {"tagList": {"tags": ["P2"]}},
+                                "common-tag-tags-0-1-0-2": {"tagList": {"tags": ["OPEN"]}},
+                            }}},
+                        }
+                    return {"previewEntityMap": {k: entities[k] for k in params.get("previewIds") or [] if k in entities}}
+                return {}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client = Client()
+        f.user_name = lambda uid, chat: "甲"
+        rows = f.history.recent("123")
+
+        # Embedded doc skipped docs.PullDocByURLsRequest
+        doc_calls = [c[1]["urls"] for c in f.client.calls if c[0] == "docs.PullDocByURLsRequest"]
+        self.assertEqual(len(doc_calls), 1)
+        self.assertNotIn(emb_url, doc_calls[0])
+        self.assertEqual(rows[0]["view"]["nodes"], [{
+            "kind": "link-card", "url": emb_url, "text": "消息自带标题",
+            "tone": "docx", "name": "飞书文档",
+        }])
+
+        # m1: prose inline links + 2 preview cards with owner & updated_at; raw text preserved for agents
+        self.assertIn(sheet_url, rows[1]["text"])
+        self.assertIn("[表格] 冷启动降级进度表", rows[1]["preview"])
+        cards1 = [n for n in rows[1]["view"]["nodes"] if n["kind"] == "link-card"]
+        self.assertEqual([c["text"] for c in cards1], ["冷启动降级进度表", "启动入口保障双日会"])
+        self.assertEqual(cards1[0]["tone"], "sheet")
+        self.assertEqual(cards1[0]["meta"], "皇凤伟")
+        self.assertTrue(cards1[0]["updated_at"].endswith("Z"))
+        self.assertEqual(cards1[1]["tone"], "wiki")
+
+        # m2: standalone Meego view promoted to single link-card
+        self.assertEqual(len(rows[2]["view"]["nodes"]), 1)
+        vc = rows[2]["view"]["nodes"][0]
+        self.assertEqual((vc["kind"], vc["tone"], vc["text"], vc["meta"]),
+                         ("link-card", "meego-view", "A项目缺陷视图", "Flowco · 2 项预览"))
+
+        # m3: 4 Meego issues stay inline rich links with badges (no link-card explosion)
+        self.assertFalse(any(n["kind"] == "link-card" for n in rows[3]["view"]["nodes"]))
+        inline_links = [n for n in rows[3]["view"]["nodes"][0]["children"] if n["kind"] == "link"]
+        self.assertEqual([l["text"] for l in inline_links], ["缺陷 1", "缺陷 2", "缺陷 3", "缺陷 4"])
+        self.assertEqual(inline_links[0]["tone"], "meego-issue")
+        self.assertEqual(inline_links[0]["options"][0]["text"], "P2")
+
+        # m4: single Meego issue promoted to link-card with priority & status badges
+        ic = rows[4]["view"]["nodes"][0]
+        self.assertEqual((ic["kind"], ic["tone"], ic["text"], ic["meta"]),
+                         ("link-card", "meego-issue", "【iOS】未染色", "Flowco"))
+        self.assertEqual(ic["options"], [{"text": "P1", "value": "attn"}, {"text": "OPEN", "value": "info"}])
+
+        # Second fetch after invalidation hits TTL cache -> 0 new doc/preview RPCs
+        prev_calls = len(f.client.calls)
+        f.history.invalidate("123")
+        f.history.recent("123")
+        new_methods = [c[0] for c in f.client.calls[prev_calls:]]
+        self.assertNotIn("docs.PullDocByURLsRequest", new_methods)
+        self.assertNotIn("url_preview.GetPreviewRequest", new_methods)
+
 
 if __name__ == "__main__":
     unittest.main()

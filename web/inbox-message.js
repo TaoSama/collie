@@ -33,6 +33,74 @@
     return url ? `<a class="im-file" href="${url}" download>${inner}</a>` : `<span class="im-file">${inner}</span>`;
   }
 
+  const LINK_TYPES = {
+    doc: ["file-text", "info"],
+    docx: ["file-text", "info"],
+    sheet: ["table-2", "ok"],
+    bitable: ["database", "ok"],
+    wiki: ["book-open", "info"],
+    slides: ["presentation", "attn"],
+    mindnote: ["git-branch", "attn"],
+    file: ["file", "muted"],
+    folder: ["folder", "muted"],
+    minutes: ["video", "info"],
+    board: ["pen-tool", "attn"],
+    "meego-issue": ["bug", "danger"],
+    "meego-story": ["clipboard-list", "info"],
+    "meego-view": ["layout-dashboard", "info"],
+    meego: ["clipboard-list", "info"],
+  };
+
+  function linkUpdated(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (!Number.isFinite(+d)) return "";
+    const now = new Date();
+    const opts = d.getFullYear() === now.getFullYear()
+      ? { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }
+      : { year: "numeric", month: "numeric", day: "numeric" };
+    return `更新于 ${new Intl.DateTimeFormat("zh-CN", opts).format(d)}`;
+  }
+
+  function linkTags(options, inline = false) {
+    const list = (Array.isArray(options) ? options : []).filter((o) => o && o.text);
+    if (!list.length) return "";
+    return list.slice(0, 3).map((o) => {
+      const tone = /^(info|ok|attn|danger|muted)$/.test(o.value || "") ? o.value : "muted";
+      return `<span class="im-link-tag${inline ? " inline" : ""}" data-tone="${tone}">${esc(o.text)}</span>`;
+    }).join("");
+  }
+
+  function renderRichLink(n, inner) {
+    const url = httpURL(n.url);
+    if (!url) return inner;
+    const spec = Object.hasOwn(LINK_TYPES, n.tone) ? LINK_TYPES[n.tone] : null;
+    if (!spec) return external(url, inner || esc(url));
+    const [icoName, accent] = spec;
+    const ico = window.collieIcons?.svg ? window.collieIcons.svg(icoName) : "";
+    const isMeego = String(n.tone || "").startsWith("meego");
+    const prefix = isMeego && n.name ? `<span class="im-rich-link-kind">[${esc(n.name)}]</span> ` : "";
+    const tags = linkTags(n.options, true);
+    const body = `<span class="im-rich-link-ico" data-accent="${accent}">${ico}</span>${prefix}<span class="im-rich-link-text">${inner || esc(url)}</span>${tags}`;
+    return external(url, body, "im-rich-link");
+  }
+
+  function renderLinkCard(n) {
+    const url = httpURL(n.url);
+    const spec = Object.hasOwn(LINK_TYPES, n.tone) ? LINK_TYPES[n.tone] : ["globe", "info"];
+    const [icoName, accent] = spec;
+    const ico = window.collieIcons?.svg ? window.collieIcons.svg(icoName) : "";
+    const extIco = window.collieIcons?.svg ? window.collieIcons.svg("external-link", "im-link-ext") : "";
+    const title = esc(n.text || n.name || url || "链接");
+    const metaParts = [n.name, n.meta, linkUpdated(n.updated_at)].filter(Boolean).map((s) => `<span class="im-link-seg">${esc(s)}</span>`);
+    const tags = linkTags(n.options, false);
+    const meta = metaParts.length || tags
+      ? `<span class="im-link-meta">${metaParts.join("")}${tags}</span>`
+      : "";
+    const inner = `<span class="im-link-ico" data-accent="${accent}">${ico}</span><span class="im-link-body"><strong class="im-link-title">${title}</strong>${meta}</span>${url ? extIco : ""}`;
+    return url ? external(url, inner, "im-link-card") : `<span class="im-link-card">${inner}</span>`;
+  }
+
   const containers = {
     group: ["div", "im-group"], columns: ["div", "im-columns"], fields: ["div", "im-fields"],
     actions: ["div", "im-actions"], note: ["div", "im-note"], paragraph: ["p", ""],
@@ -121,10 +189,8 @@
         case "table": return `<div class="im-table"><table><tbody>${inner}</tbody></table></div>`;
         case "code-block": return `<pre><code>${text}</code></pre>`;
         case "rule": return "<hr>";
-        case "link": {
-          const url = httpURL(n.url);
-          return url ? external(url, inner || esc(url)) : inner;
-        }
+        case "link": return renderRichLink(n, inner);
+        case "link-card": return renderLinkCard(n);
         case "button": {
           const url = httpURL(n.url), label = inner || "打开";
           const tone = /^primary(?:_|$)/.test(n.tone) ? " primary" : /^danger(?:_|$)/.test(n.tone) ? " danger" : "";

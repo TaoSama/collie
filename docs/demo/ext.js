@@ -491,7 +491,8 @@
       const head = !prev || !!unreadEl || who(prev) !== who(m) || dayLabel(prev.at) !== day || Date.parse(m.at) - Date.parse(prev.at) > RUN_GAP;
       const bot = ai && c.owner, pic = bot ? c.avatar : m.avatar;
       const name = bot ? c.name : ai ? "" : m.mine ? "你" : m.sender_name || "";
-      const card = rich && (m.view.kind === "card" || m.view.kind === "calendar" || m.view.kind === "media");
+      const onlyLinkCards = rich && m.view.kind === "post" && !m.view.title && Array.isArray(m.view.nodes) && m.view.nodes.length > 0 && m.view.nodes.every((n) => n && n.kind === "link-card");
+      const card = rich && (m.view.kind === "card" || m.view.kind === "calendar" || m.view.kind === "media" || onlyLinkCards);
       const body = rich ? collieInboxMessage.render(m.view, { convId: c.id, msgId: m.id }) : (m.ref && !m.human) ? md(m.text) : esc(text);
       return `${dayEl}${unreadEl}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}" data-msg-id="${esc(m.id || "")}">
         ${mine ? "" : `<span class="conv-ava${SQUARE.has(c.ext) ? " sq" : ""}" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${pic ? `<img class="inbox-pic" src="${esc(pic)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}

@@ -124,3 +124,51 @@ test("renders interactive card buttons, selects, pickers, forms, and calendar RS
   const calCancelled = render({ kind: "calendar", title: "已取消会议", start: "2026-11-30T09:30:00Z", status: "cancelled" });
   assert.match(calCancelled, /日程已取消/);
 });
+
+test("renders Feishu doc and Meego link preview cards and inline rich links safely", () => {
+  const html = render({
+    kind: "post",
+    nodes: [
+      {
+        kind: "paragraph",
+        children: [
+          { kind: "text", text: "参考：" },
+          {
+            kind: "link",
+            url: "https://meego.larkoffice.com/flowco/issue/detail/7399003891",
+            text: "【iOS】未染色",
+            tone: "meego-issue",
+            name: "缺陷",
+            options: [{ text: "P1", value: "attn" }, { text: "OPEN", value: "info" }],
+          },
+        ],
+      },
+      {
+        kind: "link-card",
+        url: "https://bytedance.larkoffice.com/sheets/NvwJsg4qlhK3uct1h4Kc13dHn8b",
+        text: "冷启动降级进度表",
+        tone: "sheet",
+        name: "电子表格",
+        meta: "皇凤伟",
+        updated_at: "2026-11-27T08:30:00Z",
+      },
+      {
+        kind: "link-card",
+        url: "javascript:alert(1)",
+        text: '<img src=x onerror=alert(1)>',
+        tone: "meego-story",
+        name: "飞书项目 · 需求",
+        options: [{ text: "P0", value: "danger" }],
+      },
+    ],
+  });
+  assert.match(html, /class="im-rich-link" href="https:\/\/meego\.larkoffice\.com\/flowco\/issue\/detail\/7399003891" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /im-rich-link-kind">\[缺陷\]<\/span>/);
+  assert.match(html, /im-link-tag inline" data-tone="attn">P1<\/span>/);
+  assert.match(html, /class="im-link-card" href="https:\/\/bytedance\.larkoffice\.com\/sheets\/NvwJsg4qlhK3uct1h4Kc13dHn8b" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /data-accent="ok"/);
+  assert.match(html, /冷启动降级进度表/);
+  assert.match(html, /电子表格.*皇凤伟.*更新于/);
+  assert.doesNotMatch(html, /href="javascript:|<img src=x/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+});
