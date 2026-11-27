@@ -194,7 +194,7 @@ test("renders interactive selectable rows, section chips, and brand accents", ()
   assert.equal(typeof hs.patch, "function");
 });
 
-test("keeps section meta hint visible alongside mode chips, adds pin hint on clickable rows, and keeps extension logo on mobile", () => {
+test("keeps section meta hint visible alongside mode chips, omits pin hint on clickable rows while preserving selected tag, and keeps extension logo on mobile", () => {
   const html = hs.render([{
     id: "meter",
     name: "Meter",
@@ -228,7 +228,8 @@ test("keeps section meta hint visible alongside mode chips, adds pin hint on cli
 
   assert.match(html, /hs-sec-sub">点击卡片切换顶栏显示</);
   assert.match(html, /hs-chips seg/);
-  assert.match(html, /hs-act-hint[^>]*>固定顶栏</);
+  assert.doesNotMatch(html, /hs-act-hint|固定顶栏/);
+  assert.match(html, /data-hs-action="set_focus"/);
   assert.match(html, /hs-sel-tag/);
   assert.match(html, /hs-mobile-ico"><img class="src-logo" src="\/api\/ext\/meter\/icon"/);
 });

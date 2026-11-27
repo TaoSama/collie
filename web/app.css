@@ -2839,13 +2839,6 @@ select.picked { display: none; }
 }
 .hs-row.is-action { cursor: pointer; border-color: var(--line); }
 .hs-row.is-action:hover { border-color: var(--line-2); background: color-mix(in srgb, var(--bg-2) 65%, var(--bg-3)); }
-.hs-row-r { display: inline-flex; align-items: center; gap: 6px; flex: none; }
-.hs-act-hint {
-  flex: none; padding: 1px 6px; border: var(--bw) solid var(--line); border-radius: 999px;
-  background: var(--bg); color: var(--t-meta); font-size: var(--fs-micro); font-weight: var(--fw-medium);
-  white-space: nowrap; transition: color .12s, border-color .12s;
-}
-.hs-row.is-action:hover .hs-act-hint { color: var(--fg); border-color: var(--line-2); }
 .hs-row.is-cur { padding-left: 12px; }
 .hs-row.is-cur::before { content: ""; position: absolute; left: 3px; top: 8px; bottom: 8px; width: 3px; border-radius: 999px; background: var(--hs-brand-col, var(--hs-info)); }
 .hs-row.hs-brand-claude { --hs-brand-col: var(--hs-claude); }

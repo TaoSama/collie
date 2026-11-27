@@ -79,17 +79,13 @@
     const selTag = r.selected
       ? `<span class="hs-sel-tag">${CHECK_SVG}<span>顶栏</span></span>`
       : "";
-    const actHint = clickable && !r.selected
-      ? `<span class="hs-act-hint" aria-hidden="true">固定顶栏</span>`
-      : "";
-    const rightGroup = right || actHint ? `<span class="hs-row-r">${right}${actHint}</span>` : "";
     const badges = renderBadges(r);
     const ico = renderIcon(r.icon, opts, "hs-row-ico");
     const titleBlock = `<span class="hs-row-id">`
       + `<span class="hs-row-title-line">${r.current && !r.selected ? `<span class="hs-cur" aria-hidden="true">▸</span>` : ""}${ico}<span class="hs-row-name" title="${esc(r.label)}">${esc(r.label)}</span>${badges}${selTag}</span>`
       + (r.sublabel ? `<span class="hs-row-sub" title="${esc(r.sublabel)}">${esc(r.sublabel)}</span>` : "")
       + `</span>`;
-    const top = `<div class="hs-row-top">${titleBlock}${rightGroup}</div>`;
+    const top = `<div class="hs-row-top">${titleBlock}${right}</div>`;
     const meters = (r.meters || []).length
       ? `<div class="hs-meters">${r.meters.map((m) => renderItem(m, true, opts)).join("")}</div>`
       : "";
