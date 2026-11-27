@@ -4396,6 +4396,58 @@
     }
     if (view === "auto" && autoTab === "hooks") { await fetchAuto("ext").catch(() => {}); drawAuto(autoData.settings); }
   }
+  const inboxReplies = new Set();
+  async function sendInboxReply(button, confirmDraft) {
+    const id = inboxCur, conv = inboxDetail?.conv;
+    if (inboxReplies.has(id)) return;
+    const draft = inboxDraft, input = inboxInput, seq = inboxDraftSeq;
+    const ta = $(confirmDraft ? "#inbox-detail [data-conv-draft-text]" : "#inbox-detail [data-conv-input]");
+    const raw = ta?.value ?? (confirmDraft ? draft?.text || "" : input);
+    const text = raw.trim();
+    const fileDraft = selectInboxFiles(), files = fileDraft.files, fileBox = inboxFileBox;
+    const sendFiles = confirmDraft && inboxReferenceOnly() ? [] : files;
+    if (!text && !sendFiles.length) {
+      toast(confirmDraft ? "回复内容不能为空" : "先输入回复内容或添加附件", "attn");
+      if (!confirmDraft) ta?.focus();
+      return;
+    }
+    const withFooter = confirmDraft && !!$("#inbox-detail [data-conv-draft-footer]")?.checked;
+    inboxReplies.add(id);
+    busy(button);
+    try {
+      if (sendFiles.length) {
+        await fileBox.ready(sendFiles);
+        if (sendFiles.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
+      }
+      const submitted = [...files];
+      const upFiles = sendFiles.map((f) => ({ path: f.path, name: f.name, mime: f.file?.type || "" }));
+      const res = await api("/api/inbox/reply", { body: { id, text, ai_footer: withFooter, files: upFiles } });
+      fileDraft.files = fileDraft.files.filter((f) => {
+        if (!submitted.includes(f)) return true;
+        fileBox.release(f);
+        return false;
+      });
+      if (id === inboxCur) {
+        if (seq === inboxDraftSeq) {
+          if (confirmDraft && inboxDraft === draft && draft?.text === raw) inboxDraft = null;
+          if (inboxInput === input && (confirmDraft ? !inboxDraft : inboxMode === "reply")) inboxInput = "";
+        }
+        inboxUnread = null; inboxNeedBottom = true;
+        inboxLoading = null;
+      }
+      const label = conv?.label || "原会话";
+      if (res.state === "deferred" || res.state === "uncertain") toast(res.reason || "已提交，稍后送达", "attn");
+      else if (conv?.send_as === "bot" || conv?.owner) toast(`已以机器人身份发送到${label}`);
+      else toast(confirmDraft ? `已发送到${label}` : `已以你本人身份发送到${label}`);
+      await Promise.all([id === inboxCur && loadConv(), fetchAuto("inbox")]);
+      if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
+    } catch (err) {
+      toast(err.message, "attn");
+    } finally {
+      inboxReplies.delete(id);
+      busy(button, false);
+    }
+  }
   const inboxCardActions = new Set();
   async function runInboxAction(el, { kind, actionId, sig, value = "", params = null }) {
     const card = el.closest(".im-card");
@@ -4583,56 +4635,8 @@
       inboxDraftSeq++;
       inboxDraft = null; drawAuto(autoData.inbox); return;
     }
-    if (b.hasAttribute("data-conv-draft-send")) {
-      const ta = $("#inbox-detail [data-conv-draft-text]");
-      const text = (ta ? ta.value : inboxDraft?.text || "").trim();
-      const draftFiles = selectInboxFiles(), files = draftFiles.files;
-      const sendFiles = inboxReferenceOnly() ? [] : files;
-      if (!text && !sendFiles.length) { toast("回复内容不能为空", "attn"); return; }
-      const withFooter = !!$("#inbox-detail [data-conv-draft-footer]")?.checked;
-      busy(b);
-      try {
-        let upFiles = [];
-        if (sendFiles.length && inboxFileBox) {
-          await inboxFileBox.ready(sendFiles);
-          if (sendFiles.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
-          upFiles = sendFiles.map((f) => ({ path: f.path, name: f.name, mime: f.file?.type || "" }));
-        }
-        const res = await api("/api/inbox/reply", { body: { id: inboxCur, text, ai_footer: withFooter, files: upFiles } });
-        if (files.length) { files.forEach((f) => inboxFileBox?.release(f)); draftFiles.files = []; }
-        inboxDraft = null; inboxInput = ""; inboxUnread = null; inboxNeedBottom = true;
-        inboxLoading = null;
-        await Promise.all([loadConv(), fetchAuto("inbox")]);
-        const c = inboxDetail?.conv;
-        if (res.state === "deferred" || res.state === "uncertain") toast(res.reason || "已提交，稍后送达", "attn");
-        else toast(c?.send_as === "bot" || c?.owner ? `已以机器人身份发送到${c?.label || "微信"}` : `已发送到${c?.label || "原会话"}`);
-        drawAuto(autoData.inbox);
-      } catch (err) { toast(err.message, "attn"); }
-      return;
-    }
-    if (b.hasAttribute("data-conv-send-reply")) {
-      const ta = $("#inbox-detail [data-conv-input]");
-      const text = (ta ? ta.value : inboxInput).trim();
-      const draftFiles = selectInboxFiles(), files = draftFiles.files;
-      if (!text && !files.length) { toast("先输入回复内容或添加附件", "attn"); ta?.focus(); return; }
-      busy(b);
-      try {
-        let upFiles = [];
-        if (files.length && inboxFileBox) {
-          await inboxFileBox.ready(files);
-          if (files.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
-          upFiles = files.map((f) => ({ path: f.path, name: f.name, mime: f.file?.type || "" }));
-        }
-        const res = await api("/api/inbox/reply", { body: { id: inboxCur, text, ai_footer: false, files: upFiles } });
-        if (files.length) { files.forEach((f) => inboxFileBox?.release(f)); draftFiles.files = []; }
-        inboxInput = ""; inboxUnread = null; inboxNeedBottom = true;
-        inboxLoading = null;
-        await Promise.all([loadConv(), fetchAuto("inbox")]);
-        const c = inboxDetail?.conv;
-        if (res.state === "deferred" || res.state === "uncertain") toast(res.reason || "已提交，稍后送达", "attn");
-        else toast(c?.send_as === "bot" || c?.owner ? `已以机器人身份发送到${c?.label || "微信"}` : `已以你本人身份发送到${c?.label || "原会话"}`);
-        drawAuto(autoData.inbox);
-      } catch (err) { toast(err.message, "attn"); }
+    if (b.hasAttribute("data-conv-draft-send") || b.hasAttribute("data-conv-send-reply")) {
+      await sendInboxReply(b, b.hasAttribute("data-conv-draft-send"));
       return;
     }
     if (b.hasAttribute("data-conv-send-collie")) {
