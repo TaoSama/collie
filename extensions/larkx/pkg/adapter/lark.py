@@ -25,6 +25,8 @@ QR_STATUS = {1: QR_WAITING, 2: QR_SCANNED, 3: QR_FAILED, 4: QR_FAILED, 5: QR_EXP
 
 MSG_FILE, MSG_TEXT, MSG_IMAGE, MSG_SYSTEM = 3, 4, 5, 6
 CHAT_P2P = 1
+CHATTER_BOT = 2  # Chatter.type: a bot or app, not a person
+TAG_BOT = "bot"  # chat_tags of a direct chat with a bot
 CMD_PUT_MESSAGE = 5
 SIGNED_OUT_RECHECK = 2  # seconds before asking Feishu again whether a session is really gone
 REQUEST_FRESH = 600  # seconds: an older message is history to Collie, never a request
@@ -367,6 +369,9 @@ class Feishu:
             peer = self.peer(chat, "" if out["owner"] else sender)
             out["chat_kind"] = "self" if peer is None or chat == self.self_chat else "dm"
             out["chat"] = self.dm_name(chat, peer, out["sender_name"] if not out["owner"] else "")
+            tags = self.dm_tags(chat)
+            if tags is not None:
+                out["chat_tags"] = tags
             pic = self.dm_picture(chat)
         else:
             out["chat_kind"] = "group"
@@ -429,6 +434,9 @@ class Feishu:
                 peer = self.peer(k)
                 if peer is None or peer[0]:
                     out[k]["name"] = self.dm_name(k, peer)
+                tags = self.dm_tags(k)
+                if tags is not None:
+                    out[k]["tags"] = tags
                 pic = self.dm_picture(k)
             else:
                 if v.get("name"):
@@ -450,13 +458,13 @@ class Feishu:
         return other[1] if other else ""
 
     def chatters(self, chat):
-        """A direct chat's people, {user id: (name, picture)}, looked up an hour; {} when not known."""
+        """A direct chat's people, {user id: (name, picture, is a bot)}, looked up an hour; {} when not known."""
         if self.client is None:
             return {}
 
         def look():
             r = self.client.api("chats.PullChatChattersRequest", {"chatId": chat, "needChatters": True, "limit": 10}) or {}
-            people = {k: [v.get("localizedName") or v.get("name") or "", picture_url(v.get("avatar") or {})]
+            people = {k: [v.get("localizedName") or v.get("name") or "", picture_url(v.get("avatar") or {}), v.get("type") == CHATTER_BOT]
                       for k, v in (r.get("chatters") or {}).items()}
             return json.dumps(people, ensure_ascii=False) if people else ""
 
@@ -534,8 +542,15 @@ class Feishu:
         others = [(k, v) for k, v in people.items() if k != self.me]
         if not others:
             return None
-        uid, (name, _) = others[0]
+        uid, (name, *_) = others[0]
         return uid, name
+
+    def dm_tags(self, chat):
+        """A direct chat's chat_tags: ["bot"] with a bot, [] with a person, None not known."""
+        people = self.chatters(chat)
+        if not people:
+            return None
+        return [TAG_BOT] if any(bot for k, (_, _, bot) in people.items() if k != self.me) else []
 
     def dm_name(self, chat, peer, sender_name=""):
         """A direct chat's name as Feishu shows it: the other person, or you with （我）; their short id when unknown."""

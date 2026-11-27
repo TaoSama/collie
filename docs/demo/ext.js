@@ -285,7 +285,7 @@
   const SUBS = [
     ["", "全部", () => true, "message-square-text"],
     ["unread", "未读", unread, "message-square-dot"],
-    ["dm", "单聊", (c) => unread(c) && (c.kind === "dm" || c.kind === "self"), "user", true],
+    ["dm", "单聊", (c) => unread(c) && (c.kind === "dm" || c.kind === "self") && !c.tags?.includes("bot"), "user", true],
     ["at", "@我", atMe, "at-sign", true],
     ["group", "群聊", (c) => unread(c) && c.kind === "group", "users", true],
   ];

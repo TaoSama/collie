@@ -728,6 +728,7 @@
   // Optimistic pin toggles before the hub's next stream frame lands: id -> { pinned, item }.
   const pinnedLocal = new Map();
   const AT_BOTTOM_PX = 36;
+  const INBOX_SCROLLBAR_MS = 800; // the inbox list's scrollbar stays this long after it stops
   // The 工作台 is an extension turned on in 接入: off, its entry hides and
   // its page is left. Unknown until the first snapshot (then it counts as on).
   const wbOn = () => sup.workbench !== false;
@@ -3208,6 +3209,13 @@
   let inboxChannel = store.get("inboxChannel", ""), inboxSubs = store.get("inboxSubs", {});
   // A chat's picture that won't load leaves the icon under it.
   document.addEventListener("error", (e) => { if (e.target.classList?.contains("inbox-pic")) e.target.remove(); }, true);
+  document.addEventListener("scroll", (e) => {
+    const el = e.target;
+    if (!el.classList?.contains("inbox-list")) return;
+    el.classList.add("scrolling");
+    clearTimeout(el._idle);
+    el._idle = setTimeout(() => el.classList.remove("scrolling"), INBOX_SCROLLBAR_MS);
+  }, true);
   collieExt.init({ esc, when, md: (t) => md(t), workerHref: (n) => { const p = paneOf(n); return p ? `#/p/${encodeURIComponent(p)}` : ""; } });
   bindTabs("#auto-tabs", "auto", "#auto-body", () => autoTab, (t) => {
     autoTab = t; store.set("autoTab", t);
@@ -3326,8 +3334,13 @@
       const msgs = body.querySelector(".conv-msgs"), stick = msgs && msgs.scrollTop < 40;
       const below = msgs ? msgs.scrollHeight - msgs.scrollTop : 0;
       if (sig !== body._sig) {
-        body._sig = sig; body._dsig = dsig;
+        // The list keeps its place while it shows the same channel and filter.
+        const place = JSON.stringify([inboxChannel, inboxSubs[inboxChannel]]);
+        const listTop = body._place === place ? body.querySelector(".inbox-list")?.scrollTop || 0 : 0;
+        body._sig = sig; body._dsig = dsig; body._place = place;
         body.innerHTML = collieExt.inboxHTML(r, inboxCur, inboxDetail, inboxChannel, inboxSubs[inboxChannel]);
+        const list = body.querySelector(".inbox-list");
+        if (list) list.scrollTop = listTop;
         // On a phone the channels and the filters slide sideways: the chosen ones in view.
         for (const on of body.querySelectorAll(".inbox-chs .on, .inbox-chips .on")) {
           const row = on.parentElement;

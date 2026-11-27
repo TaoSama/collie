@@ -370,6 +370,13 @@ class Names(unittest.TestCase):
         m = self.feishu({}).normalize(self.msg("4", "u_me", "6617623665812963591"))
         self.assertEqual(m["chat"], "私聊 963591", "nothing known: a short id, never 还不知道对方是谁")
 
+    def test_bot_chat_tagged(self):
+        """A direct chat with a bot or app (chatter type 2) is tagged bot, one with a person not."""
+        m = self.feishu({"u_me": {"name": "陆文韬", "type": 1}, "u_b": {"name": "智能纪要助手", "type": 2}}).normalize(self.msg("5", "u_b", "d5"))
+        self.assertEqual((m["chat_kind"], m["chat_tags"]), ("dm", ["bot"]))
+        m = self.feishu({"u_me": {"name": "陆文韬", "type": 1}, "u_b": {"name": "乙", "type": 1}}).normalize(self.msg("6", "u_b", "d6"))
+        self.assertEqual(m["chat_tags"], [])
+
 
 class Mentions(unittest.TestCase):
     """@自己唤起 and 群话题各开对话."""

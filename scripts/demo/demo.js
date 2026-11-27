@@ -531,6 +531,11 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { id: "larkx:oc_6", ext: "larkx", chat: "oc_6", label: "飞书", name: "王小明", kind: "dm", last_at: ago(60 * 26), preview: "王小明: 好的，周一见", on: false, handler: "agent" },
     { id: "larkx:oc_7", ext: "larkx", chat: "oc_7", label: "飞书", name: "数据库值班群", kind: "group", last_at: ago(8), preview: "飞书日历: [日历] 发布复盘", unread: 2, on: false, handler: "agent" },
     { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", unread: 12, muted: true, on: false, handler: "agent" },
+    { id: "larkx:oc_8", ext: "larkx", chat: "oc_8", label: "飞书", name: "会议纪要助手", kind: "dm", tags: ["bot"], last_at: ago(14), preview: "[卡片] 周会纪要已生成", unread: 2, on: false, handler: "agent" },
+    { id: "larkx:oc_9", ext: "larkx", chat: "oc_9", label: "飞书", name: "统一登录平台", kind: "dm", tags: ["bot"], last_at: ago(40), preview: "新设备登录提醒", unread: 1, on: false, handler: "agent" },
+    { id: "larkx:oc_10", ext: "larkx", chat: "oc_10", label: "飞书", name: "孙七", kind: "dm", last_at: ago(55), preview: "孙七: 接口文档更新了", unread: 1, on: false, handler: "agent" },
+    ...["前端周会", "移动端发版群", "设计评审", "数据平台答疑", "新人入职群", "架构讨论", "测试环境申请"].map((name, i) => (
+      { id: `larkx:og_${i}`, ext: "larkx", chat: `og_${i}`, label: "飞书", name, kind: "group", last_at: ago(120 + 45 * i), preview: "周八: 收到", on: false, handler: "agent" })),
     { id: "larkx:oc_4", ext: "larkx", chat: "oc_4", label: "飞书", name: "登录页改版 - [需求同步群]", kind: "group", last_at: ago(30), preview: "Meego: 状态变更为开发中", unread: 3, on: false, handler: "agent", hidden: true },
   ];
   const inboxMsgs = { "larkx:oc_1": [

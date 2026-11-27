@@ -1272,6 +1272,11 @@ func TestInboxNamesAndAnswers(t *testing.T) {
 	if c, _ := h.store.conv("fake:c1"); c.Name != "陆文韬（我）" {
 		t.Fatalf("no name said, the name stays: %q", c.Name)
 	}
+	h.store.appRead("fake", map[string]extproto.ChatRead{"c1": {Tags: []string{"bot"}}})
+	h.store.appRead("fake", map[string]extproto.ChatRead{"c1": {}})
+	if c, _ := h.store.conv("fake:c1"); !slices.Equal(c.Tags, []string{"bot"}) {
+		t.Fatalf("tags said are kept, none said leaves them: %v", c.Tags)
+	}
 	yes := true
 	got := mergeInboxRecent(InboxConv{ID: "fake:c1", Chat: "c1"}, nil, []extproto.Message{
 		{ID: "a", ChatID: "c1", Owner: &yes, Text: "你好！\n\n🤖 AI 代答，仅供参考 · Codex · 7秒", At: "2026-11-26T12:00:00Z"},

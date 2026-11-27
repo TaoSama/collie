@@ -2347,6 +2347,9 @@ select.picked { display: none; }
 .inbox-at { margin-right: 4px; color: var(--attn); font-weight: var(--fw-medium); }
 .inbox-split { display: grid; grid-template-columns: minmax(140px, 176px) minmax(260px, 400px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .inbox-split .card { margin-bottom: 0; }
+/* The list scrolls on its own under the channels and filters; its scrollbar shows only while it moves. */
+.inbox-list { max-height: max(320px, calc(var(--vh) - 360px)); overflow-y: auto; scrollbar-color: transparent transparent; transition: scrollbar-color .2s; }
+.inbox-list.scrolling { scrollbar-color: var(--line-2) transparent; }
 .inbox-row { cursor: pointer; }
 .inbox-row:hover { background: var(--bg-2); }
 .inbox-row.sel { background: color-mix(in srgb, var(--info) 7%, var(--bg)); box-shadow: inset 3px 0 0 var(--info); }

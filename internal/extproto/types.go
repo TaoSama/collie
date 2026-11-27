@@ -467,6 +467,8 @@ type ChatRead struct {
 	// Name: the chat's name as the app shows it now ("" not known), so a
 	// name given before (or by an older extension) is put right.
 	Name string `json:"name,omitempty"`
+	// Tags: as chat_tags, so a chat that has been there all along gets them (nil: not known).
+	Tags []string `json:"tags,omitempty"`
 }
 
 // ReadMarked is connector.read.mark's result: the chats marked, and why the others weren't.

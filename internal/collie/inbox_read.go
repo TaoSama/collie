@@ -62,6 +62,9 @@ func (st *extStore) appRead(ext string, counts map[string]extproto.ChatRead) {
 		if cr.Name != "" && cr.Name != c.Name {
 			c.Name, changed = cr.Name, true
 		}
+		if cr.Tags != nil && !slices.Equal(cr.Tags, c.Tags) {
+			c.Tags, changed = cr.Tags, true
+		}
 		if changed {
 			st.putConvLocked(c)
 		}
