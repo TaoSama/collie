@@ -34,7 +34,11 @@ Antigravity 桌面 App 的 `conversation_summaries.db` 也列出 agy CLI 起的�
 
 ## Antigravity 只有 CLI 起的会话能在 herdr 里继续
 
-`agy --conversation <id>` 只认 CLI 自己的会话。桌面 App 起的会话，CLI 报 `not found in any store`（macpro 实测），CLI 也没有指定数据目录的参数或环境变量。所以 `desktopSessions`（`internal/collie/desktop.go`）只给 App 索引里 `source` 是 CLI 的行开放接管，App 自己的会话要在 App 里继续。反过来，桌面 App 的语言服务（`SendUserCascadeMessage`）也只认 App 自己的 `~/.gemini/antigravity/conversations/`，加载不到 CLI 的会话（会报 `trajectory not found`），所以 `desktopSessions` 不把 `surface == surfaceCLI` 的行标成 `CanSend` / `via = "app"`，即使桌面 App 开着也经「在 herdr 里继续」恢复。这些行没有进程可以先结束，所以 App 说这个会话正在跑或在等后台任务时，也不给接管。herdr 外正在跑的 agy 进程、herdr 里跑过已结束的 agy 会话，各自走原来的接管和续接。接管和其他启动一样走 `startAgentAs`：只有带 `--dangerously-skip-permissions` 启动时，才预先信任目录（`trustForStart`）。否则新目录会停在 agy 的目录信任提示，在 Collie 里显示成等你确认（`agy -p` 不问信任，所以它用过的目录可能还没被信任）。
+`agy --conversation <id>` 只认 CLI 自己的会话。桌面 App 起的会话，CLI 报 `not found in any store`（macpro 实测），CLI 也没有指定数据目录的参数或环境变量。所以 `desktopSessions`（`internal/collie/desktop.go`）只给 App 索引里 `source` 是 CLI 的行开放接管，App 自己的会话要在 App 里继续。反过来，桌面 App 的语言服务（`SendUserCascadeMessage`）也只认 App 自己的 `~/.gemini/antigravity/conversations/`，加载不到 CLI 的会话（会报 `trajectory not found`），所以 `desktopSessions` 不把 `surface == surfaceCLI` 的行标成 `via = "app"`；空闲的 CLI 会话（Claude Code / Codex / Antigravity）走 `send_via = "herdr"`，网页发消息时自动在原电脑原目录（沿用 alias）用各 agent 的 resume 命令在 herdr 里拉起并投递消息，之后就是普通 herdr 会话，同时保留「在 herdr 里继续」按钮。这些行没有进程可以先结束，所以正在别处跑或在等后台任务时不能接管；若 agent 有官方通道（Claude peer inbox、Codex 共享 app-server）则继续直发/排队，没有则如实提示。herdr 外正在跑的进程、herdr 里跑过已结束的会话，各自走原来的接管和续接。接管和其他启动一样走 `startAgentAs`：只有带 `--dangerously-skip-permissions` 启动时，才预先信任目录（`trustForStart`）。否则新目录会停在 agy 的目录信任提示，在 Collie 里显示成等你确认（`agy -p` 不问信任，所以它用过的目录可能还没被信任）。
+
+## Codex CLI 连着共享后台时，线程会被标成桌面版
+
+新版 Codex CLI 与 Codex 桌面版共享 `~/.codex` 和共享 `app-server` 后台（`app-server-control.sock`）。rollout 由后台进程打开写入，CLI TUI 进程不持有 `.jsonl` 写句柄，`locateExternal` 没法通过 `lsof` 绑定到 session ID；同时共享后台在 `state_*.sqlite` 里给该线程记的是 `source = 'vscode'` 与后台启动者的 `originator`（`Codex Desktop`、`persona` 或空），因此 `codexAppRows` 会把它识别成「Codex 桌面版」，并因 `codexDaemonHas` 命中而直接走 `codexSend` 与 CLI 实时收发。独立运行的 Codex CLI 记为 `source = 'cli'`，`codexAppRows` 同时读 `source IN ('vscode', 'cli')` 并把 `source = 'cli'` 标为 `codex` / `surface = "cli"`，空闲时走 `send_via = "herdr"`。
 
 ## 没有 Antigravity App 的电脑读 CLI 自己的索引
 

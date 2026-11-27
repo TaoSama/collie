@@ -64,6 +64,7 @@ const (
 type desktopRow struct {
 	id, kind, app       string
 	surface             string // External.Surface
+	alias               string // External.Alias, when known from its config dir
 	session, title, cwd string
 	path, format        string
 	created, updated    time.Time
@@ -88,7 +89,9 @@ func (s *Server) desktopRows() ([]desktopRow, bool) {
 		return desktopCache.rows, desktopCache.app
 	}
 	var rows []desktopRow
-	rows = append(rows, s.claudeDesktopRows(s.claudeDesktopDirs())...)
+	claudeDesk := s.claudeDesktopRows(s.claudeDesktopDirs())
+	rows = append(rows, claudeDesk...)
+	rows = append(rows, s.claudeCLIRows(claudeDesk)...)
 	rows = append(rows, s.codexAppRows()...)
 	rows = append(rows, s.agyDesktopRows()...)
 	desktopCache.at, desktopCache.rows, desktopCache.app = time.Now(), rows, s.codexAppUp()
@@ -107,16 +110,14 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 	rows, appUp := s.desktopRows()
 	bySession := map[string]*claudeReg{}
 	for _, r := range regs {
-		if strings.HasPrefix(r.Entrypoint, "claude-desktop") {
-			bySession[r.SessionID] = r
-		}
+		bySession[r.SessionID] = r
 	}
 	var out []*External
 	for _, d := range rows {
 		if listed[d.session] {
 			continue
 		}
-		e := &External{ID: d.id, Kind: d.kind, Cwd: d.cwd, App: d.app, Surface: d.surface, Started: d.created, Session: d.session, Title: d.title, Updated: d.updated, Scheduled: d.scheduled, Pinned: d.pinned, path: d.path, format: d.format, desktop: true}
+		e := &External{ID: d.id, Kind: d.kind, Cwd: d.cwd, App: d.app, Surface: d.surface, Alias: d.alias, Started: d.created, Session: d.session, Title: d.title, Updated: d.updated, Scheduled: d.scheduled, Pinned: d.pinned, path: d.path, format: d.format, desktop: true}
 		if e.path != "" {
 			if fi, err := os.Stat(e.path); err == nil && fi.ModTime().After(e.Updated) {
 				e.Updated = fi.ModTime()
@@ -127,6 +128,13 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			if r := bySession[d.session]; r != nil {
 				e.reg, e.PID, e.Live = r, r.PID, true
 				s.reachable(e)
+			} else if d.surface == surfaceCLI {
+				e.CanTakeOver = e.path != "" && e.Cwd != ""
+				if e.CanTakeOver {
+					e.CanSend, e.SendVia = true, "herdr"
+				} else {
+					e.ReadOnly = "找不到这个会话的目录或记录，没法继续"
+				}
 			} else {
 				e.ReadOnly = "这个会话现在没在运行：在 Claude 桌面版里打开它，就能从这里发消息"
 				e.CanTakeOver = e.path != "" && e.Cwd != ""
@@ -137,17 +145,28 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 				e.Status = "working"
 			}
 			switch {
-			case appUp:
-				e.CanSend, e.via = true, "app"
 			case s.codexDaemonHas(d.session):
-				// A thread the App opened on this machine from another
-				// computer runs in Codex's shared background service.
+				// Loaded in Codex's shared background service (the App or a
+				// CLI client connected to it).
 				e.CanSend = true
+			case d.surface == surfaceCLI:
+				if d.running {
+					e.ReadOnly = "这个会话正在别处运行，未接入 Codex 共享后台，无法排队发消息"
+				} else {
+					e.CanTakeOver = e.Session != "" && e.Cwd != ""
+					if e.CanTakeOver {
+						e.CanSend, e.SendVia = true, "herdr"
+					} else {
+						e.ReadOnly = "找不到这个会话的目录，没法在 herdr 里继续"
+					}
+				}
+			case appUp:
+				e.CanSend, e.SendVia = true, "app"
 			case isCodexApp(d.app) && s.codexDaemonSock() != "":
 				// Queue through the shared daemon: the App's own app-server
 				// picks it up directly if it holds the thread, otherwise we
 				// wake the App (or fall back to the daemon).
-				e.CanSend, e.via = true, "queue"
+				e.CanSend, e.SendVia = true, "queue"
 				// The CLI shares ~/.codex with the App: `codex resume` picks
 				// the thread up in a herdr pane too.
 				e.CanTakeOver = !d.running && e.Session != "" && e.Cwd != ""
@@ -164,24 +183,26 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			} else if d.waiting {
 				e.Status = "waiting"
 			}
+			// `agy --conversation` resumes the CLI's own conversations, which
+			// the App lists too; the App's it can't find. Not while a turn
+			// runs: there is no process here to stop first.
+			e.CanTakeOver = d.surface == surfaceCLI && e.Session != "" && e.Cwd != "" && !e.Live
 			// The App's language server only loads conversations from its own
 			// store (~/.gemini/antigravity), not the CLI's (~/.gemini/antigravity-cli).
 			switch {
 			case d.surface == surfaceCLI:
 				if e.Live {
-					e.ReadOnly = "这个会话正在别处运行"
+					e.ReadOnly = "这个会话正在别处运行，Antigravity CLI 不支持排队发消息"
+				} else if e.CanTakeOver {
+					e.CanSend, e.SendVia = true, "herdr"
 				} else {
 					e.ReadOnly = "这个会话现在没在运行"
 				}
 			case agyDesktopServer() != nil:
-				e.CanSend, e.via = true, "app"
+				e.CanSend, e.SendVia = true, "app"
 			default:
 				e.ReadOnly = "Antigravity 没有打开：打开它之后就能从这里发消息"
 			}
-			// `agy --conversation` resumes the CLI's own conversations, which
-			// the App lists too; the App's it can't find. Not while a turn
-			// runs: there is no process here to stop first.
-			e.CanTakeOver = d.surface == surfaceCLI && e.Session != "" && e.Cwd != "" && !e.Live
 		}
 		out = append(out, e)
 	}
@@ -354,6 +375,156 @@ func newestRows(rows []desktopRow) []desktopRow {
 	return rows
 }
 
+type claudeCLIMeta struct {
+	mod     time.Time
+	size    int64
+	cwd     string
+	title   string
+	created time.Time
+	collie  bool
+}
+
+var claudeCLIFiles = struct {
+	sync.Mutex
+	m map[string]claudeCLIMeta
+}{m: map[string]claudeCLIMeta{}}
+
+// claudeCLIRows lists recent Claude Code CLI sessions outside herdr, skipping
+// those already listed by Claude Desktop and Collie's own workers.
+func (s *Server) claudeCLIRows(desktop []desktopRow) []desktopRow {
+	seen := map[string]bool{}
+	for _, d := range desktop {
+		seen[d.session] = true
+	}
+	type rootAlias struct{ dir, alias string }
+	roots := []rootAlias{{dir: filepath.Clean(claudeRoot(s.home))}}
+	seenDir := map[string]bool{roots[0].dir: true}
+	if snap, ok := s.aliases.get(""); ok {
+		for _, a := range snap.rep.Aliases {
+			if a.Kind != "claude" {
+				continue
+			}
+			if raw := a.rawEnv["CLAUDE_CONFIG_DIR"]; raw != "" && !shellOnly(raw) {
+				dir := filepath.Clean(expandTilde(raw, s.home))
+				if !seenDir[dir] {
+					seenDir[dir] = true
+					roots = append(roots, rootAlias{dir: dir, alias: a.Name})
+				}
+			}
+		}
+	}
+	type cand struct {
+		path, session, alias string
+		mod                  time.Time
+		size                 int64
+	}
+	var cands []cand
+	for _, r := range roots {
+		files, _ := filepath.Glob(filepath.Join(r.dir, "projects", "*", "*.jsonl"))
+		for _, f := range files {
+			id := strings.TrimSuffix(filepath.Base(f), ".jsonl")
+			if !conversationRe.MatchString(id) || seen[id] {
+				continue
+			}
+			fi, err := os.Stat(f)
+			if err != nil || fi.IsDir() || fi.Size() == 0 {
+				continue
+			}
+			cands = append(cands, cand{path: f, session: id, alias: r.alias, mod: fi.ModTime(), size: fi.Size()})
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].mod.After(cands[j].mod) })
+	var rows []desktopRow
+	for _, c := range cands {
+		if len(rows) == desktopMax {
+			break
+		}
+		if seen[c.session] {
+			continue
+		}
+		meta := readClaudeCLIMeta(c.path, c.mod, c.size)
+		if meta.collie || meta.cwd == "" || meta.title == "" {
+			continue
+		}
+		seen[c.session] = true
+		created := meta.created
+		if created.IsZero() {
+			created = c.mod
+		}
+		rows = append(rows, desktopRow{
+			id: "cc-" + c.session, kind: "claude", app: "claude", surface: surfaceCLI, alias: c.alias,
+			session: c.session, title: meta.title, cwd: meta.cwd, path: c.path, format: "claude",
+			created: created, updated: c.mod,
+		})
+	}
+	return rows
+}
+
+func readClaudeCLIMeta(path string, mod time.Time, size int64) claudeCLIMeta {
+	claudeCLIFiles.Lock()
+	if m, ok := claudeCLIFiles.m[path]; ok && m.mod.Equal(mod) && m.size == size {
+		claudeCLIFiles.Unlock()
+		return m
+	}
+	claudeCLIFiles.Unlock()
+	m := claudeCLIMeta{mod: mod, size: size}
+	f, err := os.Open(path)
+	if err != nil {
+		return m
+	}
+	defer f.Close()
+	tr := newTranscript(path, "claude")
+	r := bufio.NewReaderSize(f, 1<<20)
+	read := 0
+	for read < titleScanBytes && (m.cwd == "" || (m.title == "" && !m.collie)) {
+		line, err := r.ReadBytes('\n')
+		if err != nil && len(line) == 0 {
+			break
+		}
+		read += len(line)
+		if m.cwd == "" || m.created.IsZero() {
+			var h struct {
+				Cwd       string `json:"cwd"`
+				Timestamp string `json:"timestamp"`
+			}
+			if json.Unmarshal(line, &h) == nil {
+				if m.cwd == "" && h.Cwd != "" {
+					m.cwd = h.Cwd
+				}
+				if m.created.IsZero() && h.Timestamp != "" {
+					if t, err := time.Parse(time.RFC3339Nano, h.Timestamp); err == nil {
+						m.created = t
+					}
+				}
+			}
+		}
+		if m.title == "" && !m.collie {
+			tr.line(line)
+			for _, msg := range tr.msgs {
+				if msg.Kind == "user" && strings.TrimSpace(msg.Text) != "" {
+					if collieSession(msg.Text) {
+						m.collie = true
+					} else {
+						m.title = messageTitle(msg.Text)
+					}
+					break
+				}
+			}
+			tr.msgs = tr.msgs[:0]
+		}
+		if err != nil {
+			break
+		}
+	}
+	claudeCLIFiles.Lock()
+	if len(claudeCLIFiles.m) > 2000 {
+		claudeCLIFiles.m = map[string]claudeCLIMeta{}
+	}
+	claudeCLIFiles.m[path] = m
+	claudeCLIFiles.Unlock()
+	return m
+}
+
 // ---------------------------------------------------------------- Codex App
 
 // codexStateDB is the newest of the App's state databases (its number goes up with its schema).
@@ -392,8 +563,8 @@ func (s *Server) codexAppRows() []desktopRow {
 	// mustn't take the places of the App's threads; nor may the newer
 	// threads push out an automation's or a pinned thread.
 	q := `SELECT id, COALESCE(NULLIF(name,''), NULLIF(title,''), first_user_message), COALESCE(first_user_message, ''), cwd, rollout_path,
-		COALESCE(created_at_ms, created_at*1000), COALESCE(updated_at_ms, updated_at*1000), COALESCE(originator, ''), ` + sectionCol + `
-		FROM threads WHERE archived = 0 AND source = 'vscode' ORDER BY updated_at DESC`
+		COALESCE(created_at_ms, created_at*1000), COALESCE(updated_at_ms, updated_at*1000), COALESCE(originator, ''), ` + sectionCol + `, COALESCE(source, '')
+		FROM threads WHERE archived = 0 AND source IN ('vscode', 'cli') ORDER BY updated_at DESC`
 	res, err := db.Query(q)
 	if err != nil {
 		return nil
@@ -402,14 +573,14 @@ func (s *Server) codexAppRows() []desktopRow {
 	var rows []desktopRow
 	kept := 0
 	for res.Next() {
-		var id, title, first, cwd, rollout, originator, sectionID string
+		var id, title, first, cwd, rollout, originator, sectionID, source string
 		var created, updated int64
-		if res.Scan(&id, &title, &first, &cwd, &rollout, &created, &updated, &originator, &sectionID) != nil {
+		if res.Scan(&id, &title, &first, &cwd, &rollout, &created, &updated, &originator, &sectionID, &source) != nil {
 			continue
 		}
 		// A Collie worker's thread, named by Codex after its task: listed
 		// as Collie's, not as the App's.
-		if collieSession(first) {
+		if collieSession(first) || strings.TrimSpace(title) == "" {
 			continue
 		}
 		scheduled := automation[id]
@@ -420,8 +591,11 @@ func (s *Server) codexAppRows() []desktopRow {
 			}
 			kept++
 		}
-		app := codexClient(originator, cwd)
-		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, surface: codexSurface(originator), session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated), scheduled: scheduled, pinned: pinned}
+		app, surface := codexClient(originator, cwd), codexSurface(originator)
+		if source == "cli" {
+			app, surface = "codex", surfaceCLI
+		}
+		d := desktopRow{id: "cx-" + id, kind: "codex", app: app, surface: surface, session: id, title: messageTitle(title), cwd: cwd, created: time.UnixMilli(created), updated: time.UnixMilli(updated), scheduled: scheduled, pinned: pinned}
 		if p := codexRollout(rollout); p != "" {
 			d.path, d.format = p, "codex"
 			d.running = codexTurnRunning(p)

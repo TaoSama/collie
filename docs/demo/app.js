@@ -5191,7 +5191,11 @@
       $("#x-takeover").textContent = "在 herdr 里继续";
       $("#x-takeover").className = "btn small";
       $("#x-composer").hidden = !e.can_send;
-      if (e.can_send) $("#x-hint").textContent = e.kind === "agy" ? "经 Antigravity 送达" : "经 Codex App 送达";
+      if (e.can_send) {
+        $("#x-input")._slashPrefetch?.();
+        $("#x-hint").textContent = e.send_via === "herdr" ? "发送后将在 herdr 里继续"
+          : e.kind === "agy" ? "经 Antigravity 送达" : "经 Codex App 送达";
+      }
       $("#x-note").textContent = e.can_send ? ""
         : (e.read_only || "") + (e.can_take_over ? "。也可以在 herdr 里用同一个会话继续，之后就能在这里对话。" : "");
       return;
@@ -5223,13 +5227,21 @@
     return trackSend("x:" + e.id, draft, ready, async (text) => {
       const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body: { text } });
       if (r.note) toast(r.note, "attn");
+      if (r.pane_id) {
+        ext = ext.filter((x) => x.id !== e.id);
+        renderExt();
+        if (view === "ext" && extCur === e.id) {
+          replaceHash("#/p/" + encodeURIComponent(r.pane_id));
+          route();
+        }
+      }
     });
   }, () => { // files go to the computer it runs on (through its hub, if another)
     const e = ext.find((x) => x.id === extCur);
     return e?.hub ? tagged(e.machine || "", e.hub) : e?.machine || "";
   }, null, () => {
     const e = ext.find((x) => x.id === extCur);
-    return e ? slashCtx(e.hub ? tagged(e.machine || "", e.hub) : e.machine, e.kind, e.cwd, false) : null;
+    return e ? slashCtx(e.hub ? tagged(e.machine || "", e.hub) : e.machine, e.kind, e.cwd, e.send_via === "herdr") : null;
   }, () => extCur);
   function closeExt() {
     extStream?.close(); extStream = null;

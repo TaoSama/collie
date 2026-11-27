@@ -666,10 +666,6 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "空消息"})
 		return
 	}
-	if strings.HasPrefix(text, "/") {
-		writeJSON(w, 400, map[string]any{"error": "斜杠命令只能在那台电脑上输入"})
-		return
-	}
 	e := s.externalByID(r.PathValue("id"))
 	if e == nil {
 		writeJSON(w, 404, map[string]any{"error": "这个会话已经结束了"})
@@ -677,6 +673,46 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 	}
 	if !e.CanSend {
 		writeJSON(w, 409, map[string]any{"error": e.ReadOnly})
+		return
+	}
+	if e.SendVia == "herdr" {
+		if e.Session == "" || e.Cwd == "" || !e.CanTakeOver {
+			writeJSON(w, 409, map[string]any{"error": "找不到这个会话的记录，没法在 herdr 里续上"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		pane, ws, name, usedAlias, status, err := s.resumeExternal(ctx, e, nil)
+		if err != nil {
+			var he *HerdrError
+			if errors.As(err, &he) && he.Code == "agent_not_ready" {
+				writeJSON(w, 202, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias, "note": "已在 herdr 里继续，但 agent 停在了一个对话框上，请处理后再发"})
+				return
+			}
+			if status != 0 {
+				writeJSON(w, status, map[string]any{"error": err.Error()})
+				return
+			}
+			fail(w, err)
+			return
+		}
+		for wait := time.Now().Add(20 * time.Second); ; {
+			err = s.herdr.Prompt(ctx, pane, text)
+			var he *HerdrError
+			if err == nil || !errors.As(err, &he) || (he.Code != "agent_not_ready" && he.Code != "agent_not_found") || time.Now().After(wait) || ctx.Err() != nil {
+				break
+			}
+			time.Sleep(1500 * time.Millisecond)
+		}
+		if err != nil {
+			writeJSON(w, 202, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias, "note": "已在 herdr 里继续，但这条消息发送失败：" + err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias})
+		return
+	}
+	if strings.HasPrefix(text, "/") {
+		writeJSON(w, 400, map[string]any{"error": "斜杠命令只能在那台电脑上输入"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -697,7 +733,7 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "codex":
-		if e.via == "queue" {
+		if e.SendVia == "queue" {
 			note, err := s.codexQueueSend(ctx, e.Session, text)
 			if err != nil {
 				fail(w, err)
@@ -710,7 +746,7 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		send := s.codexSend
-		if e.via == "app" {
+		if e.SendVia == "app" {
 			send = s.codexAppSend
 		}
 		if err := send(ctx, e.Session, text); err != nil {
@@ -718,7 +754,7 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "agy":
-		if e.via != "app" {
+		if e.SendVia != "app" {
 			writeJSON(w, 409, map[string]any{"error": "这个 Antigravity 会话还不能从这里发消息"})
 			return
 		}

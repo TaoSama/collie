@@ -42,8 +42,9 @@ type External struct {
 	Machine string    `json:"machine,omitempty"`
 	Status  string    `json:"status,omitempty"` // working | idle | blocked, when the agent says
 	// CanSend: a message can go to it where it runs (Claude's peer inbox, the
-	// Codex daemon); otherwise ReadOnly says why.
+	// Codex daemon) or by resuming it in herdr; otherwise ReadOnly says why.
 	CanSend  bool   `json:"can_send,omitempty"`
+	SendVia  string `json:"send_via,omitempty"` // "herdr" | "app" | "queue" | ""
 	ReadOnly string `json:"read_only,omitempty"`
 	// Live: it runs right now (a process, or a turn the app is running). A
 	// desktop app's conversation is listed while it rests too.
@@ -62,8 +63,7 @@ type External struct {
 	startDir           string
 	reg                *claudeReg
 	launch             *procLaunch // how its process was started; nil if unknown
-	desktop            bool        // listed from a desktop app's index (desktop.go)
-	via                string      // "app": a message goes through the Codex App's message bus
+	desktop            bool        // listed from a desktop app's or CLI's index (desktop.go)
 	agySharedWorkspace bool        // more than one live AGY process uses this directory
 	agyCandidate       bool        // workspace match, useful for reading only
 	agyStarted         time.Time   // process start confirmed for takeover
@@ -655,24 +655,39 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
+	pane, ws, name, usedAlias, status, err := s.resumeExternal(ctx, e, body.Alias)
+	var he *HerdrError
+	if err != nil && !(errors.As(err, &he) && he.Code == "agent_not_ready") {
+		if status != 0 {
+			writeJSON(w, status, map[string]any{"error": err.Error()})
+			return
+		}
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias})
+}
+
+// resumeExternal stops a live external process (if any) and resumes its
+// conversation in a new herdr pane on this machine, in the same directory.
+func (s *Server) resumeExternal(ctx context.Context, e *External, aliasName *string) (pane, ws, name, usedAlias string, status int, err error) {
 	herdrKind := kinds[e.Kind]
-	if body.Alias == nil {
-		// Read the aliases again if the list is old: the guess was made with it.
-		guess, _ := guessAlias(e, s.localAliases(ctx, true), s.home)
-		body.Alias = &guess
+	chosen := e.Alias
+	if aliasName != nil {
+		chosen = *aliasName
+	} else if e.launch != nil {
+		chosen, _ = guessAlias(e, s.localAliases(ctx, true), s.home)
 	}
 	var alias *LauncherAlias
-	if *body.Alias != "" {
-		a, err := s.aliasOn(ctx, "", *body.Alias, herdrKind)
+	if chosen != "" {
+		a, err := s.aliasOn(ctx, "", chosen, herdrKind)
 		if err != nil {
-			writeJSON(w, 400, map[string]any{"error": err.Error()})
-			return
+			return "", "", "", "", 400, err
 		}
 		alias = a
 	}
 	if e.Kind == "agy" && e.PID > 0 && !s.sameExternalAgy(ctx, e) {
-		writeJSON(w, 409, map[string]any{"error": "原来的 Antigravity 进程或会话已经变化，请刷新后再接管"})
-		return
+		return "", "", "", "", 409, errors.New("原来的 Antigravity 进程或会话已经变化，请刷新后再接管")
 	}
 	args := resumeArgs(e.Kind, e.Session)
 	// Two processes writing one conversation would garble it: stop the
@@ -682,37 +697,28 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 	}
 	if e.PID > 0 && sameAlive() {
 		if err := syscall.Kill(e.PID, syscall.SIGINT); err != nil && !errors.Is(err, syscall.ESRCH) {
-			fail(w, err)
-			return
+			return "", "", "", "", 0, err
 		}
 		for i := 0; i < 30 && sameAlive(); i++ {
 			if i == 10 {
 				if err := syscall.Kill(e.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-					fail(w, err)
-					return
+					return "", "", "", "", 0, err
 				}
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
 		if sameAlive() {
-			writeJSON(w, 409, map[string]any{"error": "原来的进程没有退出（PID " + strconv.Itoa(e.PID) + "），请先在那个终端里退出它"})
-			return
+			return "", "", "", "", 409, errors.New("原来的进程没有退出（PID " + strconv.Itoa(e.PID) + "），请先在那个终端里退出它")
 		}
 	}
-	externalCache.Lock()
-	externalCache.at = time.Time{}
-	externalCache.Unlock()
-	name := e.Kind + "-" + strconv.Itoa(e.PID)
+	forgetExternal()
+	forgetDesktopRows()
+	name = e.Kind + "-" + strconv.Itoa(e.PID)
 	if e.PID == 0 {
 		name = e.Kind + "-" + strings.SplitN(e.Session, "-", 2)[0]
 	}
-	pane, ws, err := s.startAgentAs(ctx, "", herdrKind, name, cmp.Or(e.startDir, e.Cwd), name, alias, args)
-	var he *HerdrError
-	if err != nil && !(errors.As(err, &he) && he.Code == "agent_not_ready") {
-		fail(w, err)
-		return
-	}
-	writeJSON(w, 200, map[string]any{"pane_id": pane, "workspace_id": ws, "name": name, "alias": *body.Alias})
+	pane, ws, err = s.startAgentAs(ctx, "", herdrKind, name, cmp.Or(e.startDir, e.Cwd), name, alias, args)
+	return pane, ws, name, chosen, 0, err
 }
 
 // sortSessions puts running sessions first, then the most recently active.
@@ -756,7 +762,7 @@ func (s *Server) revealExternal(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case e.Kind == "claude" && strings.HasPrefix(e.ID, "cd-"):
 		link = "claude://code/needs-input?source=collie&session=" + url.QueryEscape("local_"+strings.TrimPrefix(e.ID, "cd-"))
-	case e.Kind == "codex" && e.via == "app" && e.Session != "":
+	case e.Kind == "codex" && e.SendVia == "app" && e.Session != "":
 		link = "codex://threads/" + url.PathEscape(e.Session)
 	default:
 		writeJSON(w, 409, map[string]any{"error": "这个会话没法从这里在 " + e.App + " 里打开"})

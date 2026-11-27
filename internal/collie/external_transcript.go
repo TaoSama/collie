@@ -78,14 +78,16 @@ func (s *Server) locateExternal(e *External, p *proc, children ...int) {
 	case "claude":
 		root := cmp.Or(e.launchEnv("CLAUDE_CONFIG_DIR"), claudeRoot(s.home))
 		sessions := filepath.Join(root, "sessions")
-		var reg struct {
-			SessionID string `json:"sessionId"`
-		}
+		var reg claudeReg
 		if b, err := os.ReadFile(filepath.Join(sessions, strconv.Itoa(p.pid)+".json")); err == nil && json.Unmarshal(b, &reg) == nil && reg.SessionID != "" {
+			reg.dir = sessions
 			id = reg.SessionID
 		}
 		if e.reg != nil && filepath.Clean(e.reg.dir) != sessions {
 			e.reg = nil
+		}
+		if e.reg == nil && reg.SessionID != "" {
+			e.reg = &reg
 		}
 		if e.reg != nil {
 			if reg.SessionID != "" && reg.SessionID != e.reg.SessionID {

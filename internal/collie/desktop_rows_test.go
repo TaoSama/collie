@@ -319,13 +319,13 @@ func TestAgyDesktopSessionsDoNotRouteCLIToApp(t *testing.T) {
 		readOnly string
 		takeOver bool
 	}{
-		{"cli-idle", false, "", "这个会话现在没在运行", true},
-		{"cli-run", false, "", "这个会话正在别处运行", false},
+		{"cli-idle", true, "herdr", "", true},
+		{"cli-run", false, "", "这个会话正在别处运行，Antigravity CLI 不支持排队发消息", false},
 		{"app-idle", true, "app", "", false},
 	} {
 		e := got[tc.id]
-		if e == nil || e.CanSend != tc.canSend || e.via != tc.via || e.ReadOnly != tc.readOnly || e.CanTakeOver != tc.takeOver {
-			t.Fatalf("session %s = %+v, want CanSend=%v via=%q ReadOnly=%q CanTakeOver=%v", tc.id, e, tc.canSend, tc.via, tc.readOnly, tc.takeOver)
+		if e == nil || e.CanSend != tc.canSend || e.SendVia != tc.via || e.ReadOnly != tc.readOnly || e.CanTakeOver != tc.takeOver {
+			t.Fatalf("session %s = %+v, want CanSend=%v SendVia=%q ReadOnly=%q CanTakeOver=%v", tc.id, e, tc.canSend, tc.via, tc.readOnly, tc.takeOver)
 		}
 	}
 }
@@ -401,8 +401,105 @@ func TestCodexDesktopSessionsAllowSendWhileRunning(t *testing.T) {
 		takeOver bool
 	}{{"idle", true}, {"run", false}} {
 		e := got[tc.id]
-		if e == nil || !e.CanSend || e.via != "queue" || e.ReadOnly != "" || e.CanTakeOver != tc.takeOver {
-			t.Fatalf("session %s = %+v, want CanSend=true via=queue ReadOnly='' CanTakeOver=%v", tc.id, e, tc.takeOver)
+		if e == nil || !e.CanSend || e.SendVia != "queue" || e.ReadOnly != "" || e.CanTakeOver != tc.takeOver {
+			t.Fatalf("session %s = %+v, want CanSend=true SendVia=queue ReadOnly='' CanTakeOver=%v", tc.id, e, tc.takeOver)
 		}
+	}
+}
+
+func TestCodexCLIRowsAndSendViaHerdr(t *testing.T) {
+	home, add := codexStateFixture(t)
+	db, err := sql.Open("sqlite", filepath.Join(home, ".codex", "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	if _, err := db.Exec(`INSERT INTO threads VALUES ('cli-1', '', 'cli title', 'cli title', '/work', '', ?, ?, ?, ?, '', 0, 'cli')`,
+		now.Unix(), now.UnixMilli(), now.Unix(), now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	add("desk-1", "desktop title", now.Add(-time.Minute))
+
+	rows := (&Server{home: home}).codexAppRows()
+	if len(rows) != 2 {
+		t.Fatalf("codexAppRows len = %d, want 2: %+v", len(rows), rows)
+	}
+	if rows[0].session != "cli-1" || rows[0].app != "codex" || rows[0].surface != surfaceCLI {
+		t.Fatalf("cli row = %+v, want session=cli-1 app=codex surface=cli", rows[0])
+	}
+
+	codexLoadedCache.Lock()
+	codexLoadedCache.at, codexLoadedCache.ids, codexLoadedCache.err = time.Now(), map[string]bool{"cli-loaded": true}, nil
+	codexLoadedCache.Unlock()
+	t.Cleanup(func() {
+		codexLoadedCache.Lock()
+		codexLoadedCache.at = time.Time{}
+		codexLoadedCache.Unlock()
+	})
+	desktopCache.Lock()
+	desktopCache.at, desktopCache.app = time.Now(), true // even with old appUp, CLI sessions must not route to App IPC
+	desktopCache.rows = []desktopRow{
+		{id: "cx-cli-idle", kind: "codex", app: "codex", surface: surfaceCLI, session: "cli-idle", cwd: "/work"},
+		{id: "cx-cli-run", kind: "codex", app: "codex", surface: surfaceCLI, session: "cli-run", cwd: "/work", running: true},
+		{id: "cx-cli-loaded", kind: "codex", app: "codex", surface: surfaceCLI, session: "cli-loaded", cwd: "/work", running: true},
+	}
+	desktopCache.Unlock()
+	t.Cleanup(forgetDesktopRows)
+
+	got := map[string]*External{}
+	for _, e := range (&Server{home: home}).desktopSessions(nil, nil, time.Now()) {
+		got[e.Session] = e
+	}
+	if e := got["cli-idle"]; e == nil || !e.CanSend || e.SendVia != "herdr" || !e.CanTakeOver || e.ReadOnly != "" {
+		t.Fatalf("cli-idle = %+v, want CanSend=true SendVia=herdr CanTakeOver=true", e)
+	}
+	if e := got["cli-run"]; e == nil || e.CanSend || e.SendVia != "" || e.CanTakeOver || e.ReadOnly == "" {
+		t.Fatalf("cli-run = %+v, want read-only running CLI", e)
+	}
+	if e := got["cli-loaded"]; e == nil || !e.CanSend || e.SendVia != "" {
+		t.Fatalf("cli-loaded = %+v, want daemon CanSend=true SendVia=''", e)
+	}
+}
+
+func TestClaudeCLIRowsAndSendViaHerdr(t *testing.T) {
+	home := t.TempDir()
+	claude := filepath.Join(home, ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	proj := filepath.Join(claude, "projects", "-work")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) string {
+		p := filepath.Join(proj, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	const (
+		cliID    = "11111111-1111-1111-1111-111111111111"
+		deskID   = "22222222-2222-2222-2222-222222222222"
+		workerID = "33333333-3333-3333-3333-333333333333"
+	)
+	write(cliID+".jsonl", `{"type":"user","cwd":"/work","timestamp":"2026-11-27T10:00:00Z","message":{"role":"user","content":"帮我看下日志"}}`+"\n")
+	write(deskID+".jsonl", `{"type":"user","cwd":"/work","timestamp":"2026-11-27T10:00:00Z","message":{"role":"user","content":"桌面会话"}}`+"\n")
+	write(workerID+".jsonl", `{"type":"user","cwd":"/work","timestamp":"2026-11-27T10:00:00Z","message":{"role":"user","content":"[collie] 1 new event"}}`+"\n")
+	write("agent-sub123.jsonl", `{"type":"user","cwd":"/work","message":{"role":"user","content":"子代理"}}`+"\n")
+
+	s := &Server{home: home}
+	desktop := []desktopRow{{id: "cd-1", kind: "claude", app: appClaude, surface: surfaceDesktop, session: deskID, cwd: "/work"}}
+	rows := s.claudeCLIRows(desktop)
+	if len(rows) != 1 || rows[0].session != cliID || rows[0].surface != surfaceCLI || rows[0].app != "claude" || rows[0].cwd != "/work" || rows[0].title != "帮我看下日志" {
+		t.Fatalf("claudeCLIRows = %+v, want only cliID", rows)
+	}
+
+	desktopCache.Lock()
+	desktopCache.at, desktopCache.app, desktopCache.rows = time.Now(), false, rows
+	desktopCache.Unlock()
+	t.Cleanup(forgetDesktopRows)
+	got := s.desktopSessions(nil, nil, time.Now())
+	if len(got) != 1 || !got[0].CanSend || got[0].SendVia != "herdr" || !got[0].CanTakeOver || got[0].ReadOnly != "" {
+		t.Fatalf("desktopSessions(claude CLI) = %+v, want CanSend=true SendVia=herdr CanTakeOver=true", got)
 	}
 }
