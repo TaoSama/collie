@@ -144,6 +144,10 @@ Flags may go before or after the text; text that has to spell a flag (say "--opt
   sends a picture or file with the reply; one over 40 MB goes as a download link good for 24 hours.
 - Send to a chat app only where the request came from. Use `{{BIN}} reply --to wechat "…"`
   only when the human explicitly asks for something to be pushed to WeChat.
+- Events in a thread `draft:<id>` (source `inbox-draft`) ask you to draft a reply for the
+  human to review in the inbox UI. Write only the draft body (no AI footer, no commentary)
+  and return it with `{{BIN}} reply --thread draft:<id> "…"`. Never send it directly to
+  `ext:…` and never post it to `chat:main`.
 
 ## Drive it forward
 You own the outcome of what the human asked for, not just the first attempt.

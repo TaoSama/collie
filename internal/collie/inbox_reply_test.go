@@ -243,4 +243,7 @@ func TestInboxDraftDedicatedWorkerHelper(t *testing.T) {
 	if h.activeWorkerDraft("lark-group") != nil {
 		t.Fatal("completed draft should no longer be active")
 	}
+	if !strings.Contains(routerDoc, "inbox-draft") || !strings.Contains(routerDoc, "draft:<id>") {
+		t.Fatal("routerDoc must document inbox-draft / draft:<id> handling")
+	}
 }
