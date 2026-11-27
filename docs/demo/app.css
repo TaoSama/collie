@@ -2360,6 +2360,7 @@ select.picked { display: none; }
 .conv-title .inbox-ava > svg { width: 14px; height: 14px; }
 .conv-title .inbox-ava > .src-logo { width: 13px; height: 13px; right: -2px; bottom: -2px; }
 .inbox-ava > .src-logo { position: absolute; right: -3px; bottom: -3px; width: 16px; height: 16px; border-radius: 5px; box-shadow: 0 0 0 2px var(--bg); }
+.inbox-ava.sq, .inbox-ava.sq > .inbox-pic, .conv-ava.sq, .conv-ava.sq > .inbox-pic { border-radius: 22%; }
 .inbox-row.sel .inbox-ava > .src-logo { box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 7%, var(--bg)); }
 .inbox-main { display: grid; gap: 3px; min-width: 0; }
 .inbox-l1, .inbox-l2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -2394,8 +2395,8 @@ select.picked { display: none; }
 .conv-msg .meta { display: flex; gap: 8px; align-items: baseline; padding: 0 4px; font-size: var(--fs-small); color: var(--t-meta); }
 .conv-msg .meta b { color: var(--t-secondary); font-weight: var(--fw-medium); }
 .conv-msg .meta time { font-variant-numeric: tabular-nums; }
-.conv-msg.bot .meta b { display: inline-flex; align-items: center; gap: 4px; color: var(--info); }
-.conv-msg.bot .meta b > svg { width: 13px; height: 13px; }
+.conv-ai { display: inline-flex; align-items: center; gap: 4px; color: var(--info); font-weight: var(--fw-medium); }
+.conv-ai > svg { width: 13px; height: 13px; }
 .conv-msg .msg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-body); line-height: calc(var(--lh-ui) + .1); }
 .conv-msg .msg.assistant { white-space: normal; }
 .conv-bubble { max-width: 100%; padding: 8px 12px; border-radius: calc(14px * var(--round)); background: var(--bg-2); color: var(--fg); }

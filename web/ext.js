@@ -92,7 +92,7 @@
     if (v?.manifest?.runtime?.builtin !== "wechat") return "";
     const pic = v.avatar_url ? `<img class="inbox-pic" src="${esc(v.avatar_url)}" alt="">` : "";
     return `<div class="ext-avatar"><span>头像</span><div class="ext-avatar-row">
-      <span class="inbox-ava">${ico("user")}${pic}${logo(v.manifest.id)}</span>
+      <span class="inbox-ava sq">${ico("user")}${pic}${logo(v.manifest.id)}</span>
       <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-ext-avatar-input>
       <button type="button" class="btn small" data-ext-avatar-pick>${v.avatar_url ? "更换" : "上传"}</button>
       ${v.avatar_url ? `<button type="button" class="btn small ghost" data-ext-avatar-clear>恢复默认</button>` : ""}
@@ -270,7 +270,9 @@
   // A chat's round tile: its picture (through the hub) over the icon of its
   // kind, which stays when there is none or it fails to load; the app's logo
   // in the corner.
-  const avatar = (c, title = "") => `<span class="inbox-ava"${title ? ` title="${esc(title)}"` : ""}>${ico(KIND_ICON[c.kind] || "message-circle")}${c.avatar ? `<img class="inbox-pic" src="${esc(c.avatar)}" alt="" loading="lazy" decoding="async">` : ""}${logo(c.ext)}</span>`;
+  // WeChat's pictures are rounded squares, as WeChat draws them; others round.
+  const SQUARE = new Set(["wechat"]);
+  const avatar = (c, title = "") => `<span class="inbox-ava${SQUARE.has(c.ext) ? " sq" : ""}"${title ? ` title="${esc(title)}"` : ""}>${ico(KIND_ICON[c.kind] || "message-circle")}${c.avatar ? `<img class="inbox-pic" src="${esc(c.avatar)}" alt="" loading="lazy" decoding="async">` : ""}${logo(c.ext)}</span>`;
 
   // 收件箱: the channels first (飞书, 微信 …) with 已交给 AI apart, a
   // channel's own filters above its chats, and the open chat beside them.
@@ -397,12 +399,14 @@
       const ai = who(m) === "ai", mine = ai ? !c.owner : m.mine;
       // Newest first: a run's header sits on its oldest message, the one shown lowest.
       const head = !older || who(older) !== who(m) || dayLabel(older.at) !== day || Date.parse(m.at) - Date.parse(older.at) > RUN_GAP;
-      const name = ai ? "AI 代答" : m.mine ? "你" : m.sender_name || "";
+      // In your chat with a bot its answers carry the bot's name and picture (c's), and the AI 代答 mark.
+      const bot = ai && c.owner, pic = bot ? c.avatar : m.avatar;
+      const name = bot ? c.name : ai ? "" : m.mine ? "你" : m.sender_name || "";
       const card = rich && (m.view.kind === "card" || m.view.kind === "calendar" || m.view.kind === "media");
       const body = rich ? collieInboxMessage.render(m.view) : m.ref ? md(m.text) : esc(text);
-      return `${line}<li class="conv-msg ${mine ? "me" : "them"}${ai ? " bot" : ""}${head ? " head" : ""}">
-        ${mine ? "" : `<span class="conv-ava" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${m.avatar ? `<img class="inbox-pic" src="${esc(m.avatar)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}
-        <div class="conv-body">${head ? `<div class="meta">${name ? `<b>${ai ? ico("bot") : ""}${esc(name)}</b>` : ""}<time title="${esc(when(m.at))}">${esc(clock(m.at))}</time></div>` : ""}
+      return `${line}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}">
+        ${mine ? "" : `<span class="conv-ava${SQUARE.has(c.ext) ? " sq" : ""}" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${pic ? `<img class="inbox-pic" src="${esc(pic)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}
+        <div class="conv-body">${head ? `<div class="meta">${name ? `<b>${esc(name)}</b>` : ""}${ai ? `<span class="conv-ai">${ico("bot")}AI 代答</span>` : ""}<time title="${esc(when(m.at))}">${esc(clock(m.at))}</time></div>` : ""}
           <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : m.ref ? "assistant" : ""}">${body}</div>${o ? outLine(o) : ""}</div></li>`;
     };
     return `<div class="card conv-card">
