@@ -158,7 +158,7 @@
         : "工作台";
       $("#wb-meta").textContent = m ? [host(m.url), m.embed === "iframe" ? "嵌入" : "新标签打开", ...(m.hub_login ? ["hub 保管登录"] : []), "给 Agent：" + SHARE[m.share]].join(" · ") : "把你关心的网页和页面放在这里，选哪些交给 Agent";
       $("#wb-acts").innerHTML = m ? `
-        ${m.embed === "iframe" ? `<button type="button" class="icon-btn" data-wb-open title="在新标签页打开" aria-label="在新标签页打开">${ico("external-link")}</button>` : ""}
+        ${m.embed === "iframe" ? `<button type="button" class="icon-btn" data-wb-open title="在新标签页打开" aria-label="在新标签页打开">${ico("maximize-2")}</button>` : ""}
         ${m.embed === "iframe" ? `<button type="button" class="icon-btn" data-wb-reload title="刷新" aria-label="刷新">${ico("refresh-cw")}</button>` : ""}
         ${m.feed ? `<button type="button" class="icon-btn" data-wb-send title="把它现在的数据发给 Collie" aria-label="发给 Collie">${ico("send")}</button>` : ""}
         <button type="button" class="icon-btn" data-wb-edit="${esc(m.id)}" title="设置" aria-label="设置">${MORE_SVG}</button>`
