@@ -4408,8 +4408,8 @@
     const ta = $(confirmDraft ? "#inbox-detail [data-conv-draft-text]" : "#inbox-detail [data-conv-input]");
     const raw = ta?.value ?? (confirmDraft ? draft?.text || "" : input);
     const text = raw.trim();
-    const fileDraft = selectInboxFiles(), files = fileDraft.files, fileBox = inboxFileBox;
-    const sendFiles = confirmDraft && inboxReferenceOnly() ? [] : files;
+    const fileDraft = selectInboxFiles(), files = [...fileDraft.files], fileBox = inboxFileBox;
+    let sendFiles = confirmDraft && inboxReferenceOnly() ? [] : files;
     if (!text && !sendFiles.length) {
       toast(confirmDraft ? "回复内容不能为空" : "先输入回复内容或添加附件", "attn");
       if (!confirmDraft) ta?.focus();
@@ -4421,13 +4421,14 @@
     try {
       if (sendFiles.length) {
         await fileBox.ready(sendFiles);
+        sendFiles = sendFiles.filter((f) => fileDraft.files.includes(f));
         if (sendFiles.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
+        if (!text && !sendFiles.length) { toast("回复内容和附件不能都为空", "attn"); return; }
       }
-      const submitted = [...files];
       const upFiles = sendFiles.map((f) => ({ path: f.path, name: f.name, mime: f.file?.type || "" }));
       const res = await api("/api/inbox/reply", { body: { id, text, ai_footer: withFooter, files: upFiles } });
       fileDraft.files = fileDraft.files.filter((f) => {
-        if (!submitted.includes(f)) return true;
+        if (!files.includes(f)) return true;
         fileBox.release(f);
         return false;
       });
@@ -4487,7 +4488,7 @@
       bubble.innerHTML = collieInboxMessage.render(updated, { convId, msgId });
       if (restoreFocus) {
         const match = [...bubble.querySelectorAll("[data-im-id]")].find((node) =>
-          node.dataset.imId === focused.dataset.imId && node.dataset.imVal === focused.dataset.imVal);
+          !node.disabled && node.dataset.imId === focused.dataset.imId && node.dataset.imVal === focused.dataset.imVal);
         const target = match || bubble.firstElementChild;
         if (!match) target.tabIndex = -1;
         target.focus({ preventScroll: true });
@@ -9789,11 +9790,11 @@
       }).catch((err) => { if (f.abort !== ctl) return; f.err = err.message; toast(`${f.name}：${err.message}`, "attn"); }).finally(draw);
     };
     // ready: every file in a message uploaded, the failed ones tried once
-    // more; a retry clicked meanwhile is waited for too.
+    // more; a retry clicked meanwhile is waited for too. Removed files stop waiting.
     const ready = async (files) => {
       files.filter((f) => f.err).forEach(upload);
       do await Promise.all(files.map((f) => f.done));
-      while (files.some((f) => !f.path && !f.err));
+      while (files.some((f) => f.abort && !f.path && !f.err));
     };
     const add = (list, draft) => {
       for (const file of list) {
