@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -335,5 +337,189 @@ func TestExtTopicSnapshotCanBeEncodedWhileReceiving(t *testing.T) {
 	in.ID = "m2"
 	if _, _, err := h.fileIncoming(man, in); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A receive extension running on a remote node survives a hub restart window:
+// messages (including /ai requests) sent while the hub is down are queued on
+// disk, replayed once the restarted hub reconnects, and trigger once without
+// duplication even if replayed again.
+func TestExtReceiveSurvivesHubRestartWindow(t *testing.T) {
+	dir := t.TempDir()
+	nodeDir := t.TempDir()
+	db, err := openDB(filepath.Join(dir, "herd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	// Simulated remote node process manager that outlives hub restarts.
+	nodeProcs := &extProcs{byID: map[string]*extProc{}}
+	man := fakeManifest("faker", "receive")
+	man.Defaults.Conversations = "" // Feishu-like: /ai triggers from you; closed chats keep previews only
+
+	startHub := func() (*Super, *extHost, context.CancelFunc) {
+		st, err := loadState(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &Server{herdr: newHerdr("", "hub", dir), home: dir}
+		sp := &Super{s: srv, db: db, dir: dir, bin: "collie", st: st, subs: map[chan struct{}]bool{}}
+		srv.sup = sp
+		h := newExtHost(srv, sp, dir)
+		h.cat = map[string]*ExtManifest{"faker": man}
+		srv.ext = h
+		srv.herdr.attach(&Machine{
+			ID: "node1", Name: "node1", Online: true,
+			ext: func(ctx context.Context) (net.Conn, error) {
+				a, b := net.Pipe()
+				go nodeProcs.serve(a, nodeDir)
+				return b, nil
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		go h.Run(ctx)
+		waitFor(t, "hub host running", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.ctx != nil })
+		return sp, h, cancel
+	}
+
+	t.Cleanup(func() {
+		nodeProcs.mu.Lock()
+		p := nodeProcs.byID["faker"]
+		delete(nodeProcs.byID, "faker")
+		nodeProcs.mu.Unlock()
+		if p != nil {
+			p.shutdown()
+		}
+	})
+
+	// Hub #1 starts the extension on node1, opens c_open, and receives a baseline message.
+	sp1, h1, cancel1 := startHub()
+	if _, err := h1.configure("faker", func(x *ExtSetting) { x.Enabled = true; x.Machine = "node1" }); err != nil {
+		t.Fatal(err)
+	}
+	var r1 *extRun
+	waitFor(t, "faker running on hub 1", func() bool { r1 = h1.run("faker"); return r1 != nil && r1.running() })
+	login(t, r1)
+	feed(t, nodeDir, "faker", fakeMsg{Chat: "c_open", ChatName: "已开群", ID: "m0", Sender: "u2", SenderName: "甲", Text: "重启前"})
+	waitFor(t, "baseline conv on hub 1", func() bool { _, ok := h1.store.conv("faker:c_open"); return ok })
+	h1.store.update("faker:c_open", func(c *InboxConv) { c.On = true; c.Handed = time.Now().Add(-time.Minute) })
+
+	// Hub #1 goes down while the node extension process keeps running.
+	cancel1()
+	waitFor(t, "node detached from hub 1", func() bool {
+		nodeProcs.mu.Lock()
+		p := nodeProcs.byID["faker"]
+		nodeProcs.mu.Unlock()
+		if p == nil {
+			return false
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.hub == nil
+	})
+	_ = sp1
+
+	// Messages arrive during the hub restart window: one in an open chat, one /ai request, one in a closed chat.
+	now := time.Now().Format(time.RFC3339)
+	feed(t, nodeDir, "faker",
+		fakeMsg{Chat: "c_open", ChatName: "已开群", ID: "m_open", Sender: "u2", SenderName: "甲", Text: "窗口期普通消息", At: now},
+		fakeMsg{Chat: "c_closed", ChatName: "未开群", ID: "m_ai", Sender: "me", SenderName: "我", Mine: true, Text: "/ai 窗口期指令", At: now},
+		fakeMsg{Chat: "c_closed", ChatName: "未开群", ID: "m_closed", Sender: "u2", SenderName: "乙", Text: "窗口期预览", At: now},
+	)
+	waitFor(t, "messages queued locally while hub is down", func() bool {
+		b, err := os.ReadFile(filepath.Join(nodeDir, "ext", "faker", "data", "pending.json"))
+		return err == nil && strings.Contains(string(b), "m_open") && strings.Contains(string(b), "m_ai") && strings.Contains(string(b), "m_closed")
+	})
+
+	// Hub #2 starts from the same database and reconnects to the still-running node extension.
+	sp2, h2, cancel2 := startHub()
+	defer cancel2()
+	waitFor(t, "all queued messages delivered to hub 2", func() bool {
+		return h2.store.hasMsg("faker:c_open", "m_open") &&
+			h2.store.hasMsg("faker:c_closed", "m_ai") &&
+			len(extTriggers(sp2, "ext:faker")) == 1
+	})
+	ts := extTriggers(sp2, "ext:faker")
+	if len(ts) != 1 || ts[0].Ref != "m_ai" || ts[0].Thread != "ext:faker:c_closed" || !strings.Contains(ts[0].Text, "窗口期指令") {
+		t.Fatalf("triggers after restart = %+v, want m_ai once", ts)
+	}
+	if c, ok := h2.store.conv("faker:c_closed"); !ok || !strings.Contains(c.Preview, "窗口期预览") {
+		t.Fatalf("closed conv preview after restart = %+v %v", c, ok)
+	}
+
+	// Replaying the same /ai message ID (e.g. lost ACK) must not create a second trigger.
+	owner := true
+	dup, _ := json.Marshal(extproto.Receive{Message: extproto.Message{
+		ID: "m_ai", ChatID: "c_closed", Chat: "未开群", ChatKind: "dm", Sender: "me", SenderName: "我", Owner: &owner, Text: "/ai 窗口期指令", At: now,
+	}})
+	if _, err := h2.run("faker").handle(t.Context(), extproto.MChannelReceive, dup); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(extTriggers(sp2, "ext:faker")); got != 1 {
+		t.Fatalf("duplicate replay produced %d triggers, want 1", got)
+	}
+}
+
+// When the hub tunnel drops while a program->hub request is already in flight,
+// extProc answers it with hub_unavailable immediately instead of leaving the
+// extension blocked until timeout (or forever).
+func TestExtProcFailsInflightOnHubDetach(t *testing.T) {
+	var hubBuf, progBuf syncBuffer
+	hub := &lineWriter{w: &hubBuf}
+	prog := &lineWriter{w: &progBuf}
+	p := &extProc{id: "x", hub: hub, prog: prog, inflight: map[string]struct{}{}}
+
+	p.fromProgram(prog, extproto.Frame{ID: "p1", Method: extproto.MChannelReceive, Params: json.RawMessage(`{}`)})
+	if !strings.Contains(hubBuf.String(), `"p1"`) {
+		t.Fatalf("request did not reach hub: %s", hubBuf.String())
+	}
+	if progBuf.String() != "" {
+		t.Fatalf("unexpected early error: %s", progBuf.String())
+	}
+
+	p.detach(hub)
+	var f extproto.Frame
+	if err := json.Unmarshal([]byte(strings.TrimSpace(progBuf.String())), &f); err != nil {
+		t.Fatalf("unmarshal detach reply %q: %v", progBuf.String(), err)
+	}
+	if f.ID != "p1" || f.Error == nil || f.Error.Code != extproto.ErrHubUnavailable {
+		t.Fatalf("detach reply = %+v, want hub_unavailable for p1", f)
+	}
+}
+
+// When a node reconnects after a hub restart, extHost wakes extensions waiting
+// on extRedialWait instead of waiting the full 10 seconds.
+func TestExtHostWakesMachineOnReconnect(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	h.mu.Lock()
+	h.cat["rem"] = fakeManifest("rem", "receive")
+	h.mu.Unlock()
+	if _, err := h.configure("rem", func(x *ExtSetting) { x.Enabled = true; x.Machine = "devbox" }); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { h.configure("rem", func(x *ExtSetting) { x.Enabled = false }) })
+	waitFor(t, "initial dial failed while machine offline", func() bool {
+		return h.view("rem").Problem != ""
+	})
+
+	dialed := make(chan struct{}, 1)
+	h.s.herdr.attach(&Machine{
+		ID: "devbox", Name: "devbox", Online: true,
+		ext: func(ctx context.Context) (net.Conn, error) {
+			select {
+			case dialed <- struct{}{}:
+			default:
+			}
+			a, b := net.Pipe()
+			t.Cleanup(func() { a.Close(); b.Close() })
+			return b, nil
+		},
+	})
+	h.wakeMachine("devbox")
+	select {
+	case <-dialed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("extRun did not wake promptly when its node reconnected")
 	}
 }

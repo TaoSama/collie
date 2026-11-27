@@ -71,6 +71,7 @@ type extRun struct {
 	man    *ExtManifest
 	set    ExtSetting
 	cancel context.CancelFunc
+	wake   chan struct{}
 
 	mu       sync.Mutex
 	peer     *extproto.Peer
@@ -225,10 +226,27 @@ func (h *extHost) startLocked(m *ExtManifest, set ExtSetting) {
 		return // nothing to run: on is all it takes
 	}
 	ctx, cancel := context.WithCancel(h.ctx)
-	r := &extRun{h: h, man: m, set: set, cancel: cancel, pull: make(chan struct{}, 1)}
+	r := &extRun{h: h, man: m, set: set, cancel: cancel, wake: make(chan struct{}, 1), pull: make(chan struct{}, 1)}
 	r.proc = extProcState{State: extStarting}
 	h.runs[m.ID] = r
 	go r.loop(ctx)
+}
+
+// wakeMachine cuts extRedialWait short when a node connects to the hub.
+func (h *extHost) wakeMachine(machine string) {
+	if h == nil || machine == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.runs {
+		if r.set.Machine == machine {
+			select {
+			case r.wake <- struct{}{}:
+			default:
+			}
+		}
+	}
 }
 
 // featureOn: that part of Collie is turned on in 接入 (off until it is).
@@ -287,8 +305,14 @@ func (r *extRun) loop(ctx context.Context) {
 			r.dialErr = err.Error()
 		}
 		r.mu.Unlock()
-		if sleepCtx(ctx, extRedialWait) != nil {
+		t := time.NewTimer(extRedialWait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
 			return
+		case <-r.wake:
+			t.Stop()
+		case <-t.C:
 		}
 	}
 }

@@ -627,6 +627,7 @@ func (s *Server) nodeConnect(w http.ResponseWriter, r *http.Request) {
 		m.ui = u
 	}
 	s.herdr.attach(m)
+	s.ext.wakeMachine(m.ID)
 	watchCtx, stopWatch := context.WithCancel(context.Background())
 	go s.herdr.watch(watchCtx, m)
 	log.Printf("node %s (%s) connected from %s", m.ID, m.Name, m.ip)

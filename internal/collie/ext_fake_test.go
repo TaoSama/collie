@@ -28,17 +28,84 @@ type fakeMsg struct {
 
 func fakeExtMain(args []string) int {
 	var (
-		mu       sync.Mutex
-		data     string
-		mode     string
-		secret   string
-		signedIn bool
-		peer     *extproto.Peer
-		seen     = map[string]bool{}
-		archive  []fakeMsg
-		sent     = map[string]string{}
-		n        int
+		mu          sync.Mutex
+		data        string
+		mode        string
+		secret      string
+		signedIn    bool
+		peer        *extproto.Peer
+		seen        = map[string]bool{}
+		pending     []fakeMsg
+		pendingWake = make(chan struct{}, 1)
+		archive     []fakeMsg
+		sent        = map[string]string{}
+		n           int
 	)
+	pendingPath := func() string { return filepath.Join(data, "pending.json") }
+	savePending := func(items []fakeMsg) {
+		b, _ := json.Marshal(items)
+		os.WriteFile(pendingPath(), b, 0o600)
+	}
+	loadPending := func() []fakeMsg {
+		b, err := os.ReadFile(pendingPath())
+		if err != nil {
+			return nil
+		}
+		var out []fakeMsg
+		json.Unmarshal(b, &out)
+		return out
+	}
+	sendReceive := func(m fakeMsg) error {
+		owner := m.Mine
+		return peer.Call(context.Background(), extproto.MChannelReceive, extproto.Receive{Message: extproto.Message{
+			ID: m.ID, Text: m.Text, ChatID: m.Chat, Chat: m.ChatName, ChatKind: "dm", Sender: m.Sender, SenderName: m.SenderName, Owner: &owner, At: m.At}}, nil)
+	}
+	queuePending := func(m fakeMsg) {
+		mu.Lock()
+		replaced := false
+		for i := range pending {
+			if pending[i].ID == m.ID {
+				pending[i] = m
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			pending = append(pending, m)
+		}
+		cp := append([]fakeMsg(nil), pending...)
+		mu.Unlock()
+		savePending(cp)
+	}
+	flushPending := func() {
+		for {
+			mu.Lock()
+			if len(pending) == 0 {
+				mu.Unlock()
+				return
+			}
+			m := pending[0]
+			mu.Unlock()
+			if err := sendReceive(m); err != nil {
+				if extproto.IsCode(err, extproto.ErrHubUnavailable) || extproto.IsCode(err, extproto.ErrTimeout) {
+					return
+				}
+			}
+			mu.Lock()
+			if len(pending) > 0 && pending[0].ID == m.ID {
+				pending = pending[1:]
+			}
+			cp := append([]fakeMsg(nil), pending...)
+			mu.Unlock()
+			savePending(cp)
+		}
+	}
+	wakePending := func() {
+		select {
+		case pendingWake <- struct{}{}:
+		default:
+		}
+	}
 	appendSent := func(v any) {
 		b, _ := json.Marshal(v)
 		f, err := os.OpenFile(filepath.Join(data, "sent.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -48,6 +115,18 @@ func fakeExtMain(args []string) int {
 		}
 	}
 	poll := func() {
+		go func() {
+			t := time.NewTicker(100 * time.Millisecond)
+			defer t.Stop()
+			for {
+				select {
+				case <-pendingWake:
+					flushPending()
+				case <-t.C:
+					flushPending()
+				}
+			}
+		}()
 		for range time.Tick(50 * time.Millisecond) {
 			f, err := os.Open(filepath.Join(data, "in.jsonl"))
 			if err != nil {
@@ -69,9 +148,16 @@ func fakeExtMain(args []string) int {
 			f.Close()
 			for _, m := range fresh {
 				if mode == "receive" {
-					owner := m.Mine
-					peer.Call(context.Background(), extproto.MChannelReceive, extproto.Receive{Message: extproto.Message{
-						ID: m.ID, Text: m.Text, ChatID: m.Chat, Chat: m.ChatName, ChatKind: "dm", Sender: m.Sender, SenderName: m.SenderName, Owner: &owner, At: m.At}}, nil)
+					mu.Lock()
+					hasPending := len(pending) > 0
+					mu.Unlock()
+					if hasPending {
+						queuePending(m)
+						continue
+					}
+					if err := sendReceive(m); err != nil && (extproto.IsCode(err, extproto.ErrHubUnavailable) || extproto.IsCode(err, extproto.ErrTimeout)) {
+						queuePending(m)
+					}
 					continue
 				}
 				mu.Lock()
@@ -89,6 +175,12 @@ func fakeExtMain(args []string) int {
 			data, _ = p.Extension.DataDir, 0
 			mode, _ = p.Config["mode"].(string)
 			secret, _ = p.Config["key"].(string)
+			mu.Lock()
+			pending = loadPending()
+			for _, m := range pending {
+				seen[m.ID] = true
+			}
+			mu.Unlock()
 			go func() {
 				var s extproto.Secrets
 				if peer.Call(context.Background(), extproto.MSecretsLoad, nil, &s) == nil && s.Data != "" {
@@ -102,6 +194,7 @@ func fakeExtMain(args []string) int {
 		case extproto.MPing:
 			return struct{}{}, nil
 		case extproto.MStatus:
+			wakePending()
 			mu.Lock()
 			defer mu.Unlock()
 			if signedIn {

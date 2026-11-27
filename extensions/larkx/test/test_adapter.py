@@ -498,61 +498,75 @@ class Pushes(unittest.TestCase):
 
         f = self.feishu()
         ext = Extension()
-        attempts, after_first = [], []
+        ext.data = tempfile.mkdtemp()
+        attempts, offline = [], [True]
 
         def call(method, params):
             self.assertEqual(method, "channel.receive")
-            mid = params["message"]["id"]
-            self.assertNotIn(mid, f.recent, "remember it only after the hub accepts it")
-            attempts.append(mid)
-            if len(attempts) == 1:
+            attempts.append(params["message"]["id"])
+            if offline[0]:
                 raise Error("hub_unavailable", "offline")
 
-        ext.peer = types.SimpleNamespace(call=call)
+        ext.peer = types.SimpleNamespace(call=call, closed=threading.Event())
 
         def listen(on_message, on_link, stop):
             f._pushes._push(14004, self.feed(), None, on_message)
-            after_first.extend(attempts)
+            self.assertIn("doc:d1", ext.pending)
+            # Replayed feed update while offline does not double-queue.
             f._pushes._push(14004, self.feed(status=2), None, on_message)
+            offline[0] = False
+            self.assertTrue(ext._flush_pending())
 
         ext.backend = types.SimpleNamespace(listen=listen)
         ext._listen(types.SimpleNamespace(wait=lambda _: False))
-        self.assertEqual(after_first, ["doc:d1", "doc:d1"], "retry without a push replay")
-        self.assertEqual(attempts, after_first, "deduplicate after the hub accepts the comment")
+        self.assertEqual(attempts, ["doc:d1", "doc:d1"], "queued once, replayed on flush")
+        self.assertEqual(ext.pending, {})
 
-    def test_doc_comment_can_be_replayed_after_retries_exhausted(self):
+    def test_messages_queued_to_disk_and_flushed_on_hub_recovery(self):
         from main import Extension
         from peer import Error
 
         for code in ("hub_unavailable", "timeout"):
             with self.subTest(code=code):
-                ext, f = Extension(), self.feishu()
-                attempts, waits = [], []
-                offline = True
+                data = tempfile.mkdtemp()
+                ext = Extension()
+                ext.data = data
+                offline = [True]
+                delivered = []
 
                 def call(method, params):
-                    attempts.append(params["message"]["id"])
-                    if offline:
+                    self.assertEqual(method, "channel.receive")
+                    if offline[0]:
                         raise Error(code, "offline")
+                    delivered.append(params["message"])
 
-                def wait(delay):
-                    waits.append(delay)
-                    return len(waits) > 3  # bounds the test even if the retry loop regresses
+                ext.peer = types.SimpleNamespace(call=call, closed=threading.Event())
+                m1 = {"id": "m1", "chat_id": "c1", "chat_kind": "group", "text": "hello"}
+                m2 = {"id": "m2", "chat_id": "c_self", "chat_kind": "self", "owner": True, "text": "/ai 查一下"}
+                m1_upd = {"id": "m1", "chat_id": "c1", "chat_kind": "group", "text": "hello updated"}
 
-                ext.peer = types.SimpleNamespace(call=call)
-                stop = types.SimpleNamespace(wait=wait)
+                self.assertTrue(ext._received(m1))
+                self.assertTrue(ext._received(m2))
+                self.assertTrue(ext._received(m1_upd))  # same id deduplicated in pending
+                with open(os.path.join(data, "pending.json")) as fp:
+                    disk = json.load(fp)
+                self.assertEqual(list(disk.keys()), ["m1", "m2"])
+                self.assertEqual(disk["m1"]["message"]["text"], "hello updated")
 
-                def received(m):
-                    return ext._received(m, stop)
+                # Simulate an extension restart loading pending.json from disk.
+                ext2 = Extension()
+                ext2.data = data
+                ext2.peer = types.SimpleNamespace(call=call, closed=threading.Event())
+                ext2.pending = ext2._read_pending()
+                self.assertEqual(list(ext2.pending.keys()), ["m1", "m2"])
 
-                f._deliver_doc_comments(self.feed(), received)
-                self.assertEqual(waits, [2, 5, 15])
-                self.assertEqual(attempts, ["doc:d1"] * 4)
-                self.assertNotIn("doc:d1", f.recent)
-                offline = False
-                f._deliver_doc_comments(self.feed(status=2), received)
-                f._deliver_doc_comments(self.feed(status=2), received)
-                self.assertEqual(attempts, ["doc:d1"] * 5)
+                offline[0] = False
+                self.assertTrue(ext2._flush_pending())
+                self.assertEqual([m["id"] for m in delivered], ["m1", "m2"])
+                self.assertEqual(delivered[0]["text"], "hello updated")
+                self.assertEqual(delivered[1]["text"], "/ai 查一下")
+                with open(os.path.join(data, "pending.json")) as fp:
+                    self.assertEqual(json.load(fp), {})
 
     def test_doc_comment_replay_while_handoff_is_pending(self):
         f = self.feishu()
@@ -723,6 +737,7 @@ class Protocol(unittest.TestCase):
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self.secret = None
         self.received = []
+        self.fail_receive = False
         self.events = []
         self.answers = {}
         self.cv = threading.Condition()
@@ -746,6 +761,9 @@ class Protocol(unittest.TestCase):
                 elif f["method"] == "connector.secrets.delete":
                     self.secret = None
                 elif f["method"] == "channel.receive":
+                    if self.fail_receive:
+                        self.write({"id": f["id"], "error": {"code": "hub_unavailable", "message": "restarting"}})
+                        continue
                     self.received.append(f["params"]["message"])
                 self.write({"id": f["id"], "result": res})
             with self.cv:
@@ -830,6 +848,41 @@ class Protocol(unittest.TestCase):
         self.assertEqual(self.status()["account"], "示例账号")
         self.assertIn("正在连接飞书", seen)
         self.assertNotIn("not_signed_in", seen)
+
+    def test_pending_flush_after_hub_unavailable(self):
+        """Messages that arrive while the hub returns hub_unavailable are persisted and flushed on reconnect."""
+        import time
+
+        self.fail_receive = True
+        saved = {"region": "feishu", "cookies": {"session": "example"}, "user_id": "u_me"}
+        self.secret = base64.b64encode(json.dumps(saved).encode()).decode()
+        self.call("initialize", {"protocol": 1, "extension": {"id": "larkx", "version": "0.4.22", "data_dir": self.data}, "config": {}})
+        pfile = os.path.join(self.data, "pending.json")
+        for _ in range(100):
+            if os.path.exists(pfile):
+                with open(pfile) as f:
+                    try:
+                        if {"m1", "m2", "m3"} <= set(json.load(f)):
+                            break
+                    except ValueError:
+                        pass
+            time.sleep(0.05)
+        else:
+            self.fail("pending.json did not record offline messages")
+        self.assertEqual(self.received, [])
+
+        # Hub comes back and asks for status: the adapter wakes and replays all queued messages.
+        self.fail_receive = False
+        self.status()
+        self.until("replayed messages", lambda: {"m1", "m2", "m3"} <= {m["id"] for m in self.received})
+        self.assertIn("/ai 今天有什么会", [m["text"] for m in self.received if m["id"] == "m3"])
+        for _ in range(40):
+            with open(pfile) as f:
+                if json.load(f) == {}:
+                    break
+            time.sleep(0.05)
+        with open(pfile) as f:
+            self.assertEqual(json.load(f), {})
 
 if __name__ == "__main__":
     unittest.main()

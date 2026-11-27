@@ -301,6 +301,9 @@ func (g *Gateway) SetInterest(chats []string) {
 		g.interest = nil
 		g.refreshInterest()
 		g.interest.fetchedAt = nowMs()
+		if g.active() {
+			g.runner.Schedule()
+		}
 	})
 }
 

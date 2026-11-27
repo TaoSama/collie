@@ -301,7 +301,7 @@ collie ext do <扩展> <动作> ... --raw             # 整个结果的 JSON（�
 清单的 `defaults.machine` 给出默认值，你可以在「接入」里改成 hub 或任意一台 node。
 
 - 在 node 上运行时，hub 通过现有隧道开一条 `ext` stream，node 负责安装、启动、健康检查和 `connector.secrets.*`，其余帧原样转发。
-- 隧道断开时，扩展进程继续运行；重连后 Collie 先拉一次 `archive`，所以不丢消息。
+- 隧道断开时，扩展进程继续运行，在途请求会立刻收到 `hub_unavailable`；重连后，`archive` 扩展由 Collie 先拉一次 `archive`，`receive` 扩展（飞书、微信）重放本地暂存的未送达消息，hub 按消息 id 去重，所以不丢不重。
 - 需要本机命令的扩展（`requires`），要选装了这些命令的电脑。
 
 ## 9. 打包与安装

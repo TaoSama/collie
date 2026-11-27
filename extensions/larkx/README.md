@@ -5,7 +5,7 @@
 ## 打开前要知道
 
 - **飞书网页版接口**：底层是 [cv-cat/LarkAgentX](https://github.com/cv-cat/LarkAgentX)，用的是飞书网页版接口，飞书升级后可能失效。用哪个账号由你决定；公司账号先确认公司规定。
-- **登录态是完整的网页会话**：只保存在运行它的那台电脑的 `COLLIE_HOME/ext/larkx/secrets.json`（0600），不上传 hub。扩展自己不存消息，`data/` 里只有依赖包和已发送记录（ref 和消息 id，保留 7 天）。
+- **登录态是完整的网页会话**：只保存在运行它的那台电脑的 `COLLIE_HOME/ext/larkx/secrets.json`（0600），不上传 hub。扩展自己不存历史消息，`data/` 里只有依赖包、已发送记录（`sent.json`，ref 和消息 id，保留 7 天）和 hub 不可达期间暂存的待补投队列（`pending.json`，送达后清除，最长保留 24 小时）。
 - **跑在哪台**：在「接入」里任选。默认是 Router 所在的电脑。
 - **前提**：那台电脑有 `python3`（≥3.9，带 pip），首次启动能访问 raw.githubusercontent.com、pypi.org、files.pythonhosted.org（扩展进程继承 Collie 的代理变量）。
 

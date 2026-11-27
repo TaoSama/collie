@@ -101,7 +101,8 @@ type extProc struct {
 	hdr           extStartHeader
 
 	mu       sync.Mutex
-	hub      *lineWriter // nil while no hub is attached
+	hub      *lineWriter         // nil while no hub is attached
+	inflight map[string]struct{} // program->hub request IDs awaiting hub's reply
 	detached time.Time
 	state    extProcState
 	prog     *lineWriter // the program's stdin, while it runs
@@ -183,7 +184,7 @@ func (ps *extProcs) attach(home string, h extStartHeader, hub *lineWriter) *extP
 		p = nil
 	}
 	if p == nil {
-		p = &extProc{home: home, id: h.ID, key: key, hdr: h, own: map[string]chan extproto.Frame{},
+		p = &extProc{home: home, id: h.ID, key: key, hdr: h, inflight: map[string]struct{}{}, own: map[string]chan extproto.Frame{},
 			quit: make(chan struct{}), done: make(chan struct{})}
 		p.state = extProcState{State: extStarting, Since: time.Now().Format(time.RFC3339)}
 		ps.byID[h.ID] = p
@@ -192,20 +193,53 @@ func (ps *extProcs) attach(home string, h extStartHeader, hub *lineWriter) *extP
 	}
 	ps.mu.Unlock()
 	p.mu.Lock()
+	var orphaned []string
+	var prog *lineWriter
+	if p.hub != nil && p.hub != hub {
+		orphaned = p.takeInflightLocked()
+		prog = p.prog
+	}
 	p.hub = hub
 	st := p.stateLocked()
 	p.mu.Unlock()
+	p.failInflight(prog, orphaned)
 	hub.frame(stateFrame(st))
 	return p
 }
 
 func (p *extProc) detach(hub *lineWriter) {
 	p.mu.Lock()
+	var orphaned []string
+	var prog *lineWriter
 	if p.hub == hub {
 		p.hub = nil
 		p.detached = time.Now()
+		orphaned = p.takeInflightLocked()
+		prog = p.prog
 	}
 	p.mu.Unlock()
+	p.failInflight(prog, orphaned)
+}
+
+func (p *extProc) takeInflightLocked() []string {
+	if len(p.inflight) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(p.inflight))
+	for id := range p.inflight {
+		ids = append(ids, id)
+	}
+	clear(p.inflight)
+	return ids
+}
+
+func (p *extProc) failInflight(prog *lineWriter, ids []string) {
+	if prog == nil {
+		return
+	}
+	for _, id := range ids {
+		prog.frame(extproto.Frame{ID: id, Error: extproto.Errorf(extproto.ErrHubUnavailable, "collie is not reachable right now")})
+	}
 }
 
 func (p *extProc) leaseWatch(ps *extProcs) {
@@ -279,6 +313,9 @@ func (p *extProc) control(hub *lineWriter, f extproto.Frame) {
 // answered here.
 func (p *extProc) toProgram(hub *lineWriter, f extproto.Frame) {
 	p.mu.Lock()
+	if f.Method == "" && f.ID != "" && p.hub == hub {
+		delete(p.inflight, f.ID)
+	}
 	prog, state := p.prog, p.state.State
 	p.mu.Unlock()
 	if prog != nil && (state == extRunning || f.Method == "") {
@@ -314,14 +351,32 @@ func (p *extProc) fromProgram(prog *lineWriter, f extproto.Frame) {
 		prog.frame(out)
 		return
 	}
+	req := f.Method != "" && f.ID != ""
 	p.mu.Lock()
 	hub := p.hub
+	if hub != nil && req {
+		p.inflight[f.ID] = struct{}{}
+	}
 	p.mu.Unlock()
-	if hub != nil && hub.frame(f) == nil {
+	if hub == nil {
+		if req {
+			prog.frame(extproto.Frame{ID: f.ID, Error: extproto.Errorf(extproto.ErrHubUnavailable, "collie is not reachable right now")})
+		}
 		return
 	}
-	if f.Method != "" && f.ID != "" {
-		prog.frame(extproto.Frame{ID: f.ID, Error: extproto.Errorf(extproto.ErrHubUnavailable, "collie is not reachable right now")})
+	if hub.frame(f) == nil {
+		return
+	}
+	if req {
+		p.mu.Lock()
+		_, still := p.inflight[f.ID]
+		if p.hub == hub {
+			delete(p.inflight, f.ID)
+		}
+		p.mu.Unlock()
+		if still {
+			prog.frame(extproto.Frame{ID: f.ID, Error: extproto.Errorf(extproto.ErrHubUnavailable, "collie is not reachable right now")})
+		}
 	}
 }
 
@@ -462,6 +517,7 @@ func (p *extProc) once() error {
 	defer func() {
 		p.mu.Lock()
 		p.prog = nil
+		clear(p.inflight)
 		p.mu.Unlock()
 	}()
 

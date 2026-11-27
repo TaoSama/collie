@@ -25,7 +25,10 @@ RESTORE_RETRY = 60
 QR_RENEWALS = 3
 LOAD_WAIT = 40  # a sign-in started while the packages install waits this long (the host's is 50)
 SENT_KEEP = 7 * 86400
-DOC_RECEIVE_WAITS = (2, 5, 15)  # seconds between attempts to hand a comment to the hub
+PENDING_KEEP = 86400
+PENDING_MOST = 500
+PENDING_WAITS = (2, 5, 10, 30)  # seconds between flush retries while the hub is away
+RETRYABLE_RECEIVE = ("hub_unavailable", "timeout")
 QR_HINTS = {"waiting": "用飞书 App 扫码登录", "scanned": "已扫码，请在手机上确认"}
 
 log = logging.getLogger("larkx")
@@ -50,6 +53,8 @@ class Extension:
         self.stop = threading.Event()
         self.loaded = threading.Event()
         self.sent = {}
+        self.pending = {}
+        self.pending_wake = threading.Event()
         self.trigger = ""
         self.ignored = False
         self.restoring = False  # kept credentials, Feishu not reached yet: 正在连接, not 未登录
@@ -61,6 +66,8 @@ class Extension:
             return self.initialize(params)
         if method == "ping":
             return {}
+        if method != "connector.logout":
+            self._wake_pending()
         if method == "connector.status":
             return self.status()
         if method == "connector.login.step":
@@ -101,6 +108,10 @@ class Extension:
         self.self_mention = cfg.get("self_mention", True) is not False
         self.group_topics = cfg.get("group_topics", True) is not False
         self.sent = self._read_sent()
+        self.pending = self._read_pending()
+        threading.Thread(target=self._flush_loop, daemon=True).start()
+        if self.pending:
+            self.pending_wake.set()
         threading.Thread(target=self.start, daemon=True).start()
         return {"protocol": PROTOCOL, "id": ID, "version": self.version}
 
@@ -159,6 +170,8 @@ class Extension:
             self.backend.logout()
         with self.mu:
             self.account, self.link, self.expired = "", "", ""
+            self.pending = {}
+        self._save_pending({})
         self.changed()
         self.peer.call("connector.secrets.delete", {"contribution": ID})
         return {}
@@ -224,6 +237,15 @@ class Extension:
             log.warning("sent.json is damaged; starting it over")
             return {}
 
+    def _write_json(self, path, data):
+        with self.write_mu:  # outside mu: a slow disk holds up no status call
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+
     def _mark(self, ref, rec):
         with self.mu:
             if rec is None:
@@ -233,13 +255,109 @@ class Extension:
             old = time.time() - SENT_KEEP
             self.sent = {k: v for k, v in self.sent.items() if v.get("at", 0) > old}
             snapshot = dict(self.sent)
-        with self.write_mu:  # outside mu: a slow disk holds up no status call
-            tmp = self._sent_file() + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(snapshot, f)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self._sent_file())
+        self._write_json(self._sent_file(), snapshot)
+
+    # Undelivered incoming messages, by id: kept on disk while the hub is away.
+
+    def _pending_file(self):
+        return os.path.join(self.data, "pending.json")
+
+    def _read_pending(self):
+        try:
+            with open(self._pending_file()) as f:
+                raw = json.load(f)
+        except FileNotFoundError:
+            return {}
+        except ValueError:
+            log.warning("pending.json is damaged; starting it over")
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        old = time.time() - PENDING_KEEP
+        return {k: v for k, v in raw.items()
+                if isinstance(v, dict) and isinstance(v.get("message"), dict) and v.get("at", 0) > old}
+
+    def _prune_pending_locked(self):
+        old = time.time() - PENDING_KEEP
+        self.pending = {k: v for k, v in self.pending.items() if v.get("at", 0) > old}
+        while len(self.pending) > PENDING_MOST:
+            self.pending.pop(next(iter(self.pending)))
+
+    def _save_pending(self, snapshot):
+        if not self.data:
+            return
+        try:
+            self._write_json(self._pending_file(), snapshot)
+        except OSError as e:
+            log.error("saving pending messages: %s", e)
+
+    def _queue_pending(self, m):
+        mid = m.get("id") or ""
+        if not mid:
+            return
+        with self.mu:
+            was_empty = not self.pending
+            self.pending[mid] = {"at": time.time(), "message": m}
+            self._prune_pending_locked()
+            snapshot = dict(self.pending)
+        self._save_pending(snapshot)
+        if was_empty:
+            self.pending_wake.set()
+
+    def _wake_pending(self):
+        with self.mu:
+            has = bool(self.pending)
+        if has:
+            self.pending_wake.set()
+
+    def _flush_pending(self):
+        with self.mu:
+            items = list(self.pending.items())
+        if not items:
+            return True
+        changed = False
+        ok = True
+        for mid, rec in items:
+            if self.peer.closed.is_set():
+                ok = False
+                break
+            try:
+                self.peer.call("channel.receive", {"contribution": ID, "message": rec["message"]})
+            except peer.Error as e:
+                if e.code in RETRYABLE_RECEIVE:
+                    log.warning("retrying message %s: %s", mid, e.message)
+                    ok = False
+                    break
+                log.warning("dropping message %s: %s", mid, e.message)
+            with self.mu:
+                if self.pending.get(mid) is rec:
+                    self.pending.pop(mid, None)
+                    changed = True
+        if changed:
+            with self.mu:
+                self._prune_pending_locked()
+                snapshot = dict(self.pending)
+            self._save_pending(snapshot)
+        return ok
+
+    def _flush_loop(self):
+        tries = 0
+        while not self.peer.closed.is_set():
+            with self.mu:
+                has = bool(self.pending)
+            if not has:
+                tries = 0
+                self.pending_wake.wait()
+                self.pending_wake.clear()
+                continue
+            self.pending_wake.clear()
+            if self._flush_pending():
+                tries = 0
+                continue
+            wait = PENDING_WAITS[tries] if tries < len(PENDING_WAITS) else PENDING_WAITS[-1]
+            tries += 1
+            if self.pending_wake.wait(wait):
+                tries = 0
 
     # Starting, signing in, listening.
 
@@ -343,19 +461,22 @@ class Extension:
                 self.link = state
         self.changed()
 
-    def _received(self, m, stop):
-        waits = (0, *DOC_RECEIVE_WAITS) if m.get("chat_kind") == "doc" else (0,)
-        for wait in waits:
-            if wait and stop.wait(wait):
-                break
-            try:
-                self.peer.call("channel.receive", {"contribution": ID, "message": m})
+    def _received(self, m, stop=None):
+        with self.mu:
+            queued = bool(self.pending)
+        if queued:
+            self._queue_pending(m)
+            return True
+        try:
+            self.peer.call("channel.receive", {"contribution": ID, "message": m})
+            return True
+        except peer.Error as e:
+            if e.code in RETRYABLE_RECEIVE:
+                log.warning("handing over message %s: %s (queued for retry)", m.get("id"), e.message)
+                self._queue_pending(m)
                 return True
-            except peer.Error as e:
-                log.warning("handing over message %s: %s", m.get("id"), e.message)
-                if e.code not in ("hub_unavailable", "timeout"):
-                    break
-        return False
+            log.warning("handing over message %s: %s", m.get("id"), e.message)
+            return False
 
     def changed(self):
         self.peer.notify("connector.changed", {"contribution": ID, "scope": "status"})

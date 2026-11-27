@@ -37,6 +37,8 @@ type peerHost struct {
 }
 
 func (h *peerHost) Receive(ctx context.Context, m extproto.Message) error {
+	ctx, cancel := context.WithTimeout(ctx, hostCallTimeout)
+	defer cancel()
 	return h.peer.Call(ctx, extproto.MChannelReceive, extproto.Receive{Contribution: h.contribution, Message: m}, nil)
 }
 
