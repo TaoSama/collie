@@ -1446,3 +1446,29 @@ func TestInboxLatestCatchUp(t *testing.T) {
 		t.Fatalf("caught up: %q at %v", got.Preview, got.LastAt)
 	}
 }
+
+func TestInboxEmojiURLs(t *testing.T) {
+	sp, _, _ := newExtTestHub(t)
+	m := InboxMsg{
+		ID:   "m1",
+		Conv: "larkx:c1",
+		View: &extproto.MessageView{
+			Kind: "post",
+			Nodes: []extproto.MessageNode{{
+				Kind: "paragraph",
+				Children: []extproto.MessageNode{
+					{Kind: "emoji", Text: "流泪", URL: "https://sf3-cn.feishucdn.com/obj/lark-reaction-cn/emoji_sob.png"},
+					{Kind: "emoji", Text: "坏", URL: "javascript:alert(1)"},
+				},
+			}},
+		},
+	}
+	sp.s.inboxMediaURLs("larkx:c1", &m)
+	kids := m.View.Nodes[0].Children
+	if !strings.HasPrefix(kids[0].URL, "/api/inbox/avatar?") || !strings.Contains(kids[0].URL, "sig=") {
+		t.Fatalf("https emoji should be signed via hub avatar proxy: %q", kids[0].URL)
+	}
+	if kids[1].URL != "" {
+		t.Fatalf("non-https emoji URL should be stripped: %q", kids[1].URL)
+	}
+}

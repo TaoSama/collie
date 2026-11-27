@@ -148,6 +148,65 @@ class MessageViewTest(unittest.TestCase):
         f.history.recent("123")
         self.assertNotEqual(f.client.calls[-1][0], "chats.PullChatChattersByIDsRequest", "kept an hour")
 
+    def test_inline_emojis_and_stickers(self):
+        """Inline emojis resolve to CDN URLs and Chinese labels; stickers become media image nodes."""
+        rt = U.L.entities.RichText()
+        rt.elementIds.extend(["1", "2", "3", "4"])
+        rt.elements.dictionary["1"].tag = E.TEXT
+        rt.elements.dictionary["1"].property = E.TextProperty(content="难哦 ").SerializeToString()
+        rt.elements.dictionary["2"].tag = E.EMOTION
+        rt.elements.dictionary["2"].property = E.EmotionProperty(key="Lark_Emoji_Sob_0").SerializeToString()
+        rt.elements.dictionary["3"].tag = E.EMOTION
+        rt.elements.dictionary["3"].property = E.EmotionProperty(key="custom_1").SerializeToString()
+        rt.elements.dictionary["4"].tag = E.EMOTION
+        rt.elements.dictionary["4"].property = E.EmotionProperty(key="UNKNOWN_KEY").SerializeToString()
+        text_body = U.L.entities.TextContent(richText=rt).SerializeToString()
+        sticker_body = U.L.entities.StickerContent(key="v3_00ng_sticker_key", stickerId="42").SerializeToString()
+
+        class Client:
+            calls = []
+
+            def api(self, method, params):
+                self.calls.append((method, params))
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"123": {"lastVisibleMessagePosition": 1}}}
+                if method == "reactions.PullEmojiResourcesV2Request":
+                    return {"emojiResourceSet": [{"emojiResources": [
+                        {"key": "Lark_Emoji_Sob_0", "i18nText": {"i18nTexts": {"zh-CN": "流泪"}},
+                         "imageKey": "emoji_sob.png"},
+                        {"key": "custom_1", "i18nText": {"i18nTexts": {"zh-CN": "勇攀高峰"}},
+                         "i18nImages": {"i18nImage": {"zh-CN": {"key": "v3_00ud_custom"}}}},
+                    ]}]}
+                if method == "chats.PullChatChattersByIDsRequest":
+                    return {"chatters": {}}
+                return {"messages": {
+                    "0": {"id": "m0", "chatId": "123", "type": 4, "fromId": "5", "content": text_body, "createTime": 1795700000},
+                    "1": {"id": "m1", "chatId": "123", "type": 10, "fromId": "5", "content": sticker_body, "createTime": 1795700001},
+                }}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client = Client()
+        f.user_name = lambda uid, chat: "甲"
+        rows = f.history.recent("123")
+        self.assertEqual(rows[0]["text"], "难哦 [流泪][勇攀高峰][表情]")
+        self.assertEqual(rows[0]["preview"], "难哦 [流泪][勇攀高峰][表情]")
+        self.assertEqual(rows[0]["view"]["kind"], "post")
+        para = rows[0]["view"]["nodes"][0]
+        self.assertEqual(para["kind"], "paragraph")
+        self.assertEqual(para["children"], [
+            {"kind": "text", "text": "难哦 "},
+            {"kind": "emoji", "text": "流泪", "url": "https://sf3-cn.feishucdn.com/obj/lark-reaction-cn/emoji_sob.png"},
+            {"kind": "emoji", "text": "勇攀高峰", "url": "https://s1-imfile.feishucdn.com/static-resource/v1/v3_00ud_custom"},
+            {"kind": "emoji", "text": "表情"},
+        ])
+        self.assertEqual(rows[1]["preview"], "[表情包]")
+        self.assertEqual(rows[1]["view"], {
+            "kind": "media",
+            "nodes": [{"kind": "image", "text": "表情包", "key": "v3_00ng_sticker_key", "tone": "sticker"}],
+        })
+        emoji_calls = [c for c in f.client.calls if c[0] == "reactions.PullEmojiResourcesV2Request"]
+        self.assertEqual(len(emoji_calls), 1, "emoji map is cached across lookups")
+
 
 if __name__ == "__main__":
     unittest.main()

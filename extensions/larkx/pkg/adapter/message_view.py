@@ -4,14 +4,17 @@ import json
 import logging
 import re
 
+import richtext
+
 log = logging.getLogger("larkx")
-POST, FILE, TEXT, IMAGE, SYSTEM, CALENDAR, CARD, SHARED_EVENT, GENERAL_EVENT = 2, 3, 4, 5, 6, 12, 14, 16, 18
+POST, FILE, TEXT, IMAGE, SYSTEM, STICKER, CALENDAR, CARD, SHARED_EVENT, GENERAL_EVENT = 2, 3, 4, 5, 6, 10, 12, 14, 16, 18
 VIEW_NODES = 320
 VIEW_DEPTH = 16
 BODY_MOST = 36000
 TEXT_MOST = 12000
 MEDIA_KEY = re.compile(r"[A-Za-z0-9_-]{1,256}")
-LABELS = {POST: "富文本", FILE: "文件", IMAGE: "图片", SYSTEM: "系统消息", CARD: "卡片",
+INLINE_KINDS = ("text", "emoji", "mention", "link", "code")
+LABELS = {POST: "富文本", FILE: "文件", IMAGE: "图片", SYSTEM: "系统消息", STICKER: "表情包", CARD: "卡片",
           CALENDAR: "日历", SHARED_EVENT: "日历", GENERAL_EVENT: "日历"}
 
 
@@ -82,10 +85,20 @@ def link_of(data):
 
 
 class Tree:
-    def __init__(self, U):
+    def __init__(self, U, emojis=None):
         self.E = U.L.entities.RichTextElement
         self.left = VIEW_NODES
         self.characters = BODY_MOST
+        self._emojis = emojis
+        self._emoji_map = None
+
+    def emoji(self, key):
+        if self._emoji_map is None:
+            self._emoji_map = (self._emojis() if callable(self._emojis) else self._emojis) or {}
+        hit = self._emoji_map.get(key)
+        if isinstance(hit, (tuple, list)) and len(hit) >= 2:
+            return hit[0], hit[1]
+        return "", ""
 
     def take(self, text):
         text = text[:self.characters]
@@ -182,7 +195,8 @@ class Tree:
                 result.extend(self.rich_element(el, kids))
             return result
 
-        return walk(roots) or ([node("text", content(data))] if content(data) else [])
+        out = walk(roots) or ([node("text", content(data))] if content(data) else [])
+        return _group_inline(out)
 
     def rich_element(self, el, children):
         from google.protobuf.message import DecodeError
@@ -219,6 +233,9 @@ class Tree:
             return [node("link", content(a.textContent or a.content or a.href), children, url=content(a.pcHref or a.href))]
         if tag == E.AT:
             return [node("mention", content(prop(E.AtProperty).content) or "@")]
+        if tag == E.EMOTION:
+            label, url = self.emoji(prop(E.EmotionProperty).key)
+            return [node("emoji", label or "表情", url=url)]
         if tag == E.MARKDOWN:
             md = prop(E.MarkdownProperty)
             images = {k: {"token": v.originKey or v.token} for k, v in md.images.items()}
@@ -299,10 +316,31 @@ def system_text(data):
     return " · ".join(v for v in values.values() if v) or "系统消息"
 
 
-def describe(U, msg):
+def _group_inline(nodes):
+    """Wrap runs of top-level inline nodes in a paragraph so they flow horizontally."""
+    out, run = [], []
+    for n in nodes:
+        if n.get("kind") in INLINE_KINDS:
+            run.append(n)
+        else:
+            if run:
+                out.append(node("paragraph", children=run))
+                run = []
+            out.append(n)
+    if run:
+        out.append(node("paragraph", children=run))
+    return out
+
+
+def _has_emotion(E, rich):
+    els = obj(obj(rich.get("elements")).get("dictionary"))
+    return any(obj(el).get("tag") in (E.EMOTION, "EMOTION") for el in els.values())
+
+
+def describe(U, msg, emojis=None):
     """Return (view, preview) from the same content. Plain messages can use their existing text."""
     kind, data = msg.get("msg_type"), obj(msg.get("content_data"))
-    tree = Tree(U)
+    tree = Tree(U, emojis=emojis)
     if kind == CARD:
         card = localized_card(data)
         header, old_header = obj(card.get("header")), obj(data.get("cardHeader"))
@@ -325,6 +363,9 @@ def describe(U, msg):
     if kind == SYSTEM:
         text = system_text(data)
         return dict(kind="system", nodes=[node("text", tree.take(text))]), text
+    if kind == STICKER:
+        key = media_key(U.media.extract_resource_key(kind, data))
+        return dict(kind="media", nodes=[node("image", "表情包", key=key, tone="sticker")]), "[表情包]"
     if kind in (IMAGE, FILE):
         key = media_key(U.media.extract_resource_key(kind, data))
         name = content(data.get("name"))
@@ -334,14 +375,16 @@ def describe(U, msg):
             "[图片]" if kind == IMAGE else ("[文件] " + name).strip())
     if kind in (POST, TEXT):
         rich = obj(data.get("richText"))
-        if kind == TEXT and not any(rich.get(k) for k in ("imageIds", "markdownIds")):
+        has_em = _has_emotion(tree.E, rich)
+        if kind == TEXT and not has_em and not any(rich.get(k) for k in ("imageIds", "markdownIds")):
             return None, ""
         title = content(data.get("title"))
         nodes = tree.rich(rich)
         plain = content(data.get("text"))
         if not nodes and plain:
             nodes = [node("text", plain)]
-        return dict(kind="post", title=title, nodes=nodes), preview_text(title or content(rich) or words(nodes) or plain) or "[富文本]"
+        summary = title or (richtext.to_text(U.L, rich, emojis=emojis) if has_em else content(rich)) or words(nodes) or plain
+        return dict(kind="post", title=title, nodes=nodes), preview_text(summary) or "[富文本]"
     raw = content(msg.get("content"))
     cleaned = re.sub(r",?\s*(key|imageKey|stickerId)=\S+", "", raw).strip()
     structure = re.search(r'(?:^|\s)([{\[])\s*[{"\[]', cleaned)

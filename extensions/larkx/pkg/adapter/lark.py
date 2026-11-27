@@ -41,6 +41,9 @@ HISTORY_FIELDS = ("id", "chat_id", "sender", "text", "preview", "sender_name", "
 AT_ALL = "all"  # the user id of an @所有人
 # A picture by its key on Feishu's CDN, 180 px: groups give only a key (and a plain-http origin).
 FEISHU_PICTURE = "https://s1-imfile.feishucdn.com/static-resource/v1/%s~?image_size=180x180&cut_type=&quality=&format=image&sticker_format=.webp"
+FEISHU_EMOJI = "https://sf3-cn.feishucdn.com/obj/lark-reaction-cn/%s"
+FEISHU_CUSTOM_EMOJI = "https://s1-imfile.feishucdn.com/static-resource/v1/%s"
+EMOJI_TTL = 24 * 3600
 DM_LOOKUPS_A_SYNC = 10  # direct chats whose people one read-state answer may look up
 NAME_TTL = 3600
 RECENT_MOST = 2000
@@ -207,6 +210,7 @@ class Feishu:
         self.group_topics = True  # 群话题各开对话: each group topic is a conversation of its own
         self.marked = collections.OrderedDict()  # message ids already marked as being worked on
         self.msg_chat = collections.OrderedDict()  # message id -> its chat, for the unread @ list
+        self._emojis = None  # (expires, {emoji_key: (label, url)})
 
     # Signing in.
 
@@ -257,7 +261,7 @@ class Feishu:
 
     def logout(self):
         self.stop()
-        self.client, self.me, self.self_chat = None, "", ""
+        self.client, self.me, self.self_chat, self._emojis = None, "", "", None
 
     # Receiving.
 
@@ -333,7 +337,7 @@ class Feishu:
         root = "" if root == "0" else root
         out = {"id": mid, "chat_id": chat, "sender": sender, "owner": bool(self.me) and sender == self.me}
         data = msg.get("content_data") or {}
-        view, preview = message_view.describe(self.U, msg)
+        view, preview = message_view.describe(self.U, msg, emojis=self.emojis)
         if view:
             out["view"] = view
         if preview:
@@ -641,11 +645,44 @@ class Feishu:
         if mention or is_request(text, self.trigger):
             self.mark_working(str(msg["msg_id"]), got)
 
+    def emojis(self):
+        """Emoji key -> (zh-CN label, CDN https URL), kept a day; {} when unavailable."""
+        if self.client is None:
+            return {}
+        with self._mu:
+            cached = self._emojis
+        if cached and time.monotonic() < cached[0]:
+            return cached[1]
+        try:
+            resp = self.client.api("reactions.PullEmojiResourcesV2Request", {"needUserTenantResources": True}) or {}
+        except Exception as e:
+            log.warning("emoji resources: %s", e)
+            return cached[1] if cached else {}
+        out = {}
+        for s in resp.get("emojiResourceSet") or []:
+            for item in s.get("emojiResources") or []:
+                key = item.get("key") or ""
+                if not key or item.get("isDeleted"):
+                    continue
+                i18n_t = item.get("i18nText") or {}
+                label = (i18n_t.get("i18nTexts") or {}).get("zh-CN") or i18n_t.get("defaultText") or key
+                i18n_i = item.get("i18nImages") or {}
+                imgs = i18n_i.get("i18nImage") or {}
+                img_key = ((imgs.get("zh-CN") or {}).get("key") or (i18n_i.get("defaultImage") or {}).get("key")
+                           or item.get("imageKey") or "")
+                url = ""
+                if img_key and self.region == "feishu":
+                    url = (FEISHU_EMOJI if "." in img_key else FEISHU_CUSTOM_EMOJI) % img_key
+                out[key] = (label, url)
+        with self._mu:
+            self._emojis = (time.monotonic() + EMOJI_TTL, out)
+        return out
+
     def _written(self, sender, data):
         """A text or post message's text as Collie gets it, and whether it @-mentions you as a request (the @ then taken out)."""
         rich = data.get("richText") or {}
         mention = self._self_mention(sender, rich)
-        text = richtext.to_text(self.U.L, rich, drop_at=self.me if mention else "").strip() or data.get("text", "")
+        text = richtext.to_text(self.U.L, rich, drop_at=self.me if mention else "", emojis=self.emojis).strip() or data.get("text", "")
         if data.get("title"):
             text = "**%s**\n%s" % (data["title"], text)
         return text, mention

@@ -150,7 +150,8 @@ func (s *Server) inboxMediaURLs(conv string, m *InboxMsg) {
 	walk = func(nodes []extproto.MessageNode) {
 		for i := range nodes {
 			n := &nodes[i]
-			if n.Kind == "image" || n.Kind == "file" {
+			switch n.Kind {
+			case "image", "file":
 				n.URL = ""
 				if inboxMediaKey.MatchString(n.Key) {
 					q := url.Values{"id": {conv}, "message": {m.ID}, "key": {n.Key}, "kind": {n.Kind},
@@ -158,6 +159,12 @@ func (s *Server) inboxMediaURLs(conv string, m *InboxMsg) {
 					n.URL = "/api/inbox/media?" + q.Encode()
 				}
 				n.Key = ""
+			case "emoji":
+				if strings.HasPrefix(n.URL, "https://") {
+					n.URL = s.senderAvatarPath(conv, n.URL)
+				} else {
+					n.URL = ""
+				}
 			}
 			walk(n.Children)
 		}

@@ -51,3 +51,28 @@ test("makes calendar, file, and clipped legacy previews readable", () => {
   assert.equal(legacyPreview('飞书日历: [日历] {"title":{"element_ids":…'), "飞书日历: [日历]");
   assert.equal(legacyPreview("正常消息 [日历] 明天上午"), "正常消息 [日历] 明天上午");
 });
+
+test("renders inline emojis through hub proxy and stickers without bubble border", () => {
+  const html = render({
+    kind: "post",
+    nodes: [{
+      kind: "paragraph",
+      children: [
+        { kind: "text", text: "难哦" },
+        { kind: "emoji", text: "流泪", url: "/api/inbox/avatar?id=larkx%3A1&u=https%3A%2F%2Fsf3-cn.feishucdn.com%2Fobj%2Flark-reaction-cn%2Femoji_sob.png&sig=abc" },
+        { kind: "emoji", text: "外链", url: "https://evil.example/e.png" },
+        { kind: "emoji", text: "未知" },
+      ],
+    }],
+  });
+  assert.match(html, /<img class="im-emoji" src="\/api\/inbox\/avatar\?[^"]+" alt="\[流泪\]" title="流泪"/);
+  assert.match(html, /<span class="im-emoji-alt">\[外链\]<\/span>/);
+  assert.match(html, /<span class="im-emoji-alt">\[未知\]<\/span>/);
+  assert.doesNotMatch(html, /evil\.example/);
+
+  const sticker = render({
+    kind: "media",
+    nodes: [{ kind: "image", text: "表情包", tone: "sticker", url: "/api/inbox/media?id=larkx%3A1&key=v3_abc" }],
+  });
+  assert.match(sticker, /<img class="im-image im-sticker" src="\/api\/inbox\/media\?[^"]+" alt="表情包"/);
+});

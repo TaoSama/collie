@@ -207,11 +207,19 @@ def at_users(L, rich):
     return out
 
 
-def to_text(L, rich, drop_at=""):
+def to_text(L, rich, drop_at="", emojis=None):
     """A received rich text (as protobuf_to_dict gives it) as Markdown-ish text: quotes keep >, code keeps ```.
     drop_at: an @ of this user id is left out."""
     E = L.entities.RichTextElement
     els = (rich.get("elements") or {}).get("dictionary") or {}
+    emoji_map = None
+
+    def emoji_label(key):
+        nonlocal emoji_map
+        if emoji_map is None:
+            emoji_map = (emojis() if callable(emojis) else emojis) or {}
+        hit = emoji_map.get(key)
+        return hit[0] if isinstance(hit, (tuple, list)) and hit else ""
 
     def prop(cls, el):
         p = cls()
@@ -238,6 +246,9 @@ def to_text(L, rich, drop_at=""):
             if drop_at and at.userId == drop_at:
                 return ""  # the @ that made it a request
             return at.content or "@"
+        if t == TAG_EMOTION:
+            label = emoji_label(prop(E.EmotionProperty, el).key)
+            return ("[%s]" % label if label else PLACEHOLDERS[TAG_EMOTION]) + kids
         if t == TAG_P:
             return kids + "\n"
         if t == TAG_LI:

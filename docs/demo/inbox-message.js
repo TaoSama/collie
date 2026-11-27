@@ -20,7 +20,8 @@
     const url = typeof n.url === "string" && n.url.startsWith("/api/inbox/media?") ? esc(n.url) : "";
     if (n.kind === "image") {
       const alt = esc(n.text || "飞书图片");
-      return url ? `<img class="im-image" src="${url}" alt="${alt}" loading="lazy">` : `<span class="im-note">图片暂不可用</span>`;
+      const cls = n.tone === "sticker" ? "im-image im-sticker" : "im-image";
+      return url ? `<img class="${cls}" src="${url}" alt="${alt}" loading="lazy">` : `<span class="im-note">图片暂不可用</span>`;
     }
     const name = esc(n.text || "飞书文件");
     const bytes = Number(n.tone);
@@ -54,6 +55,12 @@
           return String(n.tone || "").split(" ").reduce((body, mark) =>
             Object.hasOwn(marks, mark) ? `<${marks[mark]}>${body}</${marks[mark]}>` : body, inner);
         case "mention": return `<span class="im-mention">${inner}</span>`;
+        case "emoji": {
+          const url = typeof n.url === "string" && n.url.startsWith("/api/inbox/avatar?") ? esc(n.url) : "";
+          const label = text || "表情";
+          return url ? `<img class="im-emoji" src="${url}" alt="[${label}]" title="${label}" loading="lazy" decoding="async">`
+            : `<span class="im-emoji-alt">[${label}]</span>`;
+        }
         case "markdown": return `<div class="im-markdown">${markdown(n.text)}</div>`;
         case "field": return `<div class="im-field${n.tone === "short" ? " short" : ""}">${inner}</div>`;
         case "table": return `<div class="im-table"><table><tbody>${inner}</tbody></table></div>`;

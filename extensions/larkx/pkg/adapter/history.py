@@ -74,7 +74,7 @@ class History:
             if not msg["msg_id"] or str(msg["chat_id"]) != chat:
                 continue
             sender = str(msg["from_id"] or "")
-            view, preview = message_view.describe(adapter.U, msg)
+            view, preview = message_view.describe(adapter.U, msg, emojis=adapter.emojis)
             data = msg["content_data"] or {}
             text = preview
             if msg["msg_type"] in (message_view.TEXT, message_view.POST):
