@@ -14,9 +14,6 @@ import (
 func (sp *Super) beginDeliveryLocked(target, pane string, list []*Trigger) bool {
 	var worker *Worker
 	if w := sp.st.Workers[target]; w != nil && w.Conv != "" {
-		if w.DiscardRestoredDraft {
-			return false
-		}
 		if w.DraftTrigger != "" {
 			// An unconfirmed attempt can still produce a reply. Keep its
 			// ownership until the turn finishes or an idle worker takes new work.

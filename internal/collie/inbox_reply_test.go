@@ -484,7 +484,7 @@ func TestInboxDraftDedicatedTurnsAreSeparate(t *testing.T) {
 	f.check(t, second, "done", "Second draft.", 0)
 }
 
-func TestInboxDraftRestoredTurnIsDiscarded(t *testing.T) {
+func TestInboxDraftRestoredWorkingTurnKeepsDraft(t *testing.T) {
 	f := newDraftWorkerTest(t)
 	id := f.start(t)
 	f.sp.tick(t.Context())
@@ -492,9 +492,9 @@ func TestInboxDraftRestoredTurnIsDiscarded(t *testing.T) {
 	f.sp.tick(t.Context())
 	f.herdr.panes[f.worker.PaneID] = f.pane
 	f.sp.tick(t.Context())
-	f.finish(t, "Interrupted draft reply.")
-	f.check(t, id, "pending", "", 0)
-	if f.worker.DraftTrigger != "" || f.worker.DiscardRestoredDraft {
-		t.Fatalf("restored worker still owns an interrupted draft: %+v", f.worker)
+	f.finish(t, "Restored draft reply.")
+	f.check(t, id, "done", "Restored draft reply.", 0)
+	if f.worker.DraftTrigger != "" {
+		t.Fatalf("restored worker still owns a finished draft: %s", f.worker.DraftTrigger)
 	}
 }

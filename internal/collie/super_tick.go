@@ -144,9 +144,19 @@ func (sp *Super) tick(parent context.Context) {
 			if a, ok := live[w.Name]; ok && w.Status == "gone" && w.PaneID != "" && a.Pane == w.PaneID {
 				next := *w
 				next.Ended, next.Status = false, a.Status
-				next.DiscardRestoredDraft = (w.DraftTrigger != "" || w.DiscardRestoredDraft) && a.Status != "done" && a.Status != "idle"
-				if !sp.clearDraftTurnLocked(w, next) {
-					continue
+				// A completion while the pane was gone belongs to the old turn.
+				if a.CompletionSeq > 0 {
+					next.CompletionSeq = a.CompletionSeq
+				}
+				switch {
+				case a.Status == "done" || a.Status == "idle":
+					if !sp.clearDraftTurnLocked(w, next) {
+						continue
+					}
+				case w.DraftTrigger == "" || a.Status == "working" || a.Status == "blocked":
+					*w = next
+				default:
+					continue // wait until herdr knows whether the draft turn is still running
 				}
 				sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf("worker %s is back: herdr restored its pane (status %s).", w.Name, a.Status), "", "", w.Name)
 				sp.addEntryLocked("event", w.Thread, w.Name+" 回来了（herdr 恢复了它的窗格）", w.Name, "info")
@@ -160,12 +170,7 @@ func (sp *Super) tick(parent context.Context) {
 		}
 		if !alive {
 			if w.Status != "starting" && w.Status != "failed" && settled[w.Name] == w {
-				next := *w
-				next.Ended, next.Status = true, "gone"
-				next.DiscardRestoredDraft = w.DraftTrigger != "" || w.DiscardRestoredDraft
-				if !sp.clearDraftTurnLocked(w, next) {
-					continue
-				}
+				w.Ended, w.Status = true, "gone"
 				sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf("worker %s exited (its herdr pane is gone).", w.Name), "", "", w.Name)
 				sp.addEntryLocked("event", w.Thread, w.Name+" 已退出", w.Name, "info")
 			}
@@ -223,13 +228,6 @@ func (sp *Super) tick(parent context.Context) {
 			completed := prev == "working" || (a.Status == "done" && prev != "blocked" &&
 				(prev != "done" || (prevComp > 0 && a.CompletionSeq > prevComp)))
 			switch {
-			case w.DiscardRestoredDraft:
-				next := *w
-				next.DiscardRestoredDraft = false
-				if !sp.clearDraftTurnLocked(w, next) {
-					w.Status, w.CompletionSeq = prev, prevComp
-					continue
-				}
 			case draft != "" && (completed || prev == "blocked" || a.CompletionSeq > prevComp):
 				if !sp.clearDraftTurnLocked(w, *w) {
 					w.Status, w.CompletionSeq = prev, prevComp

@@ -42,7 +42,7 @@ type fakePane struct {
 	box                     string
 	writes                  []string // each pane.send_text, as sent
 	said                    []string
-	seq                     uint64
+	seq, completionSeq      uint64
 	dropPrompts, dropEnters int
 	quiet                   bool
 	// hangUp: the next agent.prompt types its text, then the connection
@@ -141,7 +141,7 @@ func (f *fakeHerdr) handle(method string, params map[string]any) (any, *HerdrErr
 		if status == "" {
 			status = "idle"
 		}
-		v := map[string]any{"pane_id": id, "workspace_id": p.ws, "cwd": p.cwd, "agent_status": status, "interactive_ready": true, "state_change_seq": p.seq}
+		v := map[string]any{"pane_id": id, "workspace_id": p.ws, "cwd": p.cwd, "agent_status": status, "interactive_ready": true, "state_change_seq": p.seq, "completion_seq": p.completionSeq}
 		if p.kind != "" {
 			v["agent"] = p.kind
 		}
@@ -567,5 +567,24 @@ func TestCloseStaleRouterWorkspaces(t *testing.T) {
 	}
 	if f.ws["wShell"] == "" {
 		t.Error("non-router workspace should have been kept")
+	}
+}
+
+func TestInboxDraftCompletedWhilePaneWasGoneIsNotSent(t *testing.T) {
+	f := newDraftWorkerTest(t)
+	f.pane.completionSeq = 5
+	id := f.start(t)
+	f.sp.tick(t.Context())
+	delete(f.herdr.panes, f.worker.PaneID)
+	f.sp.tick(t.Context())
+	f.finish(t, "Completed draft while gone.")
+	f.pane.completionSeq++
+	f.herdr.panes[f.worker.PaneID] = f.pane
+	f.sp.tick(t.Context()) // restore the pane in done state
+	f.sp.tick(t.Context()) // do not replay the completion as an ordinary reply
+	f.check(t, id, "pending", "", 0)
+	f.restoreState(t)
+	if f.worker.DraftTrigger != "" || f.worker.CompletionSeq != f.pane.completionSeq {
+		t.Fatalf("persisted worker retained draft %q or old completion %d", f.worker.DraftTrigger, f.worker.CompletionSeq)
 	}
 }

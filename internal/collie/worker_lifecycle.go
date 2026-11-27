@@ -178,7 +178,7 @@ func agentStopLine(screen, summary string) string {
 // enter the pane. A restart must not see the old draft attached to a new turn.
 func (sp *Super) clearDraftTurnLocked(w *Worker, next Worker) bool {
 	next.DraftTrigger = ""
-	if w.DraftTrigger != "" || w.DiscardRestoredDraft {
+	if w.DraftTrigger != "" {
 		if err := sp.saveDeliveryStateLocked(nil, nil, &next); err != nil {
 			log.Printf("worker %s: clear draft turn: %v", w.Name, err)
 			return false
