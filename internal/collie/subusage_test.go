@@ -953,3 +953,81 @@ func TestSubUsageHubPrefersNonKeychainOverKeychain(t *testing.T) {
 		t.Fatalf("expected failover to macpro on devbox 401: dev=%d mac=%d", devProbes.Load(), macProbes.Load())
 	}
 }
+
+func TestSubUsageGeminiHeaderShowsGeminiWindowsAndReset(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 11, 27, 23, 38, 0, 0, loc)
+	snap := subUsageSnapshot{
+		CollectedAt: now,
+		Machines: []subUsageMachineNode{
+			{
+				ID: "devbox", Name: "devbox", Online: true,
+				Today: tokenDayStats{Tokens: 2_240_000_000, Requests: 100, CacheRead: 2_195_200_000, CacheInput: 2_240_000_000},
+				Report: subUsageMachineReport{
+					CollectedAt: now.UTC().Format(time.RFC3339),
+					Accounts: []subUsageAccount{
+						{
+							Provider:    "antigravity",
+							AccountHash: "agy-1",
+							Email:       "user@example.com",
+							Plan:        "g1-ultra-lite-tier",
+							PlanRaw:     "g1-ultra-lite-tier",
+							PlanDisplay: "G1 Ultra Lite",
+							Status:      "ok",
+							Windows: []subUsageWindow{
+								{Kind: "gemini_five_hour", Label: "5H", Scope: "model", ScopedModel: "gemini", UsedPercent: 38, ResetsAt: now.Add(74 * time.Minute).UTC().Format(time.RFC3339), CheckedAt: now.UTC().Format(time.RFC3339)},
+								{Kind: "gemini_weekly", Label: "7D", Scope: "model", ScopedModel: "gemini", UsedPercent: 64, ResetsAt: now.Add(140 * time.Hour).UTC().Format(time.RFC3339), CheckedAt: now.UTC().Format(time.RFC3339)},
+								{Kind: "partner_five_hour", Label: "Partner 5H", Scope: "model", ScopedModel: "partner", UsedPercent: 0, CheckedAt: now.UTC().Format(time.RFC3339)},
+								{Kind: "partner_weekly", Label: "Partner 7D", Scope: "model", ScopedModel: "partner", UsedPercent: 0, CheckedAt: now.UTC().Format(time.RFC3339)},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Non-antigravity session models (e.g. Claude Code / Codex) without a local
+	// matching subscription must fall back to Gemini 5H/7D with reset time,
+	// never Partner buckets without reset time.
+	for _, tc := range []struct {
+		model string
+		focus string
+	}{
+		{model: "claude-opus-5-5[1m]", focus: "auto"},
+		{model: "Opus 5.5", focus: "auto"},
+		{model: "gpt-oss-120b", focus: "auto"},
+		{model: "claude-opus-5-5[1m]", focus: "antigravity"},
+		{model: "gemini-3.8-flash", focus: "auto"},
+	} {
+		cfg := subUsageConfig{PercentMode: "remaining", ShowTokens: true, DedupeAccounts: true, FocusOverride: tc.focus}
+		hs := buildSubUsageHeaderStatus(snap, cfg, tc.model, now)
+		if len(hs.Items) != 3 || hs.Items[0].Label != "Gemini" || hs.Items[1].Label != "5H" || hs.Items[1].Value != "62%" || hs.Items[2].Label != "7D" || hs.Items[2].Value != "36%" {
+			t.Fatalf("model=%q focus=%q items = %+v, want Gemini · 5H 62%% · 7D 36%%", tc.model, tc.focus, hs.Items)
+		}
+		if !strings.HasPrefix(hs.Subline, "1h14m 后重置 · 今日 2.24B · 缓存 98.0%") {
+			t.Fatalf("model=%q focus=%q subline = %q, want reset + today + cache", tc.model, tc.focus, hs.Subline)
+		}
+		if !strings.Contains(hs.Compact, "5H 62%") || !strings.Contains(hs.Compact, "7D 36%") || !strings.Contains(hs.Compact, "缓存 98.0%") {
+			t.Fatalf("model=%q focus=%q compact = %q, want 5H + 7D + cache", tc.model, tc.focus, hs.Compact)
+		}
+		if strings.Contains(hs.Compact, "Partner") {
+			t.Fatalf("model=%q focus=%q compact must not include Partner: %q", tc.model, tc.focus, hs.Compact)
+		}
+		// Drawer summary card still shows all 4 windows in order with reset details on 5H & 7D.
+		if len(hs.Sections) == 0 || len(hs.Sections[0].Rows) != 1 || len(hs.Sections[0].Rows[0].Meters) != 4 {
+			t.Fatalf("model=%q drawer meters mismatch: %+v", tc.model, hs.Sections)
+		}
+		ms := hs.Sections[0].Rows[0].Meters
+		if ms[0].Label != "5H" || ms[0].Sub == "" || ms[1].Label != "7D" || ms[1].Sub == "" || ms[2].Label != "Partner 5H" || ms[3].Label != "Partner 7D" {
+			t.Fatalf("model=%q drawer meter order/reset mismatch: %+v", tc.model, ms)
+		}
+	}
+
+	// Explicit antigravity-prefixed partner model selects Partner windows under Antigravity label.
+	cfg := subUsageConfig{PercentMode: "remaining", ShowTokens: true, DedupeAccounts: true}
+	hsPartner := buildSubUsageHeaderStatus(snap, cfg, "antigravity/claude-opus-5-5", now)
+	if len(hsPartner.Items) != 3 || hsPartner.Items[0].Label != "Antigravity" || hsPartner.Items[1].Label != "Partner 5H" || hsPartner.Items[2].Label != "Partner 7D" {
+		t.Fatalf("antigravity partner items = %+v", hsPartner.Items)
+	}
+}

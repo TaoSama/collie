@@ -590,12 +590,13 @@ func subWindowAppliesToModel(w parsedSubWindow, model string) bool {
 	if w.Model == "" {
 		return true
 	}
+	trimmed := strings.ToLower(strings.TrimSpace(model))
 	leaf := subLeafModel(model)
 	if leaf == "" {
 		return w.Model == "gemini"
 	}
 	if w.Model == "partner" {
-		return strings.HasPrefix(leaf, "claude-") || strings.HasPrefix(leaf, "opus") || strings.HasPrefix(leaf, "sonnet") || strings.HasPrefix(leaf, "haiku") || strings.HasPrefix(leaf, "gpt-oss-")
+		return strings.HasPrefix(trimmed, "antigravity/") && (strings.HasPrefix(leaf, "claude-") || strings.HasPrefix(leaf, "gpt-oss-"))
 	}
 	return strings.Contains("-"+subSlug(leaf)+"-", "-"+w.Model+"-")
 }
@@ -1147,7 +1148,9 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 		compactParts = append(compactParts, todayTok)
 		if totalToday.CacheInput > 0 {
 			hit := clampPct(float64(totalToday.CacheRead) * 100 / float64(totalToday.CacheInput))
-			subParts = append(subParts, fmt.Sprintf("缓存 %.1f%%", hit))
+			hitStr := fmt.Sprintf("缓存 %.1f%%", hit)
+			subParts = append(subParts, hitStr)
+			compactParts = append(compactParts, hitStr)
 		}
 	}
 	hs.Subline = strings.Join(subParts, " · ")
