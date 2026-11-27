@@ -56,6 +56,7 @@ type subUsageInventoryItem struct {
 	TokenValid     bool   `json:"token_valid"`                // locally checked access token validity
 	TokenExpiresAt string `json:"token_expires_at,omitempty"` // RFC3339 when known
 	HasSnapshot    bool   `json:"has_snapshot,omitempty"`     // local offline snapshot available (e.g. Codex rollout)
+	FromKeychain   bool   `json:"from_keychain,omitempty"`    // credential lives in OS Keychain (avoid unnecessary probes when file-backed machine exists)
 }
 
 // subUsageProbeResult is what GET /api/sub-usage/probe returns (Phase 2).
@@ -111,21 +112,41 @@ type subUsageCredit struct {
 
 // subUsageCollector gathers local agent subscription inventory & targeted probes.
 type subUsageCollector struct {
-	home   string
-	sysmon *sysMonitor
-	client *http.Client
-	now    func() time.Time
+	home     string
+	cacheDir string
+	sysmon   *sysMonitor
+	client   *http.Client
+	now      func() time.Time
 
 	claudeURL string
 	codexURL  string
 	agyURLs   []string
+
+	readKeychainMetaFn   func(ctx context.Context, service, account string) (keychainMeta, bool)
+	readKeychainSecretFn func(ctx context.Context, service, account string) ([]byte, bool)
 
 	mu           sync.Mutex
 	cached       *subUsageMachineReport
 	cachedAt     time.Time
 	lastGood     map[string]cachedSubAccount // provider → last good reading for transient fallback
 	proxyClients map[string]*http.Client     // normalized proxy spec → cached http.Client
+	agyKeychain  agyKeychainCacheEntry       // cached non-secret metadata for macOS Keychain Antigravity token
 	inFlight     chan struct{}
+}
+
+type keychainMeta struct {
+	cdat string
+	mdat string
+}
+
+type agyKeychainCacheEntry struct {
+	set         bool
+	cdat        string
+	mdat        string
+	email       string
+	accountHash string
+	expiresAt   time.Time
+	failed      bool
 }
 
 type subUsageProxyCtxKey struct{}
@@ -141,11 +162,13 @@ func newSubUsageCollector(home string, sysmon *sysMonitor) *subUsageCollector {
 		sysmon:       sysmon,
 		client:       subUsageHTTPClient(subUsageProviderWait),
 		now:          time.Now,
-		claudeURL:    defaultClaudeUsageURL,
-		codexURL:     defaultCodexUsageURL,
-		agyURLs:      append([]string(nil), defaultAgyBaseURLs...),
-		lastGood:     map[string]cachedSubAccount{},
-		proxyClients: map[string]*http.Client{},
+		claudeURL:            defaultClaudeUsageURL,
+		codexURL:             defaultCodexUsageURL,
+		agyURLs:              append([]string(nil), defaultAgyBaseURLs...),
+		readKeychainMetaFn:   readLocalKeychainMeta,
+		readKeychainSecretFn: readLocalKeychainAccountSecret,
+		lastGood:             map[string]cachedSubAccount{},
+		proxyClients:         map[string]*http.Client{},
 	}
 }
 
@@ -154,6 +177,7 @@ func (s *Server) localSubUsageCollector() *subUsageCollector {
 	defer s.subUsageMu.Unlock()
 	if s.subUsage == nil {
 		s.subUsage = newSubUsageCollector(s.home, s.sysmon)
+		s.subUsage.cacheDir = collieDir()
 	}
 	return s.subUsage
 }
@@ -189,7 +213,7 @@ func (c *subUsageCollector) inventory(ctx context.Context) subUsageInventory {
 	if it := c.inventoryCodex(ctx, now); it != nil {
 		items = append(items, *it)
 	}
-	if it := c.inventoryAntigravity(now); it != nil {
+	if it := c.inventoryAntigravity(ctx, now); it != nil {
 		items = append(items, *it)
 	}
 	if items == nil {

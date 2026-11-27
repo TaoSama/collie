@@ -86,9 +86,20 @@ func buildLocalProxyURL(host, port string) *url.URL {
 // readLocalKeychainSecret reads a generic password from macOS Keychain.
 // Never prints or logs the returned bytes.
 func readLocalKeychainSecret(ctx context.Context, service string) ([]byte, bool) {
-	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	return readLocalKeychainAccountSecret(ctx, service, "")
+}
+
+// readLocalKeychainAccountSecret reads a generic password from macOS Keychain,
+// optionally narrowed to a specific account (-a). Never prints or logs the returned bytes.
+func readLocalKeychainAccountSecret(ctx context.Context, service, account string) ([]byte, bool) {
+	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, "/usr/bin/security", "find-generic-password", "-s", service, "-w").Output()
+	args := []string{"find-generic-password", "-s", service}
+	if account != "" {
+		args = append(args, "-a", account)
+	}
+	args = append(args, "-w")
+	out, err := exec.CommandContext(cctx, "/usr/bin/security", args...).Output()
 	if err != nil {
 		return nil, false
 	}
@@ -97,4 +108,20 @@ func readLocalKeychainSecret(ctx context.Context, service string) ([]byte, bool)
 		return nil, false
 	}
 	return []byte(trimmed), true
+}
+
+// readLocalKeychainMeta reads non-secret metadata (cdat/mdat) for a generic
+// password without -w, so macOS does not display an authorization prompt.
+func readLocalKeychainMeta(ctx context.Context, service, account string) (keychainMeta, bool) {
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	args := []string{"find-generic-password", "-s", service}
+	if account != "" {
+		args = append(args, "-a", account)
+	}
+	out, err := exec.CommandContext(cctx, "/usr/bin/security", args...).Output()
+	if err != nil {
+		return keychainMeta{}, false
+	}
+	return parseKeychainMetaOutput(string(out)), true
 }

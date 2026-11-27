@@ -3,6 +3,7 @@ package collie
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -706,5 +707,249 @@ func TestSubUsageDefaultEnabledAndPersistedFalse(t *testing.T) {
 	bad.Defaults.Enabled = true
 	if err := bad.validate(); err == nil {
 		t.Fatal("expected non-feature manifest with defaults.enabled=true to fail validation")
+	}
+}
+
+func TestSubUsageAgyKeychainDecodeMetaAndCaching(t *testing.T) {
+	// 1. Parse macOS `security find-generic-password` metadata output (no -w).
+	sampleMeta := `keychain: "/Users/me/Library/Keychains/login.keychain-db"
+class: "genp"
+attributes:
+    "acct"<blob>="antigravity"
+    "cdat"<timedate>=0x32303236313132353037353830325A00  "20261125075802Z\000"
+    "desc"<blob>=<NULL>
+    "mdat"<timedate>=0x32303236313132373134353235385A00  "20261127145258Z\000"
+    "svce"<blob>="gemini"
+`
+	meta := parseKeychainMetaOutput(sampleMeta)
+	if meta.cdat != "20261125075802Z" || meta.mdat != "20261127145258Z" {
+		t.Fatalf("parseKeychainMetaOutput = %+v", meta)
+	}
+	if got := formatKeychainTimeRFC3339(meta.mdat); got != "2026-11-27T14:52:58Z" {
+		t.Fatalf("formatKeychainTimeRFC3339 = %q", got)
+	}
+
+	// 2. Decode plain JSON, go-keyring-base64: (including writer_id + RFC3339Nano timezone), and hex-wrapped go-keyring-base64:.
+	now := time.Date(2026, 11, 27, 15, 0, 0, 0, time.UTC)
+	plainJSON := fmt.Sprintf(`{"token":{"access_token":"ya29.kc-secret-1","token_type":"Bearer","refresh_token":"1//refresh-secret","expiry":"2026-11-27T23:52:57.504735+08:00","expires_in":3599},"auth_method":"consumer","id_token_email":"user@example.com","writer_id":"agy-1"}`)
+	wantExp, _ := time.Parse(time.RFC3339Nano, "2026-11-27T23:52:57.504735+08:00")
+	b64Payload := "go-keyring-base64:" + base64.StdEncoding.EncodeToString([]byte(plainJSON))
+	hexPayload := hex.EncodeToString([]byte(b64Payload))
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"plain", plainJSON},
+		{"b64", b64Payload},
+		{"hex+b64", hexPayload},
+	} {
+		tok, em, exp, ok := parseAgyTokenJSON(decodeKeychainSecret([]byte(tc.raw)))
+		if !ok || tok != "ya29.kc-secret-1" || em != "user@example.com" || !exp.Equal(wantExp) {
+			t.Fatalf("%s decode/parse mismatch: ok=%v tok=%q em=%q exp=%v", tc.name, ok, tok, em, exp)
+		}
+	}
+
+	// 3. Verify inventory caching minimizes -w secret reads across repeated polls, token refreshes, and process restarts.
+	home := t.TempDir()
+	cacheDir := t.TempDir()
+	c := newSubUsageCollector(home, nil)
+	c.cacheDir = cacheDir
+	c.now = func() time.Time { return now }
+
+	curMeta := keychainMeta{cdat: "20261125075802Z", mdat: "20261127145258Z"}
+	curSecret := b64Payload
+	metaOK := true
+	secretOK := true
+	var metaReads, secretReads atomic.Int32
+
+	c.readKeychainMetaFn = func(_ context.Context, svc, acct string) (keychainMeta, bool) {
+		if svc != agyKeychainService || acct != agyKeychainAccount {
+			t.Errorf("unexpected keychain lookup svc=%q acct=%q", svc, acct)
+		}
+		metaReads.Add(1)
+		return curMeta, metaOK
+	}
+	c.readKeychainSecretFn = func(_ context.Context, svc, acct string) ([]byte, bool) {
+		secretReads.Add(1)
+		if !secretOK {
+			return nil, false
+		}
+		return []byte(curSecret), true
+	}
+
+	// Cold inventory reads -w once, flags FromKeychain, and persists non-secret metadata to disk.
+	inv1 := c.inventory(context.Background())
+	if len(inv1.Accounts) != 1 || !inv1.Accounts[0].FromKeychain || inv1.Accounts[0].Email != "user@example.com" || !inv1.Accounts[0].TokenValid {
+		t.Fatalf("cold keychain inventory = %+v", inv1.Accounts)
+	}
+	if secretReads.Load() != 1 {
+		t.Fatalf("cold inventory secretReads = %d, want 1", secretReads.Load())
+	}
+	diskBytes, err := os.ReadFile(filepath.Join(cacheDir, agyKeychainCacheFile))
+	if err != nil {
+		t.Fatalf("expected non-secret disk cache file: %v", err)
+	}
+	if strings.Contains(string(diskBytes), "ya29.") || strings.Contains(string(diskBytes), "refresh-secret") {
+		t.Fatalf("disk cache leaked secret: %s", string(diskBytes))
+	}
+
+	// Simulated process restart/upgrade: a fresh collector with the same cacheDir
+	// and unchanged cdat must NOT touch -w during inventory.
+	cRestart := newSubUsageCollector(home, nil)
+	cRestart.cacheDir = cacheDir
+	cRestart.now = func() time.Time { return now }
+	cRestart.readKeychainMetaFn = c.readKeychainMetaFn
+	cRestart.readKeychainSecretFn = c.readKeychainSecretFn
+	invRestart := cRestart.inventory(context.Background())
+	if len(invRestart.Accounts) != 1 || invRestart.Accounts[0].Email != "user@example.com" || !invRestart.Accounts[0].FromKeychain {
+		t.Fatalf("post-restart inventory = %+v", invRestart.Accounts)
+	}
+	if secretReads.Load() != 1 {
+		t.Fatalf("post-restart inventory must reuse disk metadata without -w, got %d", secretReads.Load())
+	}
+
+	// Repeated inventory with unchanged mdat must NOT touch -w.
+	_ = c.inventory(context.Background())
+	_ = c.inventory(context.Background())
+	if secretReads.Load() != 1 {
+		t.Fatalf("cached inventory must not re-read -w, got %d", secretReads.Load())
+	}
+
+	// In-place token refresh (same cdat, new mdat) must NOT touch -w during inventory,
+	// while updating TokenExpiresAt so hub can clear any prior auth block.
+	curMeta.mdat = "20261127155500Z"
+	invRefreshed := c.inventory(context.Background())
+	if secretReads.Load() != 1 {
+		t.Fatalf("mdat-updated inventory must not re-read -w, got %d", secretReads.Load())
+	}
+	if len(invRefreshed.Accounts) != 1 || !invRefreshed.Accounts[0].TokenValid || invRefreshed.Accounts[0].TokenExpiresAt != "2026-11-27T15:55:00Z" {
+		t.Fatalf("refreshed inventory = %+v", invRefreshed.Accounts)
+	}
+
+	// Account recreation (new cdat) invalidates cache and reads -w once.
+	curMeta.cdat = "20261127160000Z"
+	curMeta.mdat = "20261127160000Z"
+	newJSON := fmt.Sprintf(`{"token":{"access_token":"ya29.kc-secret-2","expiry":%q},"id_token_email":"other@example.com"}`, now.Add(2*time.Hour).Format(time.RFC3339))
+	curSecret = "go-keyring-base64:" + base64.StdEncoding.EncodeToString([]byte(newJSON))
+	invNew := c.inventory(context.Background())
+	if secretReads.Load() != 2 || len(invNew.Accounts) != 1 || invNew.Accounts[0].Email != "other@example.com" {
+		t.Fatalf("new cdat inventory: secretReads=%d accounts=%+v", secretReads.Load(), invNew.Accounts)
+	}
+
+	// Denied/failed -w read is negative-cached for same (cdat, mdat) so we don't spam dialogs.
+	curMeta.cdat = "20261127170000Z"
+	curMeta.mdat = "20261127170000Z"
+	secretOK = false
+	if invFail1 := c.inventory(context.Background()); len(invFail1.Accounts) != 0 {
+		t.Fatalf("expected empty inventory on denied keychain, got %+v", invFail1.Accounts)
+	}
+	if invFail2 := c.inventory(context.Background()); len(invFail2.Accounts) != 0 {
+		t.Fatalf("expected empty inventory on negative cache, got %+v", invFail2.Accounts)
+	}
+	if secretReads.Load() != 3 {
+		t.Fatalf("negative cache must prevent repeated -w prompts, got secretReads=%d want 3", secretReads.Load())
+	}
+}
+
+func TestSubUsageHubPrefersNonKeychainOverKeychain(t *testing.T) {
+	_, h, _ := newExtTestHub(t)
+	curNow := time.Date(2026, 11, 27, 15, 0, 0, 0, time.UTC)
+
+	cat, err := extCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	for _, m := range cat {
+		if m.ID == featureUsage {
+			h.cat[m.ID] = m
+		}
+	}
+	h.mu.Unlock()
+
+	var macProbes, devProbes atomic.Int32
+	var devAuthFail atomic.Bool
+
+	// macpro has LATER expiry and alphabetically earlier name, but FromKeychain=true.
+	macSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/sub-usage/inventory":
+			writeJSON(w, 200, subUsageInventory{
+				CollectedAt: curNow.Format(time.RFC3339),
+				Accounts: []subUsageInventoryItem{
+					{Provider: "antigravity", AccountHash: "hash-agy-1", Email: "shared@example.com", TokenValid: true, TokenExpiresAt: curNow.Add(4 * time.Hour).Format(time.RFC3339), FromKeychain: true},
+				},
+			})
+		case "/api/sub-usage/probe":
+			macProbes.Add(1)
+			writeJSON(w, 200, subUsageProbeResult{Account: &subUsageAccount{
+				Provider: "antigravity", AccountHash: "hash-agy-1", Email: "shared@example.com", PlanDisplay: "G1 Ultra Lite", Status: "ok",
+				Windows: []subUsageWindow{{Kind: "gemini_five_hour", Label: "5H", Scope: "model", ScopedModel: "gemini", UsedPercent: 10, ResetsAt: curNow.Add(3 * time.Hour).Format(time.RFC3339), CheckedAt: curNow.Format(time.RFC3339)}},
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer macSrv.Close()
+
+	// devbox has EARLIER expiry, but FromKeychain=false (file-backed).
+	devSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/sub-usage/inventory":
+			writeJSON(w, 200, subUsageInventory{
+				CollectedAt: curNow.Format(time.RFC3339),
+				Accounts: []subUsageInventoryItem{
+					{Provider: "antigravity", AccountHash: "hash-agy-1", Email: "shared@example.com", TokenValid: true, TokenExpiresAt: curNow.Add(1 * time.Hour).Format(time.RFC3339), FromKeychain: false},
+				},
+			})
+		case "/api/sub-usage/probe":
+			devProbes.Add(1)
+			if devAuthFail.Load() {
+				writeJSON(w, 200, subUsageProbeResult{AuthFailed: true, Account: &subUsageAccount{Provider: "antigravity", AccountHash: "hash-agy-1", Status: "expired"}})
+				return
+			}
+			writeJSON(w, 200, subUsageProbeResult{Account: &subUsageAccount{
+				Provider: "antigravity", AccountHash: "hash-agy-1", Email: "shared@example.com", PlanDisplay: "G1 Ultra Lite", Status: "ok",
+				Windows: []subUsageWindow{{Kind: "gemini_five_hour", Label: "5H", Scope: "model", ScopedModel: "gemini", UsedPercent: 12, ResetsAt: curNow.Add(3 * time.Hour).Format(time.RFC3339), CheckedAt: curNow.Format(time.RFC3339)}},
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer devSrv.Close()
+
+	rewriteClient := func(target string) *http.Client {
+		return &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				u := *req.URL
+				u.Scheme = "http"
+				u.Host = strings.TrimPrefix(target, "http://")
+				r2 := req.Clone(req.Context())
+				r2.URL = &u
+				return http.DefaultTransport.RoundTrip(r2)
+			}),
+		}
+	}
+
+	h.s.herdr.attach(&Machine{ID: "macpro", Name: "macpro", Online: true, client: rewriteClient(macSrv.URL)})
+	h.s.herdr.attach(&Machine{ID: "devbox", Name: "devbox", Online: true, client: rewriteClient(devSrv.URL)})
+	h.s.usageHub().now = func() time.Time { return curNow }
+	h.s.localSubUsageCollector().home = t.TempDir()
+	if _, err := h.configure(featureUsage, func(x *ExtSetting) { x.Enabled = true }); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Hub must pick devbox (!FromKeychain) and NOT probe macpro (FromKeychain).
+	_ = h.headerStatuses(context.Background(), "", true)
+	if devProbes.Load() != 1 || macProbes.Load() != 0 {
+		t.Fatalf("expected hub to prefer file-backed devbox over keychain macpro: dev=%d mac=%d", devProbes.Load(), macProbes.Load())
+	}
+
+	// 2. When devbox returns 401, hub fails over to keychain-backed macpro.
+	curNow = curNow.Add(6 * time.Minute)
+	devAuthFail.Store(true)
+	_ = h.headerStatuses(context.Background(), "", false)
+	if devProbes.Load() != 2 || macProbes.Load() != 1 {
+		t.Fatalf("expected failover to macpro on devbox 401: dev=%d mac=%d", devProbes.Load(), macProbes.Load())
 	}
 }

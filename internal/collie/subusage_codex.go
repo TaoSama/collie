@@ -60,18 +60,19 @@ type codexWhamWindow struct {
 }
 
 type codexResolvedLocal struct {
-	accessToken string
-	accountID   string
-	expiresAt   time.Time
-	tokenValid  bool
-	email       string
-	accountHash string
-	plan        string
-	planDisplay string
+	accessToken  string
+	accountID    string
+	expiresAt    time.Time
+	tokenValid   bool
+	email        string
+	accountHash  string
+	plan         string
+	planDisplay  string
+	fromKeychain bool
 }
 
 func (c *subUsageCollector) resolveCodexLocal(ctx context.Context, now time.Time) (codexResolvedLocal, bool) {
-	auth, ok := readCodexLocalAuth(ctx, c.home)
+	auth, fromKC, ok := readCodexLocalAuth(ctx, c.home)
 	if !ok || auth.Tokens == nil || strings.TrimSpace(auth.Tokens.AccessToken) == "" {
 		return codexResolvedLocal{}, false
 	}
@@ -98,14 +99,15 @@ func (c *subUsageCollector) resolveCodexLocal(ctx context.Context, now time.Time
 		valid = accessExp.After(now.Add(subUsageExpiryLeeway))
 	}
 	return codexResolvedLocal{
-		accessToken: strings.TrimSpace(toks.AccessToken),
-		accountID:   accountID,
-		expiresAt:   accessExp,
-		tokenValid:  valid,
-		email:       jwtEmail,
-		accountHash: hashAccountKey("codex", canonical),
-		plan:        plan,
-		planDisplay: formatSubPlanDisplay("codex", plan, plan, ""),
+		accessToken:  strings.TrimSpace(toks.AccessToken),
+		accountID:    accountID,
+		expiresAt:    accessExp,
+		tokenValid:   valid,
+		email:        jwtEmail,
+		accountHash:  hashAccountKey("codex", canonical),
+		plan:         plan,
+		planDisplay:  formatSubPlanDisplay("codex", plan, plan, ""),
+		fromKeychain: fromKC,
 	}, true
 }
 
@@ -137,6 +139,7 @@ func (c *subUsageCollector) inventoryCodex(ctx context.Context, now time.Time) *
 		PlanDisplay:    loc.planDisplay,
 		TokenValid:     loc.tokenValid,
 		TokenExpiresAt: expStr,
+		FromKeychain:   loc.fromKeychain,
 	}
 }
 
@@ -313,19 +316,19 @@ func codexWindowKindLabel(secs int64) (kind, label string) {
 	}
 }
 
-func readCodexLocalAuth(ctx context.Context, home string) (codexAuthFile, bool) {
+func readCodexLocalAuth(ctx context.Context, home string) (codexAuthFile, bool, bool) {
 	var out codexAuthFile
 	if b, err := os.ReadFile(filepath.Join(codexRoot(home), "auth.json")); err == nil {
 		if json.Unmarshal(b, &out) == nil && out.Tokens != nil && strings.TrimSpace(out.Tokens.AccessToken) != "" {
-			return out, true
+			return out, false, true
 		}
 	}
 	if b, ok := readLocalKeychainSecret(ctx, "Codex Auth"); ok {
 		if json.Unmarshal(b, &out) == nil && out.Tokens != nil && strings.TrimSpace(out.Tokens.AccessToken) != "" {
-			return out, true
+			return out, true, true
 		}
 	}
-	return codexAuthFile{}, false
+	return codexAuthFile{}, false, false
 }
 
 // parseCodexIDTokenClaims decodes only the non-secret JWT payload claims

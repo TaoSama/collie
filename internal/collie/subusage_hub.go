@@ -459,7 +459,7 @@ func (u *subUsageHub) resolveUniqueAccount(ctx context.Context, key string, cand
 	}
 
 	// 3. Pick eligible machines (locally valid token & not 401-blocked), ordered by:
-	//    non-hub > sticky lastMachine > latest token_expires_at > stable machine name.
+	//    non-hub > non-keychain (file-backed) > sticky lastMachine > latest token_expires_at > stable machine name.
 	lastMachine := st.lastMachine
 	var eligible []probeCandidate
 	for _, c := range cands {
@@ -477,6 +477,9 @@ func (u *subUsageHub) resolveUniqueAccount(ctx context.Context, key string, cand
 		a, b := eligible[i], eligible[j]
 		if a.local != b.local {
 			return !a.local
+		}
+		if a.item.FromKeychain != b.item.FromKeychain {
+			return !a.item.FromKeychain
 		}
 		aSticky, bSticky := a.machineID == lastMachine && lastMachine != "", b.machineID == lastMachine && lastMachine != ""
 		if aSticky != bSticky {

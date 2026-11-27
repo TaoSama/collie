@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,20 @@ import (
 	"strings"
 	"time"
 )
+
+const (
+	agyKeychainService   = "gemini"
+	agyKeychainAccount   = "antigravity"
+	agyKeychainCacheFile = "subusage-agy-keychain.json"
+)
+
+type agyKeychainDiskCache struct {
+	CDat        string `json:"cdat"`
+	MDat        string `json:"mdat"`
+	Email       string `json:"email"`
+	AccountHash string `json:"account_hash"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+}
 
 var defaultAgyBaseURLs = []string{
 	"https://daily-cloudcode-pa.googleapis.com",
@@ -29,9 +44,11 @@ type agyCLIOAuthFile struct {
 }
 
 type geminiOAuthCredsFile struct {
-	AccessToken string `json:"access_token"`
-	IDToken     string `json:"id_token"`
-	ExpiryDate  int64  `json:"expiry_date"` // unix milliseconds
+	AccessToken  string `json:"access_token"`
+	IDToken      string `json:"id_token"`
+	IDTokenEmail string `json:"id_token_email"`
+	Expiry       string `json:"expiry"`
+	ExpiryDate   int64  `json:"expiry_date"` // unix milliseconds
 }
 
 type agyLoadCodeAssistResp struct {
@@ -78,7 +95,7 @@ type agyResolvedLocal struct {
 	tokenValid  bool
 }
 
-func (c *subUsageCollector) resolveAgyLocal(now time.Time) (agyResolvedLocal, bool) {
+func (c *subUsageCollector) resolveAgyFile(now time.Time) (agyResolvedLocal, bool) {
 	token, email, expiry, ok := readAgyLocalToken(c.home)
 	if !ok || token == "" {
 		return agyResolvedLocal{}, false
@@ -96,26 +113,236 @@ func (c *subUsageCollector) resolveAgyLocal(now time.Time) (agyResolvedLocal, bo
 	}, true
 }
 
-func (c *subUsageCollector) inventoryAntigravity(now time.Time) *subUsageInventoryItem {
-	loc, ok := c.resolveAgyLocal(now)
-	if !ok {
-		return nil
+func (c *subUsageCollector) inventoryAntigravity(ctx context.Context, now time.Time) *subUsageInventoryItem {
+	if loc, ok := c.resolveAgyFile(now); ok {
+		var expStr string
+		if !loc.expiresAt.IsZero() {
+			expStr = loc.expiresAt.UTC().Format(time.RFC3339)
+		}
+		return &subUsageInventoryItem{
+			Provider:       "antigravity",
+			AccountHash:    loc.accountHash,
+			Email:          loc.email,
+			TokenValid:     loc.tokenValid,
+			TokenExpiresAt: expStr,
+		}
 	}
-	var expStr string
-	if !loc.expiresAt.IsZero() {
-		expStr = loc.expiresAt.UTC().Format(time.RFC3339)
+	return c.inventoryAgyKeychain(ctx, now)
+}
+
+func (c *subUsageCollector) loadAgyKeychainCacheLocked() agyKeychainCacheEntry {
+	if c.agyKeychain.set || c.cacheDir == "" {
+		return c.agyKeychain
 	}
-	return &subUsageInventoryItem{
-		Provider:       "antigravity",
-		AccountHash:    loc.accountHash,
-		Email:          loc.email,
-		TokenValid:     loc.tokenValid,
-		TokenExpiresAt: expStr,
+	b, err := os.ReadFile(filepath.Join(c.cacheDir, agyKeychainCacheFile))
+	if err != nil {
+		return c.agyKeychain
+	}
+	var dc agyKeychainDiskCache
+	if json.Unmarshal(b, &dc) != nil || dc.CDat == "" || dc.AccountHash == "" {
+		return c.agyKeychain
+	}
+	exp, _ := parseSubTime(dc.ExpiresAt)
+	c.agyKeychain = agyKeychainCacheEntry{
+		set:         true,
+		cdat:        dc.CDat,
+		mdat:        dc.MDat,
+		email:       dc.Email,
+		accountHash: dc.AccountHash,
+		expiresAt:   exp,
+	}
+	return c.agyKeychain
+}
+
+func (c *subUsageCollector) saveAgyKeychainCache(entry agyKeychainCacheEntry) {
+	c.mu.Lock()
+	c.agyKeychain = entry
+	dir := c.cacheDir
+	c.mu.Unlock()
+	if dir == "" {
+		return
+	}
+	p := filepath.Join(dir, agyKeychainCacheFile)
+	if !entry.set {
+		_ = os.Remove(p)
+		return
+	}
+	if entry.failed || entry.cdat == "" || entry.accountHash == "" {
+		return
+	}
+	dc := agyKeychainDiskCache{
+		CDat:        entry.cdat,
+		MDat:        entry.mdat,
+		Email:       entry.email,
+		AccountHash: entry.accountHash,
+	}
+	if !entry.expiresAt.IsZero() {
+		dc.ExpiresAt = entry.expiresAt.UTC().Format(time.RFC3339)
+	}
+	if b, err := json.Marshal(dc); err == nil {
+		_ = os.MkdirAll(dir, 0o700)
+		_ = os.WriteFile(p, b, 0o600)
 	}
 }
 
+func (c *subUsageCollector) inventoryAgyKeychain(ctx context.Context, now time.Time) *subUsageInventoryItem {
+	if c.readKeychainMetaFn == nil || c.readKeychainSecretFn == nil {
+		return nil
+	}
+	meta, ok := c.readKeychainMetaFn(ctx, agyKeychainService, agyKeychainAccount)
+	if !ok {
+		c.saveAgyKeychainCache(agyKeychainCacheEntry{})
+		return nil
+	}
+
+	c.mu.Lock()
+	cached := c.loadAgyKeychainCacheLocked()
+	c.mu.Unlock()
+
+	if cached.set && cached.cdat == meta.cdat {
+		if cached.mdat == meta.mdat {
+			if cached.failed {
+				return nil
+			}
+			valid := true
+			var expStr string
+			if !cached.expiresAt.IsZero() {
+				valid = cached.expiresAt.After(now.Add(subUsageExpiryLeeway))
+				expStr = cached.expiresAt.UTC().Format(time.RFC3339)
+			}
+			return &subUsageInventoryItem{
+				Provider:       "antigravity",
+				AccountHash:    cached.accountHash,
+				Email:          cached.email,
+				TokenValid:     valid,
+				TokenExpiresAt: expStr,
+				FromKeychain:   true,
+			}
+		}
+		// Same Keychain item (cdat unchanged) with a newer mdat means the local
+		// agent refreshed the token in-place. Reuse cached account identity
+		// without touching -w during inventory; probe will read -w only if hub
+		// actually picks this machine.
+		if !cached.failed && cached.accountHash != "" {
+			expStr := formatKeychainTimeRFC3339(meta.mdat)
+			if expStr == "" && !cached.expiresAt.IsZero() {
+				expStr = cached.expiresAt.UTC().Format(time.RFC3339)
+			}
+			return &subUsageInventoryItem{
+				Provider:       "antigravity",
+				AccountHash:    cached.accountHash,
+				Email:          cached.email,
+				TokenValid:     true,
+				TokenExpiresAt: expStr,
+				FromKeychain:   true,
+			}
+		}
+	}
+
+	raw, ok := c.readKeychainSecretFn(ctx, agyKeychainService, agyKeychainAccount)
+	var email string
+	var expiry time.Time
+	var parsed bool
+	if ok {
+		_, email, expiry, parsed = parseAgyTokenJSON(decodeKeychainSecret(raw))
+	}
+	entry := agyKeychainCacheEntry{
+		set:         true,
+		cdat:        meta.cdat,
+		mdat:        meta.mdat,
+		email:       email,
+		accountHash: hashAccountKey("antigravity", email),
+		expiresAt:   expiry,
+		failed:      !parsed,
+	}
+	c.saveAgyKeychainCache(entry)
+	if !parsed {
+		return nil
+	}
+	valid := true
+	var expStr string
+	if !expiry.IsZero() {
+		valid = expiry.After(now.Add(subUsageExpiryLeeway))
+		expStr = expiry.UTC().Format(time.RFC3339)
+	}
+	return &subUsageInventoryItem{
+		Provider:       "antigravity",
+		AccountHash:    entry.accountHash,
+		Email:          entry.email,
+		TokenValid:     valid,
+		TokenExpiresAt: expStr,
+		FromKeychain:   true,
+	}
+}
+
+func (c *subUsageCollector) resolveAgyForProbe(ctx context.Context, now time.Time, expectedHash string) (agyResolvedLocal, bool) {
+	if loc, ok := c.resolveAgyFile(now); ok {
+		return loc, true
+	}
+	if c.readKeychainMetaFn == nil || c.readKeychainSecretFn == nil {
+		return agyResolvedLocal{}, false
+	}
+	meta, ok := c.readKeychainMetaFn(ctx, agyKeychainService, agyKeychainAccount)
+	if !ok {
+		c.saveAgyKeychainCache(agyKeychainCacheEntry{})
+		return agyResolvedLocal{}, false
+	}
+
+	c.mu.Lock()
+	cached := c.loadAgyKeychainCacheLocked()
+	c.mu.Unlock()
+	if cached.set && cached.cdat == meta.cdat && cached.mdat == meta.mdat {
+		if cached.failed {
+			return agyResolvedLocal{}, false
+		}
+		if expectedHash != "" && cached.accountHash != "" && !strings.EqualFold(expectedHash, cached.accountHash) {
+			return agyResolvedLocal{}, false
+		}
+		if !cached.expiresAt.IsZero() && !cached.expiresAt.After(now.Add(subUsageExpiryLeeway)) {
+			return agyResolvedLocal{
+				email:       cached.email,
+				accountHash: cached.accountHash,
+				expiresAt:   cached.expiresAt,
+				tokenValid:  false,
+			}, true
+		}
+	}
+
+	raw, ok := c.readKeychainSecretFn(ctx, agyKeychainService, agyKeychainAccount)
+	var token, email string
+	var expiry time.Time
+	var parsed bool
+	if ok {
+		token, email, expiry, parsed = parseAgyTokenJSON(decodeKeychainSecret(raw))
+	}
+	entry := agyKeychainCacheEntry{
+		set:         true,
+		cdat:        meta.cdat,
+		mdat:        meta.mdat,
+		email:       email,
+		accountHash: hashAccountKey("antigravity", email),
+		expiresAt:   expiry,
+		failed:      !parsed,
+	}
+	c.saveAgyKeychainCache(entry)
+	if !parsed || token == "" {
+		return agyResolvedLocal{}, false
+	}
+	valid := true
+	if !expiry.IsZero() {
+		valid = expiry.After(now.Add(subUsageExpiryLeeway))
+	}
+	return agyResolvedLocal{
+		accessToken: token,
+		email:       email,
+		accountHash: entry.accountHash,
+		expiresAt:   expiry,
+		tokenValid:  valid,
+	}, true
+}
+
 func (c *subUsageCollector) probeAntigravity(ctx context.Context, now time.Time, expectedHash string) subUsageProbeResult {
-	loc, ok := c.resolveAgyLocal(now)
+	loc, ok := c.resolveAgyForProbe(ctx, now, expectedHash)
 	if !ok {
 		return subUsageProbeResult{}
 	}
@@ -482,29 +709,119 @@ func parseAgyQuotaSummary(sr agyQuotaSummaryResp, checkedAt string, now time.Tim
 }
 
 func readAgyLocalToken(home string) (token, email string, expiry time.Time, ok bool) {
-	cliPath := filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")
-	if b, err := os.ReadFile(cliPath); err == nil {
-		var f agyCLIOAuthFile
-		if json.Unmarshal(b, &f) == nil && f.Token != nil && strings.TrimSpace(f.Token.AccessToken) != "" {
-			var exp time.Time
-			if t, ok := parseSubTime(f.Token.Expiry); ok {
-				exp = t
+	for _, p := range []string{
+		filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+		filepath.Join(home, ".gemini", "oauth_creds.json"),
+	} {
+		if b, err := os.ReadFile(p); err == nil {
+			if tok, em, exp, ok := parseAgyTokenJSON(b); ok {
+				return tok, em, exp, true
 			}
-			return strings.TrimSpace(f.Token.AccessToken), strings.TrimSpace(f.IDTokenEmail), exp, true
-		}
-	}
-	geminiPath := filepath.Join(home, ".gemini", "oauth_creds.json")
-	if b, err := os.ReadFile(geminiPath); err == nil {
-		var f geminiOAuthCredsFile
-		if json.Unmarshal(b, &f) == nil && strings.TrimSpace(f.AccessToken) != "" {
-			var exp time.Time
-			if f.ExpiryDate > 0 {
-				exp = time.UnixMilli(f.ExpiryDate)
-			}
-			return strings.TrimSpace(f.AccessToken), parseJWTClaimEmail(f.IDToken), exp, true
 		}
 	}
 	return "", "", time.Time{}, false
+}
+
+func parseAgyTokenJSON(b []byte) (token, email string, expiry time.Time, ok bool) {
+	var f agyCLIOAuthFile
+	if json.Unmarshal(b, &f) == nil && f.Token != nil && strings.TrimSpace(f.Token.AccessToken) != "" {
+		var exp time.Time
+		if t, ok := parseSubTime(f.Token.Expiry); ok {
+			exp = t
+		}
+		return strings.TrimSpace(f.Token.AccessToken), strings.TrimSpace(f.IDTokenEmail), exp, true
+	}
+	var g geminiOAuthCredsFile
+	if json.Unmarshal(b, &g) == nil && strings.TrimSpace(g.AccessToken) != "" {
+		var exp time.Time
+		if g.ExpiryDate > 0 {
+			exp = time.UnixMilli(g.ExpiryDate)
+		} else if t, ok := parseSubTime(g.Expiry); ok {
+			exp = t
+		}
+		em := strings.TrimSpace(g.IDTokenEmail)
+		if em == "" {
+			em = parseJWTClaimEmail(g.IDToken)
+		}
+		return strings.TrimSpace(g.AccessToken), em, exp, true
+	}
+	return "", "", time.Time{}, false
+}
+
+func decodeKeychainSecret(raw []byte) []byte {
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return nil
+	}
+	if len(s)%2 == 0 && isASCIIHex(s) {
+		if dec, err := hex.DecodeString(s); err == nil {
+			s = strings.TrimSpace(string(dec))
+		}
+	}
+	const b64Prefix = "go-keyring-base64:"
+	if strings.HasPrefix(s, b64Prefix) {
+		enc := strings.TrimSpace(s[len(b64Prefix):])
+		if dec, err := base64.StdEncoding.DecodeString(enc); err == nil {
+			return dec
+		}
+		if dec, err := base64.RawStdEncoding.DecodeString(enc); err == nil {
+			return dec
+		}
+	}
+	return []byte(s)
+}
+
+func isASCIIHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseKeychainMetaOutput(out string) keychainMeta {
+	var m keychainMeta
+	for _, line := range strings.Split(out, "\n") {
+		s := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(s, `"cdat"`):
+			m.cdat = extractKeychainQuotedValue(s)
+		case strings.HasPrefix(s, `"mdat"`):
+			m.mdat = extractKeychainQuotedValue(s)
+		}
+	}
+	return m
+}
+
+func extractKeychainQuotedValue(line string) string {
+	_, rhs, ok := strings.Cut(line, "=")
+	if !ok {
+		return ""
+	}
+	end := strings.LastIndexByte(rhs, '"')
+	if end <= 0 {
+		return ""
+	}
+	start := strings.LastIndexByte(rhs[:end], '"')
+	if start < 0 || start+1 >= end {
+		return ""
+	}
+	val := rhs[start+1 : end]
+	val = strings.TrimSuffix(val, `\000`)
+	val = strings.TrimRight(val, "\x00")
+	return strings.TrimSpace(val)
+}
+
+func formatKeychainTimeRFC3339(raw string) string {
+	if t, err := time.Parse("20060102150405Z", raw); err == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return ""
 }
 
 func parseJWTClaimEmail(jwt string) string {

@@ -59,18 +59,19 @@ type claudeExtraUsage struct {
 }
 
 type claudeResolvedLocal struct {
-	accessToken string
-	expiresAt   time.Time
-	tokenValid  bool
-	email       string
-	accountHash string
-	plan        string
-	planRaw     string
-	planDisplay string
+	accessToken  string
+	expiresAt    time.Time
+	tokenValid   bool
+	email        string
+	accountHash  string
+	plan         string
+	planRaw      string
+	planDisplay  string
+	fromKeychain bool
 }
 
 func (c *subUsageCollector) resolveClaudeLocal(ctx context.Context, now time.Time) (claudeResolvedLocal, bool) {
-	creds, ok := readClaudeLocalCreds(ctx, c.home)
+	creds, fromKC, ok := readClaudeLocalCreds(ctx, c.home)
 	if !ok || creds.ClaudeAiOauth == nil || strings.TrimSpace(creds.ClaudeAiOauth.AccessToken) == "" {
 		return claudeResolvedLocal{}, false
 	}
@@ -96,14 +97,15 @@ func (c *subUsageCollector) resolveClaudeLocal(ctx context.Context, now time.Tim
 		valid = exp.After(now.Add(subUsageExpiryLeeway))
 	}
 	return claudeResolvedLocal{
-		accessToken: strings.TrimSpace(oauth.AccessToken),
-		expiresAt:   exp,
-		tokenValid:  valid,
-		email:       email,
-		accountHash: hashAccountKey("claude", canonical),
-		plan:        plan,
-		planRaw:     planRaw,
-		planDisplay: formatSubPlanDisplay("claude", plan, planRaw, ""),
+		accessToken:  strings.TrimSpace(oauth.AccessToken),
+		expiresAt:    exp,
+		tokenValid:   valid,
+		email:        email,
+		accountHash:  hashAccountKey("claude", canonical),
+		plan:         plan,
+		planRaw:      planRaw,
+		planDisplay:  formatSubPlanDisplay("claude", plan, planRaw, ""),
+		fromKeychain: fromKC,
 	}, true
 }
 
@@ -125,6 +127,7 @@ func (c *subUsageCollector) inventoryClaude(ctx context.Context, now time.Time) 
 		PlanDisplay:    loc.planDisplay,
 		TokenValid:     loc.tokenValid,
 		TokenExpiresAt: expStr,
+		FromKeychain:   loc.fromKeychain,
 	}
 }
 
@@ -245,12 +248,12 @@ func (c *subUsageCollector) claudeUserAgent() string {
 	return defaultClaudeUA
 }
 
-func readClaudeLocalCreds(ctx context.Context, home string) (claudeLocalCreds, bool) {
+func readClaudeLocalCreds(ctx context.Context, home string) (claudeLocalCreds, bool, bool) {
 	var out claudeLocalCreds
 	root := claudeRoot(home)
 	if b, err := os.ReadFile(filepath.Join(root, ".credentials.json")); err == nil {
 		if json.Unmarshal(b, &out) == nil && out.ClaudeAiOauth != nil && strings.TrimSpace(out.ClaudeAiOauth.AccessToken) != "" {
-			return out, true
+			return out, false, true
 		}
 	}
 	services := []string{"Claude Code-credentials"}
@@ -261,11 +264,11 @@ func readClaudeLocalCreds(ctx context.Context, home string) (claudeLocalCreds, b
 	for _, svc := range services {
 		if b, ok := readLocalKeychainSecret(ctx, svc); ok {
 			if json.Unmarshal(b, &out) == nil && out.ClaudeAiOauth != nil && strings.TrimSpace(out.ClaudeAiOauth.AccessToken) != "" {
-				return out, true
+				return out, true, true
 			}
 		}
 	}
-	return claudeLocalCreds{}, false
+	return claudeLocalCreds{}, false, false
 }
 
 func readClaudeMeta(home string) (email, accountUUID, orgUUID string) {
