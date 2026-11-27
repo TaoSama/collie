@@ -3306,10 +3306,13 @@
   let inboxChannel = store.get("inboxChannel", ""), inboxSubs = store.get("inboxSubs", {});
   const inboxFileDrafts = new Map();
   let inboxFileBox = null;
+  function inboxReferenceOnly() {
+    return inboxMode === "ai" && inboxDetail?.conv?.send_media === "none";
+  }
   function selectInboxFiles() {
     const forCollie = inboxMode === "collie";
     const machine = forCollie ? targetNow().machine : "";
-    const key = `${inboxCur}:${forCollie ? "collie:" + machine : "ext"}`;
+    const key = `${inboxCur}:${forCollie ? "collie:" + machine : inboxReferenceOnly() ? "reference" : "ext"}`;
     let d = inboxFileDrafts.get(key);
     if (!d) {
       d = { key, machine, hub: forCollie ? hubOf(machine) : null, files: [] };
@@ -3323,8 +3326,11 @@
     if (!warn) return;
     const files = inboxCur ? selectInboxFiles().files : [];
     const unsupported = files.length > 0 && box.dataset.sendMedia === "none";
-    warn.hidden = !unsupported;
-    if (unsupported) {
+    const reference = files.length > 0 && inboxReferenceOnly();
+    warn.hidden = !unsupported && !reference;
+    if (reference) {
+      warn.textContent = "附件仅供 AI 起草参考，确认时只发送文字";
+    } else if (unsupported) {
       const ch = inboxDetail?.conv?.label || "该扩展";
       warn.textContent = `${ch}扩展目前只发文字，图片或文件暂不能直接发回${ch}（可切到「发给 Collie」携带附件分析）`;
     } else {
@@ -4563,15 +4569,16 @@
       const ta = $("#inbox-detail [data-conv-draft-text]");
       const text = (ta ? ta.value : inboxDraft?.text || "").trim();
       const draftFiles = selectInboxFiles(), files = draftFiles.files;
-      if (!text && !files.length) { toast("回复内容不能为空", "attn"); return; }
+      const sendFiles = inboxReferenceOnly() ? [] : files;
+      if (!text && !sendFiles.length) { toast("回复内容不能为空", "attn"); return; }
       const withFooter = !!$("#inbox-detail [data-conv-draft-footer]")?.checked;
       busy(b);
       try {
         let upFiles = [];
-        if (files.length && inboxFileBox) {
-          await inboxFileBox.ready(files);
-          if (files.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
-          upFiles = files.map((f) => ({ path: f.path, name: f.name, mime: f.file?.type || "" }));
+        if (sendFiles.length && inboxFileBox) {
+          await inboxFileBox.ready(sendFiles);
+          if (sendFiles.some((f) => f.err)) throw new Error("有文件没传上去，点 ↻ 重传或移除后再发");
+          upFiles = sendFiles.map((f) => ({ path: f.path, name: f.name, mime: f.file?.type || "" }));
         }
         const res = await api("/api/inbox/reply", { body: { id: inboxCur, text, ai_footer: withFooter, files: upFiles } });
         if (files.length) { files.forEach((f) => inboxFileBox?.release(f)); draftFiles.files = []; }

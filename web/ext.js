@@ -552,7 +552,7 @@
                 <button type="button" class="icon-btn" data-conv-draft-cancel aria-label="取消草稿" title="放弃草稿">${ico("x")}</button>
               </div>
             </div>
-            <div class="cbox conv-cbox" data-send-media="${esc(sendMedia)}">
+            <div class="cbox conv-cbox" data-send-media="${sendMedia === "none" ? "draft" : esc(sendMedia)}">
               <div class="files" hidden></div>
               <div class="conv-media-warn" data-conv-media-warn hidden></div>
               <textarea class="conv-draft-text" rows="3" data-conv-draft-text aria-label="编辑 AI 起草的回复">${esc(draft.text)}</textarea>
@@ -577,6 +577,7 @@
           </div>
           <div class="cbox conv-cbox" data-send-media="draft">
             <div class="files" hidden></div>
+            <div class="conv-media-warn" data-conv-media-warn hidden></div>
             <textarea class="conv-input" rows="1" data-conv-input placeholder="输入回复意图（可点 + 附截图让 AI 参考，留空则直接起草）…">${esc(inputText)}</textarea>
             <div class="cbar conv-cbar">
               ${attachBtn}
