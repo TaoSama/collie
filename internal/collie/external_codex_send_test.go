@@ -181,7 +181,7 @@ func TestCodexQueueSendLockedSkipsWakeAndResume(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello")
+	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello", true)
 	if err != nil || note != "" {
 		t.Fatalf("codexQueueSend = (%q, %v), want empty note and nil error", note, err)
 	}
@@ -231,7 +231,7 @@ func TestCodexQueueSendUnloadedWakesApp(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello")
+	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello", true)
 	if err != nil || note != "" {
 		t.Fatalf("codexQueueSend = (%q, %v), want empty note and nil error", note, err)
 	}
@@ -279,7 +279,7 @@ func TestCodexQueueSendUnloadedFallbackToDaemon(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello")
+	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello", true)
 	if err != nil || note != codexBgNote {
 		t.Fatalf("codexQueueSend = (%q, %v), want (%q, nil)", note, err, codexBgNote)
 	}
@@ -318,8 +318,60 @@ func TestCodexQueueSendFallbackActiveWriterIsOK(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello")
+	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello", true)
 	if err != nil || note != "" {
 		t.Fatalf("codexQueueSend = (%q, %v), want empty note and nil error when App grabbed lock", note, err)
+	}
+}
+
+func TestCodexQueueSendCLIUnloadedSkipsWakeApp(t *testing.T) {
+	const thread = "cli-unloaded"
+	var mu sync.Mutex
+	var methods []string
+	var resumePolicy string
+	startFakeCodexDaemon(t, func(method string, params json.RawMessage) (any, *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}) {
+		mu.Lock()
+		methods = append(methods, method)
+		mu.Unlock()
+		switch method {
+		case "thread/queue/add":
+			return map[string]any{"queuedSubmission": map[string]any{"id": "q5"}}, nil
+		case "thread/resume":
+			var p struct {
+				ApprovalPolicy string `json:"approvalPolicy"`
+			}
+			json.Unmarshal(params, &p)
+			resumePolicy = p.ApprovalPolicy
+			return nil, nil
+		case "thread/queue/start", "thread/unsubscribe":
+			return nil, nil
+		default:
+			t.Errorf("unexpected RPC: %s", method)
+			return nil, nil
+		}
+	})
+
+	origWake := codexWakeApp
+	t.Cleanup(func() { codexWakeApp = origWake })
+	codexWakeApp = func(context.Context, string) error {
+		t.Error("codexWakeApp must not be called for CLI threads (wakeApp=false)")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	note, err := (&Server{}).codexQueueSend(ctx, thread, "hello cli", false)
+	if err != nil || note != "" {
+		t.Fatalf("codexQueueSend(wakeApp=false) = (%q, %v), want empty note and nil error", note, err)
+	}
+	if resumePolicy != "never" {
+		t.Fatalf("resume approvalPolicy = %q, want never", resumePolicy)
+	}
+	want := []string{"thread/queue/add", "thread/resume", "thread/queue/start", "thread/unsubscribe"}
+	if !slices.Equal(methods, want) {
+		t.Fatalf("methods = %v, want %v", methods, want)
 	}
 }

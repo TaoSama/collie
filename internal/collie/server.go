@@ -32,8 +32,9 @@ type Server struct {
 	port       int      // hub only: listening port, for addresses
 	publicURLs []string // hub only: addresses given with -url, shown first
 
-	agy     agyBindings // Antigravity transcripts inferred for the local panes
-	dialogs dialogSubmissions
+	agy      agyBindings // Antigravity transcripts inferred for the local panes
+	dialogs  dialogSubmissions
+	headless headlessManager // exited CLI sessions running a native headless turn
 
 	aliases aliasBook    // hub only: launcher aliases each computer has
 	sysmon  *sysMonitor  // this computer's load and tokens; nil in tests
@@ -125,6 +126,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("GET /api/external/{id}/earlier", wrap(s.externalEarlier))
 	mux.Handle("POST /api/external/{id}/takeover", wrap(s.takeOverExternal))
 	mux.Handle("POST /api/external/{id}/send", wrap(s.sendExternal))
+	mux.Handle("POST /api/external/{id}/stop", wrap(s.stopExternal))
 	mux.Handle("POST /api/codex/interrupt", wrap(s.interruptCodex))
 	mux.Handle("POST /api/external/{id}/reveal", wrap(s.revealExternal))
 	mux.Handle("POST /api/sessions/{id}/rename", wrap(s.renameSession))

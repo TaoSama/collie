@@ -131,7 +131,7 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			} else if d.surface == surfaceCLI {
 				e.CanTakeOver = e.path != "" && e.Cwd != ""
 				if e.CanTakeOver {
-					e.CanSend, e.SendVia = true, "herdr"
+					e.CanSend, e.SendVia = true, "headless"
 				} else {
 					e.ReadOnly = "找不到这个会话的目录或记录，没法继续"
 				}
@@ -149,15 +149,18 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 				// Loaded in Codex's shared background service (the App or a
 				// CLI client connected to it).
 				e.CanSend = true
+				if d.surface == surfaceCLI {
+					e.SendVia = "queue-cli"
+				}
 			case d.surface == surfaceCLI:
 				if d.running {
 					e.ReadOnly = "这个会话正在别处运行，未接入 Codex 共享后台，无法排队发消息"
 				} else {
 					e.CanTakeOver = e.Session != "" && e.Cwd != ""
-					if e.CanTakeOver {
-						e.CanSend, e.SendVia = true, "herdr"
+					if s.codexDaemonSock() != "" && e.Session != "" {
+						e.CanSend, e.SendVia = true, "queue-cli"
 					} else {
-						e.ReadOnly = "找不到这个会话的目录，没法在 herdr 里继续"
+						e.ReadOnly = "这台电脑上没有运行 Codex 共享后台，只能看"
 					}
 				}
 			case appUp:
@@ -177,7 +180,8 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 				e.ReadOnly = "这个对话现在没有在 Codex 里打开：在 Codex App 里点开它，就能从这里发消息"
 			}
 		case "agy":
-			e.Live = d.running || d.waiting
+			locked := d.surface == surfaceCLI && s.agyPresenceLocked(d.session)
+			e.Live = d.running || d.waiting || locked
 			if d.running {
 				e.Status = "working"
 			} else if d.waiting {
@@ -185,16 +189,18 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 			}
 			// `agy --conversation` resumes the CLI's own conversations, which
 			// the App lists too; the App's it can't find. Not while a turn
-			// runs: there is no process here to stop first.
+			// runs or a live CLI holds the presence lock.
 			e.CanTakeOver = d.surface == surfaceCLI && e.Session != "" && e.Cwd != "" && !e.Live
 			// The App's language server only loads conversations from its own
 			// store (~/.gemini/antigravity), not the CLI's (~/.gemini/antigravity-cli).
 			switch {
 			case d.surface == surfaceCLI:
-				if e.Live {
+				if d.running || d.waiting {
 					e.ReadOnly = "这个会话正在别处运行，Antigravity CLI 不支持排队发消息"
+				} else if locked {
+					e.ReadOnly = "这个会话正在 Antigravity 终端里打开，不支持从外面直接发消息"
 				} else if e.CanTakeOver {
-					e.CanSend, e.SendVia = true, "herdr"
+					e.CanSend, e.SendVia = true, "headless"
 				} else {
 					e.ReadOnly = "这个会话现在没在运行"
 				}

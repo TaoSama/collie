@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -292,6 +293,25 @@ func TestAgyDesktopSessionsTakeOverOnlyTheCLIs(t *testing.T) {
 }
 
 func TestAgyDesktopSessionsDoNotRouteCLIToApp(t *testing.T) {
+	home := t.TempDir()
+	lockedID := "11111111-1111-1111-1111-111111111111"
+	presDir := filepath.Join(home, ".gemini", "antigravity-cli", "presence")
+	if err := os.MkdirAll(presDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lf, err := os.OpenFile(filepath.Join(presDir, lockedID+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lf.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+		lf.Close()
+	})
+
 	agyServerCache.Lock()
 	agyServerCache.at = time.Now()
 	agyServerCache.ls = &agyServer{addr: "127.0.0.1:1", csrf: "test-token"}
@@ -301,7 +321,8 @@ func TestAgyDesktopSessionsDoNotRouteCLIToApp(t *testing.T) {
 	desktopCache.Lock()
 	desktopCache.at, desktopCache.app = time.Now(), false
 	desktopCache.rows = []desktopRow{
-		{id: "ag-cli-idle", kind: "agy", app: appAgyCLI, surface: surfaceCLI, session: "cli-idle", cwd: "/root"},
+		{id: "ag-cli-idle", kind: "agy", app: appAgyCLI, surface: surfaceCLI, session: "22222222-2222-2222-2222-222222222222", cwd: "/root"},
+		{id: "ag-cli-locked", kind: "agy", app: appAgyCLI, surface: surfaceCLI, session: lockedID, cwd: "/root"},
 		{id: "ag-cli-run", kind: "agy", app: appAgyCLI, surface: surfaceCLI, session: "cli-run", cwd: "/root", running: true},
 		{id: "ag-app-idle", kind: "agy", app: appAgy, session: "app-idle", cwd: "/root"},
 	}
@@ -309,7 +330,7 @@ func TestAgyDesktopSessionsDoNotRouteCLIToApp(t *testing.T) {
 	t.Cleanup(forgetDesktopRows)
 
 	got := map[string]*External{}
-	for _, e := range (&Server{home: t.TempDir()}).desktopSessions(nil, nil, time.Now()) {
+	for _, e := range (&Server{home: home}).desktopSessions(nil, nil, time.Now()) {
 		got[e.Session] = e
 	}
 	for _, tc := range []struct {
@@ -319,7 +340,8 @@ func TestAgyDesktopSessionsDoNotRouteCLIToApp(t *testing.T) {
 		readOnly string
 		takeOver bool
 	}{
-		{"cli-idle", true, "herdr", "", true},
+		{"22222222-2222-2222-2222-222222222222", true, "headless", "", true},
+		{lockedID, false, "", "这个会话正在 Antigravity 终端里打开，不支持从外面直接发消息", false},
 		{"cli-run", false, "", "这个会话正在别处运行，Antigravity CLI 不支持排队发消息", false},
 		{"app-idle", true, "app", "", false},
 	} {
@@ -407,7 +429,7 @@ func TestCodexDesktopSessionsAllowSendWhileRunning(t *testing.T) {
 	}
 }
 
-func TestCodexCLIRowsAndSendViaHerdr(t *testing.T) {
+func TestCodexCLIRowsAndSendViaQueueCLI(t *testing.T) {
 	home, add := codexStateFixture(t)
 	db, err := sql.Open("sqlite", filepath.Join(home, ".codex", "state_5.sqlite"))
 	if err != nil {
@@ -447,22 +469,39 @@ func TestCodexCLIRowsAndSendViaHerdr(t *testing.T) {
 	desktopCache.Unlock()
 	t.Cleanup(forgetDesktopRows)
 
+	// Without shared daemon socket: exited CLI stays read-only with manual takeover.
 	got := map[string]*External{}
 	for _, e := range (&Server{home: home}).desktopSessions(nil, nil, time.Now()) {
 		got[e.Session] = e
 	}
-	if e := got["cli-idle"]; e == nil || !e.CanSend || e.SendVia != "herdr" || !e.CanTakeOver || e.ReadOnly != "" {
-		t.Fatalf("cli-idle = %+v, want CanSend=true SendVia=herdr CanTakeOver=true", e)
+	if e := got["cli-idle"]; e == nil || e.CanSend || e.SendVia != "" || !e.CanTakeOver || e.ReadOnly == "" {
+		t.Fatalf("cli-idle (no daemon) = %+v, want read-only with CanTakeOver=true", e)
 	}
 	if e := got["cli-run"]; e == nil || e.CanSend || e.SendVia != "" || e.CanTakeOver || e.ReadOnly == "" {
 		t.Fatalf("cli-run = %+v, want read-only running CLI", e)
 	}
-	if e := got["cli-loaded"]; e == nil || !e.CanSend || e.SendVia != "" {
-		t.Fatalf("cli-loaded = %+v, want daemon CanSend=true SendVia=''", e)
+	if e := got["cli-loaded"]; e == nil || !e.CanSend || e.SendVia != "queue-cli" {
+		t.Fatalf("cli-loaded = %+v, want daemon CanSend=true SendVia=queue-cli", e)
+	}
+
+	// With shared daemon socket: exited CLI routes natively via queue-cli (no herdr auto-takeover).
+	control := filepath.Join(home, ".codex", "app-server-control")
+	if err := os.MkdirAll(control, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(control, "app-server-control.sock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = map[string]*External{}
+	for _, e := range (&Server{home: home}).desktopSessions(nil, nil, time.Now()) {
+		got[e.Session] = e
+	}
+	if e := got["cli-idle"]; e == nil || !e.CanSend || e.SendVia != "queue-cli" || !e.CanTakeOver || e.ReadOnly != "" {
+		t.Fatalf("cli-idle (with daemon) = %+v, want CanSend=true SendVia=queue-cli CanTakeOver=true", e)
 	}
 }
 
-func TestClaudeCLIRowsAndSendViaHerdr(t *testing.T) {
+func TestClaudeCLIRowsAndSendViaHeadless(t *testing.T) {
 	home := t.TempDir()
 	claude := filepath.Join(home, ".claude")
 	t.Setenv("CLAUDE_CONFIG_DIR", claude)
@@ -499,7 +538,16 @@ func TestClaudeCLIRowsAndSendViaHerdr(t *testing.T) {
 	desktopCache.Unlock()
 	t.Cleanup(forgetDesktopRows)
 	got := s.desktopSessions(nil, nil, time.Now())
-	if len(got) != 1 || !got[0].CanSend || got[0].SendVia != "herdr" || !got[0].CanTakeOver || got[0].ReadOnly != "" {
-		t.Fatalf("desktopSessions(claude CLI) = %+v, want CanSend=true SendVia=herdr CanTakeOver=true", got)
+	if len(got) != 1 || !got[0].CanSend || got[0].SendVia != "headless" || !got[0].CanTakeOver || got[0].ReadOnly != "" {
+		t.Fatalf("desktopSessions(claude CLI) = %+v, want CanSend=true SendVia=headless CanTakeOver=true", got)
+	}
+
+	// When a live registration owns cliID, route via peer inbox (never headless).
+	regs := map[int]*claudeReg{
+		os.Getpid(): {PID: os.Getpid(), SessionID: cliID, Status: "idle", Socket: "/tmp/peer.sock", Protocol: 1},
+	}
+	got = s.desktopSessions(regs, nil, time.Now())
+	if len(got) != 1 || !got[0].Live || !got[0].CanSend || got[0].SendVia != "" {
+		t.Fatalf("desktopSessions(live claude CLI) = %+v, want Live=true CanSend=true SendVia=''", got)
 	}
 }

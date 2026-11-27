@@ -41,16 +41,19 @@ type External struct {
 	HumanAt time.Time `json:"human_at,omitzero"` // the human's last message in it, else its start
 	Machine string    `json:"machine,omitempty"`
 	Status  string    `json:"status,omitempty"` // working | idle | blocked, when the agent says
-	// CanSend: a message can go to it where it runs (Claude's peer inbox, the
-	// Codex daemon) or by resuming it in herdr; otherwise ReadOnly says why.
+	// CanSend: a message can go to it natively where it runs (Claude's peer
+	// inbox, Codex's shared daemon, a desktop app) or via a native headless
+	// turn for exited CLI sessions; otherwise ReadOnly says why.
 	CanSend  bool   `json:"can_send,omitempty"`
-	SendVia  string `json:"send_via,omitempty"` // "herdr" | "app" | "queue" | ""
+	SendVia  string `json:"send_via,omitempty"` // "queue-cli" | "headless" | "app" | "queue" | ""
 	ReadOnly string `json:"read_only,omitempty"`
 	// Live: it runs right now (a process, or a turn the app is running). A
 	// desktop app's conversation is listed while it rests too.
 	Live bool `json:"live"`
 	// CanTakeOver: it can be continued in a herdr pane from here.
 	CanTakeOver bool `json:"can_take_over,omitempty"`
+	// CanStop: an active Collie-started headless turn can be stopped here.
+	CanStop bool `json:"can_stop,omitempty"`
 	// Alias: the launcher alias it was started through, to take it over
 	// through; AliasChoices: the aliases that fit as well, when they differ.
 	Alias        string   `json:"alias,omitempty"`
@@ -347,6 +350,15 @@ func (s *Server) externalSessions() []*External {
 	kept := list[:0]
 	for _, e := range list {
 		if !collieSession(e.Title) {
+			if e.Session != "" && s.headless.running(e.Session) {
+				e.Live = true
+				e.Status = "working"
+				e.CanSend = true
+				e.SendVia = "headless"
+				e.ReadOnly = ""
+				e.CanTakeOver = false
+				e.CanStop = true
+			}
 			e.HumanAt = humanAt(e.path, e.format)
 			if e.Session != "" {
 				switch e.Kind {
@@ -397,6 +409,7 @@ func (s *Server) reachable(e *External) {
 			e.ReadOnly = "这个 Codex 会话没有在共享后台里运行（旧版本，或用了独立的后台），只能看"
 		default:
 			e.CanSend = true
+			e.SendVia = "queue-cli"
 		}
 	default:
 		if e.path == "" {
@@ -596,6 +609,12 @@ func (s *Server) streamExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var errCh chan headlessErr
+	if e.Session != "" {
+		var unsub func()
+		errCh, unsub = s.headless.subscribeErr(e.Session)
+		defer unsub()
+	}
 	first, beat := true, time.Now()
 	checked := time.Now()
 	for {
@@ -622,6 +641,11 @@ func (s *Server) streamExternal(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case herr := <-errCh:
+			if !send("run-error", map[string]any{"error": herr.msg}) {
+				return
+			}
+			beat = time.Now()
 		case <-time.After(250 * time.Millisecond):
 		}
 	}

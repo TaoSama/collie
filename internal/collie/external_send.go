@@ -56,22 +56,55 @@ type claudeReg struct {
 
 // claudeRegs reads the live claudes' registrations, by pid.
 func (s *Server) claudeRegs() map[int]*claudeReg {
+	return s.claudeRegsIn(s.claudeConfigDirs("")...)
+}
+
+func (s *Server) claudeRegsIn(roots ...string) map[int]*claudeReg {
 	out := map[int]*claudeReg{}
-	dir := filepath.Join(envOr("CLAUDE_CONFIG_DIR", filepath.Join(s.home, ".claude")), "sessions")
-	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil || len(b) > 1<<20 {
-			continue
+	for _, root := range roots {
+		dir := filepath.Join(root, "sessions")
+		files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+		for _, f := range files {
+			b, err := os.ReadFile(f)
+			if err != nil || len(b) > 1<<20 {
+				continue
+			}
+			var r claudeReg
+			if json.Unmarshal(b, &r) != nil || r.PID <= 0 || r.SessionID == "" || !alive(r.PID) {
+				continue
+			}
+			r.dir = dir
+			out[r.PID] = &r
 		}
-		var r claudeReg
-		if json.Unmarshal(b, &r) != nil || r.PID <= 0 || r.SessionID == "" || !alive(r.PID) {
-			continue
-		}
-		r.dir = dir
-		out[r.PID] = &r
 	}
 	return out
+}
+
+func (s *Server) claudeConfigDirs(extra string) []string {
+	dirs := []string{filepath.Clean(claudeRoot(s.home))}
+	seen := map[string]bool{dirs[0]: true}
+	add := func(dir string) {
+		if dir == "" {
+			return
+		}
+		dir = filepath.Clean(dir)
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	add(extra)
+	if snap, ok := s.aliases.get(""); ok {
+		for _, a := range snap.rep.Aliases {
+			if a.Kind != "claude" {
+				continue
+			}
+			if raw := a.rawEnv["CLAUDE_CONFIG_DIR"]; raw != "" && !shellOnly(raw) {
+				add(expandTilde(raw, s.home))
+			}
+		}
+	}
+	return dirs
 }
 
 func (r *claudeReg) state() string {
@@ -527,10 +560,10 @@ func (c *codexRPC) queueHas(thread, id string) bool {
 
 // codexQueueSend enqueues a message through the shared daemon so whichever
 // app-server holds the thread's writer lock picks it up (immediately when
-// idle, or after the active turn finishes) with live UI sync in the Codex App.
-// For an unloaded thread, macOS wakes the App silently; otherwise the shared
-// daemon resumes the thread to drain the queue.
-func (s *Server) codexQueueSend(ctx context.Context, thread, text string) (string, error) {
+// idle, or after the active turn finishes) with live UI sync. For an unloaded
+// thread, wakeApp=true wakes the Codex desktop App on macOS first; wakeApp=false
+// (CLI threads) drains directly through the shared daemon without waking the App.
+func (s *Server) codexQueueSend(ctx context.Context, thread, text string, wakeApp bool) (string, error) {
 	sock := s.codexDaemonSock()
 	if sock == "" {
 		return "", errors.New("这台电脑上没有运行 Codex 后台")
@@ -557,7 +590,7 @@ func (s *Server) codexQueueSend(ctx context.Context, thread, text string) (strin
 		forgetDesktopRows()
 		return "", nil
 	}
-	if codexWakeApp(ctx, thread) == nil {
+	if wakeApp && codexWakeApp(ctx, thread) == nil {
 		for deadline := time.Now().Add(codexWakeWait); time.Now().Before(deadline) && ctx.Err() == nil; {
 			if s.codexThreadLocked(thread) || (added.QueuedSubmission.ID != "" && !c.queueHas(thread, added.QueuedSubmission.ID)) {
 				forgetDesktopRows()
@@ -579,6 +612,9 @@ func (s *Server) codexQueueSend(ctx context.Context, thread, text string) (strin
 	// Let go, so the daemon closes the thread (and its lock) once it is idle.
 	c.call("thread/unsubscribe", map[string]any{"threadId": thread}, nil)
 	forgetDesktopRows()
+	if !wakeApp {
+		return "", nil
+	}
 	return codexBgNote, nil
 }
 
@@ -675,20 +711,12 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{"error": e.ReadOnly})
 		return
 	}
-	if e.SendVia == "herdr" {
-		if e.Session == "" || e.Cwd == "" || !e.CanTakeOver {
-			writeJSON(w, 409, map[string]any{"error": "找不到这个会话的记录，没法在 herdr 里续上"})
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-		defer cancel()
-		pane, ws, name, usedAlias, status, err := s.resumeExternal(ctx, e, nil)
-		if err != nil {
-			var he *HerdrError
-			if errors.As(err, &he) && he.Code == "agent_not_ready" {
-				writeJSON(w, 202, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias, "note": "已在 herdr 里继续，但 agent 停在了一个对话框上，请处理后再发"})
-				return
-			}
+	if strings.HasPrefix(text, "/") {
+		writeJSON(w, 400, map[string]any{"error": "斜杠命令只能在那台电脑上输入"})
+		return
+	}
+	if e.SendVia == "headless" {
+		if status, err := s.sendHeadless(r.Context(), e, text); err != nil {
 			if status != 0 {
 				writeJSON(w, status, map[string]any{"error": err.Error()})
 				return
@@ -696,28 +724,7 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
-		for wait := time.Now().Add(20 * time.Second); ; {
-			err = s.herdr.Prompt(ctx, pane, text)
-			var he *HerdrError
-			if err == nil || !errors.As(err, &he) || (he.Code != "agent_not_ready" && he.Code != "agent_not_found") || time.Now().After(wait) || ctx.Err() != nil {
-				break
-			}
-			time.Sleep(1500 * time.Millisecond)
-		}
-		if err != nil {
-			note := "已在 herdr 里继续，但这条消息发送失败：" + err.Error()
-			var he *HerdrError
-			if errors.As(err, &he) && (he.Code == "agent_not_ready" || he.Code == "agent_blocked") {
-				note = "已在 herdr 里继续，但 agent 停在了一个对话框上，请处理后再发"
-			}
-			writeJSON(w, 202, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias, "note": note})
-			return
-		}
-		writeJSON(w, 200, map[string]any{"ok": true, "pane_id": pane, "workspace_id": ws, "name": name, "alias": usedAlias})
-		return
-	}
-	if strings.HasPrefix(text, "/") {
-		writeJSON(w, 400, map[string]any{"error": "斜杠命令只能在那台电脑上输入"})
+		writeJSON(w, 200, map[string]any{"ok": true})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -738,8 +745,8 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "codex":
-		if e.SendVia == "queue" {
-			note, err := s.codexQueueSend(ctx, e.Session, text)
+		if e.SendVia == "queue" || e.SendVia == "queue-cli" {
+			note, err := s.codexQueueSend(ctx, e.Session, text, e.SendVia == "queue")
 			if err != nil {
 				fail(w, err)
 				return
@@ -772,4 +779,17 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) stopExternal(w http.ResponseWriter, r *http.Request) {
+	e := s.viewableByID(r.PathValue("id"))
+	if e == nil {
+		writeJSON(w, 404, map[string]any{"error": "这个会话已经结束了"})
+		return
+	}
+	stopped := e.Session != "" && s.headless.stop(e.Session)
+	if stopped {
+		forgetExternal()
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "stopped": stopped})
 }

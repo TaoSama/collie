@@ -5381,7 +5381,10 @@
     const box = $("#x-working");
     const e = !gone && !extCur?.startsWith("h:") && ext.find((x) => x.id === extCur);
     const st = e && e.live ? e.status : "";
-    const text = { working: `${e && e.app || "那边"}里还在跑…`, blocked: "在等你在电脑上确认" }[st] || "";
+    const text = {
+      working: e && e.send_via === "headless" ? "正在原地运行…" : `${e && e.app || "那边"}里还在跑…`,
+      blocked: "在等你在电脑上确认",
+    }[st] || "";
     const prev = box.hidden ? "" : box.textContent;
     if (!text) { box.hidden = true; return; }
     if (text === prev) return;
@@ -5391,15 +5394,27 @@
     box.hidden = false;
     stick($("#x-thread"), was);
   }
+  function extSendHint(e) {
+    if (e.send_via === "headless") return "原地继续此会话（不迁入 herdr）";
+    if (e.send_via === "queue-cli") return "经 Codex 后台送达";
+    if (e.kind === "agy") return "经 Antigravity 送达";
+    if (e.app === "Codex 桌面版") return "经 Codex App 送达";
+    if (e.kind === "codex") return "经 Codex 后台送达";
+    return "经会话收件箱送达";
+  }
   function renderExtHead(gone) {
     $("#x-composer")._selectDraft();
     extWorking(gone);
-    if (extCur?.startsWith("h:")) return renderHistHead(extCur.slice(2));
+    if (extCur?.startsWith("h:")) { $("#x-stop").hidden = true; return renderHistHead(extCur.slice(2)); }
     $("#x-tag").textContent = "只读";
     $("#x-forget").hidden = true;
+    $("#x-stop").hidden = true;
+    $("#x-stop").disabled = false;
+    $("#x-stop").textContent = "停止";
     $("#x-takeover").textContent = "在 herdr 里接管";
     $("#x-takeover").className = "btn primary small";
     $("#x-composer").hidden = true;
+    $("#x-input").placeholder = "发消息给它，它会在原来的窗口里接着做…";
     const e = ext.find((x) => x.id === extCur);
     if (!e) {
       $("#x-status").textContent = gone ? "已退出" : "正在连接那台电脑…";
@@ -5414,26 +5429,28 @@
     $("#x-status").className = "status " + (gone ? "ended" : "unknown");
     $("#x-cwd").textContent = (e.machine ? machineName(e.machine) + " · " : "") + tilde(e.cwd);
     const app = e.app || "另一个终端";
+    const inPlace = e.send_via === "headless" || e.send_via === "queue-cli";
     if (!e.live && !gone) {
-      // A desktop app's conversation that is not running right now.
+      // A resting desktop or CLI conversation that is not running right now.
       $("#x-tag").textContent = e.can_send ? "可对话" : "只读";
       $("#x-status").textContent = `上次活动 ${ago(e.updated || e.started)} · ${app}`;
       $("#x-status").className = "status ended";
       $("#x-takeover").hidden = !e.can_take_over;
       $("#x-takeover").disabled = false;
       $("#x-takeover").textContent = "在 herdr 里继续";
-      $("#x-takeover").className = "btn small";
+      $("#x-takeover").className = e.can_send ? "btn small" : "btn primary small";
       $("#x-composer").hidden = !e.can_send;
       if (e.can_send) {
         $("#x-input")._slashPrefetch?.();
-        $("#x-hint").textContent = e.send_via === "herdr" ? "发送后将在 herdr 里继续"
-          : e.kind === "agy" ? "经 Antigravity 送达" : "经 Codex App 送达";
+        $("#x-input").placeholder = inPlace ? "发消息原地继续这个会话，不迁入 herdr…" : "发消息给它，它会在原来的窗口里接着做…";
+        $("#x-hint").textContent = extSendHint(e);
       }
       $("#x-note").textContent = e.can_send ? ""
         : (e.read_only || "") + (e.can_take_over ? "。也可以在 herdr 里用同一个会话继续，之后就能在这里对话。" : "");
       return;
     }
     $("#x-takeover").hidden = !e.can_take_over;
+    $("#x-stop").hidden = gone || !e.can_stop;
     $("#x-note").textContent = gone ? "这个进程已经退出了。"
       : !e.can_take_over ? `它跑在 ${app} 里，无法确认这个进程对应的会话，只能查看。`
       : `它跑在 ${app} 里，Collie 只能看，不能往里面打字。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里${e.alias ? `用 alias ${e.alias} ` : ""}接着同一个会话继续，之后就能在这里和它对话。`;
@@ -5447,8 +5464,9 @@
       $("#x-tag").textContent = "可对话";
       $("#x-composer").hidden = false;
       $("#x-input")._slashPrefetch?.();
+      $("#x-input").placeholder = e.send_via === "headless" ? "发消息排队继续这个会话…" : "发消息给它，它会在原来的窗口里接着做…";
       $("#x-takeover").className = "btn small";
-      $("#x-hint").textContent = e.kind === "agy" ? "经 Antigravity 送达" : e.app === "Codex 桌面版" ? "经 Codex App 送达" : e.kind === "codex" ? "经 Codex 后台送达" : "经会话收件箱送达";
+      $("#x-hint").textContent = extSendHint(e);
       $("#x-note").textContent = "";
     } else if (!gone && e.read_only && e.session) {
       $("#x-note").textContent = e.read_only + (e.can_take_over ? "。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里接着同一个会话继续。" : "");
@@ -5460,21 +5478,14 @@
     return trackSend("x:" + e.id, draft, ready, async (text) => {
       const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body: { text } });
       if (r.note) toast(r.note, "attn");
-      if (r.pane_id) {
-        ext = ext.filter((x) => x.id !== e.id);
-        renderExt();
-        if (view === "ext" && extCur === e.id) {
-          replaceHash("#/p/" + encodeURIComponent(r.pane_id));
-          route();
-        }
-      }
+      loadExternal();
     });
   }, () => { // files go to the computer it runs on (through its hub, if another)
     const e = ext.find((x) => x.id === extCur);
     return e?.hub ? tagged(e.machine || "", e.hub) : e?.machine || "";
   }, null, () => {
     const e = ext.find((x) => x.id === extCur);
-    return e ? slashCtx(e.hub ? tagged(e.machine || "", e.hub) : e.machine, e.kind, e.cwd, e.send_via === "herdr") : null;
+    return e ? slashCtx(e.hub ? tagged(e.machine || "", e.hub) : e.machine, e.kind, e.cwd, false) : null;
   }, () => extCur);
   function closeExt() {
     extStream?.close(); extStream = null;
@@ -5796,6 +5807,12 @@
         el._msgs = null; resetEarlier(el, el._earlier?.url);
         show(JSON.parse(ev.data));
       });
+      es.addEventListener("run-error", (ev) => {
+        if (!active()) return;
+        const d = JSON.parse(ev.data);
+        if (d.error) toast(d.error, "attn");
+        loadExternal();
+      });
       es.addEventListener("gone", () => { if (active()) { closeExt(); renderExtHead(true); } });
       es.onerror = () => {
         if (es.readyState !== EventSource.CLOSED || !active()) return;
@@ -5806,6 +5823,20 @@
     };
     connect();
   }
+  $("#x-stop").addEventListener("click", async () => {
+    const e = ext.find((x) => x.id === extCur);
+    if (!e) return;
+    const b = $("#x-stop");
+    b.disabled = true; b.textContent = "停止中…";
+    try {
+      await api(`/api/external/${encodeURIComponent(e.id)}/stop`, { body: {} });
+      toast("已停止");
+      loadExternal();
+    } catch (err) {
+      toast(err.message, "attn");
+      b.disabled = false; b.textContent = "停止";
+    }
+  });
   $("#x-takeover").addEventListener("click", async () => {
     if (extCur?.startsWith("h:")) return continueHist(extCur.slice(2));
     const e = ext.find((x) => x.id === extCur);
