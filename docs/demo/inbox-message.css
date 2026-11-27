@@ -1,11 +1,51 @@
-/* Give an open conversation room for columns and long message text. */
-.auto-body:has(> .inbox-split.has-cur) { padding-inline: max(16px, calc((100% - 1180px) / 2)); }
-.inbox-split.has-cur { grid-template-columns: min(17%, 156px) min(32%, 340px) minmax(0, 1fr); }
+/* Stable wide 3-column desktop inbox: never shifts when selecting a chat. */
+.auto-body:has(> .inbox-split) {
+  padding: 14px max(16px, calc((100% - 1220px) / 2)) 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.inbox-split {
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 152px minmax(264px, 320px) minmax(0, 1fr);
+  align-items: stretch;
+}
+.inbox-chs { align-self: start; }
+@media (max-width: 1180px) {
+  .auto-body:has(> .inbox-split) { padding: 12px 12px 14px; }
+  .inbox-split {
+    grid-template-columns: minmax(220px, 256px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+  }
+  .inbox-chs {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .inbox-chs::-webkit-scrollbar { display: none; }
+  .inbox-ch { width: auto; flex: none; height: 34px; padding: 0 10px; }
+  .inbox-chs-sep { width: var(--bw); height: 20px; margin: 0 4px; flex: none; }
+}
+@media (max-width: 960px) {
+  .inbox-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .inbox-split.has-cur { grid-template-rows: minmax(0, 1fr); }
+  .inbox-split.has-cur :is(.inbox-col, .inbox-chs),
+  .inbox-split:not(.has-cur) .inbox-detail { display: none; }
+  .conv-back { display: inline-grid; }
+}
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
-  .inbox-split.has-cur { grid-template-columns: minmax(0, 1fr); }
+  .auto-body:has(> .inbox-split) { padding: 10px 12px 14px; }
+  .inbox-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .inbox-split.has-cur { grid-template-rows: minmax(0, 1fr); }
 }
 .inbox-detail, .conv-card { min-width: 0; }
-.conv-msg .msg.im-rich { white-space: normal; font-size: var(--fs-body); line-height: calc(var(--lh-ui) + .15); }
+.conv-msg .msg.im-rich { white-space: normal; font-size: calc(var(--msg-fs, var(--fs-msg)) - 1px); line-height: calc(var(--lh-ui) + .15); }
 .conv-bubble.bare .im-image { border: var(--bw) solid var(--line); }
 .im-content { min-width: 0; overflow-wrap: anywhere; }
 .im-card {

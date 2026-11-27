@@ -317,6 +317,17 @@ func (s *Server) superReply(w http.ResponseWriter, r *http.Request) {
 		}
 		body.Thread = c.thread()
 	}
+	if draftID, ok := strings.CutPrefix(body.Thread, draftThreadPrefix); ok && s.ext != nil {
+		if !s.ext.completeDraft(draftID, body.Text, "") {
+			writeJSON(w, 404, map[string]any{"error": "draft not found or already finished"})
+			return
+		}
+		s.sup.mu.Lock()
+		s.sup.routerAskedAt, s.sup.routerRetries = time.Time{}, 0
+		s.sup.mu.Unlock()
+		writeJSON(w, 200, map[string]any{"ok": true, "draft": draftID})
+		return
+	}
 	if _, _, ok := channelOf(body.Thread); ok && s.ext != nil {
 		kind := s.ext.replyKind(body.Thread, body.To != "", body.Progress)
 		sent, err := s.ext.sendOutFiles(body.Thread, body.Text, kind, s.sup.routerRunInfo(), "", body.Files)

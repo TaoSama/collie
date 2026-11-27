@@ -49,6 +49,9 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("GET /api/inbox/media", s.inboxMedia)
 	api("POST /api/inbox/conv", s.inboxSetConv)
 	api("POST /api/inbox/read", s.inboxRead)
+	api("POST /api/inbox/reply", s.inboxReply)
+	api("POST /api/inbox/draft", s.inboxDraftStart)
+	api("GET /api/inbox/draft", s.inboxDraftGet)
 	api("GET /api/inbox/avatar", s.inboxAvatar)
 }
 
@@ -226,6 +229,10 @@ type convView struct {
 	Hidden bool `json:"hidden,omitempty"`
 	// Avatar: where the page gets the chat's picture, through the hub.
 	Avatar string `json:"avatar,omitempty"`
+	// SendAs: "self" (sends as the signed-in human, e.g. Feishu), "bot" (sends
+	// only as the bound bot, e.g. WeChat), or "" when sending is unsupported.
+	SendAs   string `json:"send_as,omitempty"`
+	NoFooter bool   `json:"no_footer,omitempty"`
 }
 
 func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +241,8 @@ func (s *Server) inboxList(w http.ResponseWriter, r *http.Request) {
 	hides := map[string][]string{}
 	readBack := map[string]bool{} // extensions that mark what you read here read in the app too
 	for _, c := range convs {
-		v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: s.ext.convAvatarPath(c)}
+		sendAs, noFooter := s.ext.convSendCaps(c)
+		v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: s.ext.convAvatarPath(c), SendAs: sendAs, NoFooter: noFooter}
 		if m := s.ext.manifest(c.Ext); m != nil {
 			v.Label = extLabel(m)
 			if _, ok := hides[c.Ext]; !ok {
@@ -293,7 +301,15 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs := s.ext.store.msgs(id, time.Time{})
 	if !c.On {
-		msgs = nil // a closed conversation shows its source window, never saved request context
+		// A closed conversation shows its source window plus any outbox sends
+		// made from Collie, never saved incoming request context.
+		var sent []InboxMsg
+		for _, m := range msgs {
+			if m.Ref != "" {
+				sent = append(sent, m)
+			}
+		}
+		msgs = sent
 	}
 	msgs, unavailable := s.inboxRecent(r.Context(), &c, msgs, outs)
 	for i := range msgs {
@@ -344,7 +360,8 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 
 // convView is one conversation as the page gets it: its label and its picture through the hub.
 func (s *Server) convView(c InboxConv) convView {
-	v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: s.ext.convAvatarPath(c)}
+	sendAs, noFooter := s.ext.convSendCaps(c)
+	v := convView{InboxConv: s.ext.displayConversation(c), Label: c.Ext, Avatar: s.ext.convAvatarPath(c), SendAs: sendAs, NoFooter: noFooter}
 	if m := s.ext.manifest(c.Ext); m != nil {
 		v.Label = extLabel(m)
 	}

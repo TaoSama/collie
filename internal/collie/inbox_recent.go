@@ -60,7 +60,7 @@ func latestLine(msgs []InboxMsg) (time.Time, string) {
 		return time.Time{}, ""
 	}
 	last := msgs[len(msgs)-1]
-	if last.Ref != "" || last.Bot {
+	if !last.Human && (last.Ref != "" || last.Bot) {
 		text := strings.TrimSpace(last.Text)
 		if i := strings.LastIndex(text, "\n\n"); i > 0 {
 			text = text[:i] // the footer, its last paragraph

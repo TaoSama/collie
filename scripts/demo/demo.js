@@ -524,27 +524,59 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { manifest: { manifest_version: 1, id: "workbench", label: "工作台", name: "工作台", version: "1.0.0", icon_url: "ext-icons/workbench.svg", runtime: { feature: "workbench" },
       description: "把常用网页和 Collie 的页面钉在一处，开启后从侧栏底部的田字格进入。每个页面单独决定给不给 agent 看；选「沉淀」的每天存一份快照，Collie 做梦时提炼进记忆。" }, setting: { id: "workbench", enabled: true } }] };
   const inboxConvs = [
-    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "微信ClawBot", kind: "dm", last_at: ago(6), preview: "你: 好的，谢谢", on: true, owner: true, handler: "collie" },
+    { id: "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", ext: "wechat", chat: "o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat", label: "微信", name: "微信ClawBot", kind: "dm", last_at: ago(6), preview: "你: 好的，谢谢", on: true, owner: true, send_as: "bot", no_footer: true, handler: "collie" },
+    { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(2), preview: "陈敏: 好的，我先切 10% 流量看看报错率，大家准备好了群里吱一声。", unread: 11, at_me: true, on: false, handler: "agent" },
     { id: "larkx:oc_1", ext: "larkx", chat: "oc_1", label: "飞书", name: "产品周会", kind: "group", last_at: ago(3), preview: "张三: /ai 帮我总结今天的讨论", on: true, handler: "agent", worker: "lark-产品周会" },
-    { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
-    { id: "larkx:oc_5", ext: "larkx", chat: "oc_5", label: "飞书", name: "发布值班群", kind: "group", last_at: ago(12), preview: "赵六: @你 今晚的灰度帮忙盯一下", unread: 4, at_me: true, on: false, handler: "agent" },
-    { id: "larkx:oc_6", ext: "larkx", chat: "oc_6", label: "飞书", name: "王小明", kind: "dm", last_at: ago(60 * 26), preview: "王小明: 好的，周一见", on: false, handler: "agent" },
     { id: "larkx:oc_7", ext: "larkx", chat: "oc_7", label: "飞书", name: "数据库值班群", kind: "group", last_at: ago(8), preview: "飞书日历: [日历] 发布复盘", unread: 2, on: false, handler: "agent" },
+    { id: "larkx:oc_2", ext: "larkx", chat: "oc_2", label: "飞书", name: "李四", kind: "dm", last_at: ago(25), preview: "李四: 明天的评审改到下午了吗", unread: 1, on: false, handler: "agent" },
+    { id: "larkx:oc_8", ext: "larkx", chat: "oc_8", label: "飞书", name: "前端体验优化专项", kind: "group", last_at: ago(34), preview: "林悦: 收件箱手机端和 800px 半屏的改动看下设计图", unread: 3, on: false, handler: "agent" },
+    { id: "larkx:oc_9", ext: "larkx", chat: "oc_9", label: "飞书", name: "支付链路压测群", kind: "group", last_at: ago(52), preview: "周涛: P99 降到 28.5ms 了，复合索引很稳", unread: 1, on: false, handler: "agent" },
+    { id: "larkx:oc_10", ext: "larkx", chat: "oc_10", label: "飞书", name: "林悦", kind: "dm", last_at: ago(75), preview: "林悦: 暗色模式对比度我都复查完了", on: false, handler: "agent" },
     { id: "larkx:oc_3", ext: "larkx", chat: "oc_3", label: "飞书", name: "交付群", kind: "group", last_at: ago(90), preview: "王五: [图片]", unread: 12, muted: true, on: false, handler: "agent" },
-    { id: "larkx:oc_8", ext: "larkx", chat: "oc_8", label: "飞书", name: "会议纪要助手", kind: "dm", tags: ["bot"], last_at: ago(14), preview: "[卡片] 周会纪要已生成", unread: 2, on: false, handler: "agent" },
-    { id: "larkx:oc_9", ext: "larkx", chat: "oc_9", label: "飞书", name: "统一登录平台", kind: "dm", tags: ["bot"], last_at: ago(40), preview: "新设备登录提醒", unread: 1, on: false, handler: "agent" },
-    { id: "larkx:oc_10", ext: "larkx", chat: "oc_10", label: "飞书", name: "孙七", kind: "dm", last_at: ago(55), preview: "孙七: 接口文档更新了", unread: 1, on: false, handler: "agent" },
-    ...["前端周会", "移动端发版群", "设计评审", "数据平台答疑", "新人入职群", "架构讨论", "测试环境申请"].map((name, i) => (
-      { id: `larkx:og_${i}`, ext: "larkx", chat: `og_${i}`, label: "飞书", name, kind: "group", last_at: ago(120 + 45 * i), preview: "周八: 收到", on: false, handler: "agent" })),
+    { id: "larkx:oc_bot1", ext: "larkx", chat: "oc_bot1", label: "飞书", name: "会议纪要助手", kind: "dm", tags: ["bot"], last_at: ago(14), preview: "[卡片] 周会纪要已生成", unread: 2, on: false, handler: "agent" },
+    { id: "larkx:oc_bot2", ext: "larkx", chat: "oc_bot2", label: "飞书", name: "统一登录平台", kind: "dm", tags: ["bot"], last_at: ago(40), preview: "新设备登录提醒", unread: 1, on: false, handler: "agent" },
+    { id: "larkx:oc_11", ext: "larkx", chat: "oc_11", label: "飞书", name: "基础架构周报同步", kind: "group", last_at: ago(60 * 5), preview: "孙凯: 本周 k8s 集群升级完成，无抖动", on: false, handler: "agent" },
+    { id: "larkx:oc_6", ext: "larkx", chat: "oc_6", label: "飞书", name: "王小明", kind: "dm", last_at: ago(60 * 26), preview: "王小明: 好的，周一见", on: false, handler: "agent" },
     { id: "larkx:oc_4", ext: "larkx", chat: "oc_4", label: "飞书", name: "登录页改版 - [需求同步群]", kind: "group", last_at: ago(30), preview: "Meego: 状态变更为开发中", unread: 3, on: false, handler: "agent", hidden: true },
   ];
+  // Made-up people's pictures: a colored circle with a letter.
+  const face = (bg, ch) => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="${bg}"/><text x="20" y="26" font-size="17" text-anchor="middle" fill="#fff" font-family="sans-serif">${ch}</text></svg>`);
   const inboxMsgs = { "larkx:oc_1": [
-    { id: "m1", conv: "larkx:oc_1", at: ago(9), sender_name: "李四", text: "评审定在周五，接口先冻结" },
+    { id: "m1", conv: "larkx:oc_1", at: ago(9), sender_name: "李四", avatar: face("#0f766e", "李"), text: "评审定在周五，接口先冻结" },
     { id: "m2", conv: "larkx:oc_1", at: ago(4), sender_name: "张三", mine: true, text: "/ai 帮我总结今天的讨论" },
     { id: "out:o1", conv: "larkx:oc_1", at: ago(3), mine: true, ref: "o1", text: "今天定了三件事：\n\n1. 周五评审\n2. 接口先冻结\n3. 张三负责发布说明\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 58秒" },
   ] };
-  // Made-up people's pictures: a colored circle with a letter.
-  const face = (bg, ch) => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="${bg}"/><text x="20" y="26" font-size="17" text-anchor="middle" fill="#fff" font-family="sans-serif">${ch}</text></svg>`);
+  inboxMsgs["larkx:oc_5"] = [
+    { id: "r1", conv: "larkx:oc_5", at: ago(60 * 25), sender_name: "陈敏", avatar: face("#7c3aed", "陈"), text: "昨天 v1.3.9 回归通过，今天准备切 v1.4.0-rc2 灰度。" },
+    { id: "r2", conv: "larkx:oc_5", at: ago(60 * 24.8), sender_name: "周涛", avatar: face("#0369a1", "周"), text: "收到，shop-api 订单分页的索引已经提前建好了。" },
+    { id: "r3", conv: "larkx:oc_5", at: ago(60 * 24.5), mine: true, text: "好的，灰度前把回滚脚本再检查一遍。" },
+    { id: "r4", conv: "larkx:oc_5", at: ago(160), sender_name: "陈敏", avatar: face("#7c3aed", "陈"), text: "早！v1.4.0-rc2 的预发包已经打完，冒烟用例全部绿灯。" },
+    { id: "r5", conv: "larkx:oc_5", at: ago(158), sender_name: "陈敏", avatar: face("#7c3aed", "陈"), text: "配置项 cart.ttl 兼容逻辑也测了，老配置不会报错。" },
+    { id: "r6", conv: "larkx:oc_5", at: ago(120), sender_name: "周涛", avatar: face("#0369a1", "周"), text: "压测报告贴一下：1020 并发 P99 从 146ms 降到 28.5ms。" },
+    { id: "r7", conv: "larkx:oc_5", at: ago(95), mine: true, text: "不错，那按原计划今晚 20:00 开始灰度。" },
+    { id: "r8", conv: "larkx:oc_5", at: ago(70), sender_name: "林悦", avatar: face("#be123c", "林"), text: "前端构建产物也推到 CDN 预热了，暗色模式默认跟随系统。" },
+    // Below are the 11 unread messages (starting at r9):
+    { id: "r9", conv: "larkx:oc_5", at: ago(58), sender_name: "赵六", avatar: face("#b45309", "赵"), text: "@你 今晚 20:00 的灰度发布帮忙一起盯一下监控面板？我 20:30 有个外部评审可能走开半小时。" },
+    { id: "r10", conv: "larkx:oc_5", at: ago(56), sender_name: "赵六", avatar: face("#b45309", "赵"), text: "重点看下 /api/orders 的慢查询和 5xx 告警，如果有异常直接点一键回滚就行。" },
+    { id: "r11", conv: "larkx:oc_5", at: ago(48), sender_name: "周涛", avatar: face("#0369a1", "周"), text: "我这边 20:00-21:00 也会在线，数据库监控我已经开着大屏了。" },
+    { id: "r12", conv: "larkx:oc_5", at: ago(44), sender_name: "发布机器人", text: "[卡片] v1.4.0-rc2 预发验收通过", view: { kind: "card", title: "v1.4.0-rc2 预发验收通过", subtitle: "shop-api · shop-web", tone: "green", url: "", nodes: [{ kind: "fields", children: [{ kind: "field", tone: "short", children: [{ kind: "markdown", text: "**核心用例**\n42/42 通过" }] }, { kind: "field", tone: "short", children: [{ kind: "markdown", text: "**P99 延迟**\n28.5 ms (-80%)" }] }] }] } },
+    { id: "r13", conv: "larkx:oc_5", at: ago(38), sender_name: "林悦", avatar: face("#be123c", "林"), text: "刚刚发现一个边界情况：已取消订单目前仍计入列表页眉 total_count，这个本次灰度先不动吧？" },
+    { id: "r14", conv: "larkx:oc_5", at: ago(35), sender_name: "林悦", avatar: face("#be123c", "林"), text: "我测了下线上老版本也是这么算的，不影响现有下单和结算主链路。" },
+    { id: "r15", conv: "larkx:oc_5", at: ago(28), sender_name: "周涛", avatar: face("#0369a1", "周"), text: "同意，先把复合索引和分页稳定性灰上去，total_count 改动单独走一个 PR。" },
+    { id: "r16", conv: "larkx:oc_5", at: ago(22), sender_name: "孙凯", avatar: face("#047857", "孙"), text: "华东一区和华南一区两个 k8s 集群的副本数都确认好了，灰度开关已就绪。" },
+    { id: "r17", conv: "larkx:oc_5", at: ago(15), sender_name: "赵六", avatar: face("#b45309", "赵"), text: "对，那个先不动，等这波稳定后放 v1.4.1。确认下 @你 今晚 20:00 方便一起看下吗？" },
+    { id: "r18", conv: "larkx:oc_5", at: ago(7), sender_name: "陈敏", avatar: face("#7c3aed", "陈"), text: "灰度工单审批刚过，我把 10% 流量规则和回滚按钮都贴在值班群置顶了。" },
+    { id: "r19", conv: "larkx:oc_5", at: ago(2), sender_name: "陈敏", avatar: face("#7c3aed", "陈"), text: "好的，我先切 10% 流量看看报错率，大家准备好了群里吱一声。" },
+  ];
+  inboxMsgs["larkx:oc_2"] = [
+    { id: "l1", conv: "larkx:oc_2", at: ago(180), sender_name: "李四", avatar: face("#0f766e", "李"), text: "明天的方案评审原定上午 10 点，会议室还没约到。" },
+    { id: "l2", conv: "larkx:oc_2", at: ago(25), sender_name: "李四", avatar: face("#0f766e", "李"), text: "明天的评审改到下午了吗" },
+  ];
+  inboxMsgs["larkx:oc_8"] = [
+    { id: "f1", conv: "larkx:oc_8", at: ago(65), sender_name: "林悦", avatar: face("#be123c", "林"), text: "收件箱 390px 手机详情页和 800px 半屏的痛点都整理好了。" },
+    { id: "f2", conv: "larkx:oc_8", at: ago(42), sender_name: "林悦", avatar: face("#be123c", "林"), text: "加上搜索框、历史正序和底部 3 个回复动作，你看看体验顺不顺手。" },
+    { id: "f3", conv: "larkx:oc_8", at: ago(34), sender_name: "林悦", avatar: face("#be123c", "林"), text: "收件箱手机端和 800px 半屏的改动看下设计图" },
+  ];
   const wx = "wechat:o9cq80demo1a2b3c4d5e6f7g8h9i@im.wechat";
   inboxMsgs[wx] = [
     { id: "w1", conv: wx, at: ago(9), mine: true, text: "部署好了吗" },
@@ -686,6 +718,42 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     if (p === "/api/inbox/conv") {
       const c = inboxConvs.find((x) => x.id === q.get("id"));
       return json({ conv: c, msgs: inboxMsgs[c.id] || [], outbox: {} });
+    }
+    if (p === "/api/inbox/reply" && method === "POST") {
+      const c = inboxConvs.find((x) => x.id === body.id);
+      if (!c) return json({ error: "找不到这个会话" }, 404);
+      const text = String(body.text || "").trim();
+      if (!text) return json({ error: "消息不能为空" }, 400);
+      const at = new Date().toISOString();
+      const withFooter = !!body.ai_footer && !c.no_footer && !c.owner;
+      const fullText = withFooter ? `${text}\n\n🤖 AI 代答，仅供参考 · Claude Code · Opus 5.5 · 3秒` : text;
+      const ref = "out-" + (++seq);
+      const human = !withFooter && !c.owner;
+      const item = { id: "out:" + ref, conv: c.id, at, mine: true, human, ref, text: fullText };
+      (inboxMsgs[c.id] ||= []).push(item);
+      c.last_at = at;
+      c.preview = (human ? "你: " : "AI 代答: ") + text.split("\n")[0];
+      c.unread = 0; c.at_me = false;
+      return json({ ok: true, ref, state: "sent", msg: item, conv: c });
+    }
+    if (p === "/api/inbox/draft" && method === "POST") {
+      const c = inboxConvs.find((x) => x.id === body.id);
+      const hint = String(body.hint || "").trim();
+      const tone = String(body.tone || "");
+      await wait(160);
+      let draft = "";
+      if (c?.id === "larkx:oc_5") {
+        if (tone === "shorter") draft = "收到，今晚 20:00 我在线一起盯 /api/orders 和 5xx 监控，20:30 你放心去开会，有异常我第一时间处理。";
+        else if (tone === "formal") draft = "好的，已确认。今晚 20:00 灰度发布期间我会全程关注 /api/orders 慢查询及 5xx 告警指标；20:30–21:00 期间由我接手值守，如遇异常按预案回滚并同步群内。已取消订单的 total_count 统计同意延后至 v1.4.1 处理。";
+        else draft = hint
+          ? `收到，${hint}。今晚 20:00 灰度我这边会一起盯着 /api/orders 慢查询和 5xx 告警，20:30 你去评审放心交给我；total_count 的事同意放 v1.4.1 再改。`
+          : "没问题，今晚 20:00 我在线一起盯监控，重点看 /api/orders 慢查询和 5xx 告警，20:30 你去开会放心交给我。total_count 那个边界问题同意先不动，留到 v1.4.1 处理。";
+      } else if (c?.id === "larkx:oc_2") {
+        draft = tone === "shorter" ? "对，改到明天下午 3 点了，会议室约好我拉你。" : "是的，方案评审已经改到明天下午 15:00，会议室确认好后我立刻把日程发给你。";
+      } else {
+        draft = hint ? `收到，${hint}，有进展我第一时间同步。` : `收到，${c?.name || "这边"}的消息我已看到，稍后确认完细节再同步你。`;
+      }
+      return json({ id: "d" + (++seq), status: "done", via: "Collie", draft });
     }
     if (p === "/api/super/timers") {
       if (method === "POST") timers.push({ id: "tm" + (++seq), spec: body.spec, text: body.text, target: body.target, enabled: true, next_run: later(60), owner: "you" });

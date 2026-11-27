@@ -338,23 +338,43 @@
     const s = ch && SUBS.find(([k, , , , mixed]) => k === (sub || "") && (!mixed || ch.mixed));
     return { chs, ch, sub: s ? s[0] : "" };
   }
-  function inboxShown(r, channel, sub) {
+  function inboxShown(r, channel, sub, query = "") {
     const p = inboxPlace(r, channel, sub);
-    if (p.on) return listed(r).filter((c) => c.on);
-    return p.ch ? p.ch.convs.filter(SUBS.find(([k]) => k === p.sub)[2]) : [];
+    let list = p.on ? listed(r).filter((c) => c.on)
+      : (p.ch ? p.ch.convs.filter(SUBS.find(([k]) => k === p.sub)[2]) : []);
+    const q = String(query || "").trim().toLowerCase();
+    if (q) {
+      list = list.filter((c) => {
+        const hay = `${c.name || ""} ${c.chat || ""} ${c.preview || ""}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    return list;
+  }
+  function hi(text, query) {
+    const s = String(text ?? ""), q = String(query || "").trim();
+    if (!q) return esc(s);
+    const low = s.toLowerCase(), ql = q.toLowerCase();
+    let out = "", pos = 0, idx;
+    while ((idx = low.indexOf(ql, pos)) >= 0) {
+      out += esc(s.slice(pos, idx)) + `<mark class="inbox-hl">${esc(s.slice(idx, idx + q.length))}</mark>`;
+      pos = idx + q.length;
+    }
+    return out + esc(s.slice(pos));
   }
   // Unread chats, as the chat app's own badge counts them: muted ones aside.
   const unreadOf = (convs) => convs.filter((c) => c.unread > 0 && !c.muted).length;
 
   // The channel list: each channel with its unread chats (amber with an @
-  // for you), then 已交给 AI apart. On a phone, a row of tabs.
-  function channelsHTML(p, r) {
+  // for you), then 已交给 AI apart. On narrow screens, a row of tabs.
+  function channelsHTML(p, r, helpOpen = false) {
     const item = (key, lead, label, n, tone, on) => `<button type="button" class="inbox-ch${on ? " on" : ""}" data-inbox-channel="${esc(key)}"${on ? ' aria-current="true"' : ""}>${lead}<span class="inbox-ch-l">${esc(label)}</span>${n ? `<span class="inbox-ch-n${tone}">${unreadText(n)}</span>` : ""}</button>`;
     const ai = listed(r).filter((c) => c.on).length;
     return `<nav class="inbox-chs" aria-label="渠道">
         ${p.chs.map((ch) => item(ch.id, logo(ch.id) || ico("message-circle"), ch.label, unreadOf(ch.convs), ch.convs.some(atMe) ? " attn" : "", !p.on && p.ch?.id === ch.id)).join("")}
         <span class="inbox-chs-sep" aria-hidden="true"></span>
         ${item(AI_ON, ico("bot"), AI_HANDLED_LABEL, ai, " plain", p.on)}
+        <button type="button" class="inbox-help-btn${helpOpen ? " on" : ""}" data-inbox-help aria-expanded="${!!helpOpen}" title="收件箱使用说明">${ico("help-circle")}<span>说明</span></button>
       </nav>`;
   }
   // A channel's filters, with icons and how many chats each lists.
@@ -369,87 +389,220 @@
     return `<div class="inbox-chips" role="toolbar" aria-label="筛选${esc(p.ch.label)}会话">${SUBS.map(chip).join("")}</div>`;
   }
 
-  function inboxHTML(r, cur, detail, channel, sub) {
-    const convs = listed(r);
+  function inboxListRowsHTML(r, cur, channel, sub, query = "") {
     const p = inboxPlace(r, channel, sub);
-    const shown = inboxShown(r, channel, sub);
-    const unreadHere = shown.some((c) => c.unread > 0);
+    const shown = inboxShown(r, channel, sub, query);
+    const q = String(query || "").trim();
     const row = (c) => {
       const n = c.unread > 0 ? c.unread : 0, kind = KIND[c.kind] || c.kind || "";
       const name = c.name || c.chat;
-      // A direct chat's preview needn't repeat who it is with.
       const line = c.ext === "larkx" ? collieInboxMessage.legacyPreview(c.preview) : c.preview || "";
       const preview = c.kind === "dm" && line.startsWith(name + ": ") ? line.slice(name.length + 2) : line;
       return `<li class="row inbox-row${n ? " unread" : ""}${c.id === cur ? " sel" : ""}" data-conv="${esc(c.id)}">
         ${avatar(c, `${c.label} · ${kind}`)}
         <div class="inbox-main">
-          <div class="inbox-l1"><b class="inbox-name"${name !== c.chat ? ` title="${esc(name)}"` : ""}>${esc(name)}</b>${c.muted ? `<span class="inbox-mute" title="在原应用里设了免打扰">${ico("bell-off")}</span>` : ""}${c.on ? `<span class="pill plain info inbox-on">${AI_HANDLED_LABEL}</span>` : ""}<time class="inbox-time" datetime="${esc(c.last_at || "")}" title="${esc(when(c.last_at))}">${esc(shortTime(c.last_at))}</time></div>
-          <div class="inbox-l2"><span class="inbox-prev">${atMe(c) ? `<span class="inbox-at">[有人@我]</span>` : ""}${esc(preview)}</span>${n ? `<span class="inbox-unread${c.muted ? " muted" : ""}" title="${n} 条未读${c.muted ? "（免打扰）" : ""}">${unreadText(n)}</span>` : ""}</div>
+          <div class="inbox-l1"><b class="inbox-name"${name !== c.chat ? ` title="${esc(name)}"` : ""}>${hi(name, q)}</b>${c.muted ? `<span class="inbox-mute" title="在原应用里设了免打扰">${ico("bell-off")}</span>` : ""}${c.on ? `<span class="pill plain info inbox-on">AI</span>` : ""}<time class="inbox-time" datetime="${esc(c.last_at || "")}" title="${esc(when(c.last_at))}">${esc(shortTime(c.last_at))}</time></div>
+          <div class="inbox-l2"><span class="inbox-prev">${atMe(c) ? `<span class="inbox-at">[有人@我]</span>` : ""}${hi(preview, q)}</span>${n ? `<span class="inbox-unread${c.muted ? " muted" : ""}" title="${n} 条未读${c.muted ? "（免打扰）" : ""}">${unreadText(n)}</span>` : ""}</div>
           ${c.on ? outLine(c.out) : ""}
         </div></li>`;
     };
-    const intro = `<p class="panel-intro">打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或这个会话的专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。飞书会话可查看最近消息。</p>`;
-    if (!convs.length) return intro + `<div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
+    if (shown.length) return shown.map(row).join("");
+    if (q) return `<li class="empty-row inbox-empty-q"><div>没有匹配「${esc(q)}」的会话</div><button type="button" class="btn small ghost" data-inbox-search-clear>清空搜索</button></li>`;
+    return `<li class="empty-row">${p.sub ? "都读过了" : "没有会话"}</li>`;
+  }
+
+  function inboxHTML(r, cur, detail, channel, sub, opts = {}) {
+    const convs = listed(r);
+    const query = String(opts.query || "");
+    const helpOpen = !!opts.helpOpen;
+    const introText = `打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。`;
+    if (!convs.length) return `<p class="panel-intro">${introText}</p><div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
+    const p = inboxPlace(r, channel, sub);
+    const shown = inboxShown(r, channel, sub, query);
+    const unreadHere = shown.some((c) => c.unread > 0);
     const readAll = `<button type="button" class="btn small ghost inbox-read-all" data-inbox-read-all aria-label="全部已读" ${unreadHere ? "" : "disabled"} title="把这个列表里的会话都标为已读">${ico("check-check")}<span>全部已读</span></button>`;
-    return intro + `<div class="inbox-split ${cur ? "has-cur" : ""}">
-        ${channelsHTML(p, r)}
+    const helpBar = helpOpen ? `<div class="inbox-help-bar"><p>${introText}</p><button type="button" class="icon-btn" data-inbox-help aria-label="收起说明">${ico("x")}</button></div>` : "";
+    const chLabel = p.on ? AI_HANDLED_LABEL : p.ch?.label || "";
+    const search = `<div class="inbox-search">
+        ${ico("search")}
+        <input type="search" value="${esc(query)}" placeholder="搜索${esc(chLabel)}会话或消息…" aria-label="搜索会话" data-inbox-search autocomplete="off" spellcheck="false">
+        <span class="inbox-search-meta"${query.trim() ? "" : " hidden"}><span class="inbox-search-cnt">${shown.length}</span><button type="button" class="inbox-search-clr" data-inbox-search-clear aria-label="清空搜索" title="清空搜索">${ico("x")}</button></span>
+      </div>`;
+    return `${helpBar}<div class="inbox-split ${cur ? "has-cur" : ""}">
+        ${channelsHTML(p, r, helpOpen)}
         <div class="inbox-col">
-          <div class="inbox-head">${subsHTML(p) || `<span class="inbox-head-t">${esc(p.on ? AI_HANDLED_LABEL : p.ch?.label || "")}<span class="muted">${shown.length}</span></span>`}${readAll}</div>
-          <div class="card inbox-list"><ul class="rows">${shown.map(row).join("") || `<li class="empty-row">${p.sub ? "都读过了" : "没有"}</li>`}</ul></div>
+          ${search}
+          <div class="inbox-head">${subsHTML(p) || `<span class="inbox-head-t">${esc(chLabel)}<span class="muted">${shown.length}</span></span>`}${readAll}</div>
+          <div class="card inbox-list"><ul class="rows" id="inbox-rows">${inboxListRowsHTML(r, cur, channel, sub, query)}</ul></div>
         </div>
-        <div class="inbox-detail" id="inbox-detail">${detailHTML(cur, detail, r?.trigger)}</div>
+        <div class="inbox-detail" id="inbox-detail">${detailHTML(cur, detail, r?.trigger, opts.detailOpts)}</div>
       </div>`;
   }
 
-  const detailHTML = (cur, detail, trigger) => cur ? convHTML(detail, trigger) : `<div class="card"><div class="empty-row with-ico">${ico("messages-square")}<div>选一个会话</div></div></div>`;
+  const detailHTML = (cur, detail, trigger, opts = {}) => cur ? convHTML(detail, trigger, opts)
+    : `<div class="card conv-empty-card"><div class="empty-row with-ico">${ico("messages-square")}<div><b>选一个会话</b><span class="muted">查看时间正序历史、直接回复、AI 帮回或带上下文发给 Collie</span></div></div></div>`;
 
-  // Newest message first, so the latest reply is the first thing you see.
-  function convHTML(d, trigger) {
-    if (!d) return `<div class="card"><div class="empty-row">正在读取…</div></div>`;
+  // Chronological order (oldest on top, newest at bottom), scrolled to latest on open.
+  function convHTML(d, trigger, opts = {}) {
+    if (!d) return `<div class="card conv-card"><div class="empty-row">正在读取…</div></div>`;
     const c = d.conv, msgs = d.msgs || [], outs = d.outbox || {};
-    const seg = (name, val, opts) => `<div class="seg">${opts.map(([v, l]) => `<button type="button" data-conv-set="${name}" data-v="${v}" class="${String(val) === String(v) ? "on" : ""}">${l}</button>`).join("")}</div>`;
+    const chName = c.label || (c.ext === "wechat" ? "微信" : "飞书");
+    const kindName = KIND[c.kind] || c.kind || "";
+    const seg = (name, val, optsList) => `<div class="seg">${optsList.map(([v, l]) => `<button type="button" data-conv-set="${name}" data-v="${v}" class="${String(val) === String(v) ? "on" : ""}">${l}</button>`).join("")}</div>`;
     const href = c.worker ? workerHref(c.worker) : "";
     const worker = c.worker ? (href ? `<a href="${esc(href)}">${esc(c.worker)} →</a>` : esc(c.worker)) : "";
-    // A chat's messages as a chat app shows them: yours (and Collie's answers,
-    // sent from your account) on the right, others on the left with their
-    // picture or initial; in your own chat with a bot (c.owner) the answers are
-    // the bot's, on the left. A day line between days; one header for a run of
-    // messages from the same sender within a few minutes; system notices in
-    // the middle.
+    const subParts = [chName, kindName, c.on ? (c.handler === "agent" ? (c.worker || "专属 agent") : "Collie 处理") : ""].filter(Boolean);
+
     const RUN_GAP = 5 * 60e3;
-    const who = (m) => m.ref || m.bot ? "ai" : m.mine ? "me" : m.sender || m.sender_name || "";
+    const who = (m) => (!m.human && (m.ref || m.bot)) ? "ai" : m.mine ? "me" : m.sender || m.sender_name || "";
+    const unreadAnchor = opts.unreadAnchor || "";
+    const unreadCount = opts.unreadCount || 0;
+    const sendAs = c.send_as || (c.owner ? "bot" : "self");
+    const canSend = sendAs !== "none";
+    const botSend = sendAs === "bot";
+    const noFooter = !!c.no_footer || botSend;
+
+    // Surface failed/uncertain outbox items even when the AI switch is off (UX-33).
+    const badOuts = Object.values(outs).filter((o) => o && (o.state === "failed" || o.state === "uncertain" || o.state === "expired"));
+    const outAlert = badOuts.length ? `<div class="conv-banner warn">${outLine(badOuts[badOuts.length - 1])}</div>` : "";
+    const sentBanner = opts.sentBanner ? `<div class="conv-banner info"><span>${esc(opts.sentBanner)}</span><a href="#/collie">查看对话 →</a><button type="button" class="icon-btn" data-conv-banner-close aria-label="关闭提示">${ico("x")}</button></div>` : "";
+
     const msg = (m, i, list) => {
       const o = m.ref ? outs[m.ref] : null;
       const rich = m.view && !m.ref;
       const text = c.ext === "larkx" ? collieInboxMessage.legacyPreview(m.text) : m.text;
-      const day = dayLabel(m.at), newer = list[i - 1], older = list[i + 1];
-      const line = !newer || dayLabel(newer.at) !== day ? `<li class="conv-day"><span>${esc(day)}</span></li>` : "";
-      if (m.view?.kind === "system") return `${line}<li class="conv-sys">${collieInboxMessage.render(m.view)}</li>`;
+      const day = dayLabel(m.at), prev = list[i - 1];
+      const dayEl = !prev || dayLabel(prev.at) !== day ? `<li class="conv-day"><span>${esc(day)}</span></li>` : "";
+      const unreadEl = unreadAnchor && m.id === unreadAnchor && unreadCount > 0
+        ? `<li class="conv-unread-line" data-unread-anchor><span>以下是 ${unreadCount} 条未读消息</span></li>` : "";
+      if (m.view?.kind === "system") return `${dayEl}${unreadEl}<li class="conv-sys">${collieInboxMessage.render(m.view)}</li>`;
       const ai = who(m) === "ai", mine = ai ? !c.owner : m.mine;
-      // Newest first: a run's header sits on its oldest message, the one shown lowest.
-      const head = !older || who(older) !== who(m) || dayLabel(older.at) !== day || Date.parse(m.at) - Date.parse(older.at) > RUN_GAP;
-      // In your chat with a bot its answers carry the bot's name and picture (c's), and the AI 代答 mark.
+      // Chronological: a run's header sits on its first (top) message, or right after the unread divider.
+      const head = !prev || !!unreadEl || who(prev) !== who(m) || dayLabel(prev.at) !== day || Date.parse(m.at) - Date.parse(prev.at) > RUN_GAP;
       const bot = ai && c.owner, pic = bot ? c.avatar : m.avatar;
       const name = bot ? c.name : ai ? "" : m.mine ? "你" : m.sender_name || "";
       const card = rich && (m.view.kind === "card" || m.view.kind === "calendar" || m.view.kind === "media");
-      const body = rich ? collieInboxMessage.render(m.view) : m.ref ? md(m.text) : esc(text);
-      return `${line}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}">
+      const body = rich ? collieInboxMessage.render(m.view) : (m.ref && !m.human) ? md(m.text) : esc(text);
+      return `${dayEl}${unreadEl}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}" data-msg-id="${esc(m.id || "")}">
         ${mine ? "" : `<span class="conv-ava${SQUARE.has(c.ext) ? " sq" : ""}" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${pic ? `<img class="inbox-pic" src="${esc(pic)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}
         <div class="conv-body">${head ? `<div class="meta">${name ? `<b>${esc(name)}</b>` : ""}${ai ? `<span class="conv-ai">${ico("bot")}AI 代答</span>` : ""}<time title="${esc(when(m.at))}">${esc(clock(m.at))}</time></div>` : ""}
-          <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : m.ref ? "assistant" : ""}">${body}</div>${o ? outLine(o) : ""}</div></li>`;
+          <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : (m.ref && !m.human) ? "assistant" : ""}">${body}</div>${o ? outLine(o) : ""}</div></li>`;
     };
+
+    const mode = canSend ? (opts.composerMode || "reply") : "collie";
+    const inputText = opts.inputText || "";
+    const draft = opts.draft || null;
+    const showUnreadBtn = !!unreadAnchor && unreadCount > 0;
+    const ctxN = Math.min(msgs.length, 20);
+    const replyTabLabel = botSend ? "机器人发送" : "我直接回复";
+    const sendBtnLabel = botSend ? "以机器人发送" : `发送到${chName}`;
+    const confirmBtnLabel = botSend ? "以机器人确认发送" : `确认发送到${chName}`;
+
+    let dockBody = "";
+    if (mode === "reply") {
+      const replyHint = botSend
+        ? `${esc(chName)}仅支持以机器人「${esc(c.name || chName)}」身份发到你的${esc(chName)}（不能以你本人身份发送）`
+        : `以你本人身份直接发送到${esc(chName)}，不带 AI 尾标`;
+      dockBody = `<div class="conv-dock-hint">${logo(c.ext)}<span>${replyHint}</span></div>
+        <div class="conv-dock-row">
+          <textarea class="conv-input" rows="1" data-conv-input placeholder="${botSend ? `以机器人身份发到你的${esc(chName)}…` : `回复「${esc(c.name || c.chat)}」…`}">${esc(inputText)}</textarea>
+          <button type="button" class="btn primary small conv-act-btn" data-conv-send-reply>${ico("send")}<span>${esc(sendBtnLabel)}</span></button>
+        </div>`;
+    } else if (mode === "ai") {
+      if (draft && draft.loading && !draft.text) {
+        dockBody = `<div class="conv-draft conv-draft-wait">
+            <div class="conv-draft-head">
+              <span class="conv-draft-title"><span class="spinner small" aria-hidden="true"></span><b>正在起草回复…</b><span class="muted">${draft.via ? `由 ${esc(draft.via)} 起草，不会自动发出` : "仅生成草稿，不会自动发出"}</span></span>
+              <button type="button" class="btn small ghost" data-conv-draft-cancel>取消</button>
+            </div>
+          </div>`;
+      } else if (draft && draft.text) {
+        dockBody = `<div class="conv-draft">
+            <div class="conv-draft-head">
+              <span class="conv-draft-title">${ico("sparkles")}<b>AI 草稿</b><span class="muted">${botSend ? `确认后以机器人身份发到${esc(chName)}，尚未发出` : `确认后发往${esc(chName)}，尚未发出`}</span></span>
+              <div class="conv-draft-tools">
+                <button type="button" class="conv-chip-btn" data-conv-draft-refine="shorter" ${draft.loading ? "disabled" : ""}>${draft.loading ? "改写中…" : "更简短"}</button>
+                <button type="button" class="conv-chip-btn" data-conv-draft-refine="formal" ${draft.loading ? "disabled" : ""}>更正式</button>
+                <button type="button" class="icon-btn" data-conv-draft-cancel aria-label="取消草稿" title="放弃草稿">${ico("x")}</button>
+              </div>
+            </div>
+            <textarea class="conv-draft-text" rows="3" data-conv-draft-text aria-label="编辑 AI 起草的回复">${esc(draft.text)}</textarea>
+            <div class="conv-draft-foot">
+              ${noFooter ? `<span class="muted conv-draft-note">由 ${esc(draft.via || "Collie")} 起草</span>` : `<label class="conv-draft-opt"><input type="checkbox" data-conv-draft-footer ${draft.footer ? "checked" : ""}><span>附带 AI 代答尾标</span></label>`}
+              <div class="conv-draft-acts">
+                <button type="button" class="btn small ghost" data-conv-draft-cancel>放弃</button>
+                <button type="button" class="btn primary small" data-conv-draft-send ${draft.loading ? "disabled" : ""}>${ico("check")}<span>${esc(confirmBtnLabel)}</span></button>
+              </div>
+            </div>
+          </div>`;
+      } else {
+        dockBody = `<div class="conv-dock-hint">${ico("sparkles")}<span>AI 读取最近消息起草回复，由你审阅确认后再${botSend ? "以机器人身份" : ""}发送到${esc(chName)}</span></div>
+          <div class="conv-quick-row">
+            <button type="button" class="conv-chip-btn" data-conv-ai-quick="先回复收到，告知我会跟进">先回收到</button>
+            <button type="button" class="conv-chip-btn" data-conv-ai-quick="说明正在排查，有进展同步">同步进展</button>
+            <button type="button" class="conv-chip-btn" data-conv-ai-quick="礼貌说明改期到明天下午">礼貌改期</button>
+          </div>
+          <div class="conv-dock-row">
+            <textarea class="conv-input" rows="1" data-conv-input placeholder="输入回复意图（留空则直接根据上下文起草）…">${esc(inputText)}</textarea>
+            <button type="button" class="btn primary small conv-act-btn" data-conv-draft-gen ${draft?.loading ? "disabled" : ""}>${ico("sparkles")}<span>${draft?.loading ? "起草中…" : "生成草稿"}</span></button>
+          </div>`;
+      }
+    } else {
+      dockBody = `<div class="conv-dock-hint">${ico("bot")}<span>附带「${esc(c.name || c.chat)}」最近 ${ctxN || 1} 条消息上下文 · 仅发给 Collie，不发回${esc(chName)}</span></div>
+        <div class="conv-quick-row">
+          <button type="button" class="conv-chip-btn" data-conv-collie-quick="帮我总结这个会话的重点结论和待办">总结要点</button>
+          <button type="button" class="conv-chip-btn" data-conv-collie-quick="根据会话里提到的报错和需求，帮我查一下相关代码">查相关代码</button>
+          <button type="button" class="conv-chip-btn" data-conv-collie-quick="把会话里需要我处理的事情列个清单">提取待办</button>
+        </div>
+        <div class="conv-dock-row">
+          <textarea class="conv-input" rows="1" data-conv-input placeholder="让 Collie 总结、查代码或派活处理…">${esc(inputText)}</textarea>
+          <button type="button" class="btn primary small conv-act-btn" data-conv-send-collie>${ico("bot")}<span>发给 Collie</span></button>
+        </div>`;
+    }
+
     return `<div class="card conv-card">
-      <div class="card-h"><span class="conv-title">${avatar(c)}<span${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</span></span><button type="button" class="icon-btn conv-close" data-conv-close title="返回">×</button></div>
-      <div class="form">
-        <div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button><span><b>处理这个会话</b>${c.on ? "" : `<small class="muted">打开后，以 ${esc(trigger || "/ai")} 开头的消息交给 agent，并保存会话上下文</small>`}</span></div>
-        ${c.on ? `<div class="conv-rule"><span class="tm-lab">谁能唤起</span>${seg("anyone", !!c.anyone, [[false, "只有我"], [true, "任何人"]])}</div>
-          ${c.anyone ? `<p class="ext-warn">任何人都能唤起时，专属 agent 在隔离目录里工作，但那不是沙箱：只对信任的群打开。</p>` : ""}
-          <div class="conv-rule"><span class="tm-lab">交给</span>${seg("handler", c.handler, [["collie", "Collie"], ["agent", "专属 agent"]])}${c.handler === "agent" ? `<span class="muted">${worker || "第一次唤起时启动"}</span>` : ""}</div>` : ""}
+      <div class="card-h conv-head">
+        <button type="button" class="icon-btn conv-back" data-conv-close aria-label="返回会话列表" title="返回会话列表">${ico("chevron-left")}</button>
+        <div class="conv-title">
+          ${avatar(c)}
+          <div class="conv-title-meta">
+            <div class="conv-title-name"${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</div>
+            <div class="conv-title-sub">${esc(subParts.join(" · "))}</div>
+          </div>
+        </div>
+        <div class="conv-head-acts">
+          <div class="conv-ai-pill" title="处理这个会话：打开后自动响应 ${esc(trigger || "/ai")}">
+            <span class="conv-ai-lab">AI</span>
+            <button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button>
+          </div>
+          <button type="button" class="icon-btn conv-cfg-btn${opts.settingsOpen ? " on" : ""}" data-conv-cfg aria-expanded="${!!opts.settingsOpen}" aria-label="会话设置" title="会话处理设置">${ico("sliders-horizontal")}</button>
+        </div>
       </div>
-      ${msgs.length ? `<ul class="conv-msgs" aria-label="最近消息">${msgs.slice().reverse().map(msg).join("")}</ul>`
-        : `<div class="empty-row">${esc(c.ext === "larkx" ? collieInboxMessage.legacyPreview(c.preview) : c.preview || "")
-          || (c.on ? "打开以后的消息会出现在这里" : "暂无消息")}</div>`}
-      ${d.history_unavailable ? `<div class="empty-row">暂时无法从飞书读取最近消息</div>` : ""}
+      ${opts.settingsOpen ? `<div class="form conv-settings">
+        <div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button><span><b>处理这个会话</b><small class="muted">打开后，以 ${esc(trigger || "/ai")} 开头的消息交给 agent，并保存会话上下文</small></span></div>
+        ${c.on ? `${c.owner ? "" : `<div class="conv-rule"><span class="tm-lab">谁能唤起</span>${seg("anyone", !!c.anyone, [[false, "只有我"], [true, "任何人"]])}</div>
+          ${c.anyone ? `<p class="ext-warn">任何人都能唤起时，专属 agent 在隔离目录里工作，但那不是沙箱：只对信任的群打开。</p>` : ""}`}
+          <div class="conv-rule"><span class="tm-lab">交给</span>${seg("handler", c.handler, [["collie", "Collie"], ["agent", "专属 agent"]])}${c.handler === "agent" ? `<span class="muted">${worker || "第一次唤起时启动"}</span>` : ""}</div>` : ""}
+      </div>` : ""}
+      ${outAlert}${sentBanner}
+      <div class="conv-stage">
+        ${msgs.length ? `<ul class="conv-msgs" aria-label="最近消息">${msgs.map(msg).join("")}</ul>`
+          : `<div class="conv-msgs conv-msgs-empty"><div class="empty-row">${esc(c.ext === "larkx" ? collieInboxMessage.legacyPreview(c.preview) : c.preview || "")
+            || (c.on ? "打开以后的消息会出现在这里" : "暂无消息")}</div></div>`}
+        ${d.history_unavailable ? `<div class="conv-banner warn">暂时无法从飞书读取最近消息</div>` : ""}
+        <div class="conv-jumps" aria-label="消息快速跳转">
+          <button type="button" class="conv-jump conv-jump-unread" data-conv-jump-unread title="跳转到第一条未读消息"${showUnreadBtn ? "" : " hidden"}>${ico("arrow-up")}<span>${unreadCount} 条未读</span></button>
+          <button type="button" class="conv-jump conv-jump-bottom" data-conv-jump-bottom aria-label="跳到最新消息" title="跳到最新消息" hidden>${ico("arrow-down")}</button>
+        </div>
+      </div>
+      <div class="conv-dock" data-mode="${esc(mode)}">
+        <div class="conv-modes" role="tablist" aria-label="回复或处理方式">
+          <button type="button" role="tab" class="conv-mode${mode === "reply" ? " on" : ""}" aria-selected="${mode === "reply"}" data-conv-mode="reply" ${canSend ? "" : "disabled title=\"该扩展不支持直接发送\""}>${ico("send")}<span>${esc(replyTabLabel)}</span></button>
+          <button type="button" role="tab" class="conv-mode${mode === "ai" ? " on" : ""}" aria-selected="${mode === "ai"}" data-conv-mode="ai" ${canSend ? "" : "disabled title=\"该扩展不支持直接发送\""}>${ico("sparkles")}<span>AI 帮回</span></button>
+          <button type="button" role="tab" class="conv-mode${mode === "collie" ? " on" : ""}" aria-selected="${mode === "collie"}" data-conv-mode="collie">${ico("bot")}<span>发给 Collie</span></button>
+        </div>
+        <div class="conv-dock-body">${dockBody}</div>
+      </div>
     </div>`;
   }
 
@@ -469,5 +622,5 @@
   function logo(id) { const u = icons[id]; return u ? `<img class="src-logo" src="${esc(u)}" alt="">` : ""; }
   const known = () => Object.keys(icons).length > 0;
 
-  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, inboxShown, inboxPlace, convHTML, detailHTML, timerChannels, wechatAvatarField, label, logo, known, learn, stateOf };
+  window.collieExt = { init, hooksList, extPage, replyPage, marketsHTML, pageHead, inboxHTML, inboxListRowsHTML, inboxShown, inboxPlace, convHTML, detailHTML, timerChannels, wechatAvatarField, label, logo, known, learn, stateOf };
 })();

@@ -50,6 +50,8 @@ type extHost struct {
 
 	cfgMu    sync.Mutex // one configure at a time: an old program stops before a new one starts
 	marketMu sync.Mutex // the marketplaces' list and tokens
+	draftMu  sync.Mutex // in-flight AI reply drafts (never auto-sent)
+	drafts   map[string]*inboxDraft
 	sending  sync.Map   // refs being sent right now
 	starting sync.Map   // conversation IDs with a dedicated worker launch in flight
 	mu       sync.Mutex
@@ -82,7 +84,8 @@ type extRun struct {
 
 func newExtHost(s *Server, sp *Super, home string) *extHost {
 	h := &extHost{s: s, sp: sp, home: home, store: newExtStore(sp.db),
-		cat: map[string]*ExtManifest{}, sets: map[string]ExtSetting{}, runs: map[string]*extRun{}}
+		cat: map[string]*ExtManifest{}, sets: map[string]ExtSetting{}, runs: map[string]*extRun{},
+		drafts: map[string]*inboxDraft{}}
 	cat, err := extCatalog()
 	if err != nil {
 		log.Printf("ext: catalog: %v", err)

@@ -101,6 +101,19 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		}
 	}
 	if w.Conv != "" && !blocked && sp.s.ext != nil {
+		// If this turn was drafting a reply for the inbox UI, capture it into
+		// the draft box and never auto-send to Feishu/WeChat.
+		if d := sp.s.ext.activeWorkerDraft(w.Name); d != nil {
+			text := sp.lastReply(ctx, w, 0, false)
+			if msg := sp.workerAgentError(ctx, w, text); msg != "" {
+				sp.s.ext.completeDraft(d.ID, "", "agent 出错："+msg)
+			} else if strings.TrimSpace(text) == "" {
+				sp.s.ext.completeDraft(d.ID, "", "没取到 agent 生成的草稿")
+			} else {
+				sp.s.ext.completeDraft(d.ID, strings.TrimSpace(text), "")
+			}
+			return
+		}
 		// An extension conversation's agent: its turn's last message is the
 		// answer, sent back to that chat, not a report for the Router.
 		// Only its own words go out: never the screen, which may be the

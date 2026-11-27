@@ -28,7 +28,7 @@ func (sp *Super) targetMachine(target string) string {
 func fromHuman(list []*Trigger) []*Trigger {
 	var out []*Trigger
 	for _, t := range list {
-		if t.Source == "chat" {
+		if t.Source == "chat" || t.Source == inboxDraftSource {
 			out = append(out, t)
 		}
 	}

@@ -261,7 +261,9 @@ func (sp *Super) prepareTriggerLocked(source, thread, from, text, key, target, r
 	}
 	pol := sp.st.policyFor(source)
 	action := pol.Action
-	if len(pol.Allow) > 0 && !slices.Contains(pol.Allow, from) {
+	if source == inboxDraftSource {
+		action = "respond"
+	} else if len(pol.Allow) > 0 && !slices.Contains(pol.Allow, from) {
 		action = "ignore"
 	}
 	t := &Trigger{
