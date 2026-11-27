@@ -33,6 +33,7 @@ type subUsageConfig struct {
 	ShowTokens     bool
 	DedupeAccounts bool
 	RefreshEvery   time.Duration
+	ProxyURL       string // optional proxy URL or machine=url list
 	FocusOverride  string // "" | auto | all | claude | codex | antigravity
 }
 
@@ -61,7 +62,72 @@ func parseSubUsageConfig(raw map[string]any) subUsageConfig {
 		}
 		cfg.RefreshEvery = time.Duration(n) * time.Second
 	}
+	if s, _ := raw["proxy_url"].(string); strings.TrimSpace(s) != "" {
+		cfg.ProxyURL = strings.TrimSpace(s)
+	}
 	return cfg
+}
+
+func normalizeSubUsageProxyURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if strings.EqualFold(s, "direct") || strings.EqualFold(s, "none") {
+		return "direct"
+	}
+	if !strings.Contains(s, "://") {
+		s = "http://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+		return u.String()
+	default:
+		return ""
+	}
+}
+
+// resolveSubUsageProxy resolves either a global proxy URL or a comma/newline
+// list of machine=url entries (with optional *=url or bare url fallback).
+func resolveSubUsageProxy(spec, machineID, machineName string, local bool) string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return ""
+	}
+	var fallback string
+	for _, part := range strings.FieldsFunc(spec, func(r rune) bool {
+		return r == ',' || r == '，' || r == ';' || r == '\n'
+	}) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if k, v, ok := strings.Cut(part, "="); ok && !strings.Contains(k, "://") {
+			k = strings.TrimSpace(k)
+			norm := normalizeSubUsageProxyURL(v)
+			if k == "" || norm == "" {
+				continue
+			}
+			if k == "*" || strings.EqualFold(k, "default") {
+				fallback = norm
+				continue
+			}
+			if (machineName != "" && strings.EqualFold(k, machineName)) ||
+				(machineID != "" && strings.EqualFold(k, machineID)) ||
+				(local && (strings.EqualFold(k, "hub") || strings.EqualFold(k, "local"))) {
+				return norm
+			}
+			continue
+		}
+		if norm := normalizeSubUsageProxyURL(part); norm != "" {
+			fallback = norm
+		}
+	}
+	return fallback
 }
 
 func subUsageInt(v any) (int, bool) {
@@ -137,6 +203,14 @@ func (s *Server) usageHub() *subUsageHub {
 		}
 	}
 	return s.subUsageAgg
+}
+
+func (u *subUsageHub) resetCache() {
+	u.mu.Lock()
+	clear(u.acctState)
+	clear(u.authBlocked)
+	u.lastSnap = nil
+	u.mu.Unlock()
 }
 
 func (u *subUsageHub) collect(ctx context.Context, cfg subUsageConfig, fresh bool) subUsageSnapshot {
@@ -419,7 +493,8 @@ func (u *subUsageHub) resolveUniqueAccount(ctx context.Context, key string, cand
 	if len(eligible) == 0 {
 		for _, c := range cands {
 			if c.item.HasSnapshot {
-				res, err := u.probeMachine(ctx, c)
+				proxyURL := resolveSubUsageProxy(cfg.ProxyURL, c.machineID, c.machineName, c.local)
+				res, err := u.probeMachine(ctx, c, proxyURL)
 				if err == nil && res.Account != nil && len(res.Account.Windows) > 0 {
 					u.mu.Lock()
 					st.acct = cloneSubAccount(*res.Account)
@@ -448,7 +523,8 @@ func (u *subUsageHub) resolveUniqueAccount(ctx context.Context, key string, cand
 	// 4. Probe 1 selected machine; fail over to next candidate ONLY on 401/network failure.
 	var lastErr string
 	for _, cand := range eligible {
-		res, err := u.probeMachine(ctx, cand)
+		proxyURL := resolveSubUsageProxy(cfg.ProxyURL, cand.machineID, cand.machineName, cand.local)
+		res, err := u.probeMachine(ctx, cand, proxyURL)
 		if err != nil {
 			lastErr = "节点采集超时"
 			continue
@@ -627,9 +703,9 @@ func (u *subUsageHub) fetchNodeInventory(ctx context.Context, machineID string) 
 	return inv, resp.StatusCode, nil
 }
 
-func (u *subUsageHub) probeMachine(ctx context.Context, cand probeCandidate) (subUsageProbeResult, error) {
+func (u *subUsageHub) probeMachine(ctx context.Context, cand probeCandidate, proxyURL string) (subUsageProbeResult, error) {
 	if cand.local {
-		return u.s.localSubUsageCollector().probeOne(ctx, cand.item.Provider, cand.item.AccountHash), nil
+		return u.s.localSubUsageCollector().probeOne(ctx, cand.item.Provider, cand.item.AccountHash, proxyURL), nil
 	}
 	client, err := u.s.herdr.Client(cand.machineID)
 	if err != nil {
@@ -641,6 +717,9 @@ func (u *subUsageHub) probeMachine(ctx context.Context, cand probeCandidate) (su
 	qs.Set("provider", cand.item.Provider)
 	if cand.item.AccountHash != "" {
 		qs.Set("account_hash", cand.item.AccountHash)
+	}
+	if proxyURL != "" {
+		qs.Set("proxy", proxyURL)
 	}
 	req, err := http.NewRequestWithContext(pctx, http.MethodGet, "http://node/api/sub-usage/probe?"+qs.Encode(), nil)
 	if err != nil {
@@ -678,6 +757,7 @@ func cloneUsageSnapshot(s subUsageSnapshot) subUsageSnapshot {
 
 func cloneMachineNode(n subUsageMachineNode) subUsageMachineNode {
 	out := n
+	out.Today = cloneTokenDayStats(n.Today)
 	out.Report = cloneMachineReport(n.Report)
 	return out
 }

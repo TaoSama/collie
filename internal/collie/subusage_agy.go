@@ -46,6 +46,20 @@ type agyLoadCodeAssistResp struct {
 	CloudAICompanionProject json.RawMessage `json:"cloudaicompanionProject"`
 }
 
+type agyQuotaSummaryResp struct {
+	Groups []struct {
+		DisplayName string `json:"displayName"`
+		Description string `json:"description"`
+		Buckets     []struct {
+			BucketID          string   `json:"bucketId"`
+			DisplayName       string   `json:"displayName"`
+			Window            string   `json:"window"` // "5h" | "weekly"
+			RemainingFraction *float64 `json:"remainingFraction"`
+			ResetTime         string   `json:"resetTime"`
+		} `json:"buckets"`
+	} `json:"groups"`
+}
+
 type agyFetchModelsResp struct {
 	Models map[string]struct {
 		DisplayName string `json:"displayName"`
@@ -120,7 +134,7 @@ func (c *subUsageCollector) probeAntigravity(ctx context.Context, now time.Time,
 		return subUsageProbeResult{Account: acct, AuthFailed: true}
 	}
 
-	ua := fmt.Sprintf("antigravity/1.23.2 %s/%s", runtime.GOOS, runtime.GOARCH)
+	ua := fmt.Sprintf("antigravity/3.0.0 %s/%s", runtime.GOOS, runtime.GOARCH)
 	var (
 		baseUsed  string
 		projectID string
@@ -206,6 +220,40 @@ func (c *subUsageCollector) probeAntigravity(ctx context.Context, now time.Time,
 	}
 
 	modelsBody, _ := json.Marshal(map[string]any{"project": projectID})
+	checkedAt := now.UTC().Format(time.RFC3339)
+
+	// Prefer /v1internal:retrieveUserQuotaSummary which reports both 5H and 7D (weekly) windows.
+	if reqSum, err := http.NewRequestWithContext(ctx, http.MethodPost, baseUsed+"/v1internal:retrieveUserQuotaSummary", bytes.NewReader(modelsBody)); err == nil {
+		reqSum.Header.Set("Authorization", "Bearer "+loc.accessToken)
+		reqSum.Header.Set("Content-Type", "application/json")
+		reqSum.Header.Set("User-Agent", ua)
+		if sc, shdr, sbody, serr := c.doJSONWithHeaders(ctx, reqSum); serr == nil {
+			if sc == http.StatusUnauthorized || sc == http.StatusForbidden {
+				acct.Status = "expired"
+				acct.Error = "等待本机 Agent 刷新"
+				return subUsageProbeResult{Account: acct, AuthFailed: true}
+			}
+			if sc == http.StatusTooManyRequests {
+				acct.Status = "error"
+				acct.Error = "用量接口请求频率受限，稍后自动重试"
+				return subUsageProbeResult{Account: acct, RateLimit: true, RetryAfter: parseRetryAfterSeconds(shdr, now)}
+			}
+			if sc >= 200 && sc < 300 {
+				var sr agyQuotaSummaryResp
+				if parseSubUsageJSON(sbody, &sr) == nil {
+					if wins, hasGemini, limited, availAt := parseAgyQuotaSummary(sr, checkedAt, now); hasGemini {
+						acct.Windows = wins
+						if limited {
+							acct.Status = "limited"
+							acct.AvailableAt = availAt
+						}
+						return subUsageProbeResult{Account: acct}
+					}
+				}
+			}
+		}
+	}
+
 	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, baseUsed+"/v1internal:fetchAvailableModels", bytes.NewReader(modelsBody))
 	if err != nil {
 		acct.Status = "error"
@@ -282,7 +330,6 @@ func (c *subUsageCollector) probeAntigravity(ctx context.Context, now time.Time,
 		}
 	}
 
-	checkedAt := now.UTC().Format(time.RFC3339)
 	if geminiB.found {
 		acct.Windows = append(acct.Windows, subUsageWindow{
 			Kind:        "gemini_five_hour",
@@ -313,6 +360,125 @@ func (c *subUsageCollector) probeAntigravity(ctx context.Context, now time.Time,
 		}
 	}
 	return subUsageProbeResult{Account: acct}
+}
+
+func parseAgyQuotaSummary(sr agyQuotaSummaryResp, checkedAt string, now time.Time) (wins []subUsageWindow, hasGemini bool, limited bool, availableAt string) {
+	type winKey struct {
+		scopedModel string
+		window      string // "5h" | "weekly"
+	}
+	type agg struct {
+		kind        string
+		label       string
+		scopedModel string
+		maxUsed     float64
+		earliest    time.Time
+		resetRaw    string
+	}
+	byKey := map[winKey]*agg{}
+
+	for _, g := range sr.Groups {
+		gText := strings.ToLower(strings.TrimSpace(g.DisplayName + " " + g.Description))
+		for _, b := range g.Buckets {
+			if b.RemainingFraction == nil {
+				continue
+			}
+			bid := strings.ToLower(strings.TrimSpace(b.BucketID))
+			wStr := strings.ToLower(strings.TrimSpace(b.Window))
+			bText := bid + " " + strings.ToLower(strings.TrimSpace(b.DisplayName))
+
+			var scopedModel string
+			switch {
+			case strings.Contains(bid, "gemini") || strings.Contains(gText, "gemini"):
+				scopedModel = "gemini"
+			case strings.Contains(bid, "3p") || strings.Contains(bid, "partner") || strings.Contains(gText, "claude") || strings.Contains(gText, "gpt") || strings.Contains(gText, "partner"):
+				scopedModel = "partner"
+			default:
+				continue
+			}
+
+			var winNorm, kind, label string
+			switch {
+			case wStr == "5h" || wStr == "five_hour" || strings.Contains(bText, "5h") || strings.Contains(bText, "five hour"):
+				winNorm = "5h"
+				if scopedModel == "gemini" {
+					kind, label = "gemini_five_hour", "5H"
+				} else {
+					kind, label = "partner_five_hour", "Partner 5H"
+				}
+			case wStr == "weekly" || wStr == "week" || wStr == "7d" || strings.Contains(bText, "weekly") || strings.Contains(bText, "7d"):
+				winNorm = "weekly"
+				if scopedModel == "gemini" {
+					kind, label = "gemini_weekly", "7D"
+				} else {
+					kind, label = "partner_weekly", "Partner 7D"
+				}
+			default:
+				continue
+			}
+
+			used := clampPct((1 - *b.RemainingFraction) * 100)
+			k := winKey{scopedModel: scopedModel, window: winNorm}
+			cur := byKey[k]
+			if cur == nil {
+				cur = &agg{kind: kind, label: label, scopedModel: scopedModel, maxUsed: used}
+				byKey[k] = cur
+			} else if used > cur.maxUsed {
+				cur.maxUsed = used
+			}
+			if t, ok := parseSubTime(b.ResetTime); ok {
+				if cur.earliest.IsZero() || t.Before(cur.earliest) {
+					cur.earliest = t
+					cur.resetRaw = t.UTC().Format(time.RFC3339)
+				}
+			}
+		}
+	}
+
+	order := []winKey{
+		{scopedModel: "gemini", window: "5h"},
+		{scopedModel: "gemini", window: "weekly"},
+		{scopedModel: "partner", window: "5h"},
+		{scopedModel: "partner", window: "weekly"},
+	}
+	var geminiExhausted, partnerFound, partnerExhausted bool
+	var earliestReset time.Time
+	for _, k := range order {
+		cur := byKey[k]
+		if cur == nil {
+			continue
+		}
+		wins = append(wins, subUsageWindow{
+			Kind:        cur.kind,
+			Label:       cur.label,
+			Scope:       "model",
+			ScopedModel: cur.scopedModel,
+			UsedPercent: cur.maxUsed,
+			ResetsAt:    cur.resetRaw,
+			CheckedAt:   checkedAt,
+		})
+		if cur.scopedModel == "gemini" {
+			hasGemini = true
+			if cur.maxUsed >= 99.9 && (cur.earliest.IsZero() || cur.earliest.After(now)) {
+				geminiExhausted = true
+				if !cur.earliest.IsZero() && (earliestReset.IsZero() || cur.earliest.Before(earliestReset)) {
+					earliestReset = cur.earliest
+				}
+			}
+		} else if cur.scopedModel == "partner" {
+			partnerFound = true
+			if cur.maxUsed >= 99.9 && (cur.earliest.IsZero() || cur.earliest.After(now)) {
+				partnerExhausted = true
+			}
+		}
+	}
+	if geminiExhausted && (!partnerFound || partnerExhausted) {
+		limited = true
+		if !earliestReset.IsZero() {
+			availableAt = earliestReset.UTC().Format(time.RFC3339)
+		}
+	}
+	return wins, hasGemini, limited, availableAt
 }
 
 func readAgyLocalToken(home string) (token, email string, expiry time.Time, ok bool) {

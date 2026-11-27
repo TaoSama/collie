@@ -105,6 +105,15 @@ func TestSubUsageCollectorsOffline(t *testing.T) {
 				return
 			}
 			fmt.Fprint(w, `{"paidTier":{"id":"g1-ultra-lite-tier","name":"Google AI Ultra"},"cloudaicompanionProject":"proj-123"}`)
+		case "/v1internal:retrieveUserQuotaSummary":
+			if r.Header.Get("Authorization") != "Bearer "+agySecret {
+				http.Error(w, "unauthorized", 401)
+				return
+			}
+			fmt.Fprintf(w, `{"groups":[{"displayName":"Gemini Models","buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.82,"resetTime":%q},{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.42,"resetTime":%q}]},{"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-5h","window":"5h","remainingFraction":0.95,"resetTime":%q},{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1.0}]}]}`,
+				now.Add(3*time.Hour).Format(time.RFC3339),
+				now.Add(120*time.Hour).Format(time.RFC3339),
+				now.Add(4*time.Hour).Format(time.RFC3339))
 		case "/v1internal:fetchAvailableModels":
 			fmt.Fprintf(w, `{"models":{"gemini-3-flash":{"quotaInfo":{"remainingFraction":0.82,"resetTime":%q}},"claude-opus-5-5-high":{"quotaInfo":{"remainingFraction":0.95,"resetTime":%q}},"tab_flash_lite_preview":{"quotaInfo":{"remainingFraction":1}}}}`,
 				now.Add(3*time.Hour).Format(time.RFC3339),
@@ -172,7 +181,7 @@ func TestSubUsageCollectorsOffline(t *testing.T) {
 	if byProv["codex"].PlanDisplay != "Pro 20x" || len(byProv["codex"].Windows) != 1 || byProv["codex"].Windows[0].Label != "7D" || byProv["codex"].Credit == nil {
 		t.Fatalf("codex account mismatch: %+v", byProv["codex"])
 	}
-	if byProv["antigravity"].PlanDisplay != "G1 Ultra Lite" || len(byProv["antigravity"].Windows) != 2 {
+	if byProv["antigravity"].PlanDisplay != "G1 Ultra Lite" || len(byProv["antigravity"].Windows) != 4 || byProv["antigravity"].Windows[0].Label != "5H" || byProv["antigravity"].Windows[1].Label != "7D" {
 		t.Fatalf("antigravity account mismatch: %+v", byProv["antigravity"])
 	}
 }
@@ -224,7 +233,13 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 		case "/api/sub-usage/inventory":
 			writeJSON(w, 200, subUsageInventory{
 				CollectedAt: curNow.Format(time.RFC3339),
-				Today:       tokenDayStats{Tokens: 1_500_000, Requests: 320, CacheRead: 1_200_000, CacheWrite: 100_000, CacheInput: 1_400_000},
+				Today: tokenDayStats{
+					Tokens: 1_500_000, Requests: 320, CacheRead: 1_200_000, CacheWrite: 100_000, CacheInput: 1_400_000,
+					ByProvider: map[string]tokenDayStats{
+						"claude": {Tokens: 1_000_000, Requests: 220, CacheRead: 800_000, CacheWrite: 100_000, CacheInput: 950_000},
+						"codex":  {Tokens: 500_000, Requests: 100, CacheRead: 400_000, CacheInput: 450_000},
+					},
+				},
 				Accounts: []subUsageInventoryItem{
 					{Provider: "claude", AccountHash: "hash-claude-1", Email: "alice@example.com", Plan: "max", PlanRaw: "default_claude_max_20x", PlanDisplay: "Max 20x ($200)", TokenValid: true, TokenExpiresAt: curNow.Add(2 * time.Hour).Format(time.RFC3339)},
 					{Provider: "codex", AccountHash: "hash-codex-1", Email: "bob@example.com", Plan: "pro", PlanRaw: "pro", PlanDisplay: "Pro 20x", TokenValid: true, TokenExpiresAt: curNow.Add(4 * time.Hour).Format(time.RFC3339)},
@@ -247,6 +262,7 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 			case "codex":
 				writeJSON(w, 200, subUsageProbeResult{Account: &subUsageAccount{
 					Provider: "codex", AccountHash: "hash-codex-1", Email: "bob@example.com", Plan: "pro", PlanRaw: "pro", PlanDisplay: "Pro 20x", Status: "ok",
+					Credit: &subUsageCredit{Left: 48158, Unit: "credits"},
 					Windows: []subUsageWindow{
 						{Kind: "weekly", Label: "7D", UsedPercent: 25, ResetsAt: curNow.Add(100 * time.Hour).Format(time.RFC3339), CheckedAt: curNow.Format(time.RFC3339)},
 					},
@@ -275,7 +291,14 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 		case "/api/sub-usage/inventory":
 			writeJSON(w, 200, subUsageInventory{
 				CollectedAt: curNow.Format(time.RFC3339),
-				Today:       tokenDayStats{Tokens: 800_000, Requests: 140, CacheRead: 700_000, CacheInput: 750_000},
+				Today: tokenDayStats{
+					Tokens: 800_000, Requests: 140, CacheRead: 700_000, CacheInput: 750_000,
+					ByProvider: map[string]tokenDayStats{
+						// Claude used via gateway (no local claude subscription on devbox!)
+						"claude":      {Tokens: 500_000, Requests: 90, CacheRead: 450_000, CacheInput: 480_000},
+						"antigravity": {Tokens: 300_000, Requests: 50, CacheRead: 250_000, CacheInput: 270_000},
+					},
+				},
 				Accounts: []subUsageInventoryItem{
 					// Same shared antigravity account, earlier expiry -> MUST NOT be probed unless macpro fails!
 					{Provider: "antigravity", AccountHash: "hash-agy-shared", Email: "shared@example.com", TokenValid: true, TokenExpiresAt: curNow.Add(1 * time.Hour).Format(time.RFC3339)},
@@ -344,8 +367,9 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 		t.Fatalf("subline = %q, want aggregated today tokens 2.30M & cache hit", hs.Subline)
 	}
 
-	// Verify top "订阅额度" cards do NOT show machine names, and bottom sections are grouped BY MACHINE!
-	var sawSummary, sawToday, sawDevbox, sawMacpro bool
+	// Verify top "订阅额度" cards show Codex Credit and do NOT show machine names;
+	// bottom sections are grouped BY MACHINE showing per-vendor today token usage (no quota meters, no credit, 0-token omitted).
+	var sawSummary, sawToday, sawDevbox, sawMacpro, sawCodexTopCredit bool
 	for _, sec := range hs.Sections {
 		switch sec.Title {
 		case "订阅额度":
@@ -353,6 +377,9 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 			for _, r := range sec.Rows {
 				if r.Sublabel != "" {
 					t.Fatalf("top summary row %q must not display machine sublabel, got %q", r.Label, r.Sublabel)
+				}
+				if r.Label == "Codex" && r.Value == "Credit 48,158" {
+					sawCodexTopCredit = true
 				}
 			}
 		case "今日用量":
@@ -362,18 +389,30 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 			}
 		case "devbox":
 			sawDevbox = true
-			if len(sec.Rows) != 1 || sec.Rows[0].Label != "Antigravity" || len(sec.Rows[0].Meters) != 2 {
-				t.Fatalf("devbox machine section should show mapped Antigravity reading, got %+v", sec.Rows)
+			if len(sec.Rows) != 2 || sec.Rows[0].Label != "Claude" || sec.Rows[1].Label != "Gemini" {
+				t.Fatalf("devbox section should show non-zero vendor token rows (Claude via gateway + Gemini), got %+v", sec.Rows)
+			}
+			if sec.Rows[0].Sublabel != "" || sec.Rows[1].Sublabel != "shared@example.com" {
+				t.Fatalf("devbox vendor subscription metadata mismatch: %+v", sec.Rows)
+			}
+			for _, r := range sec.Rows {
+				if len(r.Meters) != 0 || !strings.HasSuffix(r.Value, " tok") {
+					t.Fatalf("machine vendor row must show token usage without quota meters, got %+v", r)
+				}
 			}
 		case "macpro":
 			sawMacpro = true
-			if len(sec.Rows) != 3 {
-				t.Fatalf("macpro machine section should show 3 agent rows, got %+v", sec.Rows)
+			// Antigravity has 0 tokens on macpro so only Claude and Codex are shown.
+			if len(sec.Rows) != 2 || sec.Rows[0].Label != "Claude" || sec.Rows[1].Label != "Codex" {
+				t.Fatalf("macpro section should show only non-zero vendor rows (Claude + Codex, omitting 0-token Gemini), got %+v", sec.Rows)
+			}
+			if strings.Contains(sec.Rows[1].Detail, "credit") || strings.Contains(sec.Rows[1].Value, "Credit") {
+				t.Fatalf("macpro Codex row must not show credit below, got %+v", sec.Rows[1])
 			}
 		}
 	}
-	if !sawSummary || !sawToday || !sawDevbox || !sawMacpro {
-		t.Fatalf("missing expected drawer sections: summary=%v today=%v devbox=%v macpro=%v", sawSummary, sawToday, sawDevbox, sawMacpro)
+	if !sawSummary || !sawToday || !sawDevbox || !sawMacpro || !sawCodexTopCredit {
+		t.Fatalf("missing expected drawer sections/credit: summary=%v today=%v devbox=%v macpro=%v codexCredit=%v", sawSummary, sawToday, sawDevbox, sawMacpro, sawCodexTopCredit)
 	}
 
 	// Verify failover on 401: advance time past TTL, make macpro's Antigravity 401 -> hub fails over to devbox!
@@ -528,5 +567,51 @@ func TestSubUsageRateLimitBackoffAndAllExpiredZeroRefresh(t *testing.T) {
 	}
 	if !strings.Contains(slotsExp[0].Status.Compact, "等待刷新") {
 		t.Fatalf("all-expired should show 等待刷新, got compact=%q", slotsExp[0].Status.Compact)
+	}
+}
+
+func TestSubUsageProxyConfigAndForwarding(t *testing.T) {
+	// 1. Verify resolveSubUsageProxy handles global URL, per-machine mapping, fallback, and direct.
+	if got := resolveSubUsageProxy("http://127.0.0.1:7890", "node1", "host1", false); got != "http://127.0.0.1:7890" {
+		t.Fatalf("global proxy = %q", got)
+	}
+	spec := "host1=socks5h://127.0.0.1:1080, host2=direct"
+	if got := resolveSubUsageProxy(spec, "id1", "host1", false); got != "socks5h://127.0.0.1:1080" {
+		t.Fatalf("host1 proxy = %q", got)
+	}
+	if got := resolveSubUsageProxy(spec, "id2", "host2", false); got != "direct" {
+		t.Fatalf("host2 proxy = %q", got)
+	}
+	if got := resolveSubUsageProxy(spec, "id3", "host3", false); got != "" {
+		t.Fatalf("unmatched host3 proxy = %q, want empty", got)
+	}
+
+	// 2. Verify probeOne routes HTTP requests through the explicit proxy URL.
+	home := t.TempDir()
+	now := time.Date(2026, 11, 27, 15, 0, 0, 0, time.UTC)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claudeCreds := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"sk-ant-test-tok","expiresAt":%d,"subscriptionType":"pro"}}`, now.Add(time.Hour).UnixMilli())
+	if err := os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte(claudeCreds), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+
+	var proxyHits atomic.Int32
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"five_hour":{"utilization":20,"resets_at":%q}}`, now.Add(time.Hour).Format(time.RFC3339))
+	}))
+	defer proxySrv.Close()
+
+	c := newSubUsageCollector(home, nil)
+	c.now = func() time.Time { return now }
+	c.claudeURL = "http://usage.invalid/api/oauth/usage"
+
+	res := c.probeOne(context.Background(), "claude", "", proxySrv.URL)
+	if proxyHits.Load() != 1 || res.Account == nil || res.Account.Status != "ok" || len(res.Account.Windows) != 1 {
+		t.Fatalf("proxy probe failed: hits=%d res=%+v", proxyHits.Load(), res)
 	}
 }

@@ -212,6 +212,9 @@ func (h *extHost) configureWithRestart(id string, restart bool, change func(*Ext
 	if x.Enabled && h.runs[id] == nil && h.ctx != nil {
 		h.startLocked(m, x)
 	}
+	if id == featureUsage && h.s != nil && !sameJSON(x.Config, before.Config) {
+		h.s.usageHub().resetCache()
+	}
 	return x, nil
 }
 

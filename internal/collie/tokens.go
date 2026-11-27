@@ -9,19 +9,21 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// The tokens this computer's agents ran, read from what Claude Code and
-// Codex write as they go: each sample reads what their transcripts gained
-// and adds every reply to the minute it came in. Antigravity keeps no counts
-// to read. All tokens count: input, cache writes, cache reads and output.
+// The tokens this computer's agents ran, read from what Claude Code, Codex,
+// and Antigravity write as they go: each sample reads what their transcripts
+// gained and adds every reply to the minute it came in. All tokens count:
+// input, cache writes, cache reads and output.
 //
 // A reply counts once: Claude Code writes one line per content block, all
 // with the message's id and usage, and a fork copies the history it starts
-// from into a new file; Codex repeats its token_count when nothing changed.
+// from into a new file; Codex repeats its token_count when nothing changed;
+// Antigravity keys each planner response by conversation id and step index.
 
 const (
 	tokenKeep = 26 * time.Hour // a day and the hour drawn before it
@@ -41,11 +43,24 @@ type tokenReport struct {
 
 // tokenDayStats summarizes today's local transcript token & cache activity.
 type tokenDayStats struct {
-	Tokens     int64 `json:"tokens,omitempty"`
-	Requests   int64 `json:"requests,omitempty"`
-	CacheRead  int64 `json:"cache_read,omitempty"`
-	CacheWrite int64 `json:"cache_write,omitempty"`
-	CacheInput int64 `json:"cache_input,omitempty"`
+	Tokens     int64                    `json:"tokens,omitempty"`
+	Requests   int64                    `json:"requests,omitempty"`
+	CacheRead  int64                    `json:"cache_read,omitempty"`
+	CacheWrite int64                    `json:"cache_write,omitempty"`
+	CacheInput int64                    `json:"cache_input,omitempty"`
+	ByProvider map[string]tokenDayStats `json:"by_provider,omitempty"`
+}
+
+func cloneTokenDayStats(st tokenDayStats) tokenDayStats {
+	out := st
+	if len(st.ByProvider) > 0 {
+		out.ByProvider = make(map[string]tokenDayStats, len(st.ByProvider))
+		for k, v := range st.ByProvider {
+			v.ByProvider = nil
+			out.ByProvider[k] = v
+		}
+	}
+	return out
 }
 
 type minuteStats struct {
@@ -57,6 +72,7 @@ type minuteStats struct {
 }
 
 type seenUsage struct {
+	provider   string
 	tokens     int64
 	cacheRead  int64
 	cacheWrite int64
@@ -67,10 +83,12 @@ type seenUsage struct {
 type lineParser func(m *tokenMeter, line []byte, f *meterFile, from time.Time)
 
 type meterFile struct {
-	parse lineParser
-	off   int64
-	mod   time.Time
-	total int64 // Codex: the running total last counted
+	parse  lineParser
+	off    int64
+	mod    time.Time
+	total  int64  // Codex: the running total last counted
+	model  string // Codex: last observed model from turn_context
+	convID string // Antigravity: conversation id from transcript path
 }
 
 // files and walked belong to the scan (one goroutine); mu guards the counts
@@ -81,10 +99,11 @@ type tokenMeter struct {
 	walked time.Time
 
 	mu      sync.Mutex
-	minutes map[int64]int64       // unix minute → tokens
-	mstats  map[int64]minuteStats // unix minute → detailed stats
-	seen    map[string]seenUsage  // reply → usage counted so far
-	seenAt  map[string]int64      // reply → its unix time, to forget it
+	minutes map[int64]int64                  // unix minute → tokens
+	mstats  map[int64]minuteStats            // unix minute → detailed stats
+	mpstats map[int64]map[string]minuteStats // unix minute → provider → detailed stats
+	seen    map[string]seenUsage             // reply → usage counted so far
+	seenAt  map[string]int64                 // reply → its unix time, to forget it
 }
 
 func newTokenMeter(home string) *tokenMeter {
@@ -93,6 +112,7 @@ func newTokenMeter(home string) *tokenMeter {
 		files:   map[string]*meterFile{},
 		minutes: map[int64]int64{},
 		mstats:  map[int64]minuteStats{},
+		mpstats: map[int64]map[string]minuteStats{},
 		seen:    map[string]seenUsage{},
 		seenAt:  map[string]int64{},
 	}
@@ -112,6 +132,7 @@ func (m *tokenMeter) scan(now time.Time) {
 		for day := time.Date(y, mo, d, 0, 0, 0, 0, now.Location()); !day.After(now); day = day.AddDate(0, 0, 1) {
 			m.walk(filepath.Join(codex, day.Format("2006/01/02")), from, (*tokenMeter).codexLine)
 		}
+		m.walkAgy(from)
 	} else {
 		for p, f := range m.files {
 			if fi, err := os.Stat(p); err == nil {
@@ -120,6 +141,40 @@ func (m *tokenMeter) scan(now time.Time) {
 		}
 	}
 	m.forget(from)
+}
+
+func (m *tokenMeter) walkAgy(from time.Time) {
+	seenDirs := map[string]bool{}
+	for _, root := range []string{
+		filepath.Join(m.home, ".gemini", "antigravity-cli"),
+		filepath.Join(m.home, ".gemini", "antigravity"),
+	} {
+		brain := filepath.Join(root, "brain")
+		if seenDirs[brain] {
+			continue
+		}
+		seenDirs[brain] = true
+		entries, err := os.ReadDir(brain)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			p := filepath.Join(brain, e.Name(), agyTranscriptRelPath)
+			fi, err := os.Stat(p)
+			if err != nil || fi.IsDir() || fi.ModTime().Before(from) {
+				continue
+			}
+			f := m.files[p]
+			if f == nil {
+				f = &meterFile{parse: (*tokenMeter).agyLine, convID: e.Name()}
+				m.files[p] = f
+			}
+			m.update(p, f, fi, from)
+		}
+	}
 }
 
 func (m *tokenMeter) walk(root string, from time.Time, parse lineParser) {
@@ -179,7 +234,14 @@ func (m *tokenMeter) read(p string, f *meterFile, from time.Time) {
 	}
 }
 
-func (m *tokenMeter) add(key string, at time.Time, tokens, cacheRead, cacheWrite, cacheInput int64, from time.Time) {
+func tokenProviderForModel(model, fallback string) string {
+	if cands := subProvidersForModel(model); len(cands) > 0 {
+		return cands[0]
+	}
+	return fallback
+}
+
+func (m *tokenMeter) add(key, provider string, at time.Time, tokens, cacheRead, cacheWrite, cacheInput int64, from time.Time) {
 	if tokens <= 0 || at.Before(from) {
 		return
 	}
@@ -191,11 +253,15 @@ func (m *tokenMeter) add(key string, at time.Time, tokens, cacheRead, cacheWrite
 		if tokens <= prev.tokens {
 			return
 		}
+		if prev.provider != "" {
+			provider = prev.provider
+		}
 		dt := tokens - prev.tokens
 		dcr := max(int64(0), cacheRead-prev.cacheRead)
 		dcw := max(int64(0), cacheWrite-prev.cacheWrite)
 		dci := max(int64(0), cacheInput-prev.cacheInput)
 		m.seen[key] = seenUsage{
+			provider:   provider,
 			tokens:     tokens,
 			cacheRead:  max(prev.cacheRead, cacheRead),
 			cacheWrite: max(prev.cacheWrite, cacheWrite),
@@ -206,14 +272,41 @@ func (m *tokenMeter) add(key string, at time.Time, tokens, cacheRead, cacheWrite
 		ms.cacheRead += dcr
 		ms.cacheWrite += dcw
 		ms.cacheInput += dci
+		if provider != "" {
+			pm := m.mpstats[minKey]
+			if pm == nil {
+				pm = map[string]minuteStats{}
+				m.mpstats[minKey] = pm
+			}
+			ps := pm[provider]
+			ps.tokens += dt
+			ps.cacheRead += dcr
+			ps.cacheWrite += dcw
+			ps.cacheInput += dci
+			pm[provider] = ps
+		}
 	} else {
-		m.seen[key] = seenUsage{tokens: tokens, cacheRead: cacheRead, cacheWrite: cacheWrite, cacheInput: cacheInput}
+		m.seen[key] = seenUsage{provider: provider, tokens: tokens, cacheRead: cacheRead, cacheWrite: cacheWrite, cacheInput: cacheInput}
 		m.minutes[minKey] += tokens
 		ms.tokens += tokens
 		ms.requests++
 		ms.cacheRead += cacheRead
 		ms.cacheWrite += cacheWrite
 		ms.cacheInput += cacheInput
+		if provider != "" {
+			pm := m.mpstats[minKey]
+			if pm == nil {
+				pm = map[string]minuteStats{}
+				m.mpstats[minKey] = pm
+			}
+			ps := pm[provider]
+			ps.tokens += tokens
+			ps.requests++
+			ps.cacheRead += cacheRead
+			ps.cacheWrite += cacheWrite
+			ps.cacheInput += cacheInput
+			pm[provider] = ps
+		}
 	}
 	m.mstats[minKey] = ms
 	m.seenAt[key] = at.Unix()
@@ -245,12 +338,25 @@ func (m *tokenMeter) claudeLine(line []byte, _ *meterFile, from time.Time) {
 	u := v.Message.Usage
 	total := u.Input + u.CacheWrite + u.CacheRead + u.Output
 	cacheIn := u.Input + u.CacheWrite + u.CacheRead
-	m.add("c:"+v.Message.ID, v.Timestamp, total, u.CacheRead, u.CacheWrite, cacheIn, from)
+	prov := tokenProviderForModel(v.Message.Model, "claude")
+	m.add("c:"+v.Message.ID, prov, v.Timestamp, total, u.CacheRead, u.CacheWrite, cacheIn, from)
 }
 
 // codexLine: a token_count whose running total moved counts its last reply.
 // Codex's input already holds what came from the cache.
 func (m *tokenMeter) codexLine(line []byte, f *meterFile, from time.Time) {
+	if bytes.Contains(line, []byte(`"turn_context"`)) {
+		var tc struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Model string `json:"model"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(line, &tc) == nil && tc.Type == "turn_context" && tc.Payload.Model != "" {
+			f.model = tc.Payload.Model
+		}
+		return
+	}
 	if !bytes.Contains(line, []byte(`"token_count"`)) {
 		return
 	}
@@ -280,7 +386,36 @@ func (m *tokenMeter) codexLine(line []byte, f *meterFile, from time.Time) {
 	}
 	f.total = total
 	last := v.Payload.Info.Last
-	m.add("x:"+v.Timestamp.Format(time.RFC3339Nano), v.Timestamp, last.Tokens, last.CacheRead, last.CacheWrite, last.Input, from)
+	prov := tokenProviderForModel(f.model, "codex")
+	m.add("x:"+v.Timestamp.Format(time.RFC3339Nano), prov, v.Timestamp, last.Tokens, last.CacheRead, last.CacheWrite, last.Input, from)
+}
+
+// agyLine: an Antigravity PLANNER_RESPONSE step's token counts.
+// input_tokens is uncached input, so total input is input_tokens + cache_read_tokens.
+func (m *tokenMeter) agyLine(line []byte, f *meterFile, from time.Time) {
+	if !bytes.Contains(line, []byte(`"PLANNER_RESPONSE"`)) {
+		return
+	}
+	var v struct {
+		Type            string    `json:"type"`
+		StepIndex       int       `json:"step_index"`
+		CreatedAt       time.Time `json:"created_at"`
+		Model           string    `json:"model"`
+		InputTokens     int64     `json:"input_tokens"`
+		CacheReadTokens int64     `json:"cache_read_tokens"`
+		OutputTokens    int64     `json:"output_tokens"`
+	}
+	if json.Unmarshal(line, &v) != nil || v.Type != "PLANNER_RESPONSE" || v.CreatedAt.IsZero() {
+		return
+	}
+	total := v.InputTokens + v.CacheReadTokens + v.OutputTokens
+	if total <= 0 {
+		return
+	}
+	cacheIn := v.InputTokens + v.CacheReadTokens
+	prov := tokenProviderForModel(v.Model, "antigravity")
+	key := "a:" + f.convID + ":" + strconv.Itoa(v.StepIndex)
+	m.add(key, prov, v.CreatedAt, total, v.CacheReadTokens, 0, cacheIn, from)
 }
 
 // forget drops minutes and replies older than from, and files not written
@@ -298,6 +433,7 @@ func (m *tokenMeter) forget(from time.Time) {
 		if t < cut-60 {
 			delete(m.minutes, t)
 			delete(m.mstats, t)
+			delete(m.mpstats, t)
 		}
 	}
 	for k, t := range m.seenAt {
@@ -314,6 +450,7 @@ func (m *tokenMeter) todayDetail(now time.Time) tokenDayStats {
 	y, mo, d := now.Date()
 	midnight := time.Date(y, mo, d, 0, 0, 0, 0, now.Location()).Unix()
 	var out tokenDayStats
+	var byProv map[string]tokenDayStats
 	for t, ms := range m.mstats {
 		if t >= midnight {
 			out.Tokens += ms.tokens
@@ -321,7 +458,25 @@ func (m *tokenMeter) todayDetail(now time.Time) tokenDayStats {
 			out.CacheRead += ms.cacheRead
 			out.CacheWrite += ms.cacheWrite
 			out.CacheInput += ms.cacheInput
+			for prov, ps := range m.mpstats[t] {
+				if ps.tokens <= 0 {
+					continue
+				}
+				if byProv == nil {
+					byProv = map[string]tokenDayStats{}
+				}
+				cur := byProv[prov]
+				cur.Tokens += ps.tokens
+				cur.Requests += ps.requests
+				cur.CacheRead += ps.cacheRead
+				cur.CacheWrite += ps.cacheWrite
+				cur.CacheInput += ps.cacheInput
+				byProv[prov] = cur
+			}
 		}
+	}
+	if len(byProv) > 0 {
+		out.ByProvider = byProv
 	}
 	return out
 }

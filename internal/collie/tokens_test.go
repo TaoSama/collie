@@ -92,3 +92,44 @@ func TestTokenMeterForgets(t *testing.T) {
 		t.Fatalf("kept %d replies, %d minutes", len(m.seen), len(m.minutes))
 	}
 }
+
+func TestTokenMeterByProviderAndAntigravity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
+	now := time.Date(2026, 11, 27, 15, 30, 30, 0, time.Local)
+	ts := func(d time.Duration) string { return now.Add(d).UTC().Format(time.RFC3339Nano) }
+
+	// Claude Code transcript
+	appendFile(t, filepath.Join(home, ".claude/projects/-w/a.jsonl"),
+		claudeUsageLine("m1", ts(-2*time.Minute), 100, 50, 800, 50))
+	// Codex transcript with turn_context model + token_count
+	rollout := filepath.Join(home, ".codex/sessions", now.Format("2006/01/02"), "rollout-1.jsonl")
+	appendFile(t, rollout,
+		`{"timestamp":"`+ts(-2*time.Minute)+`","type":"turn_context","payload":{"model":"gpt-6.2-sol"}}`+"\n"+
+			`{"timestamp":"`+ts(-1*time.Minute)+`","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":400},"last_token_usage":{"input_tokens":350,"cached_input_tokens":300,"total_tokens":400}}}}`+"\n")
+	// Antigravity CLI transcript (duplicate step_index must deduplicate)
+	agyLog := filepath.Join(home, ".gemini/antigravity-cli/brain/conv-1/.system_generated/logs/transcript.jsonl")
+	appendFile(t, agyLog,
+		`{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"`+ts(-1*time.Minute)+`","model":"gemini-4-neon-high","input_tokens":200,"cache_read_tokens":1000,"output_tokens":100}`+"\n"+
+			`{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"`+ts(-1*time.Minute)+`","model":"gemini-4-neon-high","input_tokens":200,"cache_read_tokens":1000,"output_tokens":100}`+"\n")
+
+	m := newTokenMeter(home)
+	m.scan(now)
+	st := m.todayDetail(now)
+	if st.Tokens != 1000+400+1300 {
+		t.Fatalf("total today tokens = %d, want %d", st.Tokens, 2700)
+	}
+	if len(st.ByProvider) != 3 {
+		t.Fatalf("by_provider len = %d, want 3: %+v", len(st.ByProvider), st.ByProvider)
+	}
+	if got := st.ByProvider["claude"]; got.Tokens != 1000 || got.CacheRead != 800 || got.CacheInput != 950 {
+		t.Fatalf("claude provider stats = %+v", got)
+	}
+	if got := st.ByProvider["codex"]; got.Tokens != 400 || got.CacheRead != 300 || got.CacheInput != 350 {
+		t.Fatalf("codex provider stats = %+v", got)
+	}
+	if got := st.ByProvider["antigravity"]; got.Tokens != 1300 || got.Requests != 1 || got.CacheRead != 1000 || got.CacheInput != 1200 {
+		t.Fatalf("antigravity provider stats = %+v", got)
+	}
+}

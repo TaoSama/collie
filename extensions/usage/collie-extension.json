@@ -59,6 +59,12 @@
         "title": "缓存刷新间隔（秒）",
         "description": "hub 汇总各订阅额度的最小间隔（60–600 秒，默认 300）。",
         "default": 300
+      },
+      "proxy_url": {
+        "type": "string",
+        "title": "代理出口",
+        "description": "可选。读取订阅用量时的 HTTP/SOCKS5 代理（如 http://127.0.0.1:7890 或 socks5h://127.0.0.1:1080），支持逗号分隔按机器指定（如 host1=socks5h://127.0.0.1:1080，或 host1=direct 直连）；留空保持各机默认环境或系统代理。",
+        "default": ""
       }
     }
   },

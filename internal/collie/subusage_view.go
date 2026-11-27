@@ -62,6 +62,8 @@ type subPoolSummary struct {
 	SingleTier      string // populated when Total == 1
 	SingleMachines  []string
 	Windows         []subPoolWindow
+	CreditLeft      float64 // summed open-ended credit balance (e.g. Codex credits)
+	CreditUnit      string
 	NextAvailableAt *time.Time
 	SingleStatus    string // ok | limited | expired | error when Total == 1
 }
@@ -231,7 +233,10 @@ func parseSubWindows(raws []subUsageWindow) []parsedSubWindow {
 }
 
 func subWindowRank(label, scopedModel string) float64 {
-	if scopedModel == "partner" {
+	if scopedModel == "partner" || strings.HasPrefix(label, "Partner") {
+		if strings.Contains(label, "7D") {
+			return 2.3
+		}
 		return 2.2
 	}
 	switch label {
@@ -684,9 +689,17 @@ func summarizeSubPools(accounts []aggSubAccount, model string, now time.Time, in
 			}
 		}
 
+		var creditLeft float64
+		var creditUnit string
 		for _, a := range members {
 			if subAccountAvailable(a, now) {
 				availCount++
+			}
+			if a.Credit != nil && a.Credit.Left > 0 && a.Credit.Limit <= 0 {
+				creditLeft += a.Credit.Left
+				if creditUnit == "" && a.Credit.Unit != "" {
+					creditUnit = a.Credit.Unit
+				}
 			}
 		}
 		collectWins(pm)
@@ -749,6 +762,8 @@ func summarizeSubPools(accounts []aggSubAccount, model string, now time.Time, in
 			Available:       availCount,
 			Total:           len(members),
 			Windows:         wins,
+			CreditLeft:      creditLeft,
+			CreditUnit:      creditUnit,
 			NextAvailableAt: nextAvail,
 		}
 		if len(members) == 1 {
@@ -942,7 +957,15 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 		}
 		if len(snap.Machines) > 0 {
 			hs.Subline = fmt.Sprintf("已扫描 %d 台在线电脑", len(snap.Machines))
-			hs.Sections = append(hs.Sections, buildSubOtherMachinesSection(snap.Machines, false))
+			if cfg.ShowTokens && totalToday.Tokens > 0 {
+				hs.Subline += " · 今日 " + subFormatCompactTokens(totalToday.Tokens)
+				hs.Sections = append(hs.Sections, buildSubTodaySection(snap.Machines, totalToday))
+			}
+			machineSecs, otherNodes := buildSubMachineSections(snap.Machines)
+			hs.Sections = append(hs.Sections, machineSecs...)
+			if len(otherNodes) > 0 {
+				hs.Sections = append(hs.Sections, buildSubOtherMachinesSection(otherNodes, len(machineSecs) > 0))
+			}
 		}
 		return hs
 	}
@@ -1230,15 +1253,28 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 					Label: actLabel,
 				},
 			}
+			creditText := ""
+			if p.CreditLeft > 0 {
+				creditText = "Credit " + subFormatCommas(int64(math.Round(p.CreditLeft)))
+			}
 			if p.Available == 0 {
 				row.Value = subUnavailableShort(p.SingleStatus, p.Total)
 				row.Tone = "danger"
+				var dets []string
 				if p.NextAvailableAt != nil {
-					row.Detail = "预计 " + subFormatResetDetail(*p.NextAvailableAt, now) + " 恢复"
+					dets = append(dets, "预计 "+subFormatResetDetail(*p.NextAvailableAt, now)+" 恢复")
 				} else if p.SingleStatus == "expired" {
-					row.Detail = "等待本机 Agent 刷新"
+					dets = append(dets, "等待本机 Agent 刷新")
 				}
+				if creditText != "" {
+					dets = append(dets, "剩余 "+creditText)
+				}
+				row.Detail = strings.Join(dets, " · ")
 			} else {
+				if creditText != "" {
+					row.Value = creditText
+					row.Tone = "info"
+				}
 				for _, w := range p.Windows {
 					if w.JustReset {
 						row.Meters = append(row.Meters, extproto.HeaderStatusItem{Label: w.Label, Value: "已重置", Sub: "等待刷新", Tone: "ok"})
@@ -1257,11 +1293,11 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 		hs.Sections = append(hs.Sections, buildSubTodaySection(snap.Machines, totalToday))
 	}
 
-	// 3. Per-machine subscription breakdown (grouped by machine).
-	machineSecs, otherNodes := buildSubMachineSections(snap.Machines, cfg, now, detailMeter)
+	// 3. Per-machine today token breakdown by model vendor (grouped by machine).
+	machineSecs, otherNodes := buildSubMachineSections(snap.Machines)
 	hs.Sections = append(hs.Sections, machineSecs...)
 
-	// 4. Online machines with no subscriptions or legacy version (only when non-empty).
+	// 4. Online machines with zero today usage or legacy/error state (only when non-empty).
 	if len(otherNodes) > 0 {
 		hs.Sections = append(hs.Sections, buildSubOtherMachinesSection(otherNodes, true))
 	}
@@ -1331,121 +1367,95 @@ func buildSubTodaySection(nodes []subUsageMachineNode, total tokenDayStats) extp
 	return sec
 }
 
-func buildSubMachineSections(nodes []subUsageMachineNode, cfg subUsageConfig, now time.Time, detailMeter func(string, float64, float64, *time.Time) extproto.HeaderStatusItem) (sections []extproto.HeaderStatusSection, others []subUsageMachineNode) {
+func buildSubMachineSections(nodes []subUsageMachineNode) (sections []extproto.HeaderStatusSection, others []subUsageMachineNode) {
 	for _, n := range nodes {
-		if len(n.Report.Accounts) == 0 {
+		if n.Error != "" || n.Unsupported {
 			others = append(others, n)
 			continue
 		}
-		accts := append([]subUsageAccount(nil), n.Report.Accounts...)
-		sort.SliceStable(accts, func(i, j int) bool {
-			oi, oj := subProviderOrder(accts[i].Provider), subProviderOrder(accts[j].Provider)
-			if oi != oj {
-				return oi < oj
+		st := machineTodayStats(n)
+		subsByProv := map[string]subUsageAccount{}
+		for _, a := range n.Report.Accounts {
+			p := strings.ToLower(strings.TrimSpace(a.Provider))
+			if p == "" {
+				continue
 			}
-			return accts[i].Email < accts[j].Email
-		})
-
-		var metaParts []string
-		metaParts = append(metaParts, fmt.Sprintf("%d 个订阅", len(accts)))
-		if st := machineTodayStats(n); cfg.ShowTokens && st.Tokens > 0 {
-			metaParts = append(metaParts, "今日 "+subFormatCompactTokens(st.Tokens))
+			if _, exists := subsByProv[p]; !exists {
+				subsByProv[p] = a
+			}
 		}
 
-		sec := extproto.HeaderStatusSection{
+		var rows []extproto.HeaderStatusRow
+		if len(st.ByProvider) > 0 {
+			provs := make([]string, 0, len(st.ByProvider))
+			for p, pst := range st.ByProvider {
+				if pst.Tokens > 0 {
+					provs = append(provs, strings.ToLower(strings.TrimSpace(p)))
+				}
+			}
+			sort.Slice(provs, func(i, j int) bool {
+				oi, oj := subProviderOrder(provs[i]), subProviderOrder(provs[j])
+				if oi != oj {
+					return oi < oj
+				}
+				return provs[i] < provs[j]
+			})
+			for _, prov := range provs {
+				pst := st.ByProvider[prov]
+				if pst.Tokens <= 0 {
+					continue
+				}
+				sub, hasSub := subsByProv[prov]
+				rows = append(rows, buildSubMachineVendorTokenRow(prov, pst, sub, hasSub))
+			}
+		} else if st.Tokens > 0 {
+			// Fallback for older nodes that report aggregate today tokens without by_provider.
+			rows = append(rows, buildSubTokenRow("今日用量", st, ""))
+		}
+
+		if len(rows) == 0 {
+			others = append(others, n)
+			continue
+		}
+
+		var metaParts []string
+		if len(n.Report.Accounts) > 0 {
+			metaParts = append(metaParts, fmt.Sprintf("%d 个订阅", len(n.Report.Accounts)))
+		}
+		if st.Tokens > 0 {
+			metaParts = append(metaParts, "今日 "+subFormatCompactTokens(st.Tokens))
+		}
+		sections = append(sections, extproto.HeaderStatusSection{
 			Title:       subMachineDisplayName(n),
 			Meta:        strings.Join(metaParts, " · "),
 			Icon:        "machine",
 			Collapsible: true,
-		}
-		for _, raw := range accts {
-			sec.Rows = append(sec.Rows, buildSubMachineAccountRow(raw, now, detailMeter))
-		}
-		sections = append(sections, sec)
+			Rows:        rows,
+		})
 	}
 	return sections, others
 }
 
-func buildSubMachineAccountRow(raw subUsageAccount, now time.Time, detailMeter func(string, float64, float64, *time.Time) extproto.HeaderStatusItem) extproto.HeaderStatusRow {
-	prov := strings.ToLower(strings.TrimSpace(raw.Provider))
-	tierDisp := formatSubPlanDisplay(prov, raw.Plan, raw.PlanRaw, raw.PlanDisplay)
-	status := normalizeSubStatus(raw.Status)
-	wins := parseSubWindows(raw.Windows)
-
-	row := extproto.HeaderStatusRow{
-		Label:  subProviderRowName(prov),
-		Icon:   subProviderIconKey(prov),
-		Accent: subProviderAccentKey(prov),
-	}
-	if e := strings.TrimSpace(raw.Email); e != "" {
-		row.Sublabel = e
-	}
-
-	var badges []extproto.HeaderStatusBadge
-	if tierDisp != "" {
-		badges = append(badges, extproto.HeaderStatusBadge{Text: tierDisp, Tone: subTierBadgeTone(tierDisp)})
-	}
-
-	var availAt *time.Time
-	if t, ok := parseSubTime(raw.AvailableAt); ok {
-		availAt = &t
-	}
-	switch status {
-	case "expired":
-		badges = append(badges, extproto.HeaderStatusBadge{Text: "等待刷新", Tone: "danger"})
-		row.Value = "等待刷新"
-		row.Tone = "danger"
-	case "limited":
-		badges = append(badges, extproto.HeaderStatusBadge{Text: "已限流", Tone: "warn"})
-		row.Tone = "warn"
-		if availAt != nil && availAt.After(now) {
-			row.Value = subFormatClock(*availAt, now) + " 恢复"
-		} else {
-			row.Value = "已限流"
+func buildSubMachineVendorTokenRow(prov string, st tokenDayStats, sub subUsageAccount, hasSub bool) extproto.HeaderStatusRow {
+	row := buildSubTokenRow(subProviderLabel(prov, ""), st, "")
+	row.Icon = subProviderIconKey(prov)
+	row.Accent = subProviderAccentKey(prov)
+	if hasSub {
+		if e := strings.TrimSpace(sub.Email); e != "" {
+			row.Sublabel = e
 		}
-	case "error":
-		badges = append(badges, extproto.HeaderStatusBadge{Text: "读取失败", Tone: "warn"})
-		row.Value = "读取失败"
-		row.Tone = "warn"
-	default:
-		row.Value = "可用"
-		row.Tone = "ok"
-	}
-	if len(badges) > 0 {
-		row.Badges = badges
-	}
-
-	var liveWins []parsedSubWindow
-	for _, w := range wins {
-		if !subWindowHasReset(w, now) {
-			liveWins = append(liveWins, w)
+		if tierDisp := formatSubPlanDisplay(prov, sub.Plan, sub.PlanRaw, sub.PlanDisplay); tierDisp != "" {
+			tierBadge := extproto.HeaderStatusBadge{Text: tierDisp, Tone: subTierBadgeTone(tierDisp)}
+			row.Badges = append([]extproto.HeaderStatusBadge{tierBadge}, row.Badges...)
 		}
 	}
-	for _, w := range liveWins {
-		row.Meters = append(row.Meters, detailMeter(w.Label, w.PctUsed, math.Max(0, 100-w.PctUsed), w.ResetsAt))
-	}
-
-	var details []string
-	if raw.Credit != nil && raw.Credit.Left > 0 {
-		if raw.Credit.Limit > 0 {
-			details = append(details, fmt.Sprintf("余额 %s / %s", subFormatCommas(int64(math.Round(raw.Credit.Left))), subFormatCommas(int64(math.Round(raw.Credit.Limit)))))
-		} else {
-			details = append(details, fmt.Sprintf("额外余额 %s %s", subFormatCommas(int64(math.Round(raw.Credit.Left))), raw.Credit.Unit))
-		}
-	}
-	if e := strings.TrimSpace(raw.Error); e != "" {
-		details = append(details, e)
-	} else if len(liveWins) == 0 && status == "ok" {
-		details = append(details, "暂无窗口读数")
-	}
-	row.Detail = strings.Join(details, " · ")
 	return row
 }
 
 func buildSubOtherMachinesSection(nodes []subUsageMachineNode, collapsed bool) extproto.HeaderStatusSection {
 	sec := extproto.HeaderStatusSection{
 		Title:       "其他在线电脑",
-		Meta:        fmt.Sprintf("%d 台无订阅登录", len(nodes)),
+		Meta:        fmt.Sprintf("%d 台今日无用量", len(nodes)),
 		Icon:        "machine",
 		Collapsible: true,
 		Collapsed:   collapsed,
@@ -1454,6 +1464,14 @@ func buildSubOtherMachinesSection(nodes []subUsageMachineNode, collapsed bool) e
 		row := extproto.HeaderStatusRow{Label: subMachineDisplayName(n)}
 		if n.Local {
 			row.Badges = append(row.Badges, extproto.HeaderStatusBadge{Text: "hub", Tone: "muted"})
+		}
+		for _, a := range n.Report.Accounts {
+			prov := strings.ToLower(strings.TrimSpace(a.Provider))
+			lbl := subProviderLabel(prov, "")
+			if tierDisp := formatSubPlanDisplay(prov, a.Plan, a.PlanRaw, a.PlanDisplay); tierDisp != "" {
+				lbl += " " + tierDisp
+			}
+			row.Badges = append(row.Badges, extproto.HeaderStatusBadge{Text: lbl, Tone: "muted"})
 		}
 		switch {
 		case n.Unsupported:
@@ -1465,7 +1483,7 @@ func buildSubOtherMachinesSection(nodes []subUsageMachineNode, collapsed bool) e
 			row.Tone = "warn"
 			row.Detail = n.Error
 		default:
-			row.Value = "无订阅登录"
+			row.Value = "今日无用量"
 			row.Tone = "muted"
 		}
 		sec.Rows = append(sec.Rows, row)
@@ -1523,6 +1541,9 @@ func formatSubUsageText(snap subUsageSnapshot, cfg subUsageConfig, model string,
 				seg += " 重置 " + subFormatClock(*w.NextResetAt, now)
 			}
 			parts = append(parts, seg)
+		}
+		if p.CreditLeft > 0 {
+			parts = append(parts, "Credit "+subFormatCommas(int64(math.Round(p.CreditLeft))))
 		}
 		if len(parts) == 0 {
 			parts = append(parts, subUnavailableShort(p.SingleStatus, p.Total))

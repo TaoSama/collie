@@ -15,7 +15,7 @@
 | --- | --- | --- | --- |
 | Claude Code | `~/.claude/.credentials.json`（或 `$CLAUDE_CONFIG_DIR`）、macOS Keychain `Claude Code-credentials`，以及 `~/.claude.json` 元信息 | `GET https://api.anthropic.com/api/oauth/usage` | 订阅档位（Pro / Max 5x / Max 20x / Team / Enterprise）、5H / 7D / 模型窗口剩余比例与重置时间 |
 | Codex | `~/.codex/auth.json`（或 `$CODEX_HOME`）、macOS Keychain `Codex Auth`，离线降级读取最近会话 `rate_limits` | `GET https://chatgpt.com/backend-api/wham/usage` | 订阅档位（Plus / ProLite 5x / Pro 20x / Team）、主/次窗口剩余比例与重置时间、额外余额 |
-| Antigravity | `~/.gemini/antigravity-cli/antigravity-oauth-token`、`~/.gemini/oauth_creds.json` | `POST /v1internal:loadCodeAssist` 与 `/v1internal:fetchAvailableModels` | 订阅档位（Free / Pro / G1 Ultra Lite / G1 Ultra）、Gemini 5H 与 Partner 5H 剩余比例与重置时间 |
+| Antigravity | `~/.gemini/antigravity-cli/antigravity-oauth-token`、`~/.gemini/oauth_creds.json` | `POST /v1internal:loadCodeAssist` 与 `/v1internal:retrieveUserQuotaSummary`（回退 `/v1internal:fetchAvailableModels`） | 订阅档位（Free / Pro / G1 Ultra Lite / G1 Ultra）、Gemini 5H / 7D 与 Partner 5H / 7D 剩余比例与重置时间 |
 
 ## 配置项
 
@@ -25,6 +25,7 @@
 | `show_tokens` | `true` | 是否在标题栏次行和抽屉中汇总各电脑今日 Token 与缓存命中率 |
 | `dedupe_accounts` | `true` | 同一订阅账号在多台电脑登录时先去重再单机读取，避免重复请求 |
 | `refresh_s` | `300` | 缓存刷新间隔（60–600 秒，默认 5 分钟；手动刷新最小冷却 30 秒） |
+| `proxy_url` | `""` | 可选。读取订阅用量时的 HTTP/SOCKS5 代理（如 `http://127.0.0.1:7890` 或 `socks5h://127.0.0.1:1080`），支持逗号分隔按机器指定（如 `host1=socks5h://127.0.0.1:1080`，或 `host1=direct` 直连）；留空保持各机默认环境或系统代理 |
 
 ## 测试
 

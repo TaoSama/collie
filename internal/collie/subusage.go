@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -119,12 +120,15 @@ type subUsageCollector struct {
 	codexURL  string
 	agyURLs   []string
 
-	mu       sync.Mutex
-	cached   *subUsageMachineReport
-	cachedAt time.Time
-	lastGood map[string]cachedSubAccount // provider → last good reading for transient fallback
-	inFlight chan struct{}
+	mu           sync.Mutex
+	cached       *subUsageMachineReport
+	cachedAt     time.Time
+	lastGood     map[string]cachedSubAccount // provider → last good reading for transient fallback
+	proxyClients map[string]*http.Client     // normalized proxy spec → cached http.Client
+	inFlight     chan struct{}
 }
+
+type subUsageProxyCtxKey struct{}
 
 type cachedSubAccount struct {
 	acct subUsageAccount
@@ -133,14 +137,15 @@ type cachedSubAccount struct {
 
 func newSubUsageCollector(home string, sysmon *sysMonitor) *subUsageCollector {
 	return &subUsageCollector{
-		home:      home,
-		sysmon:    sysmon,
-		client:    subUsageHTTPClient(subUsageProviderWait),
-		now:       time.Now,
-		claudeURL: defaultClaudeUsageURL,
-		codexURL:  defaultCodexUsageURL,
-		agyURLs:   append([]string(nil), defaultAgyBaseURLs...),
-		lastGood:  map[string]cachedSubAccount{},
+		home:         home,
+		sysmon:       sysmon,
+		client:       subUsageHTTPClient(subUsageProviderWait),
+		now:          time.Now,
+		claudeURL:    defaultClaudeUsageURL,
+		codexURL:     defaultCodexUsageURL,
+		agyURLs:      append([]string(nil), defaultAgyBaseURLs...),
+		lastGood:     map[string]cachedSubAccount{},
+		proxyClients: map[string]*http.Client{},
 	}
 }
 
@@ -168,7 +173,8 @@ func (s *Server) getSubUsageProbe(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	prov := strings.ToLower(strings.TrimSpace(q.Get("provider")))
 	hash := strings.ToLower(strings.TrimSpace(q.Get("account_hash")))
-	res := s.localSubUsageCollector().probeOne(r.Context(), prov, hash)
+	proxy := strings.TrimSpace(q.Get("proxy"))
+	res := s.localSubUsageCollector().probeOne(r.Context(), prov, hash, proxy)
 	writeJSON(w, 200, res)
 }
 
@@ -202,10 +208,13 @@ func (c *subUsageCollector) inventory(ctx context.Context) subUsageInventory {
 
 // probeOne performs Phase 2: targeted read-only usage fetch for a single
 // provider/account_hash on this machine. Never refreshes tokens or writes files.
-func (c *subUsageCollector) probeOne(ctx context.Context, provider, expectedHash string) subUsageProbeResult {
+func (c *subUsageCollector) probeOne(ctx context.Context, provider, expectedHash, proxySpec string) subUsageProbeResult {
 	now := c.now()
 	pctx, cancel := context.WithTimeout(ctx, subUsageProviderWait)
 	defer cancel()
+	if proxySpec = normalizeSubUsageProxyURL(proxySpec); proxySpec != "" {
+		pctx = context.WithValue(pctx, subUsageProxyCtxKey{}, proxySpec)
+	}
 
 	var res subUsageProbeResult
 	switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -277,7 +286,7 @@ func (c *subUsageCollector) probeAll(ctx context.Context) subUsageMachineReport 
 		wg.Add(1)
 		go func(idx int, prov string) {
 			defer wg.Done()
-			results[idx] = c.probeOne(ctx, prov, "").Account
+			results[idx] = c.probeOne(ctx, prov, "", "").Account
 		}(i, p)
 	}
 	wg.Wait()
@@ -320,6 +329,7 @@ func (c *subUsageCollector) probeAll(ctx context.Context) subUsageMachineReport 
 
 func cloneMachineReport(r subUsageMachineReport) subUsageMachineReport {
 	out := r
+	out.Today = cloneTokenDayStats(r.Today)
 	out.Accounts = make([]subUsageAccount, len(r.Accounts))
 	for i, a := range r.Accounts {
 		out.Accounts[i] = cloneSubAccount(a)
@@ -340,8 +350,12 @@ func cloneSubAccount(a subUsageAccount) subUsageAccount {
 }
 
 func subUsageHTTPClient(timeout time.Duration) *http.Client {
+	return subUsageHTTPClientWithProxyFn(timeout, subUsageProxyFunc)
+}
+
+func subUsageHTTPClientWithProxyFn(timeout time.Duration, proxyFn func(*http.Request) (*url.URL, error)) *http.Client {
 	tr := &http.Transport{
-		Proxy:                 subUsageProxyFunc,
+		Proxy:                 proxyFn,
 		MaxIdleConns:          8,
 		IdleConnTimeout:       30 * time.Second,
 		TLSHandshakeTimeout:   5 * time.Second,
@@ -356,8 +370,37 @@ func subUsageHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+func (c *subUsageCollector) httpClientFor(ctx context.Context) *http.Client {
+	proxySpec, _ := ctx.Value(subUsageProxyCtxKey{}).(string)
+	if proxySpec == "" {
+		return c.client
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.proxyClients == nil {
+		c.proxyClients = map[string]*http.Client{}
+	}
+	if cli, ok := c.proxyClients[proxySpec]; ok {
+		return cli
+	}
+	var proxyFn func(*http.Request) (*url.URL, error)
+	if !strings.EqualFold(proxySpec, "direct") {
+		u, err := url.Parse(proxySpec)
+		if err != nil {
+			return c.client
+		}
+		proxyFn = http.ProxyURL(u)
+	}
+	cli := subUsageHTTPClientWithProxyFn(subUsageProviderWait, proxyFn)
+	if len(c.proxyClients) >= 8 {
+		clear(c.proxyClients)
+	}
+	c.proxyClients[proxySpec] = cli
+	return cli
+}
+
 func (c *subUsageCollector) doJSONWithHeaders(ctx context.Context, req *http.Request) (int, http.Header, []byte, error) {
-	resp, err := c.client.Do(req.WithContext(ctx))
+	resp, err := c.httpClientFor(ctx).Do(req.WithContext(ctx))
 	if err != nil {
 		return 0, nil, nil, err
 	}
