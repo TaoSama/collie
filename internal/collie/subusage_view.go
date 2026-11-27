@@ -1255,7 +1255,7 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 			}
 			creditText := ""
 			if p.CreditLeft > 0 {
-				creditText = "Credit " + subFormatCommas(int64(math.Round(p.CreditLeft)))
+				creditText = "Credits " + subFormatCommas(int64(math.Round(p.CreditLeft)))
 			}
 			if p.Available == 0 {
 				row.Value = subUnavailableShort(p.SingleStatus, p.Total)
@@ -1273,7 +1273,6 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 			} else {
 				if creditText != "" {
 					row.Value = creditText
-					row.Tone = "info"
 				}
 				for _, w := range p.Windows {
 					if w.JustReset {
@@ -1543,7 +1542,7 @@ func formatSubUsageText(snap subUsageSnapshot, cfg subUsageConfig, model string,
 			parts = append(parts, seg)
 		}
 		if p.CreditLeft > 0 {
-			parts = append(parts, "Credit "+subFormatCommas(int64(math.Round(p.CreditLeft))))
+			parts = append(parts, "Credits "+subFormatCommas(int64(math.Round(p.CreditLeft))))
 		}
 		if len(parts) == 0 {
 			parts = append(parts, subUnavailableShort(p.SingleStatus, p.Total))
