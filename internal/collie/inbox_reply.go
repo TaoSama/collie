@@ -33,7 +33,6 @@ const (
 type inboxDraft struct {
 	ID        string    `json:"id"`
 	Conv      string    `json:"conv"`
-	Worker    string    `json:"-"`
 	Via       string    `json:"via,omitempty"`
 	Status    string    `json:"status"` // pending | done | error
 	Draft     string    `json:"draft,omitempty"`
@@ -131,13 +130,13 @@ func newDraftID() (string, error) {
 	return "d" + hex.EncodeToString(b), nil
 }
 
-func (h *extHost) newDraft(conv, worker, via string) (*inboxDraft, error) {
+func (h *extHost) newDraft(conv, via string) (*inboxDraft, error) {
 	id, err := newDraftID()
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	d := &inboxDraft{ID: id, Conv: conv, Worker: worker, Via: via, Status: "pending", CreatedAt: now, done: make(chan struct{})}
+	d := &inboxDraft{ID: id, Conv: conv, Via: via, Status: "pending", CreatedAt: now, done: make(chan struct{})}
 	h.draftMu.Lock()
 	if h.drafts == nil {
 		h.drafts = map[string]*inboxDraft{}
@@ -175,7 +174,7 @@ func (h *extHost) getDraft(id string) (*inboxDraft, bool) {
 func (h *extHost) completeDraft(id, text, errMsg string) bool {
 	h.draftMu.Lock()
 	d := h.drafts[id]
-	if d == nil || d.Status != "pending" {
+	if d == nil || d.Status != "pending" || time.Since(d.CreatedAt) > draftTimeout {
 		h.draftMu.Unlock()
 		return false
 	}
@@ -192,28 +191,6 @@ func (h *extHost) completeDraft(id, text, errMsg string) bool {
 		close(ch)
 	}
 	return true
-}
-
-// activeWorkerDraft returns the oldest still-pending draft assigned to worker.
-func (h *extHost) activeWorkerDraft(worker string) *inboxDraft {
-	if worker == "" {
-		return nil
-	}
-	h.draftMu.Lock()
-	defer h.draftMu.Unlock()
-	var best *inboxDraft
-	for _, d := range h.drafts {
-		if d.Status == "pending" && d.Worker == worker && time.Since(d.CreatedAt) <= draftTimeout {
-			if best == nil || d.CreatedAt.Before(best.CreatedAt) {
-				best = d
-			}
-		}
-	}
-	if best == nil {
-		return nil
-	}
-	cp := *best
-	return &cp
 }
 
 // sendInboxReply sends a human-authored or human-confirmed message (and optional
@@ -431,7 +408,7 @@ func (s *Server) inboxDraftStart(w http.ResponseWriter, r *http.Request) {
 	msgs, _ = s.inboxRecent(r.Context(), &c, msgs, outs)
 
 	// Prefer a live, non-blocked dedicated conversation worker; otherwise Collie Router.
-	target, via, worker := routerName, "Collie", ""
+	target, via := routerName, "Collie"
 	s.sup.mu.Lock()
 	cand := s.sup.convWorkerLocked(c, "")
 	var candName string
@@ -445,12 +422,12 @@ func (s *Server) inboxDraftStart(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		if ok {
 			if a, alive := live[candName]; alive && a.Status != "blocked" && (a.Ready || a.Status == "idle" || a.Status == "done") {
-				target, via, worker = candName, candName, candName
+				target, via = candName, candName
 			}
 		}
 	}
 
-	d, err := s.ext.newDraft(c.ID, worker, via)
+	d, err := s.ext.newDraft(c.ID, via)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})
 		return
@@ -462,7 +439,7 @@ func (s *Server) inboxDraftStart(w http.ResponseWriter, r *http.Request) {
 			validFiles = append(validFiles, resolved)
 		}
 	}
-	prompt := s.buildDraftPrompt(c, msgs, body.Hint, body.Tone, body.CurrentDraft, validFiles, d.ID, worker != "")
+	prompt := s.buildDraftPrompt(c, msgs, body.Hint, body.Tone, body.CurrentDraft, validFiles, d.ID, target != routerName)
 	s.sup.mu.Lock()
 	t, th := s.sup.prepareTriggerLocked(inboxDraftSource, draftThreadPrefix+d.ID, "you", prompt, "", target, d.ID)
 	var commitErr error

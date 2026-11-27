@@ -65,11 +65,10 @@ func withoutLarkRequests(list []*Trigger) []*Trigger {
 	return slices.DeleteFunc(list, func(t *Trigger) bool { return t.Source == larkSource })
 }
 
-// One Feishu event gets its own prompt. A batch can keep its existing
-// behavior until it reaches a Feishu event in the queue.
-func deliveryBatch(list []*Trigger) []*Trigger {
+// A Feishu request or a dedicated draft needs a turn of its own.
+func deliveryBatch(list []*Trigger, dedicated bool) []*Trigger {
 	for i, t := range list {
-		if t.Source == larkSource {
+		if t.Source == larkSource || (dedicated && t.Source == inboxDraftSource) {
 			if i == 0 {
 				return list[:1]
 			}
@@ -151,7 +150,7 @@ func (sp *Super) prepareDelivery(target, pane string, list []*Trigger) (larkDeli
 // deliver submits a pending batch for one session as a single prompt.
 func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 	sort.Slice(list, func(i, j int) bool { return list[i].At.Before(list[j].At) })
-	list = deliveryBatch(list[:min(len(list), 20)])
+	list = deliveryBatch(list[:min(len(list), 20)], target != routerName)
 	h := sp.s.herdr
 	pane := h.paneOfName(ctx, sp.herdrTarget(target))
 	if pane == "" || len(list) == 0 {

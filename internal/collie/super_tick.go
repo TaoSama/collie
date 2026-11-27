@@ -199,19 +199,21 @@ func (sp *Super) tick(parent context.Context) {
 			if prev == "blocked" {
 				sp.settleAskLocked(a.Pane, "", "") // answered in its terminal, or it moved on
 			}
-			switch {
-			case a.Status == "blocked":
+			switch a.Status {
+			case "blocked":
 				fin = append(fin, finished{w, true})
-			case a.Status == "working":
+			case "working":
 				w.ResumeAt = time.Time{} // it got going again: a message, the human, or Collie's own nudge
-			case (prev == "working" && (a.Status == "done" || a.Status == "idle")) ||
-				(prev != "done" && prev != "blocked" && a.Status == "done"):
-				if now.Sub(w.ReportAt) > 90*time.Second {
-					fin = append(fin, finished{w, false})
-				}
 			}
-		} else if a.Status == "done" && prevComp > 0 && a.CompletionSeq > prevComp {
-			if now.Sub(w.ReportAt) > 90*time.Second {
+		}
+		if a.Status == "done" || a.Status == "idle" {
+			drafting := w.DraftTrigger != ""
+			completed := prev == "working" || (a.Status == "done" && prev != "done" && prev != "blocked") ||
+				(a.Status == "done" && prev == "done" && prevComp > 0 && a.CompletionSeq > prevComp)
+			if drafting && a.CompletionSeq > prevComp {
+				completed = true
+			}
+			if completed && (drafting || now.Sub(w.ReportAt) > 90*time.Second) {
 				fin = append(fin, finished{w, false})
 			}
 		}

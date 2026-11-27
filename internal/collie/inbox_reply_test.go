@@ -306,23 +306,109 @@ func TestInboxDraftViaRouterNeverAutoSends(t *testing.T) {
 	}
 }
 
-func TestInboxDraftDedicatedWorkerHelper(t *testing.T) {
-	_, h, _ := newExtTestHub(t)
-	d, err := h.newDraft("fake:g1", "lark-group", "lark-group")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := h.activeWorkerDraft("lark-group")
-	if got == nil || got.ID != d.ID {
-		t.Fatalf("activeWorkerDraft = %+v, want %s", got, d.ID)
-	}
-	if !h.completeDraft(d.ID, "草稿内容", "") {
-		t.Fatal("completeDraft returned false")
-	}
-	if h.activeWorkerDraft("lark-group") != nil {
-		t.Fatal("completed draft should no longer be active")
-	}
+func TestRouterDocumentsInboxDraft(t *testing.T) {
 	if !strings.Contains(routerDoc, "inbox-draft") || !strings.Contains(routerDoc, "draft:<id>") {
 		t.Fatal("routerDoc must document inbox-draft / draft:<id> handling")
+	}
+}
+
+func TestInboxDraftDedicatedTurn(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		name := "previous turn finishes before draft is delivered"
+		if expired {
+			name = "draft finishes after timeout"
+		}
+		t.Run(name, func(t *testing.T) {
+			sp, h, dir := newExtTestHub(t)
+			s, f, pane := chatServer(t, 0, "codex")
+			sp.s.herdr = s.herdr
+			sp.transcripts = map[string]*transcript{}
+			sp.lastScreen = map[string]screenMark{}
+			t.Setenv("CODEX_HOME", dir)
+			worker := &Worker{Name: "larkx-draft", Kind: "codex", PaneID: pane, Conv: "larkx:chat", Thread: "ext:larkx:chat", Status: "idle"}
+			sp.st.Workers[worker.Name] = worker
+			p := f.panes[pane]
+			p.name, p.title, p.sim = worker.Name, "Topic | me", true
+			conv := InboxConv{ID: worker.Conv, Ext: larkxID, Chat: "chat", Worker: worker.Name}
+			h.store.mu.Lock()
+			h.store.convs[conv.ID] = &conv
+			h.store.mu.Unlock()
+
+			logPath := "sessions/2026/11/26/rollout-date-id.jsonl"
+			log := strings.Replace(zstRollout, `"payload":{}`, `"payload":{"cwd":"/tmp"}`, 1)
+			writeFiles(t, dir, map[string]string{
+				"session_index.jsonl": `{"id":"id","thread_name":"Topic"}` + "\n",
+				logPath:               log,
+			})
+
+			if !expired {
+				p.status, worker.Status = "working", "working"
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", "/api/inbox/draft", strings.NewReader(`{"id":"larkx:chat"}`))
+			sp.s.inboxDraftStart(rec, req)
+			var draft inboxDraft
+			if err := json.Unmarshal(rec.Body.Bytes(), &draft); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != 200 || draft.Via != worker.Name || draft.Status != "pending" {
+				t.Fatalf("start returned %d %s", rec.Code, rec.Body)
+			}
+
+			if !expired {
+				p.status = "done"
+			}
+			sp.tick(t.Context())
+			if len(p.said) != 1 || !strings.Contains(p.said[0], draftThreadPrefix+draft.ID) {
+				t.Fatalf("worker received %q, want only the draft event", p.said)
+			}
+			saved, err := loadState(sp.db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			triggerID := saved.Workers[worker.Name].DraftTrigger
+			trigger := saved.trigger(triggerID)
+			if trigger == nil || trigger.Ref != draft.ID || trigger.Status != "delivered" || !strings.Contains(p.said[0], "#"+triggerID+" ·") {
+				t.Fatalf("persisted draft turn = %+v, want delivered trigger for %s", trigger, draft.ID)
+			}
+			if !expired {
+				outs := h.store.outs("conv = ?", conv.ID)
+				current, _ := h.getDraft(draft.ID)
+				if current.Status != "pending" || len(outs) != 1 || !strings.Contains(outs[0].Text, "Two files.") {
+					t.Fatalf("previous turn: draft = %+v, outbox entries = %d", current, len(outs))
+				}
+			}
+			sp.tick(t.Context()) // observe the draft turn working
+
+			writeFiles(t, dir, map[string]string{
+				logPath: log + "\n" + `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"Draft for review."}]}}` + "\n",
+			})
+			wantStatus, wantDraft, wantOut := "done", "Draft for review.", 1
+			if expired {
+				h.draftMu.Lock()
+				h.drafts[draft.ID].CreatedAt = time.Now().Add(-draftTimeout - time.Second)
+				h.draftMu.Unlock()
+				if current, _ := h.getDraft(draft.ID); current.Status != "error" {
+					t.Fatalf("expected timeout before worker settled, got %+v", current)
+				}
+				wantStatus, wantDraft, wantOut = "error", "", 0
+
+				// A restarted hub must still recognize the in-flight turn.
+				sp.flush()
+				saved, err := loadState(sp.db)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sp.st = saved
+			}
+
+			p.status = "done"
+			sp.tick(t.Context())
+			current, _ := h.getDraft(draft.ID)
+			outs := h.store.outs("conv = ?", conv.ID)
+			if current.Status != wantStatus || current.Draft != wantDraft || len(outs) != wantOut {
+				t.Fatalf("after draft turn: draft = %+v, outbox entries = %d, want %s, %q, %d entries", current, len(outs), wantStatus, wantDraft, wantOut)
+			}
+		})
 	}
 }

@@ -91,7 +91,6 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		log.Printf("worker %s: trusted its folder %s", w.Name, w.Cwd)
 		return
 	}
-	summary := sp.lastAssistant(ctx, w)
 	var dialog *Approval
 	if blocked {
 		if screen, err := sp.s.herdr.ReadAsk(ctx, w.PaneID); err == nil {
@@ -101,17 +100,8 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		}
 	}
 	if w.Conv != "" && !blocked && sp.s.ext != nil {
-		// If this turn was drafting a reply for the inbox UI, capture it into
-		// the draft box and never auto-send to Feishu/WeChat.
-		if d := sp.s.ext.activeWorkerDraft(w.Name); d != nil {
-			text := sp.convLastReply(ctx, w)
-			if msg := sp.workerAgentError(ctx, w, text); msg != "" {
-				sp.s.ext.completeDraft(d.ID, "", "agent 出错："+msg)
-			} else if strings.TrimSpace(text) == "" {
-				sp.s.ext.completeDraft(d.ID, "", "没取到 agent 生成的草稿")
-			} else {
-				sp.s.ext.completeDraft(d.ID, strings.TrimSpace(text), "")
-			}
+		if id := sp.takeDraftTurn(w); id != "" {
+			sp.finishDraftTurn(ctx, w, id)
 			return
 		}
 		// An extension conversation's agent: its turn's last message is the
@@ -133,6 +123,7 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		}
 		return
 	}
+	summary := sp.lastAssistant(ctx, w)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if blocked {
@@ -185,6 +176,42 @@ func agentStopLine(screen, summary string) string {
 		}
 	}
 	return ""
+}
+
+// takeDraftTurn is called only when the worker's turn settles. An expired
+// or missing inbox draft still owns its turn and must never become a send.
+func (sp *Super) takeDraftTurn(w *Worker) string {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	id := w.DraftTrigger
+	if id != "" {
+		w.DraftTrigger = ""
+		sp.changed()
+	}
+	return id
+}
+
+func (sp *Super) finishDraftTurn(ctx context.Context, w *Worker, triggerID string) {
+	t, err := triggerByID(sp.db, triggerID)
+	if err != nil {
+		log.Printf("worker %s: read draft trigger %s: %v", w.Name, triggerID, err)
+		return
+	}
+	if t == nil {
+		return
+	}
+	h := sp.s.ext
+	if d, ok := h.getDraft(t.Ref); !ok || d.Status != "pending" {
+		return
+	}
+	text := sp.convLastReply(ctx, w)
+	if msg := sp.workerAgentError(ctx, w, text); msg != "" {
+		h.completeDraft(t.Ref, "", "agent 出错："+msg)
+	} else if strings.TrimSpace(text) == "" {
+		h.completeDraft(t.Ref, "", "没取到 agent 生成的草稿")
+	} else {
+		h.completeDraft(t.Ref, text, "")
+	}
 }
 
 var (
