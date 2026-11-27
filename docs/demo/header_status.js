@@ -75,21 +75,25 @@
     const right = r.metric
       ? `<span class="hs-row-metric">${renderItem(r.metric, false, opts)}</span>`
       : r.value ? `<span class="hs-row-v${toneCls(r.tone)}">${esc(r.value)}</span>` : "";
+    const clickable = !!(r.action && r.action.name);
     const selTag = r.selected
       ? `<span class="hs-sel-tag">${CHECK_SVG}<span>顶栏</span></span>`
       : "";
+    const actHint = clickable && !r.selected
+      ? `<span class="hs-act-hint" aria-hidden="true">固定顶栏</span>`
+      : "";
+    const rightGroup = right || actHint ? `<span class="hs-row-r">${right}${actHint}</span>` : "";
     const badges = renderBadges(r);
     const ico = renderIcon(r.icon, opts, "hs-row-ico");
     const titleBlock = `<span class="hs-row-id">`
       + `<span class="hs-row-title-line">${r.current && !r.selected ? `<span class="hs-cur" aria-hidden="true">▸</span>` : ""}${ico}<span class="hs-row-name" title="${esc(r.label)}">${esc(r.label)}</span>${badges}${selTag}</span>`
       + (r.sublabel ? `<span class="hs-row-sub" title="${esc(r.sublabel)}">${esc(r.sublabel)}</span>` : "")
       + `</span>`;
-    const top = `<div class="hs-row-top">${titleBlock}${right}</div>`;
+    const top = `<div class="hs-row-top">${titleBlock}${rightGroup}</div>`;
     const meters = (r.meters || []).length
       ? `<div class="hs-meters">${r.meters.map((m) => renderItem(m, true, opts)).join("")}</div>`
       : "";
     const det = r.detail ? `<div class="hs-row-d${toneCls(r.tone)}">${esc(r.detail)}</div>` : "";
-    const clickable = !!(r.action && r.action.name);
     const cls = `hs-row${r.current ? " is-cur" : ""}${r.selected ? " is-selected" : ""}${clickable ? " is-action" : ""}${accentCls(r.accent)}`;
     if (clickable) {
       return `<div class="${cls}" data-hs-key="${esc(foldKey)}" role="button" tabindex="0" aria-pressed="${!!r.selected}"${actionAttrs(slotId, r.action)}>${top}${meters}${det}</div>`;
@@ -99,9 +103,9 @@
 
   function renderChips(chips, slotId) {
     if (!Array.isArray(chips) || !chips.length) return "";
-    return `<span class="hs-chips">${chips.map((c) => {
+    return `<span class="hs-chips seg" role="group">${chips.map((c) => {
       const attrs = c.action ? actionAttrs(slotId, c.action) : "";
-      return `<button type="button" class="hs-chip${c.selected ? " is-selected" : ""}${toneCls(c.tone)}" aria-pressed="${!!c.selected}"${attrs}>${c.selected ? CHECK_SVG : ""}${esc(c.label)}</button>`;
+      return `<button type="button" class="hs-chip${c.selected ? " on is-selected" : ""}${toneCls(c.tone)}" aria-pressed="${!!c.selected}"${attrs}>${c.selected ? CHECK_SVG : ""}${esc(c.label)}</button>`;
     }).join("")}</span>`;
   }
 
@@ -122,7 +126,8 @@
           + (sec.meta ? `<span class="hs-sec-m">${esc(sec.meta)}</span>` : "")
           + `</button>`;
       } else {
-        head = `<div class="hs-sec-h${accentCls(sec.accent)}"><span class="hs-sec-l">${icoHtml}<span class="hs-sec-t">${esc(sec.title || "")}</span></span>${chipsHtml || (sec.meta ? `<span class="hs-sec-m">${esc(sec.meta)}</span>` : "")}</div>`;
+        const subMeta = chipsHtml && sec.meta ? `<div class="hs-sec-sub">${esc(sec.meta)}</div>` : "";
+        head = `<div class="hs-sec-h${accentCls(sec.accent)}"><span class="hs-sec-l">${icoHtml}<span class="hs-sec-t">${esc(sec.title || "")}</span></span>${chipsHtml || (sec.meta ? `<span class="hs-sec-m">${esc(sec.meta)}</span>` : "")}</div>${subMeta}`;
       }
     }
     const rows = collapsed
@@ -152,7 +157,7 @@
     const closeIcon = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>';
     const updated = st?.updated_at ? when(st.updated_at) : "";
     return `<div class="hs-scrim" data-hs-close${opts.open ? "" : " hidden"}></div>`
-      + `<div class="hs-panel${opts.pinned ? " is-pinned" : ""}" role="dialog" aria-label="${esc(title)}"${opts.open ? "" : " hidden"}>`
+      + `<div class="hs-panel${opts.pinned ? " is-pinned" : ""}" role="dialog" tabindex="-1" aria-label="${esc(title)}"${opts.open ? "" : " hidden"}>`
       + `<div class="hs-ph">`
       + `<span class="hs-ph-t">${slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : ""}<b>${esc(title)}</b><span class="hs-pin-tag"${opts.pinned ? "" : " hidden"}>已固定</span></span>`
       + `<span class="hs-ph-r"><span class="hs-ph-at"${updated ? "" : " hidden"}>${esc(updated)}</span><button type="button" class="icon-btn hs-ref${opts.loading ? " spinning" : ""}" data-hs-refresh="${esc(slot.id)}" aria-label="刷新" title="刷新">${refreshIcon}</button><button type="button" class="icon-btn hs-close" data-hs-close aria-label="关闭" title="关闭">${closeIcon}</button></span>`
@@ -167,6 +172,10 @@
     const items = st?.items || [];
     if (items.length) {
       return `<span class="hs-line">${items.map((it) => renderItem(it, false, opts)).join(`<span class="hs-sep" aria-hidden="true">·</span>`)}</span>`
+        + (st.subline ? `<span class="hs-sub">${esc(st.subline)}</span>` : "");
+    }
+    if (st?.compact) {
+      return `<span class="hs-line"><span class="hs-lab">${esc(st.compact)}</span></span>`
         + (st.subline ? `<span class="hs-sub">${esc(st.subline)}</span>` : "");
     }
     if (slot.state === "starting" && !st) {
@@ -185,8 +194,9 @@
     const open = opts.openId === slot.id;
     const pinned = opts.pinnedId === slot.id;
     const desktopMain = renderDesktopMain(slot, opts);
-    const mobileIco = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
-      || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
+    const mobileIco = (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "")
+      || (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
+      || "";
     return `<div class="hs-wrap${open ? " is-open" : ""}${pinned ? " is-pinned" : ""}" data-hs-id="${esc(slot.id)}">`
       + `<button type="button" class="hs-trigger${toneCls(tone)}" data-hs-toggle="${esc(slot.id)}" aria-expanded="${open}" aria-haspopup="dialog" title="${esc(title)}">`
       + `<span class="hs-desktop">${desktopMain}</span>`
@@ -316,8 +326,9 @@
       const tone = st?.tone || (hasErr ? "warn" : "");
       const compact = compactFallback(slot);
       const deskHtml = renderDesktopMain(slot, opts);
-      const mobIcoHtml = (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
-        || (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "");
+      const mobIcoHtml = (slot.icon_url ? `<img class="src-logo" src="${esc(slot.icon_url)}" alt="">` : "")
+        || (items[0] && renderIcon(items[0].icon, opts, "hs-item-ico"))
+        || "";
       const bodyHtml = renderPanelBodyInner(slot, slotOpts);
 
       if (!wrap) {

@@ -135,10 +135,10 @@ func defaultWBConfig() wbConfig {
 	return wbConfig{
 		Groups: []WBGroup{{ID: "fav", Title: "收藏"}, {ID: "collie", Title: "Collie"}},
 		Modules: []WBModule{
-			link("inbox", "收件箱", "📥", "auto:inbox"),
-			link("timers", "定时", "⏰", "auto:timers"),
-			link("memory", "记忆", "🧠", "auto:memory"),
-			link("machines", "电脑", "🖥", "devices:machines"),
+			link("inbox", "收件箱", "", "auto:inbox"),
+			link("timers", "定时", "", "auto:timers"),
+			link("memory", "记忆", "", "auto:memory"),
+			link("machines", "电脑", "", "devices:machines"),
 		},
 	}
 }

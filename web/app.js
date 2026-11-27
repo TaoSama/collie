@@ -1096,6 +1096,7 @@
     const app = $("#app").classList, st = { ...(history.state || {}) };
     if (!app.contains("has-file")) delete st.file;
     if (!app.contains("has-run")) delete st.run;
+    if (!hdrStatus.openId) delete st.hs;
     const prev = navHash;
     history.pushState({ ...st, ...add, collieIdx: ++navCur, colliePrev: prev }, "", location.hash);
     navTrail.set(navCur, navHash);
@@ -1155,6 +1156,7 @@
     if (next === view && id === (next === "ext" ? extCur : current)) {
       syncFile();
       if (next === "collie") syncRun();
+      syncHeaderStatus();
       return;
     }
     // Snapshot the departing view right before its DOM is hidden.
@@ -1214,7 +1216,8 @@
       if (!narrow()) $("#input").focus({ preventScroll: true });
     }
     syncFile();
-    if (hdrStatus.openId || hdrStatus.pinnedId) closeHeaderStatus();
+    if (hdrStatus.openId || hdrStatus.pinnedId) closeHeaderStatus({ fromHistory: true });
+    fitHeaderStatus();
     maybeRefreshHeaderStatus();
   }
   addEventListener("popstate", route);
@@ -1994,13 +1997,18 @@
     secState: {},
     expandedFolds: {},
     loading: false,
+    acting: false,
     model: "",
     at: 0,
+    seq: 0,
     inflight: null,
     openTimer: 0,
     closeTimer: 0,
     lastPointerDownAt: 0,
+    suppressFocusOpen: false,
+    pendingFocusId: "",
   };
+  let hsIdx = -1, hsShut = -1;
   const HS_ICONS = {
     claude: GLYPHS.claude,
     codex: GLYPHS.codex,
@@ -2024,7 +2032,24 @@
       scrim.style.opacity = "";
     }
   }
-  function closeHeaderStatus({ restoreFocus = false } = {}) {
+  function openHeaderStatus(id, { pin = false, fromHistory = false } = {}) {
+    clearHeaderStatusTimers();
+    if (!taskPanel.hidden) toggleTaskPanel(false);
+    const mobile = narrow();
+    if (mobile && !fromHistory) {
+      if (hdrStatus.openId && history.state?.hs) history.replaceState({ ...history.state, hs: id }, "");
+      else layerStep({ hs: id });
+      hsIdx = navCur; hsShut = -1;
+    }
+    hdrStatus.openId = id;
+    hdrStatus.pinnedId = pin || mobile ? id : "";
+    renderHeaderStatus();
+    if (mobile) {
+      const panel = $(`.view:not([hidden]) .hs-wrap[data-hs-id="${CSS.escape(id)}"] > .hs-panel`);
+      panel?.focus({ preventScroll: true });
+    }
+  }
+  function closeHeaderStatus({ restoreFocus = false, fromHistory = false } = {}) {
     clearHeaderStatusTimers();
     if (hsDrag) {
       clearHeaderStatusDrag(hsDrag.panel, hsDrag.scrim);
@@ -2032,13 +2057,60 @@
     }
     const prev = hdrStatus.openId;
     if (!prev && !hdrStatus.pinnedId) return;
+    if (!fromHistory && history.state?.hs && navCur === hsIdx) {
+      hdrStatus.pendingFocusId = restoreFocus ? prev : "";
+      history.back();
+      return;
+    }
+    if (!fromHistory && history.state?.hs) {
+      hsShut = hsIdx;
+      history.replaceState({ ...history.state, hs: undefined }, "");
+    }
+    const focusId = restoreFocus ? prev : hdrStatus.pendingFocusId;
+    hdrStatus.pendingFocusId = "";
     hdrStatus.openId = "";
     hdrStatus.pinnedId = "";
     renderHeaderStatus();
-    if (restoreFocus && prev) {
-      const btn = $(`.view:not([hidden]) [data-hs-toggle="${CSS.escape(prev)}"]`);
-      btn?.focus({ preventScroll: true });
+    if (focusId) {
+      const btn = $(`.view:not([hidden]) [data-hs-toggle="${CSS.escape(focusId)}"]`);
+      hdrStatus.suppressFocusOpen = true;
+      try { btn?.focus({ preventScroll: true }); } finally { hdrStatus.suppressFocusOpen = false; }
     }
+  }
+  function syncHeaderStatus() {
+    let id = history.state?.hs;
+    if (id && navCur === hsShut) { history.replaceState({ ...history.state, hs: undefined }, ""); id = ""; }
+    if (!id) {
+      if (hdrStatus.openId || hdrStatus.pinnedId) closeHeaderStatus({ fromHistory: true });
+      return;
+    }
+    if (hdrStatus.openId === id) return;
+    if (hdrStatus.slots.some((s) => s.id === id)) {
+      hsIdx = navCur;
+      openHeaderStatus(id, { pin: true, fromHistory: true });
+    } else {
+      history.replaceState({ ...history.state, hs: undefined }, "");
+    }
+  }
+  function fitHeaderStatus() {
+    if (narrow()) {
+      $$(".hs-wrap.is-compact").forEach((w) => w.classList.remove("is-compact"));
+      return;
+    }
+    const active = $(".view:not([hidden]) [data-hdr-slots]");
+    if (!active || active.hidden) return;
+    for (const wrap of active.querySelectorAll(":scope > .hs-wrap")) {
+      wrap.classList.remove("is-compact");
+      const line = wrap.querySelector(".hs-desktop .hs-line");
+      if (line && line.scrollWidth > line.clientWidth + 1) wrap.classList.add("is-compact");
+    }
+  }
+  if (typeof ResizeObserver === "function") {
+    const hsRO = new ResizeObserver(() => fitHeaderStatus());
+    $$("[data-hdr-slots]").forEach((el) => {
+      const head = el.closest(".d-head");
+      if (head) hsRO.observe(head);
+    });
   }
   function activeHeaderModel() {
     if (view === "collie") return lastRouterModel || lastRouter?.model || "";
@@ -2076,10 +2148,12 @@
         el.hidden = !html;
       }
     });
+    fitHeaderStatus();
   }
   async function fetchHeaderStatus({ fresh = false, silent = false } = {}) {
-    if (hdrStatus.inflight && !fresh) return hdrStatus.inflight;
     const model = activeHeaderModel();
+    if (hdrStatus.inflight && !fresh && model === hdrStatus.model) return hdrStatus.inflight;
+    const seq = ++hdrStatus.seq;
     hdrStatus.model = model;
     if (!silent) {
       hdrStatus.loading = true;
@@ -2090,13 +2164,17 @@
     if (fresh) qs.set("fresh", "1");
     const url = "/api/ext/header-status" + (qs.toString() ? "?" + qs.toString() : "");
     const p = api(url).then((r) => {
+      if (seq !== hdrStatus.seq) return;
       hdrStatus.slots = Array.isArray(r?.slots) ? r.slots : [];
       hdrStatus.at = Date.now();
       if (hdrStatus.openId && !hdrStatus.slots.some((s) => s.id === hdrStatus.openId)) {
-        hdrStatus.openId = "";
-        hdrStatus.pinnedId = "";
+        closeHeaderStatus();
       }
-    }).catch(() => {}).finally(() => {
+    }).catch((err) => {
+      if (seq !== hdrStatus.seq) return;
+      if (fresh && !silent) toast(err?.message || "刷新失败", "attn");
+    }).finally(() => {
+      if (seq !== hdrStatus.seq) return;
       hdrStatus.loading = false;
       if (hdrStatus.inflight === p) hdrStatus.inflight = null;
       renderHeaderStatus();
@@ -2105,18 +2183,24 @@
     return p;
   }
   async function runHeaderStatusAction(el) {
+    if (hdrStatus.acting) return;
     const slotId = el.dataset.hsSlot;
     const action = el.dataset.hsAction;
     if (!slotId || !action) return;
     let args = {};
     try { args = JSON.parse(el.dataset.hsArgs || "{}"); } catch {}
+    hdrStatus.acting = true;
     hdrStatus.loading = true;
     renderHeaderStatus();
     try {
       await api(`/api/ext/${encodeURIComponent(slotId)}/do`, {
         body: { action, args },
       });
-    } catch {}
+    } catch (err) {
+      toast(err?.message || "操作失败", "attn");
+    } finally {
+      hdrStatus.acting = false;
+    }
     await fetchHeaderStatus({ fresh: false });
   }
   function maybeRefreshHeaderStatus(force = false) {
@@ -2248,9 +2332,9 @@
   document.addEventListener("pointerup", (e) => finishHeaderStatusDrag(e, false));
   document.addEventListener("pointercancel", (e) => finishHeaderStatusDrag(e, true));
   document.addEventListener("focusin", (e) => {
-    if (Date.now() - hdrStatus.lastPointerDownAt < 500) return;
+    if (hdrStatus.suppressFocusOpen || Date.now() - hdrStatus.lastPointerDownAt < 500) return;
     const tog = e.target.closest?.("[data-hs-toggle]");
-    if (!tog || hdrStatus.pinnedId) return;
+    if (!tog || hdrStatus.pinnedId || narrow()) return;
     let focusVisible = false;
     try { focusVisible = tog.matches(":focus-visible"); } catch {}
     if (!focusVisible) return;
@@ -2301,17 +2385,9 @@
     const tog = e.target.closest("[data-hs-toggle]");
     if (tog) {
       e.stopPropagation();
-      clearHeaderStatusTimers();
       const id = tog.dataset.hsToggle;
-      if (!taskPanel.hidden) toggleTaskPanel(false);
-      if (hdrStatus.pinnedId === id) {
-        hdrStatus.pinnedId = "";
-        hdrStatus.openId = "";
-      } else {
-        hdrStatus.pinnedId = id;
-        hdrStatus.openId = id;
-      }
-      renderHeaderStatus();
+      if (hdrStatus.pinnedId === id) closeHeaderStatus({ restoreFocus: false });
+      else openHeaderStatus(id, { pin: true });
       return;
     }
     if ((hdrStatus.openId || hdrStatus.pinnedId) && !e.target.closest(".hs-wrap")) {
@@ -2319,6 +2395,21 @@
     }
   });
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Tab" && hdrStatus.openId) {
+      const panel = $(`.view:not([hidden]) .hs-wrap[data-hs-id="${CSS.escape(hdrStatus.openId)}"] > .hs-panel`);
+      if (panel && !panel.hidden && getComputedStyle(panel).position === "fixed") {
+        const focusables = [...panel.querySelectorAll('button:not([disabled]):not([hidden]), [tabindex]:not([tabindex="-1"])')].filter((el) => el.offsetParent !== null);
+        if (focusables.length) {
+          const first = focusables[0], last = focusables[focusables.length - 1];
+          if (e.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) {
+            e.preventDefault(); last.focus(); return;
+          }
+          if (!e.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) {
+            e.preventDefault(); first.focus(); return;
+          }
+        }
+      }
+    }
     if ((e.key === "Enter" || e.key === " ") && !composing(e)) {
       const actEl = document.activeElement?.closest?.("[data-hs-action]");
       if (actEl && actEl.tagName !== "BUTTON") {
@@ -2331,13 +2422,13 @@
       const tog = document.activeElement?.closest?.("[data-hs-toggle]");
       if (tog) {
         e.preventDefault();
-        clearHeaderStatusTimers();
-        hdrStatus.openId = hdrStatus.pinnedId = tog.dataset.hsToggle;
-        renderHeaderStatus();
+        openHeaderStatus(tog.dataset.hsToggle, { pin: true });
         return;
       }
     }
     if (e.key === "Escape" && (hdrStatus.openId || hdrStatus.pinnedId) && !composing(e)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
       const inPanel = !!document.activeElement?.closest?.(".hs-wrap");
       closeHeaderStatus({ restoreFocus: inPanel });
     }
@@ -3229,24 +3320,33 @@
   // only refreshes it. The answers ride in the startup snapshot.
   const AUTO_API = { inbox: "inbox", events: "triggers", timers: "timers", memory: "memory", hooks: "settings", settings: "settings" };
   const AUTO_PATH = { inbox: "/api/inbox", ext: "/api/ext", markets: "/api/ext-markets" };
-  let autoData = {};
+  let autoData = {}, autoErr = {};
+  const autoInflight = {};
   function autoSources(tab, sub) {
     if (tab === "events") return ["triggers", "inbox"];
     if (tab !== "hooks") return [AUTO_API[tab]];
     if (sub.startsWith("ext/")) return ["ext", "inbox"];
     if (sub === "reply") return ["ext"];
-    if (sub === "markets") return ["markets"];
+    if (sub === "markets") return autoData.ext ? ["markets"] : ["markets", "ext"];
     if (sub === "webhooks") return ["settings"];
-    const list = ["settings", "ext", "inbox"];
-    if (!autoData.markets) list.push("markets");
-    return list;
+    return ["settings", "ext", "inbox"];
   }
-  async function fetchAuto(src) {
-    const r = await api(AUTO_PATH[src] || "/api/super/" + src);
-    autoData[src] = r;
-    if (src === "ext" || src === "inbox") collieExt.learn(r);
-    if (src === "memory") (window.requestIdleCallback || setTimeout)(() => memHTML(r));
-    return r;
+  function fetchAuto(src) {
+    if (autoInflight[src]) return autoInflight[src];
+    const p = api(AUTO_PATH[src] || "/api/super/" + src).then((r) => {
+      autoData[src] = r;
+      delete autoErr[src];
+      if (src === "ext" || src === "inbox") collieExt.learn(r);
+      if (src === "memory") (window.requestIdleCallback || setTimeout)(() => memHTML(r));
+      return r;
+    }).catch((err) => {
+      autoErr[src] = err?.message || "加载失败";
+      throw err;
+    }).finally(() => {
+      if (autoInflight[src] === p) delete autoInflight[src];
+    });
+    autoInflight[src] = p;
+    return p;
   }
 
   // all: the page was just opened, so the other tabs' data is fetched too.
@@ -3265,8 +3365,8 @@
       body._memSig = memParked.sig;
       if (restore) restoreSimpleScroll(body, restore);
       revealMem();
-    } else if (have) drawAuto(have, restore);
-    else body.innerHTML = "";
+    } else if (have || autoTab === "hooks") drawAuto(have, restore);
+    else body.innerHTML = `<div class="card" aria-busy="true"><div class="skel-status" role="status"><span class="spinner small" aria-hidden="true"></span><span>正在读取…</span></div></div>`;
     clearInterval(autoTimer);
     loadAuto(have ? null : restore);
     if (all) {
@@ -3287,21 +3387,38 @@
     if (tab === "hooks" && extLogin?.waiting && !sources.includes("ext")) sources.push("ext");
     if (tab === "timers") sources.push("inbox");
     const stillOpen = () => view === "auto" && autoTab === tab && hooksSub() === sub;
+    const redrawHooks = (rest = null) => {
+      if (!stillOpen()) return;
+      resumeLogin();
+      if ($("#auto-body .ext-config.dirty")) return;
+      drawAuto(autoData[sources[0]], rest);
+    };
+    if (tab === "hooks" && !sub && !autoData.markets && !autoInflight.markets) {
+      fetchAuto("markets").catch(() => {}).finally(() => redrawHooks());
+    }
     try {
       const requests = sources.map((src, i) => {
         const request = fetchAuto(src);
-        return i > 0 || (tab === "hooks" && src !== "settings") ? request.catch(() => autoData[src]) : request;
+        if (tab === "hooks") {
+          return request.catch(() => autoData[src]).finally(() => redrawHooks());
+        }
+        return i > 0 ? request.catch(() => autoData[src]) : request;
       });
       if (tab === "inbox" && inboxCur) requests.push(loadConv());
       const [r] = await Promise.all(requests);
       if (!stillOpen()) return;
-      if (tab === "hooks") resumeLogin();
-      // Settings changed and not yet saved are not redrawn under the hand.
-      if (tab === "hooks" && $("#auto-body .ext-config.dirty")) return;
+      if (tab === "hooks") {
+        redrawHooks(restore);
+        return;
+      }
       drawAuto(r, restore);
       if (tab === "settings") api("/api/super/lark?fresh").then((l) => { autoData.lark = l; showLarkWho(); }).catch(() => {});
     } catch (err) {
-      if (stillOpen()) $("#auto-body").innerHTML = `<p class="panel-intro">${esc(err.message)}</p>`;
+      if (stillOpen()) {
+        const body = $("#auto-body");
+        body._sig = body._dsig = body._whSig = body._memSig = "";
+        body.innerHTML = `<div class="card"><div class="skel-err"><p class="ext-warn bad">${esc(err.message)}</p><button type="button" class="btn small" data-auto-retry="${esc(sources[0])}">重试</button></div></div>`;
+      }
     }
   }
   function showLarkWho() {
@@ -3362,27 +3479,42 @@
       if (body.querySelector("input:focus, textarea:focus, select:focus")) { if (restore) restoreSimpleScroll(body, restore); return; }
       const newPage = body._sub !== sub;
       const ext = autoData.ext, id = sub.startsWith("ext/") ? decodeURIComponent(sub.slice(4)) : "";
+      const hState = {
+        extLoading: !ext && !autoErr.ext,
+        extErr: autoErr.ext || "",
+        marketsLoading: !autoData.markets && !autoErr.markets,
+        marketsErr: autoErr.markets || "",
+        settingsErr: autoErr.settings || "",
+      };
       if (!sub) {
         // The list redraws as extensions change; the webhook forms only
         // when their settings do, so rows added and not yet saved stay.
         if (newPage || !$("#hooks-top")) { body.innerHTML = `<div id="hooks-top"></div><div id="hooks-wh"></div>`; body._sig = body._whSig = ""; }
-        const sig = JSON.stringify([autoData.ext, autoData.inbox, autoData.markets]), whSig = JSON.stringify(r);
-        if (sig !== body._sig) { body._sig = sig; $("#hooks-top").innerHTML = collieExt.hooksList(ext, autoData.inbox, autoData.markets); }
-        if (whSig !== body._whSig) { body._whSig = whSig; $("#hooks-wh").innerHTML = `<h3 class="hooks-h">Webhook 与来源策略</h3>` + hooksHTML(r); }
+        const sig = JSON.stringify([autoData.ext, autoData.inbox, autoData.markets, hState.extErr, hState.marketsErr]);
+        const whSig = JSON.stringify([r || null, hState.settingsErr]);
+        if (sig !== body._sig) { body._sig = sig; $("#hooks-top").innerHTML = collieExt.hooksList(ext, autoData.inbox, autoData.markets, hState); }
+        if (whSig !== body._whSig) {
+          body._whSig = whSig;
+          $("#hooks-wh").innerHTML = `<h3 class="hooks-h">Webhook 与来源策略</h3>` + (r
+            ? hooksHTML(r)
+            : hState.settingsErr
+              ? `<div class="card"><div class="skel-err"><p class="ext-warn bad">读取配置失败：${esc(hState.settingsErr)}</p><button type="button" class="btn small" data-auto-retry="settings">重试</button></div></div>`
+              : `<div class="card" aria-busy="true"><div class="skel-status" role="status"><span class="spinner small" aria-hidden="true"></span><span>正在读取 Webhook 与策略…</span></div></div>`);
+        }
       } else {
-        const data = id ? [ext, autoData.inbox, extLogin]
-          : sub === "reply" ? [ext?.trigger, ext?.default_trigger, ext?.footer, ext?.default_footer]
-          : sub === "markets" ? [autoData.markets]
-          : sub === "webhooks" ? [r]
-          : [ext, autoData.inbox, autoData.markets];
+        const data = id ? [ext, autoData.inbox, extLogin, hState.extErr]
+          : sub === "reply" ? [ext?.trigger, ext?.default_trigger, ext?.footer, ext?.default_footer, !!ext, hState.extErr]
+          : sub === "markets" ? [autoData.markets, hState.marketsErr, (ext?.extensions || []).map((v) => [v.manifest.id, v.manifest.icon_url])]
+          : sub === "webhooks" ? [r || null, hState.settingsErr]
+          : [ext, autoData.inbox, autoData.markets, hState.extErr, hState.marketsErr];
         const sig = JSON.stringify([sub, data]);
         if (sig === body._sig && !newPage) { if (restore) restoreSimpleScroll(body, restore); return; }
         body._sig = sig;
-        body.innerHTML = id ? collieExt.extPage((ext?.extensions || []).find((v) => v.manifest.id === id), ext, extLogin, autoData.inbox)
-          : sub === "reply" ? collieExt.replyPage(ext)
-          : sub === "markets" ? collieExt.marketsHTML(autoData.markets)
-          : sub === "webhooks" ? collieExt.pageHead("Webhook 与来源策略") + hooksHTML(r)
-          : collieExt.hooksList(ext, autoData.inbox, autoData.markets);
+        body.innerHTML = id ? collieExt.extPage((ext?.extensions || []).find((v) => v.manifest.id === id), ext, extLogin, autoData.inbox, hState)
+          : sub === "reply" ? collieExt.replyPage(ext, hState)
+          : sub === "markets" ? collieExt.marketsHTML(autoData.markets, { loading: hState.marketsLoading, error: hState.marketsErr })
+          : sub === "webhooks" ? collieExt.pageHead("Webhook 与来源策略") + (r ? hooksHTML(r) : hState.settingsErr ? `<div class="card"><div class="skel-err"><p class="ext-warn bad">${esc(hState.settingsErr)}</p><button type="button" class="btn small" data-auto-retry="settings">重试</button></div></div>` : `<div class="card" aria-busy="true"><div class="skel-status" role="status"><span class="spinner small" aria-hidden="true"></span><span>正在读取…</span></div></div>`)
+          : collieExt.hooksList(ext, autoData.inbox, autoData.markets, hState);
       }
       body._sub = sub;
       if (newPage) { markProgrammaticScroll(); body.scrollTop = 0; requestAnimationFrame(() => { body.scrollTop = 0; }); } else if (restore) restoreSimpleScroll(body, restore);
@@ -4057,10 +4189,25 @@
     if (b.hasAttribute("data-conv-close")) { inboxCur = ""; inboxDetail = null; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-conv-on")) { setConv({ on: b.getAttribute("aria-checked") !== "true" }); return; }
     if (b.dataset.convSet) { setConv({ [b.dataset.convSet]: b.dataset.convSet === "anyone" ? b.dataset.v === "true" : b.dataset.v }); return; }
+    if (b.hasAttribute("data-auto-retry")) {
+      const src = b.dataset.autoRetry;
+      if (src) delete autoErr[src];
+      const body = $("#auto-body");
+      body._sig = body._whSig = "";
+      if (autoTab === "hooks") drawAuto(autoData[autoSources(autoTab, hooksSub())[0]]);
+      loadAuto(); return;
+    }
     const market = b.closest("[data-market]")?.dataset.market;
     if (b.hasAttribute("data-market-refresh")) {
       busy(b);
-      await fetchAuto("markets").catch(() => {}); await api("/api/ext-markets?fresh").then((r) => { autoData.markets = r; }).catch((err) => toast(err.message, "attn"));
+      try {
+        const r = await api("/api/ext-markets?fresh");
+        autoData.markets = r;
+        delete autoErr.markets;
+      } catch (err) {
+        autoErr.markets = err?.message || "刷新失败";
+        toast(err.message, "attn");
+      } finally { busy(b, false); }
       drawAuto(autoData.settings); return;
     }
     if (market && b.hasAttribute("data-market-remove")) {
@@ -5187,7 +5334,7 @@
   // ───────────────────────────── workbench (workbench.js)
   // A shortcut module opens one of Collie's pages on a given tab.
   const workbench = window.collieWorkbench.mount({
-    api, toast, esc, ask, goHome: goWbHome,
+    api, toast, esc, ask, busy, goHome: goWbHome,
     openLink([v, tab]) {
       if (v === "auto") { autoTab = tab; store.set("autoTab", tab); }
       if (v === "devices") { devTab = tab; store.set("devTab", tab); }

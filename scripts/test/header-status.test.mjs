@@ -186,9 +186,60 @@ test("renders interactive selectable rows, section chips, and brand accents", ()
   assert.match(html, /data-hs-action="set_focus"/);
   assert.match(html, /aria-pressed="true"/);
   assert.match(html, /hs-hot/);
+  assert.match(html, /hs-chips seg/);
   assert.match(html, /hs-chip/);
   assert.match(html, /跟随模型/);
   assert.match(html, /data-hs-sec-box="meter:Pools"/);
   assert.match(html, /data-hs-key="meter:Pools:0"/);
   assert.equal(typeof hs.patch, "function");
+});
+
+test("keeps section meta hint visible alongside mode chips, adds pin hint on clickable rows, and keeps extension logo on mobile", () => {
+  const html = hs.render([{
+    id: "meter",
+    name: "Meter",
+    icon_url: "/api/ext/meter/icon",
+    state: "ok",
+    status: {
+      compact: "Claude 82% · Codex 53%",
+      items: [{ label: "Claude", value: "82%", icon: "claude", accent: "claude" }],
+      sections: [{
+        title: "模型池额度",
+        meta: "点击卡片切换顶栏显示",
+        chips: [
+          { label: "跟随模型", selected: true, action: { name: "set_focus", args: { focus: "auto" } } },
+          { label: "全部", selected: false, action: { name: "set_focus", args: { focus: "all" } } },
+        ],
+        rows: [
+          {
+            label: "Claude",
+            selected: false,
+            action: { name: "set_focus", args: { focus: "claude" }, label: "固定 Claude" },
+          },
+          {
+            label: "Codex",
+            selected: true,
+            action: { name: "set_focus", args: { focus: "codex" }, label: "取消固定" },
+          },
+        ],
+      }],
+    },
+  }], { openId: "meter", icons: { claude: '<svg data-ico="claude"></svg>' } });
+
+  assert.match(html, /hs-sec-sub">点击卡片切换顶栏显示</);
+  assert.match(html, /hs-chips seg/);
+  assert.match(html, /hs-act-hint[^>]*>固定顶栏</);
+  assert.match(html, /hs-sel-tag/);
+  assert.match(html, /hs-mobile-ico"><img class="src-logo" src="\/api\/ext\/meter\/icon"/);
+});
+
+test("desktop falls back to compact text when items are absent", () => {
+  const html = hs.render([{
+    id: "compact-only",
+    name: "Meter",
+    state: "ok",
+    status: { compact: "Quota 88%", subline: "Reset 12:00" },
+  }]);
+  assert.match(html, /hs-desktop">.*Quota 88%/);
+  assert.match(html, /Reset 12:00/);
 });

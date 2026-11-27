@@ -130,7 +130,10 @@
   // 接入: one line per extension, then the shared settings, the
   // marketplaces and the webhooks, each a page of its own.
   const extRank = (m) => (m?.market ? 1 : m?.local ? 2 : 0);
-  function hooksList(r, inbox, markets) {
+  const skelRow = (small = false) => `<div class="row skel-row" aria-hidden="true"><span class="skel-box${small ? " sm" : ""}"></span><div class="skel-lines"><span class="skel-line"></span><span class="skel-line short"></span></div><span class="right"><span class="skel-pill"></span></span></div>`;
+  const loadStatus = (text) => `<div class="skel-status" role="status"><span class="spinner small" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
+  const errBox = (msg, src) => `<div class="skel-err"><p class="ext-warn bad">${esc(msg)}</p><button type="button" class="btn small" data-auto-retry="${esc(src)}">重试</button></div>`;
+  function hooksList(r, inbox, markets, state = {}) {
     const list = [...(r?.extensions || [])].sort((a, b) => extRank(a.manifest) - extRank(b.manifest) || String(a.manifest?.id || "").localeCompare(String(b.manifest?.id || "")));
     const ms = r?.machines || [];
     const convs = inbox?.convs || [];
@@ -146,11 +149,21 @@
     };
     const nav = (href, title, sub, icon) => `<a class="row ext-row" href="${href}">${symTile(icon)}<div><div class="meta"><b>${title}</b></div><div class="text">${esc(sub)}</div></div><span class="right"><span class="chev" aria-hidden="true">›</span></span></a>`;
     const updates = (markets?.markets || []).reduce((n, mk) => n + (mk.index || []).filter((e) => mk.installed?.[e.id] && mk.installed[e.id] !== e.version).length, 0);
+    const extBody = r
+      ? (list.map(row).join("") || `<div class="empty-row with-ico">${ico("package")}<div>没有可用的扩展</div></div>`)
+      : state.extErr
+        ? errBox("读取扩展列表失败：" + state.extErr, "ext")
+        : skelRow() + skelRow() + skelRow() + loadStatus("正在读取扩展…");
+    const marketsSub = markets
+      ? `${(markets.markets || []).length} 个市场${updates ? ` · ${updates} 个可更新` : ""}`
+      : state.marketsErr
+        ? "读取市场失败，点进去重试"
+        : "正在读取市场…";
     return `<p class="panel-intro">接上飞书、微信，就能在那边和 Collie 对话；有的扩展还能让 agent 多做些事。扩展默认都关着，点进去开启、登录后才生效。</p>
-      <div class="card"><div class="card-h">扩展</div><div class="rows">${list.map(row).join("") || `<div class="empty-row">没有可用的扩展</div>`}</div></div>
+      <div class="card"${!r && !state.extErr ? ' aria-busy="true"' : ""}><div class="card-h">${cardTitle("package", "扩展")}</div><div class="rows">${extBody}</div></div>
       <div class="card"><div class="rows">
         ${nav("#/auto/hooks/reply", "唤起与回复", `触发词 ${r?.trigger || r?.default_trigger || "/ai"} · 回复尾标`, "message-square-reply")}
-        ${nav("#/auto/hooks/markets", "扩展市场", `${(markets?.markets || []).length} 个市场${updates ? ` · ${updates} 个可更新` : ""}`, "store")}
+        ${nav("#/auto/hooks/markets", "扩展市场", marketsSub, "store")}
       </div></div>`;
   }
 
@@ -158,8 +171,12 @@
   const pageHead = (title, sub = "", icon = "") => `<div class="sub-head"><a class="sub-back" href="#/auto" data-sub-back aria-label="返回接入">‹ 接入</a>${icon ? `<div class="ext-head">${icon}<div><h3>${title}</h3>${sub}</div></div>` : `<h3>${title}</h3>${sub}`}</div>`;
 
   // One extension's page: its state and the one thing to do next on top.
-  function extPage(v, r, qr, inbox) {
-    if (!v) return pageHead("扩展") + `<div class="card"><div class="empty-row">没有这个扩展</div></div>`;
+  function extPage(v, r, qr, inbox, state = {}) {
+    if (!v) {
+      if (!r && state.extErr) return pageHead("扩展") + `<div class="card">${errBox("读取扩展信息失败：" + state.extErr, "ext")}</div>`;
+      if (!r && state.extLoading) return pageHead("扩展") + `<div class="card" aria-busy="true"><div class="rows">${skelRow()}</div>${loadStatus("正在读取扩展信息…")}</div>`;
+      return pageHead("扩展") + `<div class="card"><div class="empty-row">没有这个扩展</div></div>`;
+    }
     const m = v.manifest, st = stateOf(v), ms = r?.machines || [], on = v.setting.enabled;
     const ask = m.defaults?.machine === "ask" && !v.setting.chosen;
     const primary = st.key === "off" ? (needsLogin(m) ? `<button class="btn primary" data-ext-login>${esc(loginWord(m))}</button>` : `<button class="btn primary" data-ext-enable>开启</button>`)
@@ -196,7 +213,9 @@
       </div></div>`;
   }
 
-  function replyPage(r) {
+  function replyPage(r, state = {}) {
+    if (!r && state.extErr) return pageHead("唤起与回复") + `<div class="card">${errBox("读取设置失败：" + state.extErr, "ext")}</div>`;
+    if (!r && state.extLoading) return pageHead("唤起与回复") + `<div class="card" aria-busy="true"><div class="rows">${skelRow()}</div>${loadStatus("正在读取设置…")}</div>`;
     return `${pageHead("唤起与回复")}
       <div class="card"><form class="form" id="ext-settings-form">
         <div class="set-grid">
@@ -210,14 +229,19 @@
 
   // 扩展市场: the repositories extensions are installed from, each with how
   // it is and what each of its extensions is to you; adding one below, apart.
-  function marketsHTML(mr) {
+  function marketsHTML(mr, state = {}) {
     const ms = mr?.markets || [];
+    const entryTile = (e, have) => {
+      const u = have && icons[e.id];
+      return u ? `<span class="ext-icon logo" aria-hidden="true"><img src="${esc(u)}" alt=""></span>` : symTile("package");
+    };
     const entry = (m, e) => {
       const have = m.installed?.[e.id], newer = have && have !== e.version;
       const state = !have ? "" : newer ? `<span class="pill info">可更新 · 已装 ${esc(have)}</span>` : `<span class="pill ok">已安装</span>`;
-      const act = !have ? `<button class="btn small" data-market-install="${esc(e.id)}">安装</button>`
-        : newer ? `<button class="btn small primary" data-market-install="${esc(e.id)}">更新到 ${esc(e.version)}</button>` : "";
-      return `<li class="row market-entry">${symTile("package")}<div><div class="meta"><b>${esc(e.name || e.id)}</b><span class="mono">${esc(e.id)} ${esc(e.version)}</span></div><div class="text">${esc(e.description || "")}</div></div><span class="right market-act">${state}${act}</span></li>`;
+      const dis = m.error ? " disabled" : "";
+      const act = !have ? `<button class="btn small" data-market-install="${esc(e.id)}"${dis}>安装</button>`
+        : newer ? `<button class="btn small primary" data-market-install="${esc(e.id)}"${dis}>更新到 ${esc(e.version)}</button>` : "";
+      return `<li class="row market-entry">${entryTile(e, have)}<div><div class="meta"><b>${esc(e.name || e.id)}</b><span class="mono">${esc(e.id)} ${esc(e.version)}</span></div><div class="text">${esc(e.description || "")}</div></div><span class="right market-act">${state}${act}</span></li>`;
     };
     const market = (m) => `<div class="card market" data-market="${esc(m.repo)}">
         <div class="card-h market-h">${symTile("folder-git-2")}<div class="market-t"><b>${esc(m.name || m.repo)}</b><span class="muted mono">${esc(m.repo)}${m.ref ? "@" + esc(m.ref) : ""}${m.commit ? " · " + esc(m.commit.slice(0, 7)) : ""}</span></div>
@@ -225,10 +249,15 @@
           <button class="btn small danger" data-market-remove>移除</button></div>
         ${m.error ? `<p class="ext-warn bad market-err">${esc(m.error)}</p>` : ""}
         <ul class="rows">${(m.index || []).map((e) => entry(m, e)).join("") || (m.error ? "" : `<li class="empty-row">这个市场里还没有扩展</li>`)}</ul></div>`;
+    const body = mr
+      ? `${state.error ? `<div class="card">${errBox("刷新扩展市场失败：" + state.error, "markets")}</div>` : ""}${ms.map(market).join("") || `<div class="card"><div class="empty-row with-ico">${ico("store")}<div>还没有市场，在下面添加一个</div></div></div>`}`
+      : state.error
+        ? `<div class="card">${errBox("读取扩展市场失败：" + state.error, "markets")}</div>`
+        : `<div class="card market" aria-busy="true"><div class="card-h market-h"><span class="skel-box sm" aria-hidden="true"></span><div class="market-t skel-lines"><span class="skel-line"></span><span class="skel-line short"></span></div></div><div class="rows">${skelRow(true)}${skelRow(true)}</div>${loadStatus("正在读取扩展市场…")}</div>`;
     return `${pageHead("扩展市场")}
       <div class="market-bar"><p class="ext-desc">飞书、微信和工作台是自带的，其他扩展从市场安装。市场就是一个 GitHub 仓库，根目录放 collie-marketplace.json（格式见 extensions/README.md）。</p>
-        ${ms.length ? `<button class="btn small" data-market-refresh>${ico("refresh-cw")}刷新</button>` : ""}</div>
-      ${ms.map(market).join("") || `<div class="card"><div class="empty-row with-ico">${ico("store")}<div>还没有市场，在下面添加一个</div></div></div>`}
+        ${mr && ms.length ? `<button class="btn small" data-market-refresh>${ico("refresh-cw")}刷新</button>` : ""}</div>
+      ${body}
       <div class="card"><div class="card-h">${cardTitle("plus", "添加市场")}</div>
         <form class="form" id="market-form"><div class="set-grid">
           <label>仓库<input name="repo" placeholder="owner/name" autocorrect="off" autocapitalize="off" spellcheck="false" required></label>

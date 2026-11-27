@@ -60,3 +60,39 @@ test("extPage shows WeChat nickname and avatar controls beside it, and not on ot
   }, { machines: [] }, null, { convs: [] });
   assert.doesNotMatch(larkHTML, /ext-avatar/);
 });
+
+test("hooksList and marketsHTML render loading skeletons and retry errors instead of blank or false empty states", () => {
+  const hooksLoading = ext.hooksList(undefined, undefined, undefined, { extLoading: true, marketsLoading: true });
+  assert.match(hooksLoading, /skel-row/);
+  assert.match(hooksLoading, /正在读取扩展/);
+  assert.match(hooksLoading, /正在读取市场/);
+  assert.doesNotMatch(hooksLoading, /0 个市场/);
+  assert.doesNotMatch(hooksLoading, /没有可用的扩展/);
+
+  const hooksErr = ext.hooksList(undefined, undefined, undefined, { extErr: "503", marketsErr: "timeout" });
+  assert.match(hooksErr, /读取扩展列表失败：503/);
+  assert.match(hooksErr, /data-auto-retry="ext"/);
+  assert.match(hooksErr, /读取市场失败/);
+
+  const marketsLoading = ext.marketsHTML(undefined, { loading: true });
+  assert.match(marketsLoading, /扩展市场/);
+  assert.match(marketsLoading, /skel-row/);
+  assert.match(marketsLoading, /正在读取扩展市场/);
+  assert.doesNotMatch(marketsLoading, /还没有市场/);
+
+  const marketsErr = ext.marketsHTML(undefined, { error: "network down" });
+  assert.match(marketsErr, /读取扩展市场失败：network down/);
+  assert.match(marketsErr, /data-auto-retry="markets"/);
+
+  // Installed extension in market renders its official icon when known.
+  ext.learn({ extensions: [{ manifest: { id: "demo-ext", name: "Demo", icon_url: "/api/ext/demo-ext/icon" } }] });
+  const marketsLoaded = ext.marketsHTML({
+    markets: [{
+      repo: "o/r",
+      name: "Market",
+      installed: { "demo-ext": "1.0.0" },
+      index: [{ id: "demo-ext", name: "Demo", version: "1.1.0", description: "desc" }],
+    }],
+  });
+  assert.match(marketsLoaded, /src="\/api\/ext\/demo-ext\/icon"/);
+});

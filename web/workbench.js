@@ -24,6 +24,19 @@
   const FRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads";
   const FRAME_ALLOW = "geolocation; clipboard-write; fullscreen";
   const DEFAULT_ICON = { web: "🌐", link: "↗" };
+  const LINK_ICON = {
+    "auto:inbox": "inbox",
+    "auto:events": "zap",
+    "auto:timers": "alarm-clock",
+    "auto:memory": "brain",
+    "auto:hooks": "webhook",
+    "devices:machines": "monitor",
+    "devices:connect": "smartphone",
+  };
+  // Legacy emojis saved by earlier defaultWBConfig() are drawn with Lucide
+  // line icons so built-in shortcuts match the rest of the interface.
+  const LEGACY_LINK_EMOJI = { "auto:inbox": "📥", "auto:timers": "⏰", "auto:memory": "🧠", "devices:machines": "🖥" };
+  const MORE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>';
 
   // arrange lists the groups in order, each with its modules in order.
   function arrange(cfg) {
@@ -59,8 +72,10 @@
 
   function mount(app) {
     const { api, toast, esc, ask, openLink } = app;
+    const busy = app.busy || (() => {});
     const goHome = app.goHome || ((replace) => { if (replace) location.replace("#/wb"); else location.hash = "#/wb"; });
     const $ = (s) => document.querySelector(s);
+    const ico = (name, fb = "") => window.collieIcons?.svg(name) || fb;
     let cfg = null, cur = "", seq = 0;
 
     async function load() {
@@ -68,34 +83,47 @@
       return cfg;
     }
     const mod = (id) => cfg?.modules.find((m) => m.id === id);
-    const icon = (m) => esc(m.icon || DEFAULT_ICON[m.kind] || "•");
+    const isLegacyLinkIcon = (m) => m?.kind === "link" && (!m.icon || m.icon === LEGACY_LINK_EMOJI[m.url]);
+    function icon(m) {
+      if (isLegacyLinkIcon(m)) return ico(LINK_ICON[m.url] || "layout-dashboard", esc(DEFAULT_ICON.link));
+      if (!m.icon && m.kind === "web") return ico("globe", esc(DEFAULT_ICON.web));
+      return esc(m.icon || DEFAULT_ICON[m.kind] || "•");
+    }
     const href = (m) => (m.kind === "link" ? "#" : "#/wb/" + encodeURIComponent(m.id));
     const linkAttr = (m) => (m.kind === "link" ? ` data-wb-link="${esc(m.url)}"` : "");
 
     function navHTML() {
-      return `<div class="wb-nav-home"><a class="wb-item ${cur ? "" : "on"}" href="#/wb" data-wb-home><span class="wb-ico">${window.collieIcons?.svg("layout-dashboard") || "▦"}</span><span>工作台首页</span></a></div>` +
+      return `<div class="wb-nav-home"><a class="wb-item ${cur ? "" : "on"}" href="#/wb" data-wb-home><span class="wb-ico">${ico("layout-dashboard", "▦")}</span><span>工作台首页</span></a></div>` +
         arrange(cfg).map((g) => `<div class="wb-group">${esc(g.title)}</div>` + g.modules.map((m) =>
-          `<a class="wb-item ${cur === m.id ? "on" : ""}" href="${href(m)}"${linkAttr(m)} title="${esc(m.title)}"><span class="wb-ico">${icon(m)}</span><span>${esc(m.title)}</span>${m.share !== "off" ? `<span class="wb-dot" title="给 Agent：${SHARE[m.share]}"></span>` : ""}${m.kind === "web" && m.embed !== "iframe" ? '<span class="wb-out">↗</span>' : ""}</a>`).join("")).join("") +
-        `<button type="button" class="wb-item wb-add" data-wb-add><span class="wb-ico">＋</span><span>添加网页</span></button>`;
+          `<a class="wb-item ${cur === m.id ? "on" : ""}" href="${href(m)}"${linkAttr(m)} title="${esc(m.title)}"><span class="wb-ico">${icon(m)}</span><span>${esc(m.title)}</span>${m.share !== "off" ? `<span class="wb-dot${m.snap_err ? " err" : ""}" title="${m.snap_err ? "快照失败" : "给 Agent：" + SHARE[m.share]}"></span>` : ""}${m.kind === "web" && m.embed !== "iframe" ? `<span class="wb-out" aria-hidden="true">${ico("external-link", "↗")}</span>` : ""}</a>`).join("")).join("");
     }
 
     function cardMeta(m) {
       if (m.kind === "link") return esc(LINKS[m.url]?.[2] || "Collie");
-      const bits = [esc(host(m.url))];
-      if (m.share !== "off") bits.push(`给 Agent：${SHARE[m.share]}`);
-      if (m.snap_err) bits.push(`<span class="wb-err">快照失败</span>`);
-      return bits.join(" · ");
+      return esc(host(m.url));
+    }
+
+    function cardTags(m) {
+      if (m.kind !== "web") return "";
+      const tags = [];
+      if (m.share !== "off") tags.push(`<span class="pill plain wb-tag" title="给 Agent：${SHARE[m.share]}">${SHARE[m.share]}</span>`);
+      if (m.hub_login) tags.push(`<span class="pill plain wb-tag">hub 登录</span>`);
+      if (m.snap_err) tags.push(`<span class="pill bad wb-tag" title="${esc(m.snap_err)}">快照失败</span>`);
+      return tags.length ? `<span class="wb-card-tags">${tags.join("")}</span>` : "";
     }
 
     function overviewHTML() {
       return arrange(cfg).map((g) => `<section class="wb-sec">
         <div class="wb-sec-h"><span>${esc(g.title)}</span>
-          <button type="button" class="icon-btn" data-wb-group="${esc(g.id)}" title="分组：改名、排序、删除"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button></div>
-        <div class="wb-cards">${g.modules.map((m) => `<a class="wb-card" href="${href(m)}"${linkAttr(m)}>
-          <span class="wb-card-ico">${icon(m)}</span><span class="wb-card-t">${esc(m.title)}</span>
-          <span class="wb-card-m">${cardMeta(m)}</span></a>`).join("") || '<p class="empty-hint">还没有模块</p>'}</div></section>`).join("") +
-        `<div class="wb-foot"><button type="button" class="btn small" data-wb-add>添加网页</button>
-         <button type="button" class="btn small ghost" data-wb-newgroup>新建分组</button></div>`;
+          <button type="button" class="icon-btn" data-wb-group="${esc(g.id)}" title="分组：改名或删除" aria-label="管理分组 ${esc(g.title)}">${MORE_SVG}</button></div>
+        <div class="wb-cards">${g.modules.map((m) => `<div class="wb-card">
+          <a class="wb-card-go" href="${href(m)}"${linkAttr(m)}>
+            <span class="wb-card-ico">${icon(m)}</span><span class="wb-card-t">${esc(m.title)}</span>
+            <span class="wb-card-m">${cardMeta(m)}</span>${cardTags(m)}
+          </a>
+          <button type="button" class="icon-btn wb-card-more" data-wb-edit="${esc(m.id)}" title="改名、移动或移除" aria-label="设置 ${esc(m.title)}">${MORE_SVG}</button>
+        </div>`).join("") || '<p class="empty-hint">还没有模块</p>'}</div></section>`).join("") +
+        `<div class="wb-foot"><button type="button" class="btn small ghost" data-wb-newgroup>${ico("plus")}新建分组</button></div>`;
     }
 
     // A module kept by the hub opens through a ticket (workbench_proxy.go):
@@ -126,15 +154,15 @@
 
     function headHTML(m) {
       $("#wb-name").innerHTML = m
-        ? `<a class="wb-crumb" href="#/wb" data-wb-home title="回到工作台首页">${window.collieIcons?.svg("layout-dashboard") || ""}<span>工作台</span></a><span class="wb-sep" aria-hidden="true">/</span><span class="wb-cur">${esc(m.title)}</span>`
+        ? `<a class="wb-crumb" href="#/wb" data-wb-home title="回到工作台首页">${ico("layout-dashboard")}<span>工作台</span></a><span class="wb-sep" aria-hidden="true">/</span><span class="wb-cur">${esc(m.title)}</span>`
         : "工作台";
       $("#wb-meta").textContent = m ? [host(m.url), m.embed === "iframe" ? "嵌入" : "新标签打开", ...(m.hub_login ? ["hub 保管登录"] : []), "给 Agent：" + SHARE[m.share]].join(" · ") : "把你关心的网页和页面放在这里，选哪些交给 Agent";
       $("#wb-acts").innerHTML = m ? `
-        <button type="button" class="icon-btn" data-wb-open title="在新标签页打开">${window.collieIcons?.svg("maximize-2") || ""}</button>
-        ${m.embed === "iframe" ? '<button type="button" class="icon-btn" data-wb-reload title="刷新"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>' : ""}
-        ${m.feed ? '<button type="button" class="icon-btn" data-wb-send title="把它现在的数据发给 Collie"><svg viewBox="0 0 24 24"><path d="M12 3l2.2 6.8H21l-5.5 4 2.1 6.7L12 16.4l-5.6 4.1 2.1-6.7L3 9.8h6.8z"/></svg></button>' : ""}
-        <button type="button" class="icon-btn" data-wb-edit="${esc(m.id)}" title="设置"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>`
-        : `<button type="button" class="btn small" data-wb-add>添加网页</button>`;
+        ${m.embed === "iframe" ? `<button type="button" class="icon-btn" data-wb-open title="在新标签页打开" aria-label="在新标签页打开">${ico("external-link")}</button>` : ""}
+        ${m.embed === "iframe" ? `<button type="button" class="icon-btn" data-wb-reload title="刷新" aria-label="刷新">${ico("refresh-cw")}</button>` : ""}
+        ${m.feed ? `<button type="button" class="icon-btn" data-wb-send title="把它现在的数据发给 Collie" aria-label="发给 Collie">${ico("send")}</button>` : ""}
+        <button type="button" class="icon-btn" data-wb-edit="${esc(m.id)}" title="设置" aria-label="设置">${MORE_SVG}</button>`
+        : `<button type="button" class="btn primary small" data-wb-add>${ico("plus")}添加网页</button>`;
     }
 
     function render() {
@@ -174,9 +202,17 @@
     // ── the module sheet: add or edit one module
     const dlg = $("#wb-edit");
     let editing = null; // the module being edited, or null for a new one
+    let probeSeq = 0, embedTouched = false;
     function field(name) { return dlg.querySelector(`[name="${name}"]`); }
     function setSeg(name, v) { dlg.querySelectorAll(`[data-seg="${name}"] button`).forEach((b) => b.classList.toggle("on", b.dataset.v === v)); }
     const segVal = (name) => dlg.querySelector(`[data-seg="${name}"] button.on`)?.dataset.v;
+    function syncOrderBtns() {
+      if (!editing || !cfg) return;
+      const same = cfg.modules.filter((x) => x.group === editing.group);
+      const idx = same.findIndex((x) => x.id === editing.id);
+      $("#wb-up").disabled = idx <= 0;
+      $("#wb-down").disabled = idx < 0 || idx >= same.length - 1;
+    }
     function syncForm() {
       const web = (editing?.kind || "web") === "web";
       dlg.querySelectorAll(".wb-web").forEach((el) => (el.hidden = !web));
@@ -187,9 +223,12 @@
     }
     function editModule(m) {
       editing = m || null;
+      probeSeq++;
+      embedTouched = false;
       $("#wb-edit-title").textContent = m ? "设置 · " + m.title : "添加网页";
       field("title").value = m?.title || "";
-      field("icon").value = m?.icon || "";
+      field("icon").value = isLegacyLinkIcon(m) ? "" : (m?.icon || "");
+      field("icon").placeholder = (m?.kind || "web") === "link" ? "默认" : "🌐";
       field("url").value = m?.url || "";
       field("feed").value = m?.feed || "";
       field("token").value = "";
@@ -210,67 +249,74 @@
       $("#wb-probe-note").textContent = "";
       $("#wb-edit-error").textContent = "";
       $("#wb-del").hidden = $("#wb-up").hidden = $("#wb-down").hidden = !m;
+      syncOrderBtns();
       syncForm();
       dlg.showModal();
     }
-    let probeSeq = 0;
     async function probe() {
       const url = field("url").value.trim();
       if (!url) return;
       const mine = ++probeSeq;
+      const btn = $("#wb-probe");
+      busy(btn, true);
       $("#wb-probe-note").textContent = "检测中…";
       try {
         const p = await api("/api/wb/probe", { body: { url } });
         if (mine !== probeSeq || !dlg.open) return; // another URL or module since
-        setSeg("embed", p.embed);
+        if (!embedTouched) setSeg("embed", p.embed);
         $("#wb-probe-note").textContent = p.embed === "iframe" ? "可以嵌入"
           : `不能嵌入（${p.reason}），会在新标签打开` + (p.same ? "。这像是你自己的站点：让它的响应头带上 frame-ancestors " + location.origin + " 就能嵌进来" : "");
       } catch (err) { if (mine === probeSeq) $("#wb-probe-note").textContent = err.message; }
+      finally { if (mine === probeSeq) busy(btn, false); }
     }
     async function submit() {
-      const next = clone();
-      const v = { title: field("title").value.trim(), icon: field("icon").value.trim(), group: field("group").value };
-      let id = editing?.id;
-      if (!editing || editing.kind === "web") {
-        Object.assign(v, {
-          kind: "web", url: field("url").value.trim(), embed: segVal("embed") || "tab", feed: field("feed").value.trim(),
-          share: segVal("share") || "off", sensitive: field("sensitive").checked, every: Number(field("every").value) || 0,
-          hub_login: !!cfg.proxy && field("hub-login").checked,
-        });
-        if (!v.title) v.title = host(v.url) || "网页";
-      }
-      const purge = [];
-      if (editing) {
-        const i = next.modules.findIndex((m) => m.id === id);
-        if (editing.share !== "off" && v.share === "off" && await ask({ title: "同时删除它的快照和记忆？", text: "不删的话，已经沉淀的内容会留在 Collie 的记忆里", ok: "删除" })) purge.push(id);
-        next.modules[i] = { ...next.modules[i], ...v };
-      } else {
-        id = freeId(v.url || v.title, new Set(next.modules.map((m) => m.id)));
-        next.modules.push({ id, ...v });
-      }
-      const added = !editing;
-      const logout = field("logout").checked;
-      await save(next, purge, !logout);
-      editing = mod(id); // saved: trying again after a failed token edits it, not a copy
-      if (logout) {
-        await api("/api/wb/logout", { body: { id } });
-        await load();
-        render();
-      }
-      const token = field("token").value.trim(), clear = field("clear-token").checked;
-      if (token || clear) {
-        await api("/api/wb/token", { body: { id, token: clear ? "" : token } });
-        await load();
-        render();
-      }
-      dlg.close();
-      if (added) location.hash = "#/wb/" + encodeURIComponent(id);
+      const saveBtn = dlg.querySelector('button[value="save"]');
+      busy(saveBtn, true);
+      try {
+        const next = clone();
+        const v = { title: field("title").value.trim(), icon: field("icon").value.trim(), group: field("group").value };
+        let id = editing?.id;
+        if (!editing || editing.kind === "web") {
+          Object.assign(v, {
+            kind: "web", url: field("url").value.trim(), embed: segVal("embed") || "tab", feed: field("feed").value.trim(),
+            share: segVal("share") || "off", sensitive: field("sensitive").checked, every: Number(field("every").value) || 0,
+            hub_login: !!cfg.proxy && field("hub-login").checked,
+          });
+          if (!v.title) v.title = host(v.url) || "网页";
+        }
+        const purge = [];
+        if (editing) {
+          const i = next.modules.findIndex((m) => m.id === id);
+          if (editing.share !== "off" && v.share === "off" && await ask({ title: "同时删除它的快照和记忆？", text: "不删的话，已经沉淀的内容会留在 Collie 的记忆里", ok: "删除", warn: true })) purge.push(id);
+          next.modules[i] = { ...next.modules[i], ...v };
+        } else {
+          id = freeId(v.url || v.title, new Set(next.modules.map((m) => m.id)));
+          next.modules.push({ id, ...v });
+        }
+        const added = !editing;
+        const logout = field("logout").checked;
+        await save(next, purge, !logout);
+        editing = mod(id); // saved: trying again after a failed token edits it, not a copy
+        if (logout) {
+          await api("/api/wb/logout", { body: { id } });
+          await load();
+          render();
+        }
+        const token = field("token").value.trim(), clear = field("clear-token").checked;
+        if (token || clear) {
+          await api("/api/wb/token", { body: { id, token: clear ? "" : token } });
+          await load();
+          render();
+        }
+        dlg.close();
+        if (added) location.hash = "#/wb/" + encodeURIComponent(id);
+      } finally { busy(saveBtn, false); }
     }
 
     async function remove() {
       if (!editing) return;
       if (!(await ask({ title: `移除「${editing.title}」？`, ok: "移除", warn: true }))) return;
-      const purge = editing.share !== "off" && await ask({ title: "同时删除它的快照和记忆？", ok: "删除" }) ? [editing.id] : [];
+      const purge = editing.share !== "off" && await ask({ title: "同时删除它的快照和记忆？", ok: "删除", warn: true }) ? [editing.id] : [];
       const next = clone();
       next.modules = next.modules.filter((m) => m.id !== editing.id);
       await save(next, purge);
@@ -337,18 +383,26 @@
       }
     });
     dlg.addEventListener("click", (e) => {
+      if (e.target.closest("[data-wb-cancel]")) { dlg.close("cancel"); return; }
       const b = e.target.closest("[data-seg] button");
-      if (b) { b.parentElement.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); syncForm(); return; }
+      if (b) {
+        if (b.parentElement.dataset.seg === "embed") embedTouched = true;
+        b.parentElement.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        syncForm(); return;
+      }
       if (e.target.closest("#wb-probe")) probe();
       else if (e.target.closest("#wb-del")) guard(remove)();
-      else if (e.target.closest("#wb-up, #wb-down")) guard(async () => { await save(shift(clone(), editing.id, e.target.closest("#wb-up") ? -1 : 1)); dlg.close(); })();
+      else if (e.target.closest("#wb-up, #wb-down")) {
+        const dir = e.target.closest("#wb-up") ? -1 : 1;
+        guard(async () => { await save(shift(clone(), editing.id, dir)); editing = mod(editing.id); syncOrderBtns(); })();
+      }
       else if (e.target === dlg) dlg.close();
     });
-    field("url").addEventListener("change", probe);
+    field("url").addEventListener("change", () => { embedTouched = false; probe(); });
     // Through the hub any page can be embedded: its frame headers are Collie's.
-    field("hub-login").addEventListener("change", (e) => { if (e.target.checked) setSeg("embed", "iframe"); });
+    field("hub-login").addEventListener("change", (e) => { embedTouched = true; if (e.target.checked) setSeg("embed", "iframe"); });
     dlg.querySelector("form").addEventListener("submit", (e) => {
-      if (e.submitter?.value !== "save") return;
+      if (e.submitter && e.submitter.value !== "save") return;
       e.preventDefault();
       guard(submit)();
     });

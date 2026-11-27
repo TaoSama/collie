@@ -249,3 +249,65 @@ test("mobile workbench home control has data-wb-home and >=44px touch target rul
   assert.match(html, /class="wb-home"[^>]*data-wb-home/);
   assert.match(css, /#v-wb\.wb-on-page \.wb-home\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/);
 });
+
+test("workbench overview gives every card (including shortcuts) an edit button, single add-web button, and separate tag row", async () => {
+  const makeEl = (id = "") => ({
+    id, innerHTML: "", textContent: "", hidden: false, open: false, disabled: false,
+    classList: { toggle() {} },
+    addEventListener() {},
+    querySelector() { return makeEl(); },
+    querySelectorAll() { return []; },
+  });
+  const nodes = {
+    "#v-wb": makeEl("v-wb"), "#wb-name": makeEl("wb-name"), "#wb-meta": makeEl("wb-meta"),
+    "#wb-acts": makeEl("wb-acts"), "#wb-nav": makeEl("wb-nav"), "#wb-main": makeEl("wb-main"),
+    "#wb-edit": makeEl("wb-edit"),
+  };
+  const mctx = {
+    window: { collieIcons: { svg: (n) => `<svg data-ico="${n}"></svg>` } },
+    URL,
+    document: { querySelector: (s) => nodes[s] || makeEl(s) },
+    location: { hash: "#/wb", replace() {} },
+  };
+  vm.runInNewContext(readFileSync(new URL("../../web/workbench.js", import.meta.url), "utf8"), mctx);
+  const wb = mctx.window.collieWorkbench.mount({
+    api: async () => ({
+      groups: [{ id: "fav", title: "收藏" }, { id: "collie", title: "Collie" }],
+      modules: [
+        { id: "gw", title: "网关", group: "fav", kind: "web", url: "https://gw.example.com", embed: "tab", share: "keep", snap_err: "timeout" },
+        { id: "inbox", title: "收件箱", icon: "📥", group: "collie", kind: "link", url: "auto:inbox", share: "off" },
+      ],
+    }),
+    toast() {}, esc: (s) => String(s ?? ""), ask: async () => false, openLink() {},
+  });
+  await wb.open("");
+
+  // Single primary add button in header; none in nav or footer.
+  const addCount = (nodes["#wb-acts"].innerHTML.match(/data-wb-add/g) || []).length
+    + (nodes["#wb-nav"].innerHTML.match(/data-wb-add/g) || []).length
+    + (nodes["#wb-main"].innerHTML.match(/data-wb-add/g) || []).length;
+  assert.equal(addCount, 1);
+  assert.match(nodes["#wb-acts"].innerHTML, /class="btn primary small"[^>]*data-wb-add/);
+
+  // Both web and link cards expose direct edit buttons on overview.
+  assert.match(nodes["#wb-main"].innerHTML, /data-wb-edit="gw"/);
+  assert.match(nodes["#wb-main"].innerHTML, /data-wb-edit="inbox"/);
+
+  // Built-in shortcut uses Lucide icon instead of legacy emoji; share/error in separate tag row.
+  assert.match(nodes["#wb-main"].innerHTML, /data-ico="inbox"/);
+  assert.doesNotMatch(nodes["#wb-main"].innerHTML, /📥/);
+  assert.match(nodes["#wb-main"].innerHTML, /wb-card-tags.*沉淀.*快照失败/);
+});
+
+test("wb-edit close and cancel buttons have type=button and error banner is outside sheet-body", () => {
+  const html = readFileSync(new URL("../../web/index.html", import.meta.url), "utf8");
+  const dlg = html.slice(html.indexOf('id="wb-edit"'), html.indexOf("</dialog>", html.indexOf('id="wb-edit"')));
+  // Every button before the submit save button must be type="button" so Enter submits save.
+  const buttons = [...dlg.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
+  const submitButtons = buttons.filter((b) => !/type="button"/.test(b));
+  assert.equal(submitButtons.length, 1);
+  assert.match(submitButtons[0], /value="save"/);
+  // Error element sits after .sheet-body closes, directly above .sheet-foot.
+  assert.ok(dlg.indexOf('id="wb-edit-error"') > dlg.lastIndexOf("</div>", dlg.indexOf('id="wb-edit-error"')));
+  assert.ok(dlg.indexOf('id="wb-edit-error"') < dlg.indexOf('<footer class="sheet-foot"'));
+});
