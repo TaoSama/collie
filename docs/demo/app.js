@@ -8633,12 +8633,19 @@
       else lbDlLink.removeAttribute("download");
     }
   }
+  function lbOrigin() {
+    const r = lbStage.getBoundingClientRect();
+    return {
+      x: r.left + lbImg.offsetLeft + lbImg.offsetWidth / 2,
+      y: r.top + lbImg.offsetTop + lbImg.offsetHeight / 2,
+    };
+  }
   function clampLbPan() {
     if (lbScale <= 1.005) { lbScale = 1; lbX = 0; lbY = 0; return; }
     const st = lbStage.getBoundingClientRect();
     const bw = lbImg.offsetWidth || 0, bh = lbImg.offsetHeight || 0;
-    const maxX = Math.max(0, (bw * lbScale - st.width) / 2 + 24);
-    const maxY = Math.max(0, (bh * lbScale - st.height) / 2 + 24);
+    const maxX = Math.max(0, (bw * lbScale - Math.min(bw, st.width)) / 2);
+    const maxY = Math.max(0, (bh * lbScale - Math.min(bh, st.height)) / 2);
     lbX = Math.min(maxX, Math.max(-maxX, lbX));
     lbY = Math.min(maxY, Math.max(-maxY, lbY));
   }
@@ -8646,9 +8653,8 @@
     clampLbPan();
     const zoomed = lbScale > 1.005;
     lightbox.classList.toggle("is-zoomed", zoomed);
-    if (immediate) lightbox.classList.add("no-anim");
+    lightbox.classList.toggle("no-anim", immediate);
     lbImg.style.transform = zoomed ? `translate3d(${lbX.toFixed(1)}px, ${lbY.toFixed(1)}px, 0) scale(${lbScale.toFixed(3)})` : "";
-    if (immediate) requestAnimationFrame(() => lightbox.classList.remove("no-anim"));
     if (lbZoomBtn) {
       lbZoomBtn.classList.toggle("zoomed", zoomed);
       lbZoomBtn.setAttribute("aria-pressed", String(zoomed));
@@ -8676,14 +8682,15 @@
       applyLbTransform(immediate);
       return;
     }
+    const factor = clamped / lbScale;
+    let ox = 0, oy = 0;
     if (typeof clientX === "number" && typeof clientY === "number") {
-      const r = lbStage.getBoundingClientRect();
-      const ox = clientX - (r.left + r.width / 2);
-      const oy = clientY - (r.top + r.height / 2);
-      const factor = clamped / lbScale;
-      lbX = ox - (ox - lbX) * factor;
-      lbY = oy - (oy - lbY) * factor;
+      const c = lbOrigin();
+      ox = clientX - c.x;
+      oy = clientY - c.y;
     }
+    lbX = ox - (ox - lbX) * factor;
+    lbY = oy - (oy - lbY) * factor;
     lbScale = clamped;
     applyLbTransform(immediate);
   }
@@ -8881,6 +8888,9 @@
         closeLightbox();
       }
     });
+    let lbWheelX = 0, lbWheelLast = 0, lbWheelLock = 0;
+    const ptrs = new Map();
+    let gesture = null, lastTap = null;
     lightbox.addEventListener("close", () => {
       lightbox.returnValue = "";
       lightbox.removeAttribute("data-closing");
@@ -8892,6 +8902,8 @@
       lbImg.hidden = true;
       lbStatus.hidden = true;
       lbScale = 1; lbX = 0; lbY = 0;
+      lbWheelX = 0; lbWheelLast = 0; lbWheelLock = 0;
+      ptrs.clear(); gesture = null; lastTap = null;
       if (lbSavedScroll?.sc && lbSavedScroll.sc.scrollTop !== lbSavedScroll.top) {
         markProgrammaticScroll(120);
         lbSavedScroll.sc.scrollTop = lbSavedScroll.top;
@@ -8927,31 +8939,55 @@
     lightbox.addEventListener("wheel", (ev) => {
       if (lbImg.hidden || lbZoomBtn?.disabled) return;
       ev.preventDefault();
-      const factor = Math.exp(-ev.deltaY * 0.0022);
+      const now = performance.now();
+      const dx = ev.deltaMode === 1 ? ev.deltaX * 16 : ev.deltaX;
+      const dy = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
+      if (!ev.ctrlKey && lbScale <= 1.005) {
+        if (now < lbWheelLock) return;
+        if (lbItems.length > 1 && Math.abs(dx) > Math.abs(dy)) {
+          if (now - lbWheelLast > 160) lbWheelX = 0;
+          lbWheelLast = now;
+          lbWheelX += dx;
+          if (Math.abs(lbWheelX) >= 60) {
+            const dir = lbWheelX > 0 ? 1 : -1;
+            lbWheelX = 0;
+            lbWheelLock = now + 450;
+            showLbSlide(lbIdx + dir);
+          }
+          return;
+        }
+      }
+      if (!dy) return;
+      const factor = Math.exp(-dy * (ev.ctrlKey ? 0.008 : 0.0022));
       zoomLbTo(lbScale * factor, ev.clientX, ev.clientY, true);
     }, { passive: false });
 
-    // Pointer gestures on stage: backdrop light-dismiss, click-to-zoom, 1-finger pan, 2-finger pinch & 1x swipe.
-    const ptrs = new Map();
-    let gesture = null;
+    // Pointer gestures on stage: backdrop light-dismiss, click/double-tap zoom, 1-finger pan, 2-finger pinch & 1x swipe.
+    const startPinch = () => {
+      if (gesture?.swiping) applyLbTransform(true);
+      const [a, b] = [...ptrs.values()];
+      const c = lbOrigin();
+      const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+      gesture = {
+        kind: "pinch", moved: true,
+        dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+        scale0: lbScale,
+        ux: (midX - c.x - lbX) / lbScale,
+        uy: (midY - c.y - lbY) / lbScale,
+      };
+      lastTap = null;
+      lightbox.classList.add("is-dragging");
+    };
     lbStage.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0 && ev.pointerType === "mouse") return;
       ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-      if (ptrs.size === 2) {
-        const [a, b] = [...ptrs.values()];
-        gesture = {
-          kind: "pinch", moved: true,
-          dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
-          scale0: lbScale,
-        };
-        lightbox.classList.add("is-dragging");
-        return;
-      }
+      if (ptrs.size === 2) { startPinch(); return; }
+      if (ptrs.size > 2) return;
       gesture = {
-        kind: "single", pointerId: ev.pointerId,
+        kind: "single", pointerId: ev.pointerId, pointerType: ev.pointerType,
         startX: ev.clientX, startY: ev.clientY,
-        panX0: lbX, panY0: lbY,
-        target: ev.target, moved: false,
+        panX0: lbX, panY0: lbY, zoomed0: lbScale > 1.005,
+        target: ev.target, moved: false, swiping: false,
       };
       if (lbScale > 1.005 && ev.target === lbImg) {
         try { lbStage.setPointerCapture(ev.pointerId); } catch {}
@@ -8964,37 +9000,86 @@
         const [a, b] = [...ptrs.values()];
         const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
         const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
-        zoomLbTo(gesture.scale0 * (dist / gesture.dist), midX, midY, true);
+        const nextScale = Math.min(6, Math.max(1, gesture.scale0 * (dist / gesture.dist)));
+        if (nextScale <= 1.005) {
+          lbScale = 1; lbX = 0; lbY = 0;
+        } else {
+          const c = lbOrigin();
+          lbScale = nextScale;
+          lbX = (midX - c.x) - gesture.ux * lbScale;
+          lbY = (midY - c.y) - gesture.uy * lbScale;
+        }
+        applyLbTransform(true);
         return;
       }
       if (!gesture || gesture.kind !== "single" || gesture.pointerId !== ev.pointerId) return;
       const dx = ev.clientX - gesture.startX, dy = ev.clientY - gesture.startY;
       if (!gesture.moved && Math.hypot(dx, dy) > 5) {
         gesture.moved = true;
-        if (lbScale > 1.005) lightbox.classList.add("is-dragging");
+        lastTap = null;
+        if (gesture.zoomed0) {
+          lightbox.classList.add("is-dragging");
+        } else if (lbItems.length > 1 && Math.abs(dx) > Math.abs(dy)) {
+          gesture.swiping = true;
+          lightbox.classList.add("no-anim");
+        }
       }
-      if (gesture.moved && lbScale > 1.005) {
+      if (!gesture.moved) return;
+      if (gesture.zoomed0) {
         lbX = gesture.panX0 + dx;
         lbY = gesture.panY0 + dy;
         applyLbTransform(true);
+      } else if (gesture.swiping) {
+        lbImg.style.transform = `translate3d(${dx.toFixed(1)}px, 0, 0)`;
       }
     });
     const endPtr = (ev, cancelled = false) => {
       ptrs.delete(ev.pointerId);
       if (ptrs.size === 0) lightbox.classList.remove("is-dragging");
-      if (!gesture || cancelled) { if (!ptrs.size) gesture = null; return; }
+      if (!gesture) return;
+      if (cancelled) {
+        if (gesture.swiping) applyLbTransform(false);
+        if (!ptrs.size) gesture = null;
+        return;
+      }
+      if (gesture.kind === "pinch") {
+        if (ptrs.size === 1 && lbScale > 1.005) {
+          const [[id, p]] = [...ptrs.entries()];
+          gesture = {
+            kind: "single", pointerId: id, pointerType: ev.pointerType,
+            startX: p.x, startY: p.y, panX0: lbX, panY0: lbY, zoomed0: true,
+            target: lbImg, moved: true, swiping: false,
+          };
+        } else if (ptrs.size === 0) {
+          gesture = null;
+        }
+        return;
+      }
       if (gesture.kind === "single" && gesture.pointerId === ev.pointerId) {
         const g = gesture;
         gesture = null;
         const dx = ev.clientX - g.startX, dy = ev.clientY - g.startY;
         if (!g.moved) {
           if (g.target === lbImg && !lbImg.hidden) {
-            toggleLbZoom(ev.clientX, ev.clientY);
+            if (g.pointerType === "mouse") {
+              toggleLbZoom(ev.clientX, ev.clientY);
+            } else {
+              const now = performance.now();
+              if (lastTap && now - lastTap.t < 320 && Math.hypot(ev.clientX - lastTap.x, ev.clientY - lastTap.y) < 36) {
+                lastTap = null;
+                toggleLbZoom(ev.clientX, ev.clientY);
+              } else {
+                lastTap = { t: now, x: ev.clientX, y: ev.clientY };
+              }
+            }
           } else if (g.target === lbStage && ev.target === lbStage) {
+            lastTap = null;
             closeLightbox();
           }
-        } else if (lbScale <= 1.005 && lbItems.length > 1 && Math.abs(dx) > 52 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+        } else if (!g.zoomed0 && lbItems.length > 1 && Math.abs(dx) > 52 && Math.abs(dx) > Math.abs(dy) * 1.4) {
           showLbSlide(lbIdx + (dx < 0 ? 1 : -1));
+        } else if (g.swiping) {
+          applyLbTransform(false);
         }
       }
     };
