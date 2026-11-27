@@ -382,6 +382,9 @@ func TestSubUsageTwoPhaseDedupeFailoverAndByMachineUI(t *testing.T) {
 					if r.Tone != "muted" {
 						t.Fatalf("top Codex credit tone = %q, want muted (same color as reset time)", r.Tone)
 					}
+					if r.Metric == nil || r.Metric.Label != "Credits" || r.Metric.Value != "48,158" || r.Metric.Tone != "muted" {
+						t.Fatalf("top Codex credit metric = %+v, want {Label:Credits Value:48,158 Tone:muted}", r.Metric)
+					}
 					sawCodexTopCredit = true
 				}
 			}

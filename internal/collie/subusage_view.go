@@ -1253,9 +1253,11 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 					Label: actLabel,
 				},
 			}
+			creditNum := ""
 			creditText := ""
 			if p.CreditLeft > 0 {
-				creditText = "Credits " + subFormatCommas(int64(math.Round(p.CreditLeft)))
+				creditNum = subFormatCommas(int64(math.Round(p.CreditLeft)))
+				creditText = "Credits " + creditNum
 			}
 			if p.Available == 0 {
 				row.Value = subUnavailableShort(p.SingleStatus, p.Total)
@@ -1272,6 +1274,11 @@ func buildSubUsageHeaderStatus(snap subUsageSnapshot, cfg subUsageConfig, model 
 				row.Detail = strings.Join(dets, " · ")
 			} else {
 				if creditText != "" {
+					row.Metric = &extproto.HeaderStatusItem{
+						Label: "Credits",
+						Value: creditNum,
+						Tone:  "muted",
+					}
 					row.Value = creditText
 					row.Tone = "muted"
 				}
