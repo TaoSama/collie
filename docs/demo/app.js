@@ -3352,7 +3352,7 @@
       unreadAnchor: u?.anchorId || "",
       unreadCount: u?.count || 0,
       composerMode: inboxMode,
-      draft: dr,
+      draft: dr && { text: dr.text, loading: dr.loading, footer: dr.footer, via: dr.via },
       inputText: inboxInput,
       sentBanner: inboxSentBanner,
     };
@@ -3474,8 +3474,13 @@
     const startedAt = performance.now();
     const draft = { conv: id, text: currentDraft, loading: true, footer: keepFooter, startedAt, deliveryStatus: "submitting" };
     const active = () => current() && inboxDraft === draft;
+    const restoreDraft = (via) => {
+      const text = draft.text || currentDraft;
+      inboxDraft = text ? { conv: id, text, loading: false, footer: draft.footer, via } : null;
+      drawAuto(autoData.inbox, null, true);
+    };
     inboxDraft = draft;
-    drawAuto(autoData.inbox);
+    drawAuto(autoData.inbox, null, true);
     const clock = setInterval(() => {
       if (active()) syncInboxDraftProgress();
       else clearInterval(clock);
@@ -3492,17 +3497,15 @@
       }
       if (!active()) return;
       if (res.status === "error" || res.error) {
-        inboxDraft = currentDraft ? { conv: id, text: currentDraft, loading: false, footer: keepFooter, via: res.via || "" } : null;
-        drawAuto(autoData.inbox);
+        restoreDraft(res.via);
         toast(res.error || "起草失败", "attn");
         return;
       }
-      inboxDraft = { conv: id, id: res.id || "", text: res.draft || "", loading: false, footer: keepFooter, via: res.via || "" };
-      drawAuto(autoData.inbox);
+      inboxDraft = { conv: id, id: res.id || "", text: res.draft || "", loading: false, footer: draft.footer, via: res.via || "" };
+      drawAuto(autoData.inbox, null, true);
     } catch (err) {
       if (!active()) return;
-      inboxDraft = currentDraft ? { conv: id, text: currentDraft, loading: false, footer: keepFooter } : null;
-      drawAuto(autoData.inbox);
+      restoreDraft();
       toast(err.message, "attn");
     } finally {
       clearInterval(clock);
@@ -3639,7 +3642,7 @@
 
   // drawAuto shows r in the open tab, keeping the scroll and which folds are
   // open. Tabs with forms are left alone when the answer hasn't changed.
-  function drawAuto(r, restore = null) {
+  function drawAuto(r, restore = null, forceDock = false) {
     const body = $("#auto-body"), tab = autoTab;
     const keepTop = !restore && body.clientHeight > 0 ? { scrollTop: body.scrollTop, atBottom: body.scrollHeight - body.scrollTop - body.clientHeight <= AT_BOTTOM_PX } : null;
     const applyAfter = () => {
@@ -3658,7 +3661,7 @@
       // Do not clobber active typing in the search bar or bottom composer on background poll.
       const active = document.activeElement;
       const typingSearch = active?.matches?.("[data-inbox-search]");
-      const typingDock = active?.matches?.("[data-conv-input], [data-conv-draft-text]");
+      const typingDock = !forceDock && active?.matches?.("[data-conv-input], [data-conv-draft-text]");
       const interactingCard = !!(active?.closest?.(".im-card") || pickOpen?.closest?.(".im-card"));
       const attachInInbox = !!(attachOpen && $("#inbox-detail")?.contains(attachOpen.btn));
       const uploadingInbox = !!(inboxCur && selectInboxFiles().files.some((f) => !f.path && !f.err));
@@ -3669,7 +3672,7 @@
       const msgs = body.querySelector(".conv-msgs");
       const atBottom = msgs && (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight <= 48);
       const prevTop = msgs ? msgs.scrollTop : 0;
-      if (sig !== body._sig && !typingSearch && !interactingCard && !attachInInbox && !uploadingInbox) {
+      if (sig !== body._sig && !typingSearch && !lockDock) {
         // The list keeps its place while it shows the same channel, filter and query.
         const place = JSON.stringify([inboxChannel, inboxSubs[inboxChannel], inboxQuery]);
         const listTop = body._place === place ? body.querySelector(".inbox-list")?.scrollTop || 0 : 0;

@@ -173,6 +173,22 @@ test("convHTML renders chronological order, unread anchor + jump controls, human
   assert.match(aiHtml, /class="icon-btn attach"/);
   assert.match(aiHtml, /data-conv-mode="ai"/);
 
+  const waitingHTML = ext.convHTML(larkDetail, "/ai", {
+    composerMode: "ai",
+    draft: { loading: true, text: "" },
+  });
+  const refiningHTML = ext.convHTML(larkDetail, "/ai", {
+    composerMode: "ai",
+    draft: { loading: true, text: "保留旧稿。", footer: true },
+  });
+  for (const loadingHTML of [waitingHTML, refiningHTML]) {
+    assert.match(loadingHTML, /data-draft-stage role="status"/);
+    assert.match(loadingHTML, /data-draft-elapsed/);
+  }
+  assert.doesNotMatch(waitingHTML, /data-conv-draft-text/);
+  assert.match(refiningHTML, /data-conv-draft-text[^>]*>保留旧稿。<\/textarea>/);
+  assert.doesNotMatch(aiHtml, /data-draft-elapsed/);
+
   // Shared + attach button also present in reply, ai prompt, and collie modes.
   assert.match(html, /class="cbox conv-cbox"/);
   assert.match(html, /class="icon-btn attach"/);
