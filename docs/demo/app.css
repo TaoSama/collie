@@ -1270,6 +1270,7 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .lark-thread-row:hover, .lark-thread-row:has(.lark-thread-detail:not([hidden])) { background: var(--bg-2); }
 .lark-thread-cell { display: flex; align-items: start; gap: 4px; }
 .lark-thread-cell > .meta { flex: 1; min-width: 0; flex-wrap: nowrap; align-items: baseline; }
+.lark-thread-topic.pill.plain { height: 16px; padding-inline: 5px; font-size: var(--fs-tiny); font-weight: var(--fw-normal); }
 .lark-thread-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--t-secondary); }
 .lark-thread-route { flex: none; max-width: 65%; overflow-wrap: anywhere; }
 .lark-thread-route a { color: var(--info); text-underline-offset: 2px; }
@@ -1279,8 +1280,10 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .lark-thread-detail { grid-column: 2 / -1; display: grid; gap: 8px; padding: 10px 0 3px; border-top: var(--bw) solid var(--line); cursor: auto; }
 .lark-thread-detail .text { display: block; margin-top: 1px; }
 @media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
-  .lark-thread-cell > .meta { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .lark-thread-cell > .meta { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 3px 6px; }
+  .lark-thread-name, .lark-thread-route { grid-column: 1 / -1; }
   .lark-thread-route { max-width: none; }
+  .lark-thread-topic + .lark-thread-route { grid-column: 2; }
   .lark-thread-detail { grid-column: 1 / -1; }
 }
 .row > .btn.ghost { margin-right: -10px; }

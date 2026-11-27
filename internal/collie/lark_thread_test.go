@@ -51,7 +51,7 @@ func TestLarkThreadOnlyShowsItsRequestsAndSentReplies(t *testing.T) {
 	}
 	s := sp.s
 	summaries := s.larkThreadSummaries([]Thread{*th, {ID: "chat:main"}})
-	want := larkThreadSummary{Name: "项目群", Topic: "发布安排", From: "小林", At: now.Add(3 * time.Minute)}
+	want := larkThreadSummary{Name: "项目群", Topic: "发布安排", IsTopic: true, From: "小林", At: now.Add(3 * time.Minute)}
 	if got := summaries[thread]; got != want || len(summaries) != 1 {
 		t.Fatalf("summaries = %+v, want %+v for the Feishu thread only", summaries, want)
 	}
@@ -166,5 +166,8 @@ func TestLarkThreadWithoutTopicExcludesUnlinkedSends(t *testing.T) {
 	}
 	if !latest[thread].Equal(deferredAt) || len(latest) != 1 {
 		t.Fatalf("latest times = %v, want only %s at %v", latest, thread, deferredAt)
+	}
+	if view := sp.s.larkThreadSummaries([]Thread{{ID: thread}})[thread]; view.IsTopic {
+		t.Fatalf("non-topic summary is marked as a topic: %+v", view)
 	}
 }

@@ -683,7 +683,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     }
     if (p === "/api/super/lark") return json({ ready: true, who: "Alex" });
     if (p === "/api/super/triggers") return json({ triggers, threads, lark_threads: {
-      [larkThread]: { name: "产品周会", topic: larkThreadMessages[0].text, from: "你", at: larkThreadMessages[1].at },
+      [larkThread]: { name: "产品周会", topic: larkThreadMessages[0].text, is_topic: true, from: "你", at: larkThreadMessages[1].at },
     } });
     if (p === "/api/inbox/lark-thread") return json({ messages: larkThreadMessages });
     if (p === "/api/ext/header-status") return json({ slots: [] });

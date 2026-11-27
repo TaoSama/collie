@@ -3908,8 +3908,8 @@
     const label = [data.name, data.from, data.topic].filter(Boolean).join(" · ");
     const detailId = "lark-thread-" + th.id;
     const subscribers = th.subscribers || [];
-    const route = subscribers.length ? `订阅：${subscribers.map((name, i) => links[i]
-      ? `<a href="${esc(links[i])}">${esc(name)}</a>` : esc(name)).join("、")}` : "→ Collie";
+    const route = subscribers.length ? subscribers.map((name, i) => links[i]
+      ? `<a href="${esc(links[i])}">${esc(name)}</a>` : esc(name)).join("、") : "Collie";
     const messages = larkThreadOpen?.messages;
     const detail = !open ? "" : larkThreadOpen.error
       ? `<div role="status">${esc(larkThreadOpen.error)}</div>`
@@ -3918,7 +3918,10 @@
     return `<li class="row lark-thread-row" data-lark-thread="${esc(th.id)}">
       <span class="badge">${count}</span>
       <div class="lark-thread-cell">
-        <div class="meta"><span class="lark-thread-name" title="${esc(label)}">飞书 · ${esc(label)}</span><span class="lark-thread-route">${route}</span></div>
+        <div class="meta">
+          <span class="lark-thread-name" title="${esc(label)}">飞书 · ${esc(label)}</span>${data.is_topic ? '<span class="pill plain lark-thread-topic">话题</span>' : ""}
+          <span class="lark-thread-route">→ ${route}</span>
+        </div>
         <button type="button" class="icon-btn lark-thread-toggle" aria-expanded="${open}" aria-controls="${esc(detailId)}" aria-label="${esc((open ? "收起 " : "展开 ") + label)}">${ico("chevron-left")}</button>
       </div>
       <span class="right">${when(data.at || th.last_at)}</span>

@@ -15,10 +15,11 @@ import (
 )
 
 type larkThreadSummary struct {
-	Name  string    `json:"name"`
-	Topic string    `json:"topic,omitempty"`
-	From  string    `json:"from,omitempty"`
-	At    time.Time `json:"at,omitzero"`
+	Name    string    `json:"name"`
+	Topic   string    `json:"topic,omitempty"`
+	IsTopic bool      `json:"is_topic,omitempty"`
+	From    string    `json:"from,omitempty"`
+	At      time.Time `json:"at,omitzero"`
 }
 
 type larkThreadMessage struct {
@@ -71,7 +72,7 @@ func (s *Server) larkThreadSummaries(threads []Thread) map[string]larkThreadSumm
 		conv, _ := s.ext.store.conv(convID)
 		root := topicOf(th.ID)
 		keys = append(keys, larkThreadKey{th.ID, convID, root})
-		view := larkThreadSummary{Name: cmp.Or(conv.Name, "飞书会话"), Topic: th.Title}
+		view := larkThreadSummary{Name: cmp.Or(conv.Name, "飞书会话"), Topic: th.Title, IsTopic: root != ""}
 		var first *Trigger
 		if err := loadRows(s.sup.db, `SELECT data FROM triggers WHERE thread = ? AND source = ? ORDER BY n LIMIT 1`,
 			func(t *Trigger) { first = t }, th.ID, larkSource); err != nil {
