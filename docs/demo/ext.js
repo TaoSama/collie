@@ -611,7 +611,10 @@
       ${opts.settingsOpen ? `<div class="form conv-settings">
         <div class="conv-rule"><button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button><span><b>处理这个会话</b><small class="muted">打开后，以 ${esc(trigger || "/ai")} 开头的消息交给 agent，并保存会话上下文</small></span></div>
         ${c.on ? `${c.owner ? "" : `<div class="conv-rule"><span class="tm-lab">谁能唤起</span>${seg("anyone", !!c.anyone, [[false, "只有我"], [true, "任何人"]])}</div>
-          ${c.anyone ? `<p class="ext-warn">任何人都能唤起时，专属 agent 在隔离目录里工作，但那不是沙箱：只对信任的群打开。</p>` : ""}`}
+          ${c.anyone ? (c.ext === "larkx" ? `<div class="conv-rule"><span class="tm-lab conv-danger-label">允许危险操作</span>
+            <button type="button" class="switch" role="switch" aria-checked="${!!c.allow_dangerous}" aria-label="允许危险操作" aria-describedby="conv-danger-desc" data-conv-danger></button></div>
+            <p class="ext-warn" id="conv-danger-desc">关时，其他成员唤起的 Agent 不读私人资料、不执行高风险操作。<br>这是模型行为限制。开启后，本会话的任何成员都可以提出此类请求。</p>`
+            : `<p class="ext-warn">任何人都能唤起时，专属 agent 在隔离目录里工作，但那不是沙箱：只对信任的群打开。</p>`) : ""}`}
           <div class="conv-rule"><span class="tm-lab">交给</span>${seg("handler", c.handler, [["collie", "Collie"], ["agent", "专属 agent"]])}${c.handler === "agent" ? `<span class="muted">${worker || "第一次唤起时启动"}</span>` : ""}</div>` : ""}
       </div>` : ""}
       ${outAlert}${sentBanner}

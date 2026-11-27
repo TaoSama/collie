@@ -61,17 +61,26 @@ func replace(list []string, from, to string) []string {
 	return out
 }
 
-// deliver submits all pending triggers for one session as a single prompt.
-func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
-	sort.Slice(list, func(i, j int) bool { return list[i].At.Before(list[j].At) })
-	if len(list) > 20 {
-		list = list[:20]
-	}
-	sp.mu.Lock()
-	fresh := target == routerName && sp.routerFresh
-	words := sp.st.Settings.ReplyChars
-	sp.mu.Unlock()
+func withoutLarkRequests(list []*Trigger) []*Trigger {
+	return slices.DeleteFunc(list, func(t *Trigger) bool { return t.Source == larkSource })
+}
 
+// One Feishu event gets its own prompt. A batch can keep its existing
+// behavior until it reaches a Feishu event in the queue.
+func deliveryBatch(list []*Trigger) []*Trigger {
+	for i, t := range list {
+		if t.Source == larkSource {
+			if i == 0 {
+				return list[:1]
+			}
+			return list[:i]
+		}
+	}
+	return list
+}
+
+// deliveryPrompt writes the policy outside the portion that can spill.
+func (sp *Super) deliveryPrompt(target string, list []*Trigger, lark larkDelivery, fresh bool, words int) string {
 	var b strings.Builder
 	if fresh {
 		b.WriteString(sp.sessionStart())
@@ -83,15 +92,29 @@ func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 		fmt.Fprintf(&b, "[collie] %d new events (batched)\n", len(list))
 	}
 	for _, t := range list {
-		fmt.Fprintf(&b, "\n#%s · %s · %s", t.ID, t.Thread, t.Source)
-		if t.From != "" {
-			fmt.Fprintf(&b, " · from %s", t.From)
+		fmt.Fprintf(&b, "\n#%s · ", t.ID)
+		if lark.mode != "" {
+			b.WriteString("ext:larkx")
+		} else {
+			fmt.Fprintf(&b, "%s · %s", t.Thread, t.Source)
+			if t.From != "" {
+				fmt.Fprintf(&b, " · from %s", t.From)
+			}
 		}
 		if t.Action == "candidate" {
-			b.WriteString(" · candidate (act only if a rule or memory says so; otherwise stay silent)")
+			if lark.mode == larkRestricted {
+				b.WriteString(" · candidate（仅在已明确允许本会话处理时执行）")
+			} else {
+				b.WriteString(" · candidate (act only if a rule or memory says so; otherwise stay silent)")
+			}
 		}
 		fmt.Fprintf(&b, " · %s\n", t.At.Format("15:04"))
-		text := strings.TrimSpace(t.Text)
+		text := t.Text
+		if lark.mode != "" {
+			lark.writePrompt(&b, t, target)
+			text = larkPromptData(text)
+		}
+		text = strings.TrimSpace(text)
 		if len([]rune(text)) > 700 { // Inline & Spill
 			text = string([]rune(text)[:700]) + fmt.Sprintf(" … [spilled; run `collie show %s`]", t.ID)
 		}
@@ -102,12 +125,43 @@ func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
 		fmt.Fprintf(&b, "\nReply with `collie reply`, usually ≤%d characters.", words)
 	}
 
+	return b.String()
+}
+
+func (sp *Super) prepareDelivery(target, pane string, list []*Trigger) (larkDelivery, bool, int, bool) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	lark, ok := sp.larkDeliveryLocked(list[0]) // a Feishu batch contains only its own event
+	if !ok {
+		sp.cancelLarkDeliveryLocked(list[0])
+		return larkDelivery{}, false, 0, false
+	}
+	if !sp.beginDeliveryLocked(target, pane, list) {
+		return larkDelivery{}, false, 0, false
+	}
+	if lark.mode != "" {
+		t := list[0]
+		log.Printf("larkx guard policy=%s submit trigger=%s thread=%q target=%q actor=%s mode=%s grant=%d",
+			larkPolicyVersion, t.ID, t.Thread, target, lark.actor, lark.mode, lark.grant)
+	}
+	fresh := target == routerName && sp.routerFresh && lark.mode != larkRestricted
+	return lark, fresh, sp.st.Settings.ReplyChars, true
+}
+
+// deliver submits a pending batch for one session as a single prompt.
+func (sp *Super) deliver(ctx context.Context, target string, list []*Trigger) {
+	sort.Slice(list, func(i, j int) bool { return list[i].At.Before(list[j].At) })
+	list = deliveryBatch(list[:min(len(list), 20)])
 	h := sp.s.herdr
 	pane := h.paneOfName(ctx, sp.herdrTarget(target))
-	if pane == "" || !sp.beginDelivery(target, pane, list) {
+	if pane == "" || len(list) == 0 {
 		return
 	}
-	err := h.Prompt(ctx, pane, b.String())
+	lark, fresh, words, ok := sp.prepareDelivery(target, pane, list)
+	if !ok {
+		return
+	}
+	err := h.Prompt(ctx, pane, sp.deliveryPrompt(target, list, lark, fresh, words))
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if err != nil {

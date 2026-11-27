@@ -11,9 +11,7 @@ import (
 
 // The terminal cannot take part in the SQLite transaction. Record the pane
 // first so a restart in between can look for the event before acting on it.
-func (sp *Super) beginDelivery(target, pane string, list []*Trigger) bool {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
+func (sp *Super) beginDeliveryLocked(target, pane string, list []*Trigger) bool {
 	attempt := deliveryAttempt{Pane: pane, At: time.Now()}
 	return sp.updateDeliveryLocked(list, nil, func(t *Trigger) {
 		if t.Deliveries == nil {

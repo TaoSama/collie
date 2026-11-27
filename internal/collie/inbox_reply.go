@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -272,6 +273,9 @@ func (h *extHost) sendInboxReply(c InboxConv, text string, aiFooter bool, ri run
 			full += "\n\n" + footer
 		}
 	}
+	if err := h.checkLarkSend(c, o, false, full); err != nil {
+		return nil, err
+	}
 	o.Text, o.Footer = full, footer
 	human := !aiFooter && !c.Owner
 	display := full
@@ -361,7 +365,11 @@ func (s *Server) inboxReply(w http.ResponseWriter, r *http.Request) {
 	}
 	o, err := s.ext.sendInboxReply(c, text, body.AIFooter && !noFooter, s.sup.routerRunInfo(), files)
 	if err != nil {
-		writeJSON(w, 409, map[string]any{"error": err.Error()})
+		status := http.StatusConflict
+		if errors.Is(err, errLarkCredential) {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, map[string]any{"error": err.Error()})
 		return
 	}
 	updated, _ := s.ext.store.conv(c.ID)

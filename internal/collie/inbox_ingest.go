@@ -85,9 +85,14 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 		from := in.SenderName
 		if in.fromYou() {
 			from = "you"
+		} else if c.Ext == larkxID && from == "you" {
+			from = "" // "you" in source policies means the authenticated account
 		}
 		t, th = sp.prepareTriggerLocked("ext:"+c.Ext, c.threadOf(topic), from, text, "ext:"+c.ID+":"+in.ID, "", in.ID)
 		if t != nil {
+			if c.Ext == larkxID {
+				t.LarkRequest = newLarkRequest(c, in)
+			}
 			h.prepareConvDeliveryLocked(c, topic, t)
 			if err := sp.persistTriggerLocked(tx, t, th); err != nil {
 				return InboxConv{}, nil, fmt.Errorf("save message trigger: %w", err)

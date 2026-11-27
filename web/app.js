@@ -4526,6 +4526,7 @@
       return;
     }
     if (b.hasAttribute("data-conv-on")) { setConv({ on: b.getAttribute("aria-checked") !== "true" }); return; }
+    if (b.hasAttribute("data-conv-danger")) { setConv({ allow_dangerous: b.getAttribute("aria-checked") !== "true" }); return; }
     if (b.dataset.convSet) { setConv({ [b.dataset.convSet]: b.dataset.convSet === "anyone" ? b.dataset.v === "true" : b.dataset.v }); return; }
     if (b.hasAttribute("data-auto-retry")) {
       const src = b.dataset.autoRetry;

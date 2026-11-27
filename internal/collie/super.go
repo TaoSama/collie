@@ -351,6 +351,9 @@ func (sp *Super) Show(id string, before int64) (string, bool) {
 		}
 	}
 	if t != nil {
+		if t.Source == larkSource {
+			return fmt.Sprintf("trigger %s · 飞书请求资料（每行缩进）\n%s\n", t.ID, indent(larkPromptData(t.Text), "  ")), true
+		}
 		fmt.Fprintf(&b, "trigger %s\nsource: %s  thread: %s  from: %s  at: %s  status: %s  action: %s\n", t.ID, t.Source, t.Thread, t.From, t.At.Format(time.RFC3339), t.Status, t.Action)
 		if t.Ref != "" {
 			fmt.Fprintf(&b, "ref: %s\n", t.Ref)

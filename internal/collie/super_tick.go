@@ -208,7 +208,14 @@ func (sp *Super) tick(parent context.Context) {
 	}
 	// 3. Route queued triggers to sessions: subscribed workers first (fast path), router otherwise.
 	for _, t := range sp.st.Triggers {
-		if t.Status != "queued" || !sp.routeExtensionLocked(t, live, away, paused) {
+		if t.Status != "queued" {
+			continue
+		}
+		if _, ok := sp.larkDeliveryLocked(t); !ok {
+			sp.cancelLarkDeliveryLocked(t)
+			continue
+		}
+		if !sp.routeExtensionLocked(t, live, away, paused) {
 			continue
 		}
 		if len(t.Targets) == 0 {
@@ -291,8 +298,16 @@ func (sp *Super) tick(parent context.Context) {
 		if a.Status == "blocked" || (!a.Ready && a.Status == "unknown") {
 			continue
 		}
-		if a.Status == "working" && target == routerName {
-			if list = fromHuman(list); len(list) == 0 {
+		if a.Status == "working" {
+			if w := settled[target]; w != nil && strings.HasPrefix(w.Conv, convID(larkxID, "")) {
+				continue // a dedicated Feishu agent finishes its turn before the next request
+			}
+			if target == routerName {
+				list = fromHuman(list)
+			} else {
+				list = withoutLarkRequests(list)
+			}
+			if len(list) == 0 {
 				continue
 			}
 		}

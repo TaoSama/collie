@@ -23,7 +23,8 @@ type Trigger struct {
 	Status  string    `json:"status"` // queued | delivered | ignored | failed
 	Targets []string  `json:"targets,omitempty"`
 	// Deliveries records each target whose prompt may already be in its terminal.
-	Deliveries map[string]deliveryAttempt `json:"deliveries,omitempty"`
+	Deliveries  map[string]deliveryAttempt `json:"deliveries,omitempty"`
+	LarkRequest *larkRequest               `json:"lark_request,omitempty"`
 	// WaitForConvWorker keeps a dedicated extension request queued until its worker is live.
 	WaitForConvWorker bool   `json:"wait_for_conv_worker,omitempty"`
 	Key               string `json:"key,omitempty"` // idempotency key

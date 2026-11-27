@@ -52,10 +52,13 @@ type InboxConv struct {
 	// Owner: the signed-in person's own chat with the bot (WeChat).
 	Owner bool `json:"owner,omitempty"`
 	// What you set: handled at all, by anyone in it or only you, by whom.
-	On      bool   `json:"on"`
-	Anyone  bool   `json:"anyone,omitempty"`
-	Handler string `json:"handler"` // collie | agent
-	Worker  string `json:"worker,omitempty"`
+	On              bool   `json:"on"`
+	Anyone          bool   `json:"anyone,omitempty"`
+	AllowDangerous  bool   `json:"allow_dangerous,omitempty"`
+	LarkGrant       uint64 `json:"lark_grant,omitempty"`
+	LarkPublicEpoch uint64 `json:"lark_public_epoch,omitempty"`
+	Handler         string `json:"handler"` // collie | agent
+	Worker          string `json:"worker,omitempty"`
 	// The request being answered: its message and when it came.
 	AskMsg string    `json:"ask_msg,omitempty"`
 	AskAt  time.Time `json:"ask_at,omitempty"`
@@ -257,15 +260,33 @@ func (st *extStore) conv(id string) (InboxConv, bool) {
 
 // update changes one conversation under the lock and saves it.
 func (st *extStore) update(id string, fn func(c *InboxConv)) (InboxConv, bool) {
+	c, ok, err := st.changeConv(id, func(c *InboxConv) error {
+		fn(c)
+		return nil
+	})
+	if err != nil {
+		log.Printf("ext: save conversation: %v", err)
+	}
+	return c, ok && err == nil
+}
+
+// changeConv publishes the new settings only after SQLite accepts them.
+func (st *extStore) changeConv(id string, fn func(*InboxConv) error) (InboxConv, bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	c := st.convs[id]
-	if c == nil {
-		return InboxConv{}, false
+	current := st.convs[id]
+	if current == nil {
+		return InboxConv{}, false, nil
 	}
-	fn(c)
-	st.putConvLocked(c)
-	return *c, true
+	c := *current
+	if err := fn(&c); err != nil {
+		return *current, true, err
+	}
+	if err := putInboxConv(st.db, &c); err != nil {
+		return *current, true, err
+	}
+	st.convs[id] = &c
+	return c, true, nil
 }
 
 func (st *extStore) list(ext string) []InboxConv {

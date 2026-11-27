@@ -3,6 +3,8 @@ package collie
 import (
 	"context"
 	"encoding/base64"
+	"errors"
+	"log"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -322,16 +324,22 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID      string  `json:"id"`
-		On      *bool   `json:"on"`
-		Anyone  *bool   `json:"anyone"`
-		Handler *string `json:"handler"`
-		Seen    bool    `json:"seen"`
+		ID             string  `json:"id"`
+		On             *bool   `json:"on"`
+		Anyone         *bool   `json:"anyone"`
+		AllowDangerous *bool   `json:"allow_dangerous"`
+		Handler        *string `json:"handler"`
+		Seen           bool    `json:"seen"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	c, ok := s.ext.store.update(body.ID, func(c *InboxConv) {
+	// Ingestion and the delivery journal take the same lock before reading
+	// the conversation, so they see either side of a committed change.
+	s.sup.mu.Lock()
+	var previous InboxConv
+	c, ok, err := s.ext.store.changeConv(body.ID, func(c *InboxConv) error {
+		previous = *c
 		if body.On != nil {
 			c.On = *body.On
 		}
@@ -344,7 +352,27 @@ func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {
 		if body.On != nil && *body.On {
 			c.Handed = time.Now() // what came before isn't context for the first request
 		}
+		return c.setLarkAccess(previous, body.AllowDangerous)
 	})
+	s.sup.mu.Unlock()
+	if err == nil && ok && c.Ext == larkxID &&
+		(c.AllowDangerous != previous.AllowDangerous || c.larkPublic() != previous.larkPublic()) {
+		operator := "browser"
+		if master, _ := s.identity(r); master {
+			operator = "master"
+		}
+		log.Printf("larkx guard policy=%s config conv=%q operator=%s public=%t dangerous=%t grant=%d epoch=%d",
+			larkPolicyVersion, c.ID, operator, c.larkPublic(), c.AllowDangerous, c.LarkGrant, c.LarkPublicEpoch)
+	}
+	if err != nil {
+		if errors.Is(err, errLarkAccess) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		} else {
+			log.Printf("ext: update conversation: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "未能保存会话设置"})
+		}
+		return
+	}
 	if !ok {
 		writeJSON(w, 404, map[string]any{"error": "no conversation " + body.ID})
 		return

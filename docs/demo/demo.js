@@ -717,8 +717,15 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     }
     if (p === "/api/inbox/conv" && method === "POST") {
       const c = inboxConvs.find((x) => x.id === body.id);
-      if (c) for (const k of ["on", "anyone", "handler"]) if (body[k] != null) c[k] = body[k];
-      if (c && body.seen) { c.unread = 0; c.at_me = false; }
+      if (c) {
+        const publicFeishu = c.ext === "larkx" && (body.on ?? c.on) && (body.anyone ?? c.anyone) && !c.owner;
+        if (body.allow_dangerous != null && (c.ext !== "larkx" || (body.allow_dangerous && !publicFeishu))) {
+          return json({ error: "只有已打开处理且允许任何人唤起的飞书会话可开启危险操作" }, 400);
+        }
+        for (const k of ["on", "anyone", "handler", "allow_dangerous"]) if (body[k] != null) c[k] = body[k];
+        if (c.ext === "larkx" && !publicFeishu) c.allow_dangerous = false;
+        if (body.seen) { c.unread = 0; c.at_me = false; }
+      }
       return json({ conv: c ? { send_as: c.owner ? "bot" : "self", send_media: c.ext === "wechat" ? "all" : "none", ...c } : c });
     }
     if (p === "/api/inbox/conv") {

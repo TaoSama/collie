@@ -573,6 +573,40 @@ func TestLarkxFake(t *testing.T) {
 	if post.Text != "改到 **三点**" || !strings.HasPrefix(post.Footer, "🤖 AI 代答") || post.ReplyTo != "m1" {
 		t.Fatalf("the post, its footer apart: %s", b)
 	}
+
+	// Direct replies get the error at the sending surface, without also
+	// notifying the owner in chat:main.
+	beforeOuts := len(h.store.outs("conv = ?", "larkx:c_dm"))
+	beforeEntries := len(sp.st.Entries)
+	reply = httptest.NewRecorder()
+	sp.s.inboxReply(reply, httptest.NewRequest("POST", "/api/inbox/reply", strings.NewReader(
+		`{"id":"larkx:c_dm","text":"app_secret: B9Qm583tknWzFake"}`)))
+	if reply.Code != 400 || strings.Contains(reply.Body.String(), "B9Qm583tknWzFake") {
+		t.Fatal("direct reply should receive a sanitized 400")
+	}
+	if len(h.store.outs("conv = ?", "larkx:c_dm")) != beforeOuts || len(sp.st.Entries) != beforeEntries {
+		t.Fatal("blocked direct reply should neither reach the outbox nor send a duplicate notice")
+	}
+	reply = httptest.NewRecorder()
+	sp.s.inboxReply(reply, httptest.NewRequest("POST", "/api/inbox/reply", strings.NewReader(
+		`{"id":"larkx:c_dm","text":"token: req.Token"}`)))
+	if reply.Code != 200 {
+		t.Fatalf("direct reply with a code reference = %d, want 200", reply.Code)
+	}
+
+	// An outbox row saved before the guard was installed must not reach the
+	// fake Feishu on retry. Its rejection reason contains no original text.
+	pending := &OutboxItem{Ref: "oold", Conv: "larkx:c_dm", Text: "token=synthetic_07062_secret",
+		Kind: extproto.KindAnswer, State: outPending, At: time.Now()}
+	h.store.putOut(pending)
+	h.retrySends(r)
+	if got := h.store.out(pending.Ref); got == nil || got.State != extproto.DeliveryFailed || got.Reason != errLarkCredential.Error() {
+		t.Fatal("legacy pending reply was not blocked on retry")
+	}
+	if posts, err := os.ReadFile(filepath.Join(dir, "ext", "larkx", "data", "fake-posts.jsonl")); err != nil ||
+		strings.Contains(string(posts), pending.Text) {
+		t.Fatal("a blocked reply reached Feishu or the fixture log could not be read")
+	}
 }
 
 // An action extension: a pasted key to sign in, the computer to be picked

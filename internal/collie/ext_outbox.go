@@ -128,6 +128,18 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 		return nil, err
 	}
 	o := &OutboxItem{Ref: ref, Conv: convID, Kind: kind, Trigger: trig, State: outPending, At: time.Now()}
+	footer := ""
+	if m := h.manifest(conv.Ext); kind != extproto.KindProgress && (m == nil || !m.Contributes.Channel.NoFooter) {
+		footer = renderFooter(h.footer(), vars)
+	}
+	if err := h.checkLarkSend(conv, o, true, text, footer); err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		if err := h.checkLarkSend(conv, o, true, f.Name); err != nil {
+			return nil, err
+		}
+	}
 	if len(files) > 0 {
 		if m := h.manifest(conv.Ext); m == nil || !m.has(capSend) {
 			return nil, fmt.Errorf("%s 只能发文字", conv.Ext)
@@ -150,9 +162,8 @@ func (h *extHost) sendOutFiles(thread, text, kind string, ri runInfo, trig strin
 			text += "\n\n文件太大，发下载链接（24 小时内有效）：\n" + strings.Join(links, "\n")
 		}
 	}
-	full, footer := text, ""
-	if m := h.manifest(conv.Ext); kind != extproto.KindProgress && (m == nil || !m.Contributes.Channel.NoFooter) {
-		footer = renderFooter(h.footer(), vars)
+	full := text
+	if footer != "" {
 		full += "\n\n" + footer
 	}
 	o.Text, o.Footer = full, footer
@@ -227,6 +238,10 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 	conv, ok := h.store.conv(o.Conv)
 	if !ok {
 		return true
+	}
+	if err := h.checkPendingLarkSend(conv, o); err != nil {
+		o.State, o.Reason, o.DoneAt = extproto.DeliveryFailed, err.Error(), time.Now()
+		return h.store.putOutIf(o, outPending) == nil
 	}
 	ctx := context.Background()
 	var err error
