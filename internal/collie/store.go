@@ -27,6 +27,8 @@ type Trigger struct {
 	LarkRequest *larkRequest               `json:"lark_request,omitempty"`
 	// WaitForConvWorker keeps a dedicated extension request queued until its worker is live.
 	WaitForConvWorker bool   `json:"wait_for_conv_worker,omitempty"`
+	// Alias is the launcher alias requested for a dedicated extension worker ("" for default/current).
+	Alias             string `json:"alias,omitempty"`
 	Key               string `json:"key,omitempty"` // idempotency key
 	Ref               string `json:"ref,omitempty"` // related object id (worker, timer…)
 }

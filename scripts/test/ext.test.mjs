@@ -117,6 +117,8 @@ test("inbox search filters and highlights matches without dropping bot-chat DM e
   assert.match(rows, /<mark class="inbox-hl">值班<\/mark>/);
   const empty = ext.inboxListRowsHTML(r, "", "larkx", "", "不存在的词");
   assert.match(empty, /data-inbox-search-clear/);
+  const helpHTML = ext.inboxHTML(r, "", null, "larkx", "", { helpOpen: true });
+  assert.match(helpHTML, /交给专属 agent 时，\/ai 后可加 alias 指定 agent，如 \/ai agyn …；不写用默认/);
 });
 
 test("convHTML renders chronological order, unread anchor + jump controls, human vs AI replies, and honest WeChat bot labels", () => {

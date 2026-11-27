@@ -415,7 +415,7 @@
     const convs = listed(r);
     const query = String(opts.query || "");
     const helpOpen = !!opts.helpOpen;
-    const introText = `打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。`;
+    const introText = `打开的扩展收到的会话都在这里。你本人发的、以触发词 <b>${esc(r?.trigger || "/ai")}</b> 开头的消息，在任何会话都会交给 Collie 或专属 agent，回复带尾标发回原会话；会话开关只管别人的消息。<br>交给专属 agent 时，/ai 后可加 alias 指定 agent，如 /ai agyn …；不写用默认`;
     if (!convs.length) return `<p class="panel-intro">${introText}</p><div class="card"><div class="empty-row with-ico">${ico("inbox")}<div>还没有会话。先在 <a href="#/auto" data-auto-tab="hooks">接入</a> 打开一个扩展并登录</div></div></div>`;
     const p = inboxPlace(r, channel, sub);
     const shown = inboxShown(r, channel, sub, query);

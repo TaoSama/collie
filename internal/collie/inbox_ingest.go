@@ -12,6 +12,8 @@ import (
 // fileIncoming commits the message, conversation and any resulting trigger
 // together. The scheduler and the inbox see the new state only after commit.
 func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trigger, error) {
+	reqAlias, aliasWord, aliasRest := h.resolveConvAlias(m, in)
+
 	sp, store := h.sp, h.store
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
@@ -26,6 +28,15 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 	if !triggered && in.Mention && in.fromYou() {
 		// You @-mentioned yourself: the extension took the @ out already.
 		request, triggered = strings.TrimSpace(in.Text), true
+	}
+	if c.Handler == handlerAgent && triggered && reqAlias != "" {
+		if w, _ := splitFirstWord(request); w == aliasWord {
+			request = aliasRest
+		} else {
+			reqAlias = ""
+		}
+	} else {
+		reqAlias = ""
 	}
 	topic := ""
 	if c.Kind == chatGroup {
@@ -93,6 +104,7 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 			if c.Ext == larkxID {
 				t.LarkRequest = newLarkRequest(c, in)
 			}
+			t.Alias = reqAlias
 			h.prepareConvDeliveryLocked(c, topic, t)
 			if err := sp.persistTriggerLocked(tx, t, th); err != nil {
 				return InboxConv{}, nil, fmt.Errorf("save message trigger: %w", err)

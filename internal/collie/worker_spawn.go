@@ -113,7 +113,7 @@ func (sp *Super) Spawn(spec SpawnSpec) (*Worker, <-chan error, error) {
 		sp.mu.Unlock()
 		return nil, nil, fmt.Errorf("invalid worker name %q", name)
 	}
-	if w := sp.st.Workers[name]; w != nil && !w.Ended {
+	if w := sp.st.Workers[name]; w != nil && !w.Ended && spec.Conv == "" {
 		sp.mu.Unlock()
 		return nil, nil, fmt.Errorf("worker %s is still running: `collie send %s …` to give it more, or spawn under another name such as %s", name, name, spareName(name, takenLocked))
 	}

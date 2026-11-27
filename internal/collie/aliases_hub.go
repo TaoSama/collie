@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -133,6 +134,43 @@ func (s *Server) aliasOn(ctx context.Context, machine, name, herdrKind string) (
 		return nil, fmt.Errorf("alias %s 启动的是 %s，不是 %s", name, a.Kind, herdrKind)
 	}
 	return a, nil
+}
+
+// findAliasOn returns the launcher alias on machine matching name (exact first,
+// then case-insensitive), reading the computer's aliases if its list is missing
+// or stale.
+func (s *Server) findAliasOn(ctx context.Context, machine, name string) *LauncherAlias {
+	if s == nil || !aliasNameRe.MatchString(name) {
+		return nil
+	}
+	find := func(rep aliasReport) *LauncherAlias {
+		for i := range rep.Aliases {
+			if rep.Aliases[i].Name == name {
+				return &rep.Aliases[i]
+			}
+		}
+		for i := range rep.Aliases {
+			if strings.EqualFold(rep.Aliases[i].Name, name) {
+				return &rep.Aliases[i]
+			}
+		}
+		return nil
+	}
+	snap, ok := s.aliases.get(machine)
+	if a := find(snap.rep); a != nil {
+		return a
+	}
+	if ok && time.Since(snap.tried) < aliasFresh {
+		return nil
+	}
+	if s.herdr == nil {
+		return nil
+	}
+	rep, err := s.readAliases(ctx, machine)
+	if err != nil {
+		return nil
+	}
+	return find(rep)
 }
 
 type aliasMachineView struct {
