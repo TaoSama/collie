@@ -27,7 +27,7 @@ type Message struct {
 	Error   bool     `json:"error,omitempty"`
 	// ToolDone records a tool result even when it carried no displayable output.
 	ToolDone bool `json:"tool_done,omitempty"`
-	// TurnMS: this message ends a turn (Codex, agy) that took this long, so the
+	// TurnMS: this message ends a turn that took this long, so the
 	// steps before it can fold away once the turn is done.
 	TurnMS int64 `json:"turn_ms,omitempty"`
 	at     int64 // where in the log its line starts
@@ -116,10 +116,12 @@ func textOf(raw json.RawMessage) string {
 
 func (t *transcript) claudeLine(line []byte) bool {
 	var e struct {
-		Type      string `json:"type"`
-		IsMeta    bool   `json:"isMeta"`
-		Sidechain bool   `json:"isSidechain"`
-		Message   struct {
+		Type       string `json:"type"`
+		Subtype    string `json:"subtype"`
+		DurationMS int64  `json:"durationMs"`
+		IsMeta     bool   `json:"isMeta"`
+		Sidechain  bool   `json:"isSidechain"`
+		Message    struct {
 			ID      string          `json:"id"`
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
@@ -139,6 +141,9 @@ func (t *transcript) claudeLine(line []byte) bool {
 	}
 	if json.Unmarshal(line, &e) != nil || e.Sidechain {
 		return false
+	}
+	if e.Type == "system" && e.Subtype == "turn_duration" {
+		return t.endTurn(e.DurationMS)
 	}
 	// What the human typed while the agent was busy is logged as a queued
 	// command once the agent takes it, not as a user line.

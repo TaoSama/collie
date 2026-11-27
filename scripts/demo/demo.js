@@ -181,7 +181,7 @@
       { kind: "user", text: "[collie] 根据 v1.3..main 的提交写 v1.4 发布说明。完成后 collie report。" },
       tool("Bash", "git log --oneline v1.3..main", "27 commits"),
       tool("Edit", "CHANGELOG.md", "+38"),
-      { kind: "assistant", text: "CHANGELOG 已更新：6 条改动，2 条需要注意的升级事项（配置项 `api_url` 改名为 `api_base`；最低 Node 版本升到 22）。" },
+      { kind: "assistant", text: "CHANGELOG 已更新：6 条改动，2 条需要注意的升级事项（配置项 `api_url` 改名为 `api_base`；最低 Node 版本升到 22）。", turn_ms: 420000 },
     ],
     "w1:p1": [
       { kind: "user", text: "[collie] 1 个事件 · 对话 · 订单接口的分页测试偶尔会挂……" },

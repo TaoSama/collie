@@ -49,6 +49,39 @@ func TestClaudeTranscript(t *testing.T) {
 	}
 }
 
+func TestClaudeTurnDone(t *testing.T) {
+	msgs := parse(t, "claude", `{"type":"user","message":{"content":"list files"}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"Looking."}]}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"thinking","thinking":"hm"}]}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"a"}]}}
+{"type":"system","subtype":"turn_duration","durationMs":1000,"isSidechain":true}
+{"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"One file."}]}}
+{"type":"system","subtype":"turn_duration","durationMs":420000}
+{"type":"user","message":{"content":"again"}}
+{"type":"assistant","message":{"id":"m3","content":[{"type":"text","text":"Looking again."}]}}
+{"type":"assistant","message":{"id":"m3","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ls"}}]}}
+`)
+	want := []struct {
+		kind string
+		ms   int64
+	}{
+		{"user", 0}, {"assistant", 0}, {"tool", 0}, {"assistant", 420000},
+		{"user", 0}, {"assistant", 0}, {"tool", 0},
+	}
+	if len(msgs) != len(want) {
+		t.Fatalf("got %d messages, want %d", len(msgs), len(want))
+	}
+	for i, m := range msgs {
+		if m.Kind != want[i].kind || m.TurnMS != want[i].ms {
+			t.Errorf("message %d = %+v, want kind %q and duration %d", i, m, want[i].kind, want[i].ms)
+		}
+	}
+	if msgs[3].Text != "One file." || msgs[2].Output != "a" {
+		t.Errorf("answer = %q, tool output = %q", msgs[3].Text, msgs[2].Output)
+	}
+}
+
 func TestCodexTranscript(t *testing.T) {
 	msgs := parse(t, "codex", `{"type":"session_meta","payload":{}}
 {"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"sys"}]}}
