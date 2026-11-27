@@ -109,7 +109,7 @@ func (sp *Super) cancelLarkDeliveryLocked(t *Trigger) {
 	if len(t.Deliveries) != 0 {
 		return // recovery checks the terminal before resolving an in-flight attempt
 	}
-	if sp.updateDeliveryLocked([]*Trigger{t}, nil, nil, func(t *Trigger) {
+	if sp.updateDeliveryLocked([]*Trigger{t}, nil, func(t *Trigger) {
 		t.Status, t.Targets = "ignored", nil
 	}) {
 		log.Printf("larkx guard policy=%s cancel trigger=%s thread=%q reason=public-access-revoked", larkPolicyVersion, t.ID, t.Thread)

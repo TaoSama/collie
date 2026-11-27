@@ -266,7 +266,7 @@ func (h *extHost) saveConvBrief(c InboxConv, t *Trigger) (string, error) {
 	}
 	updated := *t
 	updated.Text = prefix + t.Text
-	if err := sp.saveDeliveryLocked([]Trigger{updated}, nil, nil); err != nil {
+	if err := sp.saveDeliveryLocked([]Trigger{updated}, nil); err != nil {
 		return "", err
 	}
 	t.Text = updated.Text
@@ -288,7 +288,7 @@ func (h *extHost) failConvStart(conv InboxConv, t *Trigger, reason string) {
 	}
 	sp := h.sp
 	sp.mu.Lock()
-	failed := sp.updateDeliveryLocked([]*Trigger{t}, nil, nil, func(t *Trigger) { t.Status = "failed" })
+	failed := sp.updateDeliveryLocked([]*Trigger{t}, nil, func(t *Trigger) { t.Status = "failed" })
 	if failed {
 		sp.addEntryLocked("event", mainThread, fmt.Sprintf("没能为外部会话「%s」（%s）启动专属助手：%s", label, conv.ID, reason), t.ID, "error")
 		sp.changed()

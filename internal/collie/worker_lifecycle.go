@@ -100,10 +100,6 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		}
 	}
 	if w.Conv != "" && !blocked && sp.s.ext != nil {
-		if id := sp.takeDraftTurn(w); id != "" {
-			sp.finishDraftTurn(ctx, w, id)
-			return
-		}
 		// An extension conversation's agent: its turn's last message is the
 		// answer, sent back to that chat, not a report for the Router.
 		// Only its own words go out: never the screen, and never Collie's
@@ -178,21 +174,24 @@ func agentStopLine(screen, summary string) string {
 	return ""
 }
 
-// takeDraftTurn is called only when the worker's turn settles. An expired
-// or missing inbox draft still owns its turn and must never become a send.
-func (sp *Super) takeDraftTurn(w *Worker) string {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
-	id := w.DraftTrigger
-	if id != "" {
-		w.DraftTrigger = ""
-		sp.changed()
+// clearDraftTurnLocked commits the worker transition before another request can
+// enter the pane. A restart must not see the old draft attached to a new turn.
+func (sp *Super) clearDraftTurnLocked(w *Worker, next Worker) bool {
+	next.DraftTrigger = ""
+	if w.DraftTrigger != "" || w.DiscardRestoredDraft {
+		if err := sp.saveDeliveryStateLocked(nil, nil, &next); err != nil {
+			log.Printf("worker %s: clear draft turn: %v", w.Name, err)
+			return false
+		}
 	}
-	return id
+	*w = next
+	return true
 }
 
-func (sp *Super) finishDraftTurn(ctx context.Context, w *Worker, triggerID string) {
-	t, err := triggerByID(sp.db, triggerID)
+func (sp *Super) finishDraftTurn(ctx context.Context, w *Worker, triggerID string, interrupted bool) {
+	sp.mu.Lock()
+	t, err := sp.deliveryTriggerLocked(triggerID)
+	sp.mu.Unlock()
 	if err != nil {
 		log.Printf("worker %s: read draft trigger %s: %v", w.Name, triggerID, err)
 		return
@@ -202,6 +201,10 @@ func (sp *Super) finishDraftTurn(ctx context.Context, w *Worker, triggerID strin
 	}
 	h := sp.s.ext
 	if d, ok := h.getDraft(t.Ref); !ok || d.Status != "pending" {
+		return
+	}
+	if interrupted {
+		h.completeDraft(t.Ref, "", "AI 起草已中断")
 		return
 	}
 	text := sp.convLastReply(ctx, w)

@@ -14,10 +14,17 @@ import (
 func (sp *Super) beginDeliveryLocked(target, pane string, list []*Trigger) bool {
 	var worker *Worker
 	if w := sp.st.Workers[target]; w != nil && w.Conv != "" {
+		if w.DiscardRestoredDraft {
+			return false
+		}
 		if w.DraftTrigger != "" {
 			// An unconfirmed attempt can still produce a reply. Keep its
 			// ownership until the turn finishes or an idle worker takes new work.
-			previous := sp.st.trigger(w.DraftTrigger)
+			previous, err := sp.deliveryTriggerLocked(w.DraftTrigger)
+			if err != nil {
+				log.Printf("worker %s: read draft trigger %s: %v", w.Name, w.DraftTrigger, err)
+				return false
+			}
 			if previous == nil || previous.Status != "failed" || (w.Status != "idle" && w.Status != "done") {
 				return false
 			}
@@ -36,7 +43,7 @@ func (sp *Super) beginDeliveryLocked(target, pane string, list []*Trigger) bool 
 		}
 	}
 	attempt := deliveryAttempt{Pane: pane, At: time.Now()}
-	return sp.updateDeliveryLocked(list, nil, worker, func(t *Trigger) {
+	return sp.updateDeliveryStateLocked(list, nil, worker, func(t *Trigger) {
 		if t.Deliveries == nil {
 			t.Deliveries = map[string]deliveryAttempt{}
 		}
@@ -67,7 +74,7 @@ func (sp *Super) finishDeliveryLocked(target string, list []*Trigger, retry bool
 		next.DraftTrigger = ""
 		worker = &next
 	}
-	if !sp.updateDeliveryLocked(list, notice, worker, func(t *Trigger) {
+	if !sp.updateDeliveryStateLocked(list, notice, worker, func(t *Trigger) {
 		delete(t.Deliveries, target)
 		if retry {
 			return
@@ -89,14 +96,26 @@ func (sp *Super) finishDeliveryLocked(target string, list []*Trigger, retry bool
 	}
 }
 
-func (sp *Super) updateDeliveryLocked(list []*Trigger, notice *Entry, worker *Worker, update func(*Trigger)) bool {
+func (sp *Super) deliveryTriggerLocked(id string) (*Trigger, error) {
+	t := sp.st.trigger(id)
+	if t == nil && sp.db != nil {
+		return triggerByID(sp.db, id)
+	}
+	return t, nil
+}
+
+func (sp *Super) updateDeliveryLocked(list []*Trigger, notice *Entry, update func(*Trigger)) bool {
+	return sp.updateDeliveryStateLocked(list, notice, nil, update)
+}
+
+func (sp *Super) updateDeliveryStateLocked(list []*Trigger, notice *Entry, worker *Worker, update func(*Trigger)) bool {
 	updated := make([]Trigger, len(list))
 	for i, t := range list {
 		updated[i] = *t
 		updated[i].Deliveries = maps.Clone(t.Deliveries)
 		update(&updated[i])
 	}
-	if err := sp.saveDeliveryLocked(updated, notice, worker); err != nil {
+	if err := sp.saveDeliveryStateLocked(updated, notice, worker); err != nil {
 		log.Printf("save delivery for %s: %v", list[0].ID, err)
 		return false
 	}
@@ -110,7 +129,11 @@ func (sp *Super) updateDeliveryLocked(list []*Trigger, notice *Entry, worker *Wo
 	return true
 }
 
-func (sp *Super) saveDeliveryLocked(list []Trigger, notice *Entry, worker *Worker) error {
+func (sp *Super) saveDeliveryLocked(list []Trigger, notice *Entry) error {
+	return sp.saveDeliveryStateLocked(list, notice, nil)
+}
+
+func (sp *Super) saveDeliveryStateLocked(list []Trigger, notice *Entry, worker *Worker) error {
 	tx, err := sp.db.Begin()
 	if err != nil {
 		return err

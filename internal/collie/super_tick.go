@@ -115,8 +115,10 @@ func (sp *Super) tick(parent context.Context) {
 	sp.recoverDeliveries(ctx, away, live)
 
 	type finished struct {
-		w       *Worker
-		blocked bool
+		w           *Worker
+		blocked     bool
+		draft       string
+		interrupted bool
 	}
 	var fin []finished
 	var dead []*Worker // the agent never started, or quit, leaving a shell
@@ -140,7 +142,12 @@ func (sp *Super) tick(parent context.Context) {
 		if w.Ended {
 			// herdr restored its pane (a herdr restart or update): it's back.
 			if a, ok := live[w.Name]; ok && w.Status == "gone" && w.PaneID != "" && a.Pane == w.PaneID {
-				w.Ended, w.Status = false, a.Status
+				next := *w
+				next.Ended, next.Status = false, a.Status
+				next.DiscardRestoredDraft = (w.DraftTrigger != "" || w.DiscardRestoredDraft) && a.Status != "done" && a.Status != "idle"
+				if !sp.clearDraftTurnLocked(w, next) {
+					continue
+				}
 				sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf("worker %s is back: herdr restored its pane (status %s).", w.Name, a.Status), "", "", w.Name)
 				sp.addEntryLocked("event", w.Thread, w.Name+" 回来了（herdr 恢复了它的窗格）", w.Name, "info")
 				sp.changed()
@@ -153,7 +160,12 @@ func (sp *Super) tick(parent context.Context) {
 		}
 		if !alive {
 			if w.Status != "starting" && w.Status != "failed" && settled[w.Name] == w {
-				w.Ended, w.Status = true, "gone"
+				next := *w
+				next.Ended, next.Status = true, "gone"
+				next.DiscardRestoredDraft = w.DraftTrigger != "" || w.DiscardRestoredDraft
+				if !sp.clearDraftTurnLocked(w, next) {
+					continue
+				}
 				sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf("worker %s exited (its herdr pane is gone).", w.Name), "", "", w.Name)
 				sp.addEntryLocked("event", w.Thread, w.Name+" 已退出", w.Name, "info")
 			}
@@ -201,20 +213,31 @@ func (sp *Super) tick(parent context.Context) {
 			}
 			switch a.Status {
 			case "blocked":
-				fin = append(fin, finished{w, true})
+				fin = append(fin, finished{w: w, blocked: true})
 			case "working":
 				w.ResumeAt = time.Time{} // it got going again: a message, the human, or Collie's own nudge
 			}
 		}
 		if a.Status == "done" || a.Status == "idle" {
-			drafting := w.DraftTrigger != ""
-			completed := prev == "working" || (a.Status == "done" && prev != "done" && prev != "blocked") ||
-				(a.Status == "done" && prev == "done" && prevComp > 0 && a.CompletionSeq > prevComp)
-			if drafting && a.CompletionSeq > prevComp {
-				completed = true
-			}
-			if completed && (drafting || now.Sub(w.ReportAt) > 90*time.Second) {
-				fin = append(fin, finished{w, false})
+			draft := w.DraftTrigger
+			completed := prev == "working" || (a.Status == "done" && prev != "blocked" &&
+				(prev != "done" || (prevComp > 0 && a.CompletionSeq > prevComp)))
+			switch {
+			case w.DiscardRestoredDraft:
+				next := *w
+				next.DiscardRestoredDraft = false
+				if !sp.clearDraftTurnLocked(w, next) {
+					w.Status, w.CompletionSeq = prev, prevComp
+					continue
+				}
+			case draft != "" && (completed || prev == "blocked" || a.CompletionSeq > prevComp):
+				if !sp.clearDraftTurnLocked(w, *w) {
+					w.Status, w.CompletionSeq = prev, prevComp
+					continue
+				}
+				fin = append(fin, finished{w: w, draft: draft, interrupted: prev == "blocked" && a.CompletionSeq <= prevComp})
+			case draft == "" && completed && now.Sub(w.ReportAt) > 90*time.Second:
+				fin = append(fin, finished{w: w})
 			}
 		}
 		if !paused && sp.resumeDueLocked(w, a.Status, now) {
@@ -269,7 +292,11 @@ func (sp *Super) tick(parent context.Context) {
 
 	// Worker completion summaries need file/screen IO: do it outside the lock.
 	for _, f := range fin {
-		sp.workerSettled(ctx, f.w, f.blocked)
+		if f.draft != "" {
+			sp.finishDraftTurn(ctx, f.w, f.draft, f.interrupted)
+		} else {
+			sp.workerSettled(ctx, f.w, f.blocked)
+		}
 	}
 	for _, w := range dead {
 		sp.workerDead(ctx, w)

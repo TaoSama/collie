@@ -80,6 +80,8 @@ type Worker struct {
 	Conv string `json:"conv,omitempty"`
 	// DraftTrigger identifies a dedicated draft turn independently of the in-memory draft's lifetime.
 	DraftTrigger string `json:"draft_trigger,omitempty"`
+	// DiscardRestoredDraft suppresses the interrupted turn if herdr restores it still running.
+	DiscardRestoredDraft bool `json:"discard_restored_draft,omitempty"`
 	// cwdFallback says the asked-for directory wasn't there, so it started in
 	// home; spawn's answer passes it on. Not kept.
 	cwdFallback string
