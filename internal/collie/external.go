@@ -58,6 +58,8 @@ type External struct {
 	// through; AliasChoices: the aliases that fit as well, when they differ.
 	Alias        string   `json:"alias,omitempty"`
 	AliasChoices []string `json:"alias_choices,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Effort       string   `json:"effort,omitempty"`
 	Scheduled    bool     `json:"scheduled,omitempty"`
 	Pinned       bool     `json:"pinned,omitempty"`
 
@@ -360,6 +362,10 @@ func (s *Server) externalSessions() []*External {
 				e.CanStop = true
 			}
 			e.HumanAt = humanAt(e.path, e.format)
+			if e.path != "" {
+				u := contextUsage(e.path, e.format, 0)
+				e.Model, e.Effort = u.Model, u.Effort
+			}
 			if e.Session != "" {
 				switch e.Kind {
 				case "codex":

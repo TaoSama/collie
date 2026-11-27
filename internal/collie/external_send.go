@@ -618,6 +618,64 @@ func (s *Server) codexQueueSend(ctx context.Context, thread, text string, wakeAp
 	return codexBgNote, nil
 }
 
+// codexEffortSend starts a turn on the shared daemon with an explicit
+// reasoning effort (does not touch ~/.codex/config.toml). Because
+// thread/queue/add and turn/steer do not take effort, an in-progress turn
+// returns 409 so the caller knows to wait until it finishes.
+func (s *Server) codexEffortSend(ctx context.Context, thread, text, effort string) (int, error) {
+	sock := s.codexDaemonSock()
+	if sock == "" {
+		return 0, errors.New("这台电脑上没有运行 Codex 后台")
+	}
+	c, err := dialCodex(ctx, sock)
+	if err != nil {
+		return 0, err
+	}
+	defer c.close()
+	ids, err := c.loaded()
+	if err != nil {
+		return 0, err
+	}
+	loaded := ids[thread]
+	input := []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}}
+	if loaded {
+		if err := c.call("thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}, nil); err != nil {
+			return 0, err
+		}
+		var read struct {
+			Thread struct {
+				Turns []struct {
+					ID     string `json:"id"`
+					Status string `json:"status"`
+				} `json:"turns"`
+			} `json:"thread"`
+		}
+		if err := c.call("thread/read", map[string]any{"threadId": thread, "includeTurns": true}, &read); err != nil {
+			return 0, err
+		}
+		for _, t := range read.Thread.Turns {
+			if t.Status == "inProgress" {
+				return 409, errors.New("这个 Codex 会话正在运行，等当前这轮结束后再按指定思考强度发送")
+			}
+		}
+		if err := c.call("turn/start", map[string]any{"threadId": thread, "input": input, "effort": effort}, nil); err != nil {
+			return 0, err
+		}
+		forgetDesktopRows()
+		return 0, nil
+	}
+	if err := c.call("thread/resume", map[string]any{"threadId": thread, "excludeTurns": true, "approvalPolicy": "never"}, nil); err != nil {
+		return 0, err
+	}
+	if err := c.call("turn/start", map[string]any{"threadId": thread, "input": input, "effort": effort}, nil); err != nil {
+		c.call("thread/unsubscribe", map[string]any{"threadId": thread}, nil)
+		return 0, err
+	}
+	c.call("thread/unsubscribe", map[string]any{"threadId": thread}, nil)
+	forgetDesktopRows()
+	return 0, nil
+}
+
 // codexInterrupt stops the turn a Codex thread is running in the shared
 // daemon. Closing its terminal is not enough: the turn lives in the daemon,
 // not in the window, and carries on without it.
@@ -692,7 +750,8 @@ const heldNote = "已送到，但被这个会话扣住了：它开着跳过权�
 
 func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text string `json:"text"`
+		Text   string `json:"text"`
+		Effort string `json:"effort"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -700,6 +759,11 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(body.Text)
 	if text == "" {
 		writeJSON(w, 400, map[string]any{"error": "空消息"})
+		return
+	}
+	effort := strings.TrimSpace(body.Effort)
+	if effort != "" && !modelNameRe.MatchString(effort) {
+		writeJSON(w, 400, map[string]any{"error": "思考强度参数不合法"})
 		return
 	}
 	e := s.externalByID(r.PathValue("id"))
@@ -716,7 +780,7 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e.SendVia == "headless" {
-		if status, err := s.sendHeadless(r.Context(), e, text); err != nil {
+		if status, err := s.sendHeadless(r.Context(), e, text, effort); err != nil {
 			if status != 0 {
 				writeJSON(w, status, map[string]any{"error": err.Error()})
 				return
@@ -731,6 +795,10 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	switch e.Kind {
 	case "claude":
+		if effort != "" {
+			writeJSON(w, 409, map[string]any{"error": "活会话经收件箱发送，不支持按次改思考强度（/effort 会改全局默认）"})
+			return
+		}
 		reg := e.reg
 		var offset int64
 		if fi, err := os.Stat(e.path); err == nil {
@@ -745,6 +813,24 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "codex":
+		if effort != "" {
+			if e.SendVia == "app" {
+				if err := s.codexAppSend(ctx, e.Session, text, effort); err != nil {
+					fail(w, err)
+					return
+				}
+				break
+			}
+			if status, err := s.codexEffortSend(ctx, e.Session, text, effort); err != nil {
+				if status != 0 {
+					writeJSON(w, status, map[string]any{"error": err.Error()})
+					return
+				}
+				fail(w, err)
+				return
+			}
+			break
+		}
 		if e.SendVia == "queue" || e.SendVia == "queue-cli" {
 			note, err := s.codexQueueSend(ctx, e.Session, text, e.SendVia == "queue")
 			if err != nil {
@@ -757,15 +843,22 @@ func (s *Server) sendExternal(w http.ResponseWriter, r *http.Request) {
 			}
 			break
 		}
-		send := s.codexSend
 		if e.SendVia == "app" {
-			send = s.codexAppSend
+			if err := s.codexAppSend(ctx, e.Session, text, ""); err != nil {
+				fail(w, err)
+				return
+			}
+			break
 		}
-		if err := send(ctx, e.Session, text); err != nil {
+		if err := s.codexSend(ctx, e.Session, text); err != nil {
 			fail(w, err)
 			return
 		}
 	case "agy":
+		if effort != "" {
+			writeJSON(w, 409, map[string]any{"error": "Antigravity 桌面版不支持从这里改思考强度"})
+			return
+		}
 		if e.SendVia != "app" {
 			writeJSON(w, 409, map[string]any{"error": "这个 Antigravity 会话还不能从这里发消息"})
 			return

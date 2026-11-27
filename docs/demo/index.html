@@ -275,6 +275,10 @@
           <textarea id="x-input" rows="1" placeholder="发消息给它，它会在原来的窗口里接着做…"></textarea>
           <div class="cbar">
             <button type="button" class="icon-btn attach" title="添加图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <div class="chips" id="x-chips" hidden>
+              <span class="pick chip ro" id="x-model" title="外部 CLI 会话不支持修改模型" hidden></span>
+              <select id="x-effort" data-pick="chip" data-title="本次发送的思考强度" hidden></select>
+            </div>
             <span class="muted x-hint" id="x-hint"></span>
             <span class="spacer"></span>
             <button class="send" type="submit" title="发送 (Enter)"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>

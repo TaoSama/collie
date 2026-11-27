@@ -1912,7 +1912,10 @@ select.picked { display: none; }
 #v-ext .composer { padding-bottom: 6px; }
 /* Nothing under the input box (no take-over bar): it sits on the home indicator. */
 #v-ext .composer:has(~ .ext-bar > p:empty):not(:has(~ .ext-bar > .btn:not([hidden]))) { padding-bottom: max(6px, env(safe-area-inset-bottom)); }
-#x-composer .x-hint { font-size: var(--fs-small); padding-left: 8px; }
+#x-composer .x-hint { font-size: var(--fs-small); padding-left: 6px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 760px), (max-height: 500px) and (pointer: coarse) {
+  #x-composer .cbar:has(#x-chips:not([hidden])) .x-hint { display: none; }
+}
 
 /* settings: one card per topic */
 .settings { display: grid; gap: 14px; }

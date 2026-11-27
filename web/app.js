@@ -5402,10 +5402,59 @@
     if (e.kind === "codex") return "经 Codex 后台送达";
     return "经会话收件箱送达";
   }
+  const extEffort = new Map(); // ext id -> chosen per-turn thinking effort ("" = keep current)
+  let extChipKey = "", extChipSeq = 0;
+  async function renderExtChips(e) {
+    const box = $("#x-chips"), mSel = $("#x-model"), eSel = $("#x-effort");
+    const show = !!(e && e.can_send && (e.surface === "cli" || e.kind === "codex" || e.send_via === "headless"));
+    if (!show) {
+      extChipKey = "";
+      box.hidden = mSel.hidden = eSel.hidden = true;
+      return;
+    }
+    const picked = extEffort.get(e.id) || "";
+    const key = [e.id, e.kind, e.machine || "", e.model || "", e.effort || "", e.send_via || "", e.live ? 1 : 0, e.status || "", picked, modelGen].join("|");
+    if (extChipKey === key) return;
+    extChipKey = key;
+    const seq = ++extChipSeq;
+    const info = e.hub ? {} : await modelsFor(e.kind, e.machine || "");
+    if (seq !== extChipSeq) return;
+    const model = e.model || info.default || "";
+    const curEffort = e.effort || info.default_effort || "";
+    const effs = effortsOf(info, (info.models || []).find((m) => m.id === model));
+    mSel.hidden = !model;
+    if (model) {
+      mSel.innerHTML = `<span class="pv"><span class="pt">${esc(modelName(model))}</span></span>`;
+      mSel.title = "外部 CLI 会话不支持修改模型";
+    }
+    const fixed = e.kind === "claude" && e.send_via !== "headless"
+      ? "活会话经收件箱发送，不支持按次改思考强度（/effort 会改全局默认）"
+      : e.kind === "agy" && e.send_via !== "headless"
+      ? "Antigravity 桌面版不支持从这里改思考强度"
+      : e.kind === "codex" && e.live && e.status === "working"
+      ? "正在运行中，等这轮停下来再改思考强度"
+      : !effs.length ? "当前模型不支持调整思考强度" : "";
+    const effOpt = (lv, short, sub = "") => `<option value="${esc(lv)}" data-short="${esc(short)}"${sub ? ` data-sub="${esc(sub)}"` : ""}>${esc(lv ? (EFFORT_LABEL[lv] || lv) : `默认（${EFFORT_LABEL[curEffort] || curEffort || "保持当前"}）`)}</option>`;
+    eSel.innerHTML = effOpt("", `思考 · ${EFFORT_LABEL[curEffort] || curEffort || "默认"}`, e.effort ? "会话当前" : "agent 默认")
+      + effs.map((lv) => effOpt(lv, `思考 · ${EFFORT_LABEL[lv] || lv}`, lv)).join("");
+    eSel.hidden = !effs.length && !fixed;
+    eSel.disabled = !!fixed;
+    eSel.value = !fixed && effs.includes(picked) ? picked : "";
+    eSel.title = fixed || "调整思考强度（只作用于本次发送，不改全局默认）";
+    syncPick(eSel);
+    eSel._pick?.classList.toggle("changed", !fixed && !!eSel.value);
+    box.hidden = mSel.hidden && eSel.hidden;
+  }
+  $("#x-effort").addEventListener("change", (ev) => {
+    if (!extCur) return;
+    const v = ev.target.value;
+    if (v) extEffort.set(extCur, v); else extEffort.delete(extCur);
+    ev.target._pick?.classList.toggle("changed", !!v);
+  });
   function renderExtHead(gone) {
     $("#x-composer")._selectDraft();
     extWorking(gone);
-    if (extCur?.startsWith("h:")) { $("#x-stop").hidden = true; return renderHistHead(extCur.slice(2)); }
+    if (extCur?.startsWith("h:")) { $("#x-stop").hidden = true; renderExtChips(null); return renderHistHead(extCur.slice(2)); }
     $("#x-tag").textContent = "只读";
     $("#x-forget").hidden = true;
     $("#x-stop").hidden = true;
@@ -5417,6 +5466,7 @@
     $("#x-input").placeholder = "发消息给它，它会在原来的窗口里接着做…";
     const e = ext.find((x) => x.id === extCur);
     if (!e) {
+      renderExtChips(null);
       $("#x-status").textContent = gone ? "已退出" : "正在连接那台电脑…";
       $("#x-status").className = "status " + (gone ? "ended" : "unknown");
       $("#x-takeover").disabled = true;
@@ -5440,6 +5490,7 @@
       $("#x-takeover").textContent = "在 herdr 里继续";
       $("#x-takeover").className = e.can_send ? "btn small" : "btn primary small";
       $("#x-composer").hidden = !e.can_send;
+      renderExtChips(e.can_send ? e : null);
       if (e.can_send) {
         $("#x-input")._slashPrefetch?.();
         $("#x-input").placeholder = inPlace ? "发消息原地继续这个会话，不迁入 herdr…" : "发消息给它，它会在原来的窗口里接着做…";
@@ -5463,20 +5514,27 @@
       // It takes messages where it runs: no need to take it over.
       $("#x-tag").textContent = "可对话";
       $("#x-composer").hidden = false;
+      renderExtChips(e);
       $("#x-input")._slashPrefetch?.();
       $("#x-input").placeholder = e.send_via === "headless" ? "发消息排队继续这个会话…" : "发消息给它，它会在原来的窗口里接着做…";
       $("#x-takeover").className = "btn small";
       $("#x-hint").textContent = extSendHint(e);
       $("#x-note").textContent = "";
-    } else if (!gone && e.read_only && e.session) {
-      $("#x-note").textContent = e.read_only + (e.can_take_over ? "。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里接着同一个会话继续。" : "");
+    } else {
+      renderExtChips(null);
+      if (!gone && e.read_only && e.session) {
+        $("#x-note").textContent = e.read_only + (e.can_take_over ? "。接管会先结束那边的进程（相当于按 Ctrl-C），再在 herdr 里接着同一个会话继续。" : "");
+      }
     }
   }
   bindComposer($("#x-composer"), $("#x-input"), (draft, ready) => {
     const e = ext.find((x) => x.id === extCur);
     if (!e) throw new Error("这个会话已经结束了");
+    const eSel = $("#x-effort");
+    const effort = eSel && !eSel.hidden && !eSel.disabled ? eSel.value : "";
     return trackSend("x:" + e.id, draft, ready, async (text) => {
-      const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body: { text } });
+      const body = effort ? { text, effort } : { text };
+      const r = await api(`/api/external/${encodeURIComponent(e.id)}/send`, { body });
       if (r.note) toast(r.note, "attn");
       loadExternal();
     });
@@ -6621,7 +6679,7 @@
     mSel.value = model; eSel.value = effort;
     eSel.hidden = !effs.length;
     sess = { key, pane: v.pane_id, kind, machine, model, effort: run[1], tip: own ? "agent 自己的设置" : modelName(run[0]) + (run[1] ? "，思考 " + (EFFORT_LABEL[run[1]] || run[1]) : ""),
-      fixed: kind === "claude" || kind === "agy" ? `${kind === "claude" ? "Claude Code" : "Antigravity"} 在会话里换模型会顺带改掉以后所有新会话的默认，这里只显示`
+      fixed: kind === "claude" || kind === "agy" ? `${kind === "claude" ? "Claude Code" : "Antigravity"} 在会话里换模型或思考强度会顺带改掉以后所有新会话的默认，这里只显示`
         : remote ? "另一个 hub 上的会话，到那边去换"
         : !list.length ? "没读到这台电脑上这个 agent 的模型列表"
         : kind === "codex" && cmpVer(vers.codex || "0", CODEX_INLINE_MODEL) < 0 ? `Codex ${CODEX_INLINE_MODEL} 起才能在会话里直接换，这台是 ${vers.codex || "未知版本"}` : "" };

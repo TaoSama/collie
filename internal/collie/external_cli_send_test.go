@@ -329,10 +329,10 @@ echo '{"type":"result","status":"SUCCESS"}'
 	const sid = "66666666-6666-6666-6666-666666666666"
 	s := &Server{home: home}
 	e := &External{ID: "ag-" + sid, Kind: "agy", Cwd: home, Surface: surfaceCLI, Session: sid, CanSend: true, SendVia: "headless", desktop: true}
-	if _, err := s.sendHeadless(context.Background(), e, "first"); err != nil {
+	if _, err := s.sendHeadless(context.Background(), e, "first", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.sendHeadless(context.Background(), e, "second"); err != nil {
+	if _, err := s.sendHeadless(context.Background(), e, "second", ""); err != nil {
 		t.Fatal(err)
 	}
 	if !s.headless.running(sid) {
@@ -354,10 +354,10 @@ echo '{"type":"result","status":"SUCCESS"}'
 	if err := os.WriteFile(filepath.Join(binDir, "agy"), []byte("#!/bin/sh\ntrap 'exit 130' INT\nsleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.sendHeadless(context.Background(), e, "long-turn"); err != nil {
+	if _, err := s.sendHeadless(context.Background(), e, "long-turn", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.sendHeadless(context.Background(), e, "queued-after"); err != nil {
+	if _, err := s.sendHeadless(context.Background(), e, "queued-after", ""); err != nil {
 		t.Fatal(err)
 	}
 	externalCache.Lock()
@@ -394,7 +394,7 @@ exit 1
 	ch, unsub := s.headless.subscribeErr(sid)
 	defer unsub()
 	e := &External{ID: "cc-" + sid, Kind: "claude", Cwd: home, Surface: surfaceCLI, Session: sid, CanSend: true, SendVia: "headless", desktop: true}
-	if _, err := s.sendHeadless(context.Background(), e, "hi"); err != nil {
+	if _, err := s.sendHeadless(context.Background(), e, "hi", ""); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -406,4 +406,151 @@ exit 1
 		t.Fatal("timed out waiting for published headless error")
 	}
 	waitUntil(t, 5*time.Second, func() bool { return !s.headless.running(sid) })
+}
+
+func TestSendExternalPerTurnEffort(t *testing.T) {
+	t.Run("codex unloaded passes effort to turn/start", func(t *testing.T) {
+		const thread = "88888888-8888-8888-8888-888888888888"
+		var mu sync.Mutex
+		var methods []string
+		var gotEffort string
+		startFakeCodexDaemon(t, func(method string, params json.RawMessage) (any, *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}) {
+			mu.Lock()
+			methods = append(methods, method)
+			mu.Unlock()
+			switch method {
+			case "thread/loaded/list":
+				return map[string]any{"data": []string{}}, nil
+			case "thread/resume", "thread/unsubscribe":
+				return nil, nil
+			case "turn/start":
+				var p struct {
+					Effort string `json:"effort"`
+				}
+				json.Unmarshal(params, &p)
+				gotEffort = p.Effort
+				return nil, nil
+			default:
+				t.Errorf("unexpected RPC: %s", method)
+				return nil, nil
+			}
+		})
+
+		s := &Server{home: t.TempDir()}
+		externalCache.Lock()
+		externalCache.at = time.Now()
+		externalCache.list = []*External{{
+			ID: "cx-" + thread, Kind: "codex", Cwd: "/work", Surface: surfaceCLI,
+			Session: thread, CanSend: true, SendVia: "queue-cli", desktop: true,
+		}}
+		externalCache.Unlock()
+		t.Cleanup(forgetExternal)
+
+		r := httptest.NewRequest("POST", "/api/external/cx-"+thread+"/send", strings.NewReader(`{"text":"查一下","effort":"low"}`))
+		r.SetPathValue("id", "cx-"+thread)
+		w := httptest.NewRecorder()
+		s.sendExternal(w, r)
+		if w.Code != 200 {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+		if gotEffort != "low" {
+			t.Fatalf("turn/start effort = %q, want low", gotEffort)
+		}
+		want := []string{"thread/loaded/list", "thread/resume", "turn/start", "thread/unsubscribe"}
+		if !slices.Equal(methods, want) {
+			t.Fatalf("methods = %v, want %v", methods, want)
+		}
+	})
+
+	t.Run("codex live busy rejects effort with 409", func(t *testing.T) {
+		const thread = "99999999-9999-9999-9999-999999999999"
+		startFakeCodexDaemon(t, func(method string, _ json.RawMessage) (any, *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}) {
+			switch method {
+			case "thread/loaded/list":
+				return map[string]any{"data": []string{thread}}, nil
+			case "thread/resume":
+				return nil, nil
+			case "thread/read":
+				return map[string]any{"thread": map[string]any{"turns": []map[string]any{{"id": "t1", "status": "inProgress"}}}}, nil
+			default:
+				t.Errorf("unexpected RPC: %s", method)
+				return nil, nil
+			}
+		})
+
+		s := &Server{home: t.TempDir()}
+		externalCache.Lock()
+		externalCache.at = time.Now()
+		externalCache.list = []*External{{
+			ID: "cx-" + thread, Kind: "codex", Cwd: "/work", Surface: surfaceCLI,
+			Session: thread, CanSend: true, SendVia: "queue-cli", Live: true, desktop: true,
+		}}
+		externalCache.Unlock()
+		t.Cleanup(forgetExternal)
+
+		r := httptest.NewRequest("POST", "/api/external/cx-"+thread+"/send", strings.NewReader(`{"text":"查一下","effort":"high"}`))
+		r.SetPathValue("id", "cx-"+thread)
+		w := httptest.NewRecorder()
+		s.sendExternal(w, r)
+		if w.Code != 409 {
+			t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("claude live peer inbox rejects effort with 409", func(t *testing.T) {
+		s := &Server{home: t.TempDir()}
+		externalCache.Lock()
+		externalCache.at = time.Now()
+		externalCache.list = []*External{{
+			ID: "claude-99", Kind: "claude", PID: 99, Cwd: "/work", Surface: surfaceCLI,
+			Session: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", CanSend: true, Live: true,
+		}}
+		externalCache.Unlock()
+		t.Cleanup(forgetExternal)
+
+		r := httptest.NewRequest("POST", "/api/external/claude-99/send", strings.NewReader(`{"text":"hi","effort":"low"}`))
+		r.SetPathValue("id", "claude-99")
+		w := httptest.NewRecorder()
+		s.sendExternal(w, r)
+		if w.Code != 409 || !strings.Contains(w.Body.String(), "收件箱") {
+			t.Fatalf("status = %d, body = %s, want 409 explaining peer inbox limitation", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("claude and agy headless pass --effort", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+		binDir := t.TempDir()
+		outC := filepath.Join(t.TempDir(), "claude.args")
+		outA := filepath.Join(t.TempDir(), "agy.args")
+		os.WriteFile(filepath.Join(binDir, "claude"), []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho '{\"type\":\"result\",\"is_error\":false}'\n", outC)), 0o755)
+		os.WriteFile(filepath.Join(binDir, "agy"), []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho '{\"type\":\"result\",\"status\":\"SUCCESS\"}'\n", outA)), 0o755)
+		stubHeadlessBin(t, binDir)
+
+		s := &Server{home: home}
+		const sidC = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		const sidA = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+		if _, err := s.sendHeadless(context.Background(), &External{ID: "cc-" + sidC, Kind: "claude", Cwd: home, Session: sidC, SendVia: "headless"}, "hello", "low"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.sendHeadless(context.Background(), &External{ID: "ag-" + sidA, Kind: "agy", Cwd: home, Session: sidA, SendVia: "headless"}, "hello", "low"); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, 5*time.Second, func() bool { return !s.headless.running(sidC) && !s.headless.running(sidA) })
+
+		gotC, _ := os.ReadFile(outC)
+		if !strings.Contains(string(gotC), "--effort\nlow\n--\nhello\n") {
+			t.Fatalf("claude args =\n%s", string(gotC))
+		}
+		gotA, _ := os.ReadFile(outA)
+		if !strings.Contains(string(gotA), "--conversation\n"+sidA+"\n--output-format\nstream-json\n--effort\nlow\n-p=hello\n") {
+			t.Fatalf("agy args =\n%s", string(gotA))
+		}
+	})
 }

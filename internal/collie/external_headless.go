@@ -35,6 +35,7 @@ type headlessReq struct {
 	bin       string
 	alias     *LauncherAlias
 	configDir string
+	effort    string
 	text      string
 }
 
@@ -192,13 +193,16 @@ func (s *Server) checkHeadlessSafe(kind, session, configDir string) error {
 	return nil
 }
 
-func (s *Server) sendHeadless(ctx context.Context, e *External, text string) (int, error) {
+func (s *Server) sendHeadless(ctx context.Context, e *External, text, effort string) (int, error) {
 	if e.Session == "" || !conversationRe.MatchString(e.Session) {
 		return 409, errors.New("找不到这个会话的 ID，没法续发")
 	}
 	cwd := cmp.Or(e.startDir, e.Cwd)
 	if cwd == "" {
 		return 409, errors.New("找不到这个会话的目录，没法续发")
+	}
+	if e.Kind == "agy" && effort != "" && e.Model != "" && !agyTakesEffort(e.Model) {
+		return 400, errors.New("当前模型不支持调整思考强度")
 	}
 	configDir := ""
 	if e.Kind == "claude" {
@@ -226,7 +230,7 @@ func (s *Server) sendHeadless(ctx context.Context, e *External, text string) (in
 	}
 	req := headlessReq{
 		kind: e.Kind, session: e.Session, cwd: cwd,
-		bin: bin, alias: alias, configDir: configDir, text: text,
+		bin: bin, alias: alias, configDir: configDir, effort: effort, text: text,
 	}
 	s.headless.mu.Lock()
 	sl := s.headless.slotLocked(e.Session)
@@ -320,12 +324,17 @@ func (s *Server) headlessCommand(ctx context.Context, req headlessReq) (*exec.Cm
 	switch req.kind {
 	case "claude":
 		baseArgs := []string{"-p", "--resume", req.session, "--output-format", "stream-json", "--verbose"}
+		extraEffort := []string{}
+		if req.effort != "" {
+			extraEffort = []string{"--effort", req.effort}
+		}
 		if req.alias != nil && aliasNeedsShell(req.alias) {
 			sh := req.alias.Via
 			if sh == "" {
 				_, sh, _ = aliasShell(s.home, loginShell())
 			}
-			line, err := shellLine(append([]string{req.alias.Name}, aliasArgs(req.alias, baseArgs)...))
+			all := append(append([]string{req.alias.Name}, aliasArgs(req.alias, baseArgs)...), extraEffort...)
+			line, err := shellLine(all)
 			if err != nil {
 				return nil, err
 			}
@@ -336,20 +345,25 @@ func (s *Server) headlessCommand(ctx context.Context, req headlessReq) (*exec.Cm
 				args = append(args, expandTilde(w, s.home))
 			}
 			args = append(args, aliasArgs(req.alias, baseArgs)...)
+			args = append(args, extraEffort...)
 			args = append(args, "--", req.text)
 			cmd = exec.CommandContext(ctx, req.bin, args...)
 			for k, v := range req.alias.rawEnv {
 				env = setEnvKV(env, k, expandTilde(v, s.home))
 			}
 		} else {
-			args := append(baseArgs, "--", req.text)
+			args := append(append(baseArgs, extraEffort...), "--", req.text)
 			cmd = exec.CommandContext(ctx, req.bin, args...)
 			if req.configDir != "" && filepath.Clean(req.configDir) != filepath.Clean(claudeRoot(s.home)) {
 				env = setEnvKV(env, "CLAUDE_CONFIG_DIR", req.configDir)
 			}
 		}
 	case "agy":
-		args := []string{"--conversation", req.session, "--output-format", "stream-json", "-p=" + req.text}
+		args := []string{"--conversation", req.session, "--output-format", "stream-json"}
+		if req.effort != "" {
+			args = append(args, "--effort", req.effort)
+		}
+		args = append(args, "-p="+req.text)
 		cmd = exec.CommandContext(ctx, req.bin, args...)
 	default:
 		return nil, errors.New("这种 agent 不支持无头续发")

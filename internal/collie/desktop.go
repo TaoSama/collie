@@ -796,7 +796,7 @@ func (c *codexApp) owner(thread string) (string, error) {
 
 // codexAppSend runs a turn in the App window that owns the thread. A thread
 // the App has not loaded is opened in it first (the App comes forward).
-func (s *Server) codexAppSend(ctx context.Context, thread, text string) error {
+func (s *Server) codexAppSend(ctx context.Context, thread, text, effort string) error {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", s.codexAppSock())
 	if err != nil {
@@ -820,10 +820,14 @@ func (s *Server) codexAppSend(ctx context.Context, thread, text string) error {
 	if err != nil {
 		return errCodexNotLoaded
 	}
+	req := map[string]any{"threadId": thread, "clientUserMessageId": uuid4(), "input": []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}}}
+	if effort != "" {
+		req["effort"] = effort
+	}
 	turn := map[string]any{
 		"conversationId": thread,
 		"turnStart": map[string]any{
-			"request": map[string]any{"threadId": thread, "clientUserMessageId": uuid4(), "input": []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}}},
+			"request": req,
 			"context": map[string]any{},
 		},
 	}
