@@ -510,6 +510,7 @@
     const confirmBtnLabel = `确认发送到${chName}`;
     const attachBtn = `<button type="button" class="icon-btn attach" title="添加图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
 
+    const draftProgress = (label) => `<span class="conv-draft-title"><span class="spinner small" aria-hidden="true"></span><b data-draft-stage role="status">${label}</b><span class="muted conv-draft-elapsed" data-draft-elapsed></span></span>`;
     let dockBody = "";
     if (mode === "reply") {
       const replyHint = botSend
@@ -531,14 +532,20 @@
       if (draft && draft.loading && !draft.text) {
         dockBody = `<div class="conv-draft conv-draft-wait">
             <div class="conv-draft-head">
-              <span class="conv-draft-title"><span class="spinner small" aria-hidden="true"></span><b>正在起草回复…</b><span class="muted">${draft.via ? `由 ${esc(draft.via)} 起草，不会自动发出` : "仅生成草稿，不会自动发出"}</span></span>
+              <span class="conv-draft-status">
+                ${draftProgress("正在起草回复…")}
+                <span class="muted conv-draft-context">生成后可编辑草稿</span>
+              </span>
               <button type="button" class="btn small ghost" data-conv-draft-cancel>取消</button>
             </div>
           </div>`;
       } else if (draft && draft.text) {
         dockBody = `<div class="conv-draft">
             <div class="conv-draft-head">
-              <span class="conv-draft-title">${ico("sparkles")}<b>AI 草稿</b><span class="muted">确认后发往${esc(chName)}，尚未发出</span></span>
+              <span class="conv-draft-status">${draft.loading
+                ? draftProgress("改写中…")
+                : `<span class="conv-draft-title">${ico("sparkles")}<b>AI 草稿</b></span>`}
+                <span class="muted conv-draft-context">确认后发往${esc(chName)}，尚未发出</span></span>
               <div class="conv-draft-tools">
                 <button type="button" class="conv-chip-btn" data-conv-draft-refine="shorter" ${draft.loading ? "disabled" : ""}>${draft.loading ? "改写中…" : "更简短"}</button>
                 <button type="button" class="conv-chip-btn" data-conv-draft-refine="formal" ${draft.loading ? "disabled" : ""}>更正式</button>

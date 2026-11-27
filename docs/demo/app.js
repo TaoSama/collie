@@ -3394,6 +3394,7 @@
     inboxCfgOpen = false;
     inboxSentBanner = "";
     if (switching) {
+      inboxDraftSeq++;
       inboxInput = "";
       inboxDraft = null;
       inboxUnread = hadUnread > 0 ? { conv: id, anchorId: "", count: hadUnread } : null;
@@ -3422,6 +3423,7 @@
       history.back();
       return;
     }
+    inboxDraftSeq++;
     inboxCur = ""; inboxDetail = null; inboxCfgOpen = false; inboxSentBanner = ""; inboxDraft = null; inboxInput = "";
     syncInboxChrome();
     if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
@@ -3433,10 +3435,29 @@
     else if (want && want !== inboxCur) openInboxConv(want, false);
   }
   let inboxDraftSeq = 0;
+  const draftDeliveryLabels = {
+    submitting: "正在提交起草请求",
+    queued: "等待投递",
+    delivered: "已交给 AI，等待草稿",
+    failed: "未能确认投递",
+    ignored: "请求未继续投递",
+  };
+  function syncInboxDraftProgress() {
+    const draft = inboxDraft;
+    if (!draft?.loading || draft.conv !== inboxCur) return;
+    const label = draftDeliveryLabels[draft.deliveryStatus];
+    const stage = $("#inbox-detail [data-draft-stage]");
+    const elapsed = $("#inbox-detail [data-draft-elapsed]");
+    const title = label || (draft.text ? "改写中…" : "正在起草回复…");
+    const wait = `已等待 ${Math.floor((performance.now() - draft.startedAt) / 1000)} 秒`;
+    if (stage && stage.textContent !== title) stage.textContent = title;
+    if (elapsed && elapsed.textContent !== wait) elapsed.textContent = wait;
+  }
   async function generateInboxDraft(hint, tone) {
     const id = inboxCur;
     if (!id) return;
     const seq = ++inboxDraftSeq;
+    const current = () => inboxDraftSeq === seq && inboxCur === id;
     const curConv = inboxDetail?.conv;
     const keepFooter = curConv?.no_footer || curConv?.owner ? false : (inboxDraft?.conv === id ? !!inboxDraft.footer : true);
     const currentDraft = tone && inboxDraft?.conv === id ? (inboxDraft.text || "") : "";
@@ -3445,23 +3466,31 @@
     if (draftFiles.length && inboxFileBox) {
       try {
         await inboxFileBox.ready(draftFiles);
+        if (!current()) return;
         if (draftFiles.some((f) => f.err)) { toast("有附件没传上去，点 ↻ 重传或移除后再起草", "attn"); return; }
         filePaths = draftFiles.map((f) => f.path).filter(Boolean);
-      } catch (err) { toast(err.message, "attn"); return; }
+      } catch (err) { if (current()) toast(err.message, "attn"); return; }
     }
-    inboxDraft = { conv: id, text: currentDraft, loading: true, footer: keepFooter, via: inboxDraft?.via || "" };
+    const startedAt = performance.now();
+    const draft = { conv: id, text: currentDraft, loading: true, footer: keepFooter, startedAt, deliveryStatus: "submitting" };
+    const active = () => current() && inboxDraft === draft;
+    inboxDraft = draft;
     drawAuto(autoData.inbox);
+    const clock = setInterval(() => {
+      if (active()) syncInboxDraftProgress();
+      else clearInterval(clock);
+    }, 250);
     try {
       let res = await api("/api/inbox/draft", { body: { id, hint, tone, current_draft: currentDraft, files: filePaths } });
       while (res.status === "pending" && res.id) {
-        if (inboxDraftSeq !== seq || inboxCur !== id || !inboxDraft) return;
-        inboxDraft = { conv: id, id: res.id, text: currentDraft, loading: true, footer: keepFooter, via: res.via || "" };
-        drawAuto(autoData.inbox);
+        if (!active()) return;
+        draft.deliveryStatus = res.delivery_status;
+        syncInboxDraftProgress();
         await new Promise((r) => setTimeout(r, 1000));
-        if (inboxDraftSeq !== seq || inboxCur !== id || !inboxDraft) return;
+        if (!active()) return;
         res = await api("/api/inbox/draft?id=" + encodeURIComponent(res.id));
       }
-      if (inboxDraftSeq !== seq || inboxCur !== id) return;
+      if (!active()) return;
       if (res.status === "error" || res.error) {
         inboxDraft = currentDraft ? { conv: id, text: currentDraft, loading: false, footer: keepFooter, via: res.via || "" } : null;
         drawAuto(autoData.inbox);
@@ -3471,11 +3500,12 @@
       inboxDraft = { conv: id, id: res.id || "", text: res.draft || "", loading: false, footer: keepFooter, via: res.via || "" };
       drawAuto(autoData.inbox);
     } catch (err) {
-      if (inboxDraftSeq === seq && inboxCur === id) {
-        inboxDraft = currentDraft ? { conv: id, text: currentDraft, loading: false, footer: keepFooter } : null;
-        drawAuto(autoData.inbox);
-      }
+      if (!active()) return;
+      inboxDraft = currentDraft ? { conv: id, text: currentDraft, loading: false, footer: keepFooter } : null;
+      drawAuto(autoData.inbox);
       toast(err.message, "attn");
+    } finally {
+      clearInterval(clock);
     }
   }
   // A chat's picture that won't load leaves the icon under it.
@@ -3668,6 +3698,7 @@
         bindConvMsgs();
       }
       bindInboxComposer();
+      syncInboxDraftProgress();
       applyAfter();
     } else if (tab === "hooks") {
       // 接入 is a list of extensions with the webhooks under it, as before;

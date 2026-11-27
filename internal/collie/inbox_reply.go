@@ -31,14 +31,16 @@ const (
 // Drafts never auto-send to Feishu/WeChat; the human reviews and sends via
 // POST /api/inbox/reply.
 type inboxDraft struct {
-	ID        string    `json:"id"`
-	Conv      string    `json:"conv"`
-	Via       string    `json:"via,omitempty"`
-	Status    string    `json:"status"` // pending | done | error
-	Draft     string    `json:"draft,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"-"`
-	done      chan struct{}
+	ID             string    `json:"id"`
+	Conv           string    `json:"conv"`
+	Via            string    `json:"via,omitempty"`
+	Status         string    `json:"status"` // pending | done | error
+	Draft          string    `json:"draft,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	DeliveryStatus string    `json:"delivery_status,omitempty"`
+	CreatedAt      time.Time `json:"-"`
+	triggerID      string
+	done           chan struct{}
 }
 
 // convSendCaps reports how Collie can send into c:
@@ -453,6 +455,12 @@ func (s *Server) inboxDraftStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if t != nil {
+		s.ext.draftMu.Lock()
+		d.triggerID = t.ID
+		s.ext.draftMu.Unlock()
+	}
+
 	// Wait briefly in case a fast agent or test completes synchronously.
 	timer := time.NewTimer(draftFastWait)
 	defer timer.Stop()
@@ -462,7 +470,7 @@ func (s *Server) inboxDraftStart(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 	}
 	cur, _ := s.ext.getDraft(d.ID)
-	writeJSON(w, 200, cur)
+	s.writeInboxDraft(w, cur)
 }
 
 // inboxDraftGet handles GET /api/inbox/draft?id=...: polls a pending AI draft.
@@ -472,6 +480,21 @@ func (s *Server) inboxDraftGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeJSON(w, 404, map[string]any{"error": "草稿不存在或已过期"})
 		return
+	}
+	s.writeInboxDraft(w, d)
+}
+
+func (s *Server) writeInboxDraft(w http.ResponseWriter, d *inboxDraft) {
+	if d.Status == "pending" && d.triggerID != "" {
+		s.sup.mu.Lock()
+		trigger, err := s.sup.deliveryTriggerLocked(d.triggerID)
+		if trigger != nil {
+			d.DeliveryStatus = trigger.Status
+		}
+		s.sup.mu.Unlock()
+		if err != nil {
+			log.Printf("inbox draft %s: read trigger %s: %v", d.ID, d.triggerID, err)
+		}
 	}
 	writeJSON(w, 200, d)
 }

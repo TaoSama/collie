@@ -2593,6 +2593,12 @@ select.picked { display: none; }
 .conv-draft-title { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-small); color: var(--fg); }
 .conv-draft-title > svg { width: 14px; height: 14px; color: var(--info); flex: none; }
 .conv-draft-title .muted { font-size: var(--fs-tiny); }
+.conv-draft-wait .conv-draft-head { flex-wrap: nowrap; }
+.conv-draft-wait .btn, .conv-draft-status .spinner { flex: none; }
+.conv-draft-status { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 10px; min-width: 0; }
+.conv-draft-status .conv-draft-title { flex-wrap: wrap; row-gap: 2px; }
+.conv-draft-context { font-size: var(--fs-tiny); }
+.conv-draft-elapsed { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .conv-draft-tools { display: inline-flex; align-items: center; gap: 5px; }
 .conv-draft-tools .icon-btn { width: 26px; height: 26px; }
 .conv-draft-tools .icon-btn > svg { width: 14px; height: 14px; }
