@@ -65,9 +65,8 @@ class History:
         adapter = self.adapter
         info = adapter.chats_now([chat]).get(chat) or {}
         last = int(info.get("lastVisibleMessagePosition") or info.get("lastMessagePosition") or 0)
-        positions = list(range(max(1, last - RECENT_COUNT + 1), last + 1))
-        if not positions:
-            return []
+        # Positions count from 0: a chat with one message (a bot's card, say) has it at 0.
+        positions = list(range(max(0, last - RECENT_COUNT + 1), last + 1))
         result = adapter.client.api("messages.PullMessagesByPositionsRequest", {"chatId": chat, "positions": positions}) or {}
         messages = []
         for _, raw in sorted((result.get("messages") or {}).items(), key=lambda kv: int(kv[0])):

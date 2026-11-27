@@ -573,6 +573,9 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
     { id: "l1", conv: "larkx:oc_2", at: ago(180), sender_name: "李四", avatar: face("#0f766e", "李"), text: "明天的方案评审原定上午 10 点，会议室还没约到。" },
     { id: "l2", conv: "larkx:oc_2", at: ago(25), sender_name: "李四", avatar: face("#0f766e", "李"), text: "明天的评审改到下午了吗" },
   ];
+  inboxMsgs["larkx:oc_bot1"] = [
+    { id: "b1", conv: "larkx:oc_bot1", at: ago(14), sender_name: "会议纪要助手", text: "[卡片] 周会纪要已生成", view: { kind: "card", title: "周会纪要已生成", tone: "blue", nodes: [{ kind: "markdown", text: "**产品周会** 的纪要已生成，共 3 项待办。" }, { kind: "actions", children: [{ kind: "button", text: "查看纪要", url: "https://example.com/minutes", tone: "primary" }] }] } },
+  ];
   inboxMsgs["larkx:oc_8"] = [
     { id: "f1", conv: "larkx:oc_8", at: ago(65), sender_name: "林悦", avatar: face("#be123c", "林"), text: "收件箱 390px 手机详情页和 800px 半屏的痛点都整理好了。" },
     { id: "f2", conv: "larkx:oc_8", at: ago(42), sender_name: "林悦", avatar: face("#be123c", "林"), text: "加上搜索框、历史正序和底部 3 个回复动作，你看看体验顺不顺手。" },

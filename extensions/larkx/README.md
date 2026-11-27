@@ -56,6 +56,8 @@ COLLIE_LARKX_UPSTREAM=/path/to/upstream COLLIE_LARKX_DEPS=/path/to/deps go test 
 
 ## 实测
 
+- 2026-11-27：会话里的消息位置从 0 起（`firstChatMessagePosition` 是 -1），只有一条消息的机器人私聊 `lastMessagePosition` 是 0。详情原来从位置 1 起读，这类会话读出来是空的，只显示一行预览；现在从 0 起读。
+
 - 2026-11-27：一个群列表显示的最新消息点开看不到：那条是话题回复，位置 -3，会话主线最后一条比它早约 4 小时，详情只按主线位置读。`thread.PullThreadMessagesByPositionsRequest` 能读话题里的消息，`thread.PullThreadsByPositionsRequest` 和 `messages.PullChatMessagesRequest` 网关返回 400。
 
 - 2026-11-26：Collie 原来自己数的未读和飞书差得多，原因有两个：Collie 只数扩展运行以后推来的消息（话题群还把话题里的回复也算上），而且从来不知道你在飞书里读过。线上 218 个会话里，飞书已读的有 89 个，Collie 认为已读的只有 4 个，两边数一致的只有 5 个。309 个会话问一轮未读数约 2.7 秒（4 批）。

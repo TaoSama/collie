@@ -14,6 +14,9 @@
     uncertain: ["可能已发出，为避免重复没有重发，去原应用确认", "bad"], failed: ["没发出", "bad"], expired: ["已过期，没发出", "bad"],
   };
   const KIND = { dm: "私聊", group: "群", self: "和自己", doc: "文档评论" };
+  // A direct chat with a bot (tag bot) says so, not 私聊.
+  const isBot = (c) => !!c.tags?.includes("bot");
+  const kindLabel = (c) => isBot(c) ? "bot" : KIND[c.kind] || c.kind || "";
   const KIND_ICON = { dm: "user", group: "users", self: "user", doc: "file-text" };
   const { svg: ico, title: cardTitle } = window.collieIcons;
   // A line icon on the same tile as an extension's logo, for the rows
@@ -314,7 +317,7 @@
   const SUBS = [
     ["", "全部", () => true, "message-square-text"],
     ["unread", "未读", unread, "message-square-dot"],
-    ["dm", "单聊", (c) => unread(c) && (c.kind === "dm" || c.kind === "self") && !c.tags?.includes("bot"), "user", true],
+    ["dm", "单聊", (c) => unread(c) && (c.kind === "dm" || c.kind === "self") && !isBot(c), "user", true],
     ["at", "@我", atMe, "at-sign", true],
     ["group", "群聊", (c) => unread(c) && c.kind === "group", "users", true],
   ];
@@ -394,7 +397,7 @@
     const shown = inboxShown(r, channel, sub, query);
     const q = String(query || "").trim();
     const row = (c) => {
-      const n = c.unread > 0 ? c.unread : 0, kind = KIND[c.kind] || c.kind || "";
+      const n = c.unread > 0 ? c.unread : 0, kind = kindLabel(c);
       const name = c.name || c.chat;
       const line = c.ext === "larkx" ? collieInboxMessage.legacyPreview(c.preview) : c.preview || "";
       const preview = c.kind === "dm" && line.startsWith(name + ": ") ? line.slice(name.length + 2) : line;
@@ -447,7 +450,7 @@
     if (!d) return `<div class="card conv-card"><div class="empty-row">正在读取…</div></div>`;
     const c = d.conv, msgs = d.msgs || [], outs = d.outbox || {};
     const chName = c.label || (c.ext === "wechat" ? "微信" : "飞书");
-    const kindName = KIND[c.kind] || c.kind || "";
+    const kindName = kindLabel(c);
     const seg = (name, val, optsList) => `<div class="seg">${optsList.map(([v, l]) => `<button type="button" data-conv-set="${name}" data-v="${v}" class="${String(val) === String(v) ? "on" : ""}">${l}</button>`).join("")}</div>`;
     const href = c.worker ? workerHref(c.worker) : "";
     const worker = c.worker ? (href ? `<a href="${esc(href)}">${esc(c.worker)} →</a>` : esc(c.worker)) : "";

@@ -121,6 +121,14 @@ test("inbox search filters and highlights matches without dropping bot-chat DM e
   assert.match(helpHTML, /交给专属 agent 时，\/ai 后可加 alias 指定 agent，如 \/ai agyn …；不写用默认/);
 });
 
+test("a direct chat with a bot is labelled bot, not 私聊, in the list and the open chat", () => {
+  const bot = { id: "larkx:b1", ext: "larkx", chat: "b1", label: "飞书", name: "会议纪要助手", kind: "dm", tags: ["bot"], unread: 1, preview: "纪要已生成", last_at: "2026-11-27T16:10:00+08:00" };
+  assert.match(ext.inboxListRowsHTML({ convs: [bot] }, "", "larkx", "", ""), /title="飞书 · bot"/);
+  const html = ext.convHTML({ conv: bot, msgs: [], outbox: {} }, "/ai", {});
+  assert.match(html, /飞书 · bot/);
+  assert.doesNotMatch(html, /私聊/);
+});
+
 test("convHTML renders chronological order, unread anchor + jump controls, human vs AI replies, and honest WeChat bot labels", () => {
   const larkDetail = {
     conv: { id: "larkx:g1", ext: "larkx", chat: "g1", label: "飞书", name: "发布值班群", kind: "group", send_as: "self", on: false },
