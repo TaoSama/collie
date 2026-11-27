@@ -78,6 +78,37 @@ func TestExtReceiveRollsBackMessageWhenTriggerWriteFails(t *testing.T) {
 	}
 }
 
+func TestExtReceiveUpdateRetriesOnDBWriteError(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	r := &extRun{h: h, man: h.manifest("fakew")}
+	if _, err := r.handle(t.Context(), extproto.MChannelReceive, extReceiveParams(t, "m1")); err != nil {
+		t.Fatal(err)
+	}
+	owner := true
+	upd, err := json.Marshal(extproto.Receive{Message: extproto.Message{
+		ID: "m1", ChatID: "c1", Owner: &owner, Text: "updated card", Updated: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sp.db.Exec(`CREATE TRIGGER reject_msg_update BEFORE UPDATE ON ext_msgs BEGIN SELECT RAISE(ABORT, 'update failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.handle(t.Context(), extproto.MChannelReceive, upd); !extproto.IsCode(err, extproto.ErrHubUnavailable) {
+		t.Fatalf("update error = %v, want retryable hub_unavailable", err)
+	}
+	if _, err := sp.db.Exec(`DROP TRIGGER reject_msg_update`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.handle(t.Context(), extproto.MChannelReceive, upd); err != nil {
+		t.Fatal(err)
+	}
+	msgs := h.store.msgs("fakew:c1", time.Time{})
+	if len(msgs) != 1 || msgs[0].Text != "updated card" {
+		t.Fatalf("messages after update retry = %+v, want updated card", msgs)
+	}
+}
+
 func TestExtDedicatedRequestSurvivesRestartBeforeWorkerLaunch(t *testing.T) {
 	sp, h, dir := newExtTestHub(t)
 	man := *h.manifest("fakew")

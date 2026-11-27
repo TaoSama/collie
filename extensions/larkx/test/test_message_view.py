@@ -123,6 +123,64 @@ class MessageViewTest(unittest.TestCase):
         f.normalize(dict(reply, msg_id="m3", position=3, create_time=1795720000))
         self.assertEqual([r["id"] for r in f.history.recent("123")], ["m0", "m1", "r1"], "a message of the chat's own stream comes from its positions")
 
+    def test_topic_group_reads_threads_and_replies(self):
+        """A topic group (chatMode 3) has no chat message positions: its window pulls recent topics and replies."""
+        def text_wire(mid, text, at, root=""):
+            w = {"id": mid, "chatId": "750", "type": 4, "fromId": "u1",
+                 "content": U.L.entities.TextContent(richText=richtext.build(U.L, text)).SerializeToString(),
+                 "createTime": at}
+            if root:
+                w["rootId"] = root
+            return w
+
+        class Client:
+            calls = []
+
+            def api(self, method, params):
+                self.calls.append((method, params))
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"750": {"chatMode": 3, "lastVisibleThreadPosition": 757, "lastThreadPosition": 757}}}
+                if method == "thread.PullThreadsByPositionsRequest":
+                    root = text_wire("101", "话题根消息", 1795795757)
+                    r1 = text_wire("102", "第一条回复", 1795797024, root="101")
+                    r2 = text_wire("103", "最后一条回复", 1795797174, root="101")
+                    return {
+                        "rootMessages": {"101": root},
+                        "lastReplyMessages": {"101": r2},
+                        "threadMessages": {"101": {"rootMessage": root, "lastMessages": [r1]}},
+                    }
+                if method == "chats.PullChatChattersByIDsRequest":
+                    return {"chatters": {}}
+                raise AssertionError("unexpected call: %s" % method)
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client, f.me = Client(), "u_me"
+        f.user_name = lambda uid, chat: "甲"
+        rows = f.history.recent("750")
+        self.assertEqual([r["id"] for r in rows], ["101", "102", "103"])
+        self.assertEqual([r["text"] for r in rows], ["话题根消息", "第一条回复", "最后一条回复"])
+        pull = [c for c in f.client.calls if c[0] == "thread.PullThreadsByPositionsRequest"][0][1]
+        self.assertEqual((pull["channelId"], pull["type"], pull["positions"]), ("750", 1, list(range(746, 758))))
+
+    def test_topic_group_without_threads_falls_back_to_chat_messages(self):
+        """A brand-new topic group with no topics still reads chat position 0."""
+        class Client:
+            calls = []
+
+            def api(self, method, params):
+                self.calls.append((method, params))
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"751": {"chatMode": 3, "lastThreadPosition": -1}}}
+                if method == "messages.PullMessagesByPositionsRequest":
+                    return {"messages": {"0": {"id": "1", "chatId": "751", "type": 6, "createTime": 1795700000, "content": b""}}}
+                return {}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client = Client()
+        rows = f.history.recent("751")
+        self.assertEqual([r["id"] for r in rows], ["1"])
+        self.assertNotIn("thread.PullThreadsByPositionsRequest", [c[0] for c in f.client.calls])
+
     def test_senders_have_their_pictures(self):
         """Each sender's avatar comes with the window, the people looked up once in one call."""
         class Client:

@@ -180,7 +180,7 @@ class Extension:
             self.account, self.link, self.expired = "", "", ""
             self.starting, self.restoring = False, False
             self.pending = {}
-        self._save_pending({})
+        self._save_pending()
         self.changed()
         self.wake_outbox()
         self.peer.call("connector.secrets.delete", {"contribution": ID})
@@ -252,14 +252,13 @@ class Extension:
             log.warning("sent.json is damaged; starting it over")
             return {}
 
-    def _write_json(self, path, data):
-        with self.write_mu:  # outside mu: a slow disk holds up no status call
-            tmp = path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(data, f, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, path)
+    def _write_json_locked(self, path, data):
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
 
     def _mark(self, ref, rec):
         with self.mu:
@@ -269,8 +268,10 @@ class Extension:
                 self.sent[ref] = rec
             old = time.time() - SENT_KEEP
             self.sent = {k: v for k, v in self.sent.items() if v.get("at", 0) > old}
-            snapshot = dict(self.sent)
-        self._write_json(self._sent_file(), snapshot)
+        with self.write_mu:  # outside mu during I/O, snapshot inside write_mu so older writes never win
+            with self.mu:
+                snapshot = dict(self.sent)
+            self._write_json_locked(self._sent_file(), snapshot)
 
     # Undelivered incoming messages, by id: kept on disk while the hub is away.
 
@@ -298,26 +299,36 @@ class Extension:
         while len(self.pending) > PENDING_MOST:
             self.pending.pop(next(iter(self.pending)))
 
-    def _save_pending(self, snapshot):
+    def _save_pending(self):
         if not self.data:
-            return
+            return True
         try:
-            self._write_json(self._pending_file(), snapshot)
+            with self.write_mu:
+                with self.mu:
+                    self._prune_pending_locked()
+                    snapshot = dict(self.pending)
+                self._write_json_locked(self._pending_file(), snapshot)
+            return True
         except OSError as e:
             log.error("saving pending messages: %s", e)
+            return False
 
     def _queue_pending(self, m):
         mid = m.get("id") or ""
         if not mid:
-            return
+            return False
         with self.mu:
             was_empty = not self.pending
+            prev = self.pending.get(mid)
+            if prev and not prev["message"].get("updated") and m.get("updated"):
+                m = dict(m)
+                m.pop("updated", None)
             self.pending[mid] = {"at": time.time(), "message": m}
             self._prune_pending_locked()
-            snapshot = dict(self.pending)
-        self._save_pending(snapshot)
+        saved = self._save_pending()
         if was_empty:
             self.pending_wake.set()
+        return saved
 
     def _wake_pending(self):
         with self.mu:
@@ -349,10 +360,7 @@ class Extension:
                     self.pending.pop(mid, None)
                     changed = True
         if changed:
-            with self.mu:
-                self._prune_pending_locked()
-                snapshot = dict(self.pending)
-            self._save_pending(snapshot)
+            self._save_pending()
         return ok
 
     def _flush_loop(self):
@@ -485,16 +493,14 @@ class Extension:
         with self.mu:
             queued = bool(self.pending)
         if queued:
-            self._queue_pending(m)
-            return True
+            return self._queue_pending(m)
         try:
             self.peer.call("channel.receive", {"contribution": ID, "message": m})
             return True
         except peer.Error as e:
             if e.code in RETRYABLE_RECEIVE:
                 log.warning("handing over message %s: %s (queued for retry)", m.get("id"), e.message)
-                self._queue_pending(m)
-                return True
+                return self._queue_pending(m)
             log.warning("handing over message %s: %s", m.get("id"), e.message)
             return False
 

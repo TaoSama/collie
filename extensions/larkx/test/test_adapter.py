@@ -568,6 +568,74 @@ class Pushes(unittest.TestCase):
                 with open(os.path.join(data, "pending.json")) as fp:
                     self.assertEqual(json.load(fp), {})
 
+    def test_pending_repush_preserves_initial_delivery(self):
+        """A re-push marked updated=True while the initial message is queued must not turn it into an update-only drop."""
+        from main import Extension
+        from peer import Error
+
+        data = tempfile.mkdtemp()
+        ext = Extension()
+        ext.data = data
+        offline = [True]
+        delivered = []
+
+        def call(method, params):
+            if offline[0]:
+                raise Error("hub_unavailable", "offline")
+            delivered.append(params["message"])
+
+        ext.peer = types.SimpleNamespace(call=call, closed=threading.Event())
+        m1 = {"id": "m1", "chat_id": "c1", "chat_kind": "group", "text": "first"}
+        m1_repush = {"id": "m1", "chat_id": "c1", "chat_kind": "group", "text": "first edited", "updated": True}
+        m2_upd = {"id": "m2", "chat_id": "c1", "chat_kind": "group", "text": "card updated", "updated": True}
+
+        self.assertTrue(ext._received(m1))
+        self.assertTrue(ext._received(m1_repush))
+        self.assertTrue(ext._received(m2_upd))
+
+        offline[0] = False
+        self.assertTrue(ext._flush_pending())
+        self.assertEqual([m["id"] for m in delivered], ["m1", "m2"])
+        self.assertEqual(delivered[0]["text"], "first edited")
+        self.assertFalse(delivered[0].get("updated"), "initial queued message stays non-updated after re-push")
+        self.assertTrue(delivered[1].get("updated"), "a message that first arrived as an update stays updated")
+
+    def test_pending_writes_stay_monotonic_and_report_oserror(self):
+        """Interleaved pending writes never persist an older snapshot, and a write failure returns False."""
+        from main import Extension
+        from peer import Error
+
+        data = tempfile.mkdtemp()
+        ext = Extension()
+        ext.data = data
+        ext.peer = types.SimpleNamespace(
+            call=lambda method, params: (_ for _ in ()).throw(Error("hub_unavailable", "offline")),
+            closed=threading.Event(),
+        )
+
+        # Hold write_mu while thread 1 queues m1 and thread 2 queues m2, so both wait to write.
+        entered = threading.Event()
+        with ext.write_mu:
+            t1 = threading.Thread(target=ext._received, args=({"id": "m1", "chat_id": "c1", "text": "one"},))
+            t1.start()
+            while "m1" not in ext.pending:
+                entered.wait(0.005)
+            t2 = threading.Thread(target=ext._received, args=({"id": "m2", "chat_id": "c1", "text": "two"},))
+            t2.start()
+            while "m2" not in ext.pending:
+                entered.wait(0.005)
+        t1.join(5)
+        t2.join(5)
+        with open(os.path.join(data, "pending.json")) as fp:
+            self.assertEqual(set(json.load(fp).keys()), {"m1", "m2"})
+
+        # A write failure must return False from _received so callers know persistence did not succeed.
+        def fail_write(path, payload):
+            raise OSError("disk full")
+
+        ext._write_json_locked = fail_write
+        self.assertFalse(ext._received({"id": "m3", "chat_id": "c1", "text": "three"}))
+
     def test_doc_comment_replay_while_handoff_is_pending(self):
         f = self.feishu()
         started, release = threading.Event(), threading.Event()

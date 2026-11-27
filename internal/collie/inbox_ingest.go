@@ -23,7 +23,9 @@ func (h *extHost) fileIncoming(m *ExtManifest, in incomingMsg) (InboxConv, *Trig
 	id := convID(m.ID, in.Chat)
 	if in.Updated {
 		if prev := store.convs[id]; prev != nil && prev.On {
-			store.updateMsgViewLocked(id, in.ID, in.Text, in.View)
+			if err := store.updateMsgViewLocked(id, in.ID, in.Text, in.View); err != nil {
+				return InboxConv{}, nil, fmt.Errorf("update message: %w", err)
+			}
 		}
 		return InboxConv{}, nil, nil
 	}

@@ -11,11 +11,23 @@ RECENT_COUNT = 12
 RECENT_TTL = 30
 RECENT_CHATS = 16
 MEDIA_MOST = 20 << 20
+CHAT_TOPICS = 3
+CHANNEL_CHAT = 1
+TOPIC_REPLIES = 3
 
 
 def message_at(msg):
     at = int(msg.get("create_time") or 0)
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at / 1000 if at > 10 ** 12 else at)) if at else ""
+
+
+def _raw_time_key(raw):
+    ms = int(raw.get("createTimeMs") or 0)
+    if not ms:
+        sec = int(raw.get("createTime") or 0)
+        ms = sec if sec > 10 ** 12 else sec * 1000
+    mid = raw.get("id") or ""
+    return (ms, int(mid) if str(mid).isdigit() else 0)
 
 
 class History:
@@ -72,16 +84,46 @@ class History:
                 if self.active.get(chat) is fetch:
                     del self.active[chat]
 
-    def _read(self, chat):
-        adapter = self.adapter
-        info = adapter.chats_now([chat]).get(chat) or {}
+    def _pull_raw(self, chat, info):
+        client = self.adapter.client
+        if info.get("chatMode") == CHAT_TOPICS:
+            last = info.get("lastVisibleThreadPosition")
+            if last is None:
+                last = info.get("lastThreadPosition")
+            if last is not None and int(last) >= 0:
+                last = int(last)
+                positions = list(range(max(0, last - RECENT_COUNT + 1), last + 1))
+                result = client.api("thread.PullThreadsByPositionsRequest", {
+                    "channelId": chat, "type": CHANNEL_CHAT, "positions": positions, "lastMessageCount": TOPIC_REPLIES,
+                }) or {}
+                by_id = {}
+                for bucket in ((result.get("rootMessages") or {}).values(),
+                               (result.get("lastReplyMessages") or {}).values()):
+                    for raw in bucket:
+                        mid = str((raw or {}).get("id") or "")
+                        if mid and str(raw.get("chatId") or raw.get("channelId") or chat) == chat:
+                            by_id[mid] = raw
+                for td in (result.get("threadMessages") or {}).values():
+                    if not isinstance(td, dict):
+                        continue
+                    for raw in [td.get("rootMessage")] + list(td.get("lastMessages") or []):
+                        mid = str((raw or {}).get("id") or "")
+                        if mid and str(raw.get("chatId") or raw.get("channelId") or chat) == chat:
+                            by_id[mid] = raw
+                if by_id:
+                    return sorted(by_id.values(), key=_raw_time_key)[-RECENT_COUNT:]
         last = int(info.get("lastVisibleMessagePosition") or info.get("lastMessagePosition") or 0)
         # Positions count from 0: a chat with one message (a bot's card, say) has it at 0.
         positions = list(range(max(0, last - RECENT_COUNT + 1), last + 1))
-        result = adapter.client.api("messages.PullMessagesByPositionsRequest", {"chatId": chat, "positions": positions}) or {}
+        result = client.api("messages.PullMessagesByPositionsRequest", {"chatId": chat, "positions": positions}) or {}
+        return [raw for _, raw in sorted((result.get("messages") or {}).items(), key=lambda kv: int(kv[0]))]
+
+    def _read(self, chat):
+        adapter = self.adapter
+        info = adapter.chats_now([chat]).get(chat) or {}
         messages = []
         cal_pairs = []
-        for _, raw in sorted((result.get("messages") or {}).items(), key=lambda kv: int(kv[0])):
+        for raw in self._pull_raw(chat, info):
             msg = message_view.decode(adapter.U, raw, chat)
             if not msg["msg_id"] or str(msg["chat_id"]) != chat:
                 continue

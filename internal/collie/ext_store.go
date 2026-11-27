@@ -3,6 +3,7 @@ package collie
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"maps"
 	"os"
@@ -357,17 +358,23 @@ func (st *extStore) addMsg(m InboxMsg) {
 func (st *extStore) updateMsgView(conv, id, text string, view *extproto.MessageView) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.updateMsgViewLocked(conv, id, text, view)
+	if err := st.updateMsgViewLocked(conv, id, text, view); err != nil {
+		log.Printf("ext: update message: %v", err)
+	}
 }
 
-func (st *extStore) updateMsgViewLocked(conv, id, text string, view *extproto.MessageView) {
+func (st *extStore) updateMsgViewLocked(conv, id, text string, view *extproto.MessageView) error {
 	var raw string
-	if err := st.db.QueryRow(`SELECT data FROM ext_msgs WHERE conv = ? AND id = ?`, conv, id).Scan(&raw); err != nil {
-		return
+	err := st.db.QueryRow(`SELECT data FROM ext_msgs WHERE conv = ? AND id = ?`, conv, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	var m InboxMsg
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return
+		return err
 	}
 	if view != nil {
 		m.View = view
@@ -377,11 +384,10 @@ func (st *extStore) updateMsgViewLocked(conv, id, text string, view *extproto.Me
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		return
+		return err
 	}
-	if _, err := st.db.Exec(`UPDATE ext_msgs SET data = ? WHERE conv = ? AND id = ?`, string(b), conv, id); err != nil {
-		log.Printf("ext: update message: %v", err)
-	}
+	_, err = st.db.Exec(`UPDATE ext_msgs SET data = ? WHERE conv = ? AND id = ?`, string(b), conv, id)
+	return err
 }
 
 func (st *extStore) hasMsg(conv, id string) bool {
