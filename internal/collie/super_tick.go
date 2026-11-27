@@ -57,6 +57,8 @@ func (sp *Super) agentList(ctx context.Context) ([]Agent, bool) {
 func (sp *Super) byName(list []Agent) map[string]liveAgent {
 	m := map[string]liveAgent{}
 	router := sp.routerAgent()
+	machine := sp.routerOn()
+	cwd := sp.routerCwd(machine)
 	for _, a := range list {
 		if a.Name == nil {
 			continue
@@ -64,6 +66,9 @@ func (sp *Super) byName(list []Agent) map[string]liveAgent {
 		name := *a.Name
 		switch name {
 		case router:
+			if !isRouterAgent(a, router, machine, cwd) {
+				continue
+			}
 			name = routerName
 		case routerName:
 			continue // another agent took the name the Router could not have

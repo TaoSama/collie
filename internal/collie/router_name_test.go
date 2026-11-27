@@ -470,3 +470,102 @@ func TestEnsureRouterTakesSpareName(t *testing.T) {
 		t.Errorf("after setRouterOn routerAgent() = %q, want collie-3", got)
 	}
 }
+
+// A dev Collie sharing herdr started a "collie" pane in a temp folder: the hub
+// must not adopt it in liveAgents or state, must not close its workspace, and
+// must launch its own Router in the real router folder under a spare name.
+func TestRouterIgnoresSameNameInOtherFolder(t *testing.T) {
+	f := newFakeHerdr(t)
+	sp := newRouterTestSuper(t, f)
+	dev := f.add("wDev", routerLabel, routerName, "claude", "/tmp/dev-collie/router")
+
+	live, ok := sp.liveAgents(context.Background())
+	if !ok {
+		t.Fatal("liveAgents failed")
+	}
+	if _, found := live[routerName]; found {
+		t.Fatalf("liveAgents adopted wrong-cwd agent %s as Router", dev)
+	}
+	st := sp.s.state(context.Background())
+	for _, a := range st.Agents {
+		if a.IsRouter {
+			t.Errorf("state marked wrong-cwd pane %s as is_router", a.PaneID)
+		}
+	}
+
+	launchRouter(t, sp)
+	if f.panes[dev] == nil {
+		t.Fatal("closeStaleRouterWorkspaces closed another Collie's live router workspace")
+	}
+	if got := sp.routerAgent(); got != "collie-2" {
+		t.Fatalf("routerAgent() = %q, want collie-2", got)
+	}
+	live, _ = sp.liveAgents(context.Background())
+	got, found := live[routerName]
+	if !found || got.Pane == dev || f.panes[got.Pane].cwd != sp.routerCwd("") {
+		t.Fatalf("live Router = %+v (found=%t), want new pane in %q", got, found, sp.routerCwd(""))
+	}
+	st = sp.s.state(context.Background())
+	for _, a := range st.Agents {
+		if want := a.PaneID == got.Pane; a.IsRouter != want {
+			t.Errorf("pane %s is_router = %t, want %t", a.PaneID, a.IsRouter, want)
+		}
+	}
+}
+
+// Router identity checks the computer as well as the folder, and stays unset
+// for a remote computer until its router folder has been synced.
+func TestByNameChecksRouterMachineAndCwd(t *testing.T) {
+	f := newFakeHerdr(t)
+	sp := newRouterTestSuper(t, f)
+	sp.mu.Lock()
+	sp.setRouterOn("macpro", "")
+	sp.mu.Unlock()
+	router, claude := routerName, "claude"
+	dir, wrong := "/Users/me/.collie/router", "/tmp/dev/router"
+	list := []Agent{
+		{Name: &router, PaneID: "w1:p1", Agent: &claude, Cwd: &dir},
+		{Name: &router, PaneID: "w2:p1@other", Agent: &claude, Cwd: &dir},
+		{Name: &router, PaneID: "w3:p1@macpro", Agent: &claude, Cwd: &wrong},
+		{Name: &router, PaneID: "w4:p1@macpro", Agent: &claude, Cwd: &dir},
+	}
+
+	// Before first sync, routerCwd("macpro") is unknown: match nothing.
+	if live := sp.byName(list); len(live) != 0 {
+		t.Fatalf("before sync live = %+v, want empty", live)
+	}
+
+	sp.rsync.mu.Lock()
+	sp.rsync.machine, sp.rsync.dir = "macpro", dir
+	sp.rsync.mu.Unlock()
+	if live := sp.byName(list); live[routerName].Pane != "w4:p1@macpro" {
+		t.Fatalf("matched Router = %+v, want w4:p1@macpro", live[routerName])
+	}
+	if live := sp.byName(list[:3]); len(live) != 0 {
+		t.Fatalf("without the real Router, live = %+v, want empty", live)
+	}
+}
+
+func TestCloseStaleRouterWorkspaces(t *testing.T) {
+	f := newFakeHerdr(t)
+	sp := newRouterTestSuper(t, f)
+	f.add("wOrphan", routerLabel, "", "", "/tmp/elsewhere")
+	f.add("wOwn", routerLabel, routerName, "claude", sp.routerCwd(""))
+	f.add("wOther", routerLabel, routerName, "claude", "/tmp/dev-collie/router")
+	f.add("wShell", "work", "", "", sp.routerCwd(""))
+
+	sp.closeStaleRouterWorkspaces(context.Background())
+
+	if f.ws["wOrphan"] != "" {
+		t.Error("orphan router workspace (no live agent) was not closed")
+	}
+	if f.ws["wOwn"] != "" {
+		t.Error("own-folder router workspace was not closed")
+	}
+	if f.ws["wOther"] == "" {
+		t.Error("other-folder live router workspace should have been kept")
+	}
+	if f.ws["wShell"] == "" {
+		t.Error("non-router workspace should have been kept")
+	}
+}

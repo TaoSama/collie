@@ -59,13 +59,19 @@ func (s *Server) state(ctx context.Context) PaneState {
 	}
 	names := map[string]string{}
 	var routerPane string
-	router := routerName
+	var router, machine, cwd string
 	if s.sup != nil {
 		router = s.sup.routerAgent()
+		machine = s.sup.routerOn()
+		cwd = s.sup.routerCwd(machine)
 	}
 	for _, a := range agents {
 		names[a.PaneID] = deref(a.Name)
-		if names[a.PaneID] == router {
+		if s.sup != nil {
+			if isRouterAgent(a, router, machine, cwd) {
+				routerPane = a.PaneID
+			}
+		} else if names[a.PaneID] == routerName {
 			routerPane = a.PaneID
 		}
 	}

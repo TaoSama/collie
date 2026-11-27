@@ -51,6 +51,13 @@ func (sp *Super) herdrTarget(target string) string {
 	return target
 }
 
+// isRouterAgent reports whether a is a live Router named name on machine in cwd.
+// Another agent (e.g. a dev Collie sharing herdr) with the same name in another
+// folder or on another computer does not match.
+func isRouterAgent(a Agent, name, machine, cwd string) bool {
+	return deref(a.Name) == name && a.Agent != nil && cwd != "" && deref(a.Cwd) == cwd && machineOf(a.PaneID) == machine
+}
+
 func nameTaken(err error) bool {
 	var he *HerdrError
 	return errors.As(err, &he) && he.Code == "agent_name_taken"
@@ -78,7 +85,7 @@ func (sp *Super) settleNameTaken(ctx context.Context, machine, paneID, wsID, her
 	for _, a := range agents {
 		n := deref(a.Name)
 		taken[n] = true
-		if n == routerName && a.PaneID != paneID && a.Agent != nil && cwd != "" && deref(a.Cwd) == cwd && machineOf(a.PaneID) == machine {
+		if a.PaneID != paneID && isRouterAgent(a, routerName, machine, cwd) {
 			if err := sp.s.herdr.Call(ctx, "workspace.close", map[string]any{"workspace_id": wsID}, nil); err != nil {
 				return "", false, fmt.Errorf("Collie 已经在 %s 运行，但没能关掉多起的那个：%w", a.PaneID, err)
 			}

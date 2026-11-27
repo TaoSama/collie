@@ -221,15 +221,41 @@ func (sp *Super) writeRouterFiles() error {
 	return nil
 }
 
-// closeStaleRouterWorkspaces removes router workspaces whose agent has exited,
-// so a crashed router does not leave an orphan shell behind.
+// closeStaleRouterWorkspaces removes router workspaces whose agent has exited
+// or whose live agent is in this hub's router folder, leaving another Collie
+// instance's live router workspace alone.
 func (sp *Super) closeStaleRouterWorkspaces(ctx context.Context) {
 	wss, err := sp.s.herdr.Workspaces(ctx)
 	if err != nil {
 		return
 	}
+	var cand []Workspace
 	for _, ws := range wss {
-		if ws.Label == routerLabel { // wherever it ran: there is one Collie at a time
+		if ws.Label == routerLabel {
+			cand = append(cand, ws)
+		}
+	}
+	if len(cand) == 0 {
+		return
+	}
+	panes, err := sp.s.herdr.Panes(ctx)
+	if err != nil {
+		return
+	}
+	byWS := map[string][]Pane{}
+	for _, p := range panes {
+		byWS[p.WorkspaceID] = append(byWS[p.WorkspaceID], p)
+	}
+	for _, ws := range cand {
+		cwd := sp.routerCwd(machineOf(ws.ID))
+		closeIt := true
+		for _, p := range byWS[ws.ID] {
+			if p.Agent != nil && (cwd == "" || deref(p.Cwd) != cwd) {
+				closeIt = false
+				break
+			}
+		}
+		if closeIt {
 			sp.s.herdr.Call(ctx, "workspace.close", map[string]any{"workspace_id": ws.ID}, nil)
 		}
 	}
