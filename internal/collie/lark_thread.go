@@ -2,6 +2,8 @@ package collie
 
 import (
 	"cmp"
+	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -56,8 +58,11 @@ func larkThreadSender(t *Trigger) string {
 	}
 }
 
+type larkThreadKey struct{ id, conv, root string }
+
 func (s *Server) larkThreadSummaries(threads []Thread) map[string]larkThreadSummary {
 	out := map[string]larkThreadSummary{}
+	var keys []larkThreadKey
 	for _, th := range threads {
 		ext, convID, ok := channelOf(th.ID)
 		if !ok || ext != larkxID {
@@ -65,6 +70,7 @@ func (s *Server) larkThreadSummaries(threads []Thread) map[string]larkThreadSumm
 		}
 		conv, _ := s.ext.store.conv(convID)
 		root := topicOf(th.ID)
+		keys = append(keys, larkThreadKey{th.ID, convID, root})
 		view := larkThreadSummary{Name: cmp.Or(conv.Name, "飞书会话"), Topic: th.Title}
 		var first *Trigger
 		if err := loadRows(s.sup.db, `SELECT data FROM triggers WHERE thread = ? AND source = ? ORDER BY n LIMIT 1`,
@@ -88,15 +94,77 @@ func (s *Server) larkThreadSummaries(threads []Thread) map[string]larkThreadSumm
 				log.Printf("lark thread root message: %v", err)
 			}
 		}
-		messages, err := s.larkThreadMessages(th.ID, convID, root)
-		if err != nil {
-			log.Printf("lark thread latest message: %v", err)
-		} else if n := len(messages); n != 0 {
-			view.At = messages[n-1].At
-		}
 		out[th.ID] = view
 	}
+	latest, err := larkThreadTimes(s.sup.db, keys)
+	if err != nil {
+		log.Printf("lark thread latest message: %v", err)
+	}
+	for id, at := range latest {
+		view := out[id]
+		view.At = at
+		out[id] = view
+	}
 	return out
+}
+
+// larkThreadTimes projects timestamps for the same window of requests and sent
+// replies shown by the detail route. The polling path only needs their maximum,
+// and compares the RFC3339 values as time.Time to preserve offsets and precision.
+func larkThreadTimes(db *sql.DB, keys []larkThreadKey) (map[string]time.Time, error) {
+	latest := make(map[string]time.Time, len(keys))
+	if len(keys) == 0 {
+		return latest, nil
+	}
+	args := make([]any, 0, 3*len(keys)+4)
+	for _, key := range keys {
+		args = append(args, key.id, key.conv, key.root)
+	}
+	args = append(args, larkSource, showThreadPage, extproto.DeliverySent, showThreadPage)
+	// Search sends by conversation and time, even when the state index is cheaper on paper.
+	query := `WITH selected(thread, conv, root) AS (VALUES (?, ?, ?)` + strings.Repeat(", (?, ?, ?)", len(keys)-1) + `),
+		recent AS MATERIALIZED (
+			SELECT s.thread, t.id, t.at, json_extract(t.data, '$.at') AS stamp,
+				NULLIF(json_extract(t.data, '$.ref'), '') AS message
+			FROM selected s JOIN triggers t ON t.id IN (
+				SELECT id FROM triggers WHERE thread = s.thread AND source = ? ORDER BY n DESC LIMIT ?
+			)
+		)
+		SELECT thread, stamp FROM recent
+		UNION ALL
+		SELECT s.thread, COALESCE(NULLIF(json_extract(o.data, '$.done_at'), '0001-01-01T00:00:00Z'), json_extract(o.data, '$.at'))
+		FROM selected s JOIN ext_outbox o ON o.ref IN (
+			SELECT ref FROM ext_outbox INDEXED BY ext_outbox_conv
+			WHERE conv = s.conv AND state = ?
+				AND at >= (SELECT MIN(at) FROM recent WHERE thread = s.thread)
+				AND (NULLIF(json_extract(data, '$.reply_to'), '') = NULLIF(s.root, '')
+					OR NULLIF(json_extract(data, '$.reply_to'), '') IN (SELECT message FROM recent WHERE thread = s.thread)
+					OR json_extract(data, '$.trigger') IN (SELECT id FROM recent WHERE thread = s.thread))
+			ORDER BY at DESC LIMIT ?
+		)`
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return latest, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var stamp sql.NullString
+		if err := rows.Scan(&id, &stamp); err != nil {
+			return latest, err
+		}
+		if !stamp.Valid {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, stamp.String)
+		if err != nil {
+			return latest, fmt.Errorf("parse thread time: %w", err)
+		}
+		if at.After(latest[id]) {
+			latest[id] = at
+		}
+	}
+	return latest, rows.Err()
 }
 
 func (s *Server) larkThreadMessages(thread, conv, root string) ([]larkThreadMessage, error) {

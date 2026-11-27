@@ -83,3 +83,88 @@ func TestLarkThreadOnlyShowsItsRequestsAndSentReplies(t *testing.T) {
 		t.Fatalf("unexpected messages: %+v", msgs)
 	}
 }
+
+func TestLarkThreadRoutesDoNotExposeInboxDataToNodes(t *testing.T) {
+	sp, _, _ := newExtTestHub(t)
+	s := sp.s
+	s.token, s.web = "test-token", web.FS
+	s.auths = newAuth(sp.db, s.token)
+	code, _ := s.auths.newCode("machine")
+	_, token, err := s.auths.redeem(code, "machine", "test-node", "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	s.superRoutes(mux)
+	s.extRoutes(mux)
+	request := func(path, credential string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Header.Set("Authorization", "Bearer "+credential)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+	for _, tc := range []struct {
+		token string
+		want  bool
+	}{{s.token, true}, {token, false}} {
+		w := request("/api/super/triggers", tc.token)
+		var data map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &data); w.Code != http.StatusOK || err != nil {
+			t.Fatalf("triggers status %d, decode %v", w.Code, err)
+		}
+		if _, ok := data["lark_threads"]; ok != tc.want {
+			t.Fatalf("lark_threads present = %t, want %t", ok, tc.want)
+		}
+	}
+	if w := request("/api/inbox/lark-thread?id=ext:larkx:dm", token); w.Code != http.StatusUnauthorized {
+		t.Fatalf("node thread details status = %d, want 401", w.Code)
+	}
+}
+
+func TestLarkThreadWithoutTopicExcludesUnlinkedSends(t *testing.T) {
+	sp, host, _ := newExtTestHub(t)
+	now := time.Now().Truncate(time.Second)
+	conv := "larkx:dm"
+	thread := extThreadPrefix + conv
+	tx, err := sp.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for _, item := range []Trigger{
+		{ID: "t1", Source: larkSource, Thread: thread, From: "you", Ref: "m1", At: now, LarkText: "第一个问题"},
+		{ID: "t2", Source: larkSource, Thread: thread, From: "you", Ref: "m2", At: now.Add(500 * time.Millisecond), LarkText: "第二个问题"},
+		{ID: "t3", Source: "worker", Thread: thread, At: now.Add(5 * time.Second), Text: "调度状态"},
+	} {
+		if err := writeTrigger(tx, &item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	deferredAt := now.Add(2*time.Second + time.Nanosecond)
+	for _, item := range []OutboxItem{
+		{Ref: "answer", Conv: conv, State: extproto.DeliverySent, ReplyTo: "m1", At: now.Add(time.Second), DoneAt: deferredAt, Text: "第一条的回复"},
+		{Ref: "by-trigger", Conv: conv, State: extproto.DeliverySent, Trigger: "t2", At: now.Add(2 * time.Second), Text: "第二条的回复"},
+		{Ref: "human", Conv: conv, State: extproto.DeliverySent, At: now.Add(4 * time.Second), Text: "人工直发"},
+	} {
+		host.store.putOut(&item)
+	}
+	messages, err := sp.s.larkThreadMessages(thread, conv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 4 || messages[2].Text != "第二条的回复" || messages[3].Text != "第一条的回复" {
+		t.Fatalf("unexpected messages: %+v", messages)
+	}
+	missing := thread + "#missing"
+	latest, err := larkThreadTimes(sp.db, []larkThreadKey{{thread, conv, ""}, {missing, conv, "missing"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !latest[thread].Equal(deferredAt) || len(latest) != 1 {
+		t.Fatalf("latest times = %v, want only %s at %v", latest, thread, deferredAt)
+	}
+}
