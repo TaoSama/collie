@@ -16,6 +16,7 @@ REACTION_BATCH = 50
 INBOX_READ_TTL = 10
 INBOX_READ_MAX = 64
 TOPIC_WINDOW = 50
+TOPIC_PREVIEW_REPLIES = 3
 UNCERTAIN_FORWARD = "没有收到转发回执，消息可能已经转发，请到飞书确认"
 EMOJI_KEY_MAX = 256
 
@@ -233,7 +234,7 @@ class Inbox:
         if not raw_id(chat) or not raw_id(tid):
             raise ValueError("无效的飞书话题")
         reply = require_client(self.adapter).api("thread.PullThreadsByIDsRequest", {
-            "threadIds": [tid], "lastMessageCount": 0,
+            "threadIds": [tid], "lastMessageCount": TOPIC_PREVIEW_REPLIES,
         }) or {}
         topic = (reply.get("threads") or {}).get(tid)
         if not topic or str(topic.get("id") or "") != tid or str(topic.get("channelId") or "") != chat:
@@ -253,7 +254,6 @@ class Inbox:
         if positions and (_count(topic.get("replyCount")) or last > start):
             response = require_client(self.adapter).api("thread.PullThreadMessagesByPositionsRequest", {
                 "threadId": tid, "positions": positions, "channelId": chat, "channelType": 1,
-                "onlyVisibleMessages": True,
             }) or {}
             if "status" in response and response["status"]:
                 raise ValueError("飞书未能读取话题评论")

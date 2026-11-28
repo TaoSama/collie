@@ -1,11 +1,12 @@
 """Read a small inbox window and its attachments through the signed-in client."""
 import base64
 import collections
+import logging
 import threading
 import time
 
 import actions
-from lark_inbox import require_client
+from lark_inbox import TOPIC_PREVIEW_REPLIES, require_client
 import message_view
 
 RECENT_COUNT = 12
@@ -13,7 +14,8 @@ RECENT_TTL = 30
 RECENT_CHATS = 16
 MEDIA_MOST = 20 << 20
 CHANNEL_CHAT = 1
-TOPIC_REPLIES = 3
+
+log = logging.getLogger("larkx")
 
 
 def message_at(msg):
@@ -174,7 +176,7 @@ class History:
                 last = int(last)
                 positions = list(range(max(0, last - RECENT_COUNT + 1), last + 1))
                 result = client.api("thread.PullThreadsByPositionsRequest", {
-                    "channelId": chat, "type": CHANNEL_CHAT, "positions": positions, "lastMessageCount": TOPIC_REPLIES,
+                    "channelId": chat, "type": CHANNEL_CHAT, "positions": positions, "lastMessageCount": TOPIC_PREVIEW_REPLIES,
                 }) or {}
                 rows = self.thread_rows(chat, result)
                 if rows:
@@ -192,12 +194,30 @@ class History:
         window = self._render(chat, self._pull_raw(chat, info, topic_mode))
         if topic_mode:
             return window, True
+        self._normal_topic_counts(chat, window)
         with self.lock:
             replies = list(self.topic_replies.get(chat, ()))
         ids = {m["id"] for _, m in window}
         window += [(msg, m) for msg, m in replies if m["id"] not in ids]
         window.sort(key=lambda item: item[1]["at"])
         return window[-RECENT_COUNT:], False
+
+    def _normal_topic_counts(self, chat, window):
+        roots = {m["thread_id"]: m for _, m in window
+                 if m.get("thread_id") and m.get("root_id") == m["id"]}
+        if not roots:
+            return
+        try:
+            result = require_client(self.adapter).api("thread.PullThreadsByIDsRequest", {
+                "threadIds": list(roots), "lastMessageCount": TOPIC_PREVIEW_REPLIES,
+            }) or {}
+        except Exception as e:
+            log.warning("ordinary chat topic metadata: %s", e)
+            return
+        for tid, thread in (result.get("threads") or {}).items():
+            root = roots.get(str(tid))
+            if root and str(thread.get("channelId")) == chat and str(thread.get("rootMessageId")) == root["id"]:
+                root["reply_count"] = int(thread.get("replyCount") or 0)
 
     def render_rows(self, chat, raws):
         return self._shown(self._render(chat, sorted(raws, key=_raw_time_key)))

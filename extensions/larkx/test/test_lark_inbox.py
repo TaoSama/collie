@@ -44,12 +44,14 @@ class NativeInbox(unittest.TestCase):
             return {"messages": {mid: {"id": mid, "chatId": "31" if mid in ("90", "96") else "32", "chatType": 2,
                                        "type": 4, "rootId": "91" if mid == "90" else "0"}}}
         if method == "thread.PullThreadsByIDsRequest":
+            self.assertGreater(params["lastMessageCount"], 0, "Feishu rejects zero for this request")
             tid = params["threadIds"][0]
             return {"threads": {tid: {"id": tid, "rootMessageId": "90", "channelId": "31",
                                       "replyCount": 2, "lastMessagePosition": 2}},
                     "rootMessages": {"90": self.raw_message("90", chat="31")},
                     "settings": {tid: {"threadId": tid, "isFollowV2": True}}}
         if method == "thread.PullThreadMessagesByPositionsRequest":
+            self.assertNotIn("onlyVisibleMessages", params, "the filter drops actual Feishu replies")
             return {"messages": {
                 "1": self.raw_message("93", chat="31", thread="92", root="90"),
                 "2": self.raw_message("94", chat="32", thread="92", root="90"),
@@ -252,7 +254,11 @@ class NativeInbox(unittest.TestCase):
         root = self.raw_message("90", chat="31", thread="92")
         root["threadMessageType"] = self.U.L.entities.Message.THREAD_ROOT_MESSAGE
         standalone = self.raw_message("96", chat="31", thread="96")
-        rows = self.adapter.history.render_rows("31", [root, standalone])
+        window = self.adapter.history._render("31", [root, standalone])
+        self.adapter.history._normal_topic_counts("31", window)
+        rows = self.adapter.history._shown(window)
+        self.assertEqual(rows[0]["reply_count"], 2)
+        self.assertNotIn("reply_count", rows[1])
         self.assertEqual([(r["id"], r.get("thread_id"), r.get("root_id")) for r in rows],
                          [("90", "92", "90"), ("96", None, None)])
         with self.assertRaisesRegex(lark.NotSent, "已属于话题"):
