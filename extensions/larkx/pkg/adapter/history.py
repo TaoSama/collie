@@ -94,7 +94,7 @@ class History:
                     entry["view"] = dict(entry["view"])
                 pairs.append((raw, entry))
             messages.append(entry)
-        self.previews.enrich(pairs)
+        self.previews.enrich(pairs, include_fallback=True)
         return messages if self is self.adapter.history else []
 
     def _pull_raw(self, chat, info):

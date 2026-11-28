@@ -121,6 +121,7 @@ class LinkPreviewTest(unittest.TestCase):
                 self.assertEqual(len(recent), 1)
                 self.assertIn(OTHER, recent[0]["text"])
                 self.assertNotIn("补齐的标题", recent[0]["preview"])
+                self.assertNotIn("preview_fallback", recent[0])
 
                 self.feishu.history.recent(CHAT)
                 self.assertEqual(client.lookups, [URL])
@@ -129,8 +130,10 @@ class LinkPreviewTest(unittest.TestCase):
 
         wait_for_previews(self.feishu.history)
         self.assertEqual(client.lookups, [URL, OTHER])
-        self.assertIn("补齐的标题", self.feishu.history.recent(CHAT)[0]["preview"])
-        self.assertIn(OTHER, self.feishu.history.recent(CHAT)[0]["text"])
+        warm = self.feishu.history.recent(CHAT)[0]
+        self.assertIn("补齐的标题", warm["preview"])
+        self.assertEqual(warm["preview_fallback"], recent[0]["preview"])
+        self.assertIn(OTHER, warm["text"])
 
     def test_preview_misses_cool_down_across_history_polls(self):
         for response in ({}, OSError("gateway unavailable")):

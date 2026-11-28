@@ -32,14 +32,14 @@ class LinkPreviews:
                 self._pool.shutdown(wait=False, cancel_futures=True)
                 self._pool = None
 
-    def enrich(self, pairs):
+    def enrich(self, pairs, *, include_fallback=False):
         found = collect_links(self._U, pairs)
         if not found:
             return
         with self._lock:
             if self._pool is None:
                 return
-            render_links(self._U, self.cache, found)
+            render_links(self._U, self.cache, found, include_fallback)
             if self.client is None:
                 return
             keys, work = set(), []

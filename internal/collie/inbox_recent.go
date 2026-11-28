@@ -73,16 +73,24 @@ func latestLine(msgs []InboxMsg) (time.Time, string) {
 
 // Replace an old placeholder only when the source still has that last message.
 func (s *Server) repairInboxPreview(c *InboxConv, messages []extproto.Message) {
-	if c.Ext != "larkx" || !legacyInboxPreview.MatchString(c.Preview) {
+	if c.Ext != larkxID {
 		return
 	}
+	legacy := legacyInboxPreview.MatchString(c.Preview)
+	latest := true
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
-		if m.ChatID != c.Chat || m.Preview == "" || m.View == nil || !parseAt(m.At).Equal(c.LastAt) ||
-			(m.View.Kind != "card" && m.View.Kind != "calendar") {
+		if m.ChatID != c.Chat || !parseAt(m.At).Equal(c.LastAt) || (m.View != nil && m.View.Kind == "system") {
 			continue
 		}
-		preview := inboxPreview(m.Preview, m.SenderName, m.Owner != nil && *m.Owner)
+		mine := m.Owner != nil && *m.Owner
+		link := latest && m.PreviewFallback != "" && c.Preview == inboxPreview(m.PreviewFallback, m.SenderName, mine)
+		latest = false
+		card := legacy && m.View != nil && (m.View.Kind == "card" || m.View.Kind == "calendar")
+		if m.Preview == "" || (!link && !card) {
+			continue
+		}
+		preview := inboxPreview(m.Preview, m.SenderName, mine)
 		if preview == c.Preview {
 			return
 		}

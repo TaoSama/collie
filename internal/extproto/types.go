@@ -220,6 +220,9 @@ type Message struct {
 	Preview     string       `json:"preview,omitempty"`
 	View        *MessageView `json:"view,omitempty"`
 	Updated     bool         `json:"updated,omitempty"` // in-place update of an existing message (e.g. card state changed)
+
+	// PreviewFallback is the cold link summary that Preview can replace in the inbox list.
+	PreviewFallback string `json:"preview_fallback,omitempty"`
 }
 
 // MessageView carries readable content independently of the text used for requests.

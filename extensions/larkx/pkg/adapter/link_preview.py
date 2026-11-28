@@ -661,10 +661,11 @@ def collect_links(U, pairs):
     return found
 
 
-def render_links(U, cache, per_msg):
+def render_links(U, cache, per_msg, include_fallback=False):
     """Enrich views and previews without changing the text used by agents."""
     for msg, out, links, emb_eid, emb_url in per_msg:
         resolved_map = {}
+        cold_links = {}
         ordered_urls = []
         for u, pid, eid, base in links:
             if u in resolved_map:
@@ -678,7 +679,9 @@ def render_links(U, cache, per_msg):
                     info["kind"], info["label"], info["short_label"] = DOC_TYPE_INFO[dt_val]
             else:
                 ck = _cache_key(u)
-                info = cache.get(ck) or dict(base)
+                info = cache.get(ck) or base
+                if include_fallback and info.get("title"):
+                    cold_links[u] = _fallback_info(u, base)
             info = _fallback_info(u, info)
             resolved_map[u] = info
             ordered_urls.append(u)
@@ -708,3 +711,7 @@ def render_links(U, cache, per_msg):
         updated_preview = _replace_preview_urls(base_preview, resolved_map)
         if updated_preview:
             out["preview"] = updated_preview
+            if cold_links:
+                fallback = _replace_preview_urls(base_preview, resolved_map | cold_links)
+                if fallback != updated_preview:
+                    out["preview_fallback"] = fallback
