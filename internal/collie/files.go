@@ -12,16 +12,18 @@ import (
 )
 
 // readFile lets the web app show or download a file an agent mentions (a report
-// it wrote, a chart it drew), read-only. Bytes go out as an opaque download so
-// a browser never runs them unless ?as=html is requested for an .html/.htm
-// file, which renders inside a strict opaque-origin CSP sandbox.
+// it wrote, a chart it drew), read-only. Bytes go out as an opaque attachment.
+// The HTML mode raises the text limit for the sandboxed file reader.
 const (
 	fileTextMax     = 1 << 20
 	fileHTMLMax     = 5 << 20
 	fileImageMax    = 20 << 20
 	fileDownloadMax = 100 << 20
-	htmlSandboxCSP  = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 )
+
+func isHTMLFileRequest(q url.Values) bool {
+	return q.Get("as") == "html" && q.Get("download") != "1" && isHTMLPath(q.Get("path"))
+}
 
 func isHTMLPath(p string) bool {
 	ext := strings.ToLower(path.Ext(strings.TrimSpace(p)))
@@ -37,11 +39,27 @@ func isImagePath(p string) bool {
 	return false
 }
 
-func setHTMLSandboxHeaders(h http.Header) {
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Del("Content-Disposition")
-	h.Set("Content-Security-Policy", htmlSandboxCSP)
+func setFileAttachmentHeaders(h http.Header, disposition string) {
+	h.Set("Content-Type", "application/octet-stream")
+	h.Set("Content-Disposition", disposition)
+	h.Set("Content-Security-Policy", "sandbox")
 	h.Set("Cache-Control", "no-store")
+}
+
+// Old HTML links opened /api/file as a document. Keep them pointing at the
+// reader so an HTML file never runs as the top-level API response.
+func (s *Server) routeFile(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if r.Header.Get("Sec-Fetch-Dest") == "document" && isHTMLFileRequest(q) {
+		file := url.Values{"path": {q.Get("path")}}
+		if q.Has("machine") {
+			file.Set("machine", q.Get("machine"))
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, "/#/file?"+file.Encode(), http.StatusFound)
+		return
+	}
+	s.readFile(w, r)
 }
 
 func attachmentDisposition(p string) string {
@@ -79,10 +97,7 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case os.IsNotExist(err):
 		if !s.node && s.herdr != nil {
-			if download && s.tryRemoteDownloadFile(w, r, rawPath) {
-				return
-			}
-			if !download && as == "html" && s.tryRemoteHTMLFile(w, r, rawPath) {
+			if download && !q.Has("machine") && s.tryRemoteDownloadFile(w, r, rawPath) {
 				return
 			}
 		}
@@ -93,6 +108,10 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 		return
 	case fi.IsDir():
 		writeJSON(w, 400, map[string]any{"error": "这是一个文件夹"})
+		return
+	}
+	if !download && as == "html" && fi.Size() > fileHTMLMax {
+		writeJSON(w, 413, map[string]any{"error": "HTML 文件超过 5 MB，无法预览"})
 		return
 	}
 	if download && fi.Size() > fileDownloadMax {
@@ -108,10 +127,7 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 
 	if download {
 		h := w.Header()
-		h.Set("Content-Type", "application/octet-stream")
-		h.Set("Content-Disposition", attachmentDisposition(p))
-		h.Set("Content-Security-Policy", "sandbox")
-		h.Set("Cache-Control", "no-store")
+		setFileAttachmentHeaders(h, attachmentDisposition(p))
 		h.Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 		h.Set("X-File-Kind", "download")
 		h.Set("X-File-Size", strconv.FormatInt(fi.Size(), 10))
@@ -121,15 +137,23 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if as == "html" {
-		b, _ := io.ReadAll(io.LimitReader(f, fileHTMLMax))
+		b, err := io.ReadAll(io.LimitReader(f, fileHTMLMax+1))
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"error": "无法读取 HTML 文件"})
+			return
+		}
+		if len(b) > fileHTMLMax {
+			writeJSON(w, 413, map[string]any{"error": "HTML 文件超过 5 MB，无法预览"})
+			return
+		}
 		if bytes.IndexByte(b[:min(len(b), 8000)], 0) >= 0 {
 			writeJSON(w, 400, map[string]any{"error": "这个文件不是有效的 HTML 文本"})
 			return
 		}
 		h := w.Header()
-		setHTMLSandboxHeaders(h)
+		setFileAttachmentHeaders(h, "attachment")
 		h.Set("X-File-Kind", "html")
-		h.Set("X-File-Size", strconv.FormatInt(fi.Size(), 10))
+		h.Set("X-File-Size", strconv.Itoa(len(b)))
 		h.Set("X-File-Path", url.PathEscape(s.tilde(p)))
 		w.Write(b)
 		return
@@ -157,10 +181,7 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 			h.Set("X-File-Thumb", "1")
 		}
 	}
-	h.Set("Content-Type", "application/octet-stream")
-	h.Set("Content-Disposition", "attachment")
-	h.Set("Content-Security-Policy", "sandbox")
-	h.Set("Cache-Control", "no-store")
+	setFileAttachmentHeaders(h, "attachment")
 	h.Set("X-File-Kind", kind)
 	h.Set("X-File-Size", strconv.FormatInt(fi.Size(), 10))
 	h.Set("X-File-Path", url.PathEscape(s.tilde(p)))
@@ -207,47 +228,6 @@ func (s *Server) tryRemoteDownloadFile(w http.ResponseWriter, r *http.Request, r
 		}
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, io.LimitReader(resp.Body, fileDownloadMax+4096))
-		return true
-	}
-	return false
-}
-
-// tryRemoteHTMLFile looks across connected online nodes when a direct ?as=html
-// link hits the hub without a machine parameter and the file is not on the hub.
-func (s *Server) tryRemoteHTMLFile(w http.ResponseWriter, r *http.Request, rawPath string) bool {
-	for _, m := range s.herdr.Machines() {
-		if m.Local || !m.Online {
-			continue
-		}
-		client, err := s.herdr.Client(m.ID)
-		if err != nil {
-			continue
-		}
-		u := "http://node/api/file?as=html&path=" + url.QueryEscape(rawPath)
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
-		if err != nil {
-			continue
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode == http.StatusNotFound {
-			resp.Body.Close()
-			continue
-		}
-		defer resp.Body.Close()
-		h := w.Header()
-		for _, k := range []string{"Content-Type", "Content-Security-Policy", "Cache-Control", "X-File-Kind", "X-File-Size", "X-File-Path"} {
-			if v := resp.Header.Get(k); v != "" {
-				h.Set(k, v)
-			}
-		}
-		if resp.StatusCode == http.StatusOK {
-			setHTMLSandboxHeaders(h)
-		}
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, io.LimitReader(resp.Body, fileHTMLMax+4096))
 		return true
 	}
 	return false

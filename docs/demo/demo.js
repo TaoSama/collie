@@ -4,7 +4,6 @@
 (() => {
   "use strict";
   window.__collieDemo = true;
-  window.__collieDemoHtmlUrl = (p) => (/bench-pagination\.html$/i.test(p || "") ? "bench-pagination.html" : "");
   const now = Date.now();
   const ago = (min) => new Date(now - min * 60000).toISOString();
   const later = (min) => new Date(Date.now() + min * 60000).toISOString();
@@ -897,7 +896,7 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       if (/bench-pagination\.html$/i.test(fp)) {
         const html = await (await realFetch(new URL("bench-pagination.html", location.href))).text();
         const isHtml = !dl && q.get("as") === "html";
-        return new Response(html, { headers: { "Content-Type": isHtml ? "text/html; charset=utf-8" : "application/octet-stream", "X-File-Kind": dl ? "download" : (isHtml ? "html" : "text"), "X-File-Size": String(new Blob([html]).size), "X-File-Path": encodeURIComponent("~/code/shop-api/bench-pagination.html"), ...dlHead("bench-pagination.html") } });
+        return new Response(html, { headers: { "Content-Type": "application/octet-stream", "X-File-Kind": dl ? "download" : (isHtml ? "html" : "text"), "X-File-Size": String(new Blob([html]).size), "X-File-Path": encodeURIComponent("~/code/shop-api/bench-pagination.html"), ...dlHead("bench-pagination.html") } });
       }
       if (!mach && /perf-audit-v1\.4\.md$/.test(fp)) {
         return new Response(perfAuditMd, { headers: { "X-File-Kind": dl ? "download" : "text", "X-File-Size": String(new Blob([perfAuditMd]).size), "X-File-Path": encodeURIComponent("~/code/shop-api/docs/perf-audit-v1.4.md"), ...dlHead("perf-audit-v1.4.md") } });

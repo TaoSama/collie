@@ -33,7 +33,7 @@ var shellFiles = []string{
 func (s *Server) webBuild() string {
 	webBuildOnce.Do(func() {
 		h := sha256.New()
-		for _, p := range append([]string{"/sw.js"}, shellFiles...) {
+		for _, p := range append([]string{"/sw.js", "/html-viewer.html"}, shellFiles...) {
 			if p == "/" {
 				p = "/index.html"
 			}
@@ -76,6 +76,10 @@ func (s *Server) static() http.Handler {
 		if p == "sw.js" {
 			s.serviceWorker(w, r)
 			return
+		}
+		if p == "html-viewer.html" {
+			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+			w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
 		}
 		if tag := etag(p); tag != "" {
 			w.Header().Set("ETag", tag)

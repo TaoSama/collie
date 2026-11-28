@@ -1265,7 +1265,8 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .msg.user .att { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .msg.user .att span, .msg.user .att a { font-size: calc(var(--fs-small) + 0.5px); padding: 2px 8px; border-radius: calc(8px * var(--round)); background: color-mix(in srgb, var(--user-fg) 14%, transparent); text-decoration: none; }
 .msg.user .att a:hover { background: color-mix(in srgb, var(--user-fg) 22%, transparent); }
-.fv-html-sandbox { width: 100%; height: 100%; min-height: 480px; border: 0; display: block; background: #fff; border-radius: calc(8px * var(--round)); }
+.fv-html-sandbox { display: block; width: 100%; height: 100%; border: 0; }
+.fv-body:has(> .fv-html-sandbox) { overflow: hidden; }
 .send { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; border: 0; background: var(--accent); color: var(--on-accent); transition: transform .1s, opacity .15s; }
 .send svg { width: 17px; height: 17px; }
 .send:active { transform: scale(.94); }

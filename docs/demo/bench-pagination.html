@@ -46,18 +46,34 @@
     .axis { stroke: var(--line); stroke-width: 1; }
     .lbl { fill: var(--muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, monospace; }
     .note { margin-top: 14px; font-size: 12.5px; color: var(--muted); }
+    details { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--surface); }
+    summary { cursor: pointer; font-weight: 600; }
+    details p { margin: 8px 0 0; color: var(--muted); }
+    @media (max-width: 570px) {
+      body { padding: 16px 12px 20px; }
+      h1 { font-size: 20px; }
+      p.lead { margin-bottom: 14px; }
+      .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-bottom: 12px; }
+      .kpi { padding: 7px 6px; }
+      .kpi .k { font-size: 11px; }
+      .kpi .v { font-size: 17px; }
+      .card { padding: 11px 9px; }
+      .toolbar { margin-bottom: 5px; }
+      .note { margin-top: 6px; font-size: 11px; }
+      details { margin-top: 10px; font-size: 13px; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="eyebrow">shop-api · benchmark · sandboxed html report</div>
+    <div class="eyebrow">shop-api · 分页基准测试 · 模拟数据</div>
     <h1>/orders 分页稳定性与延迟分布报告</h1>
-    <p class="lead">对比修复前（仅 <code>ORDER BY created_at DESC</code>）与修复后（<code>ORDER BY created_at DESC, id DESC</code>）在 200 轮并发翻页下的表现。</p>
+    <p class="lead">200 轮并发翻页测试，比较复合索引修复前后的查询耗时。</p>
 
     <div class="kpis">
       <div class="kpi"><div class="k">跨页重复率</div><div class="v ok" id="kpi-dup">0.0%</div></div>
       <div class="kpi"><div class="k">200 轮回归通过</div><div class="v ok" id="kpi-pass">200 / 200</div></div>
-      <div class="kpi"><div class="k">P95 查询耗时</div><div class="v" id="kpi-p95">4.8 ms</div></div>
+      <div class="kpi"><div class="k" id="latency-label">P95 查询耗时</div><div class="v" id="kpi-p95">4.8 ms</div></div>
     </div>
 
     <div class="card">
@@ -71,6 +87,10 @@
       <svg viewBox="0 0 640 210" role="img" aria-label="各页延迟柱状对比图" id="chart"></svg>
       <div class="note">绿柱：修复后复合索引 <code>(user_id, created_at DESC, id DESC)</code>；橙柱：修复前单列排序。</div>
     </div>
+    <details>
+      <summary>测试口径</summary>
+      <p>固定测试数据，按每次请求记录耗时。P50 是中位数，P95 反映较慢请求的耗时。</p>
+    </details>
   </div>
   <script>
     const DATA = {
@@ -96,6 +116,7 @@
         s += `<text class="lbl" x="${x + 26}" y="192" text-anchor="middle">${label}</text>`;
       });
       chart.innerHTML = s;
+      document.getElementById("latency-label").textContent = mode.toUpperCase() + " 查询耗时";
       document.getElementById("kpi-p95").textContent = mode === "p95" ? "4.8 ms" : "2.2 ms";
     }
     document.getElementById("metric-seg").addEventListener("click", (e) => {

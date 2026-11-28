@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const app = readFileSync(new URL("../../web/app.js", import.meta.url), "utf8");
 const start = app.indexOf("  // ───────────────────────────── fullscreen image lightbox");
-const end = app.indexOf("  async function openSandboxedHtmlRemote(", start);
+const end = app.indexOf('  document.addEventListener("click", (e) => {\n    const copy = e.target.closest(".md-code-copy");', start);
 assert.ok(start >= 0 && end > start, "lightbox section");
 const source = app.slice(start, end);
 

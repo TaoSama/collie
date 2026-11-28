@@ -89,7 +89,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("GET /api/state", wrap(s.getState))
 	mux.Handle("GET /api/ext-local", wrap(s.localExts))
 	mux.Handle("GET /api/dirs", wrap(s.listDirs))
-	mux.Handle("GET /api/file", wrap(s.readFile))
+	mux.Handle("GET /api/file", wrap(s.routeFile))
 	mux.Handle("POST /api/agents", wrap(s.launchAgent))
 	mux.Handle("POST /api/agents/{target}/prompt", wrap(s.promptAgent))
 	mux.Handle("GET /api/panes/{id}/stream", wrap(s.streamPane))

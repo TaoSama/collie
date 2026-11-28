@@ -37,6 +37,8 @@ body.reading-file .main { display: flex !important; }
   padding: 28px clamp(16px, 3.5vw, 40px) 68px; min-width: 0;
 }
 .rv-container.is-code { max-width: 1120px; padding-top: 20px; }
+.rv-scroller:has(.fv-html-sandbox) { overflow: hidden; scrollbar-gutter: auto; }
+.rv-container:has(> .fv-html-sandbox) { height: 100%; max-width: none; padding: 0; }
 .rv-code-card {
   border: var(--bw) solid var(--line); border-radius: calc(12px * var(--round)); background: var(--code-bg);
   overflow: auto; max-width: 100%;

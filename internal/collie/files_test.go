@@ -10,9 +10,11 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/TaoSama/collie/web"
 )
 
-func TestReadFileAsHTMLSandboxLimitsAndNodeForwarding(t *testing.T) {
+func TestReadFileAsHTMLLimitsAndNodeForwarding(t *testing.T) {
 	hubHome := t.TempDir()
 	nodeHome := t.TempDir()
 
@@ -38,7 +40,7 @@ func TestReadFileAsHTMLSandboxLimitsAndNodeForwarding(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(hubHome, "large2m.html"), twoMiB, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// 6 MiB HTML (> fileHTMLMax 5 MiB) is capped at fileHTMLMax (5 MiB).
+	// 6 MiB HTML (> fileHTMLMax 5 MiB) must be rejected in preview mode.
 	sixMiB := bytes.Repeat([]byte("b"), 6<<20)
 	if err := os.WriteFile(filepath.Join(hubHome, "huge6m.html"), sixMiB, 0o600); err != nil {
 		t.Fatal(err)
@@ -51,7 +53,20 @@ func TestReadFileAsHTMLSandboxLimitsAndNodeForwarding(t *testing.T) {
 	}
 
 	nodeSrv := &Server{home: nodeHome, node: true, web: fstest.MapFS{}}
-	nodeHTTP := httptest.NewServer(nodeSrv.NodeRoutes())
+	nodeRoutes := nodeSrv.NodeRoutes()
+	nodeHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("path") == "~/old-node.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Content-Security-Policy", "sandbox allow-scripts")
+			w.Header().Set("X-File-Kind", "html")
+			_, err := w.Write([]byte(nodeHTML))
+			if err != nil {
+				t.Error(err)
+			}
+			return
+		}
+		nodeRoutes.ServeHTTP(w, r)
+	}))
 	defer nodeHTTP.Close()
 	nodeURL, _ := url.Parse(nodeHTTP.URL)
 
@@ -76,7 +91,7 @@ func TestReadFileAsHTMLSandboxLimitsAndNodeForwarding(t *testing.T) {
 		herdr: herdr,
 		token: "secret-tok",
 		home:  hubHome,
-		web:   fstest.MapFS{"index.html": {Data: []byte("ok")}, "app.js": {Data: []byte("")}, "app.css": {Data: []byte("")}},
+		web:   web.FS,
 	}
 	handler := hubSrv.Routes()
 
@@ -110,27 +125,23 @@ func TestReadFileAsHTMLSandboxLimitsAndNodeForwarding(t *testing.T) {
 		t.Fatalf("default CSP = %q, want sandbox", csp)
 	}
 
-	// 2. ?as=html renders inline with strict CSP sandbox and no Content-Disposition.
+	assertAttachment := func(rec *httptest.ResponseRecorder) {
+		t.Helper()
+		for name, want := range map[string]string{
+			"Content-Type": "application/octet-stream", "Content-Disposition": "attachment",
+			"Content-Security-Policy": "sandbox", "Cache-Control": "no-store", "X-File-Kind": "html",
+		} {
+			if got := rec.Header().Get(name); got != want {
+				t.Fatalf("%s = %q, want %q", name, got, want)
+			}
+		}
+	}
 	for _, p := range []string{"~/report.html", "~/legacy.HTM"} {
 		rec = get("/api/file?path="+url.QueryEscape(p)+"&as=html", nil)
 		if rec.Code != 200 {
 			t.Fatalf("as=html %s status = %d: %s", p, rec.Code, rec.Body.String())
 		}
-		if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
-			t.Fatalf("%s Content-Type = %q, want text/html; charset=utf-8", p, ct)
-		}
-		if cd := rec.Header().Get("Content-Disposition"); cd != "" {
-			t.Fatalf("%s unexpected Content-Disposition = %q", p, cd)
-		}
-		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
-			t.Fatalf("%s Cache-Control = %q, want no-store", p, cc)
-		}
-		if csp := rec.Header().Get("Content-Security-Policy"); csp != htmlSandboxCSP {
-			t.Fatalf("%s CSP = %q, want %q", p, csp, htmlSandboxCSP)
-		}
-		if strings.Contains(rec.Header().Get("Content-Security-Policy"), "allow-same-origin") {
-			t.Fatal("CSP sandbox must NEVER include allow-same-origin")
-		}
+		assertAttachment(rec)
 	}
 
 	// 3. Non-HTML suffixes and binary disguised as .html are rejected on ?as=html.
@@ -144,40 +155,51 @@ func TestReadFileAsHTMLSandboxLimitsAndNodeForwarding(t *testing.T) {
 		}
 	}
 
-	// 4. Size limits: 2 MiB reads in full (not cut at 1 MiB); 6 MiB caps at 5 MiB.
+	// Reports must be read whole, within the preview limit.
 	rec = get("/api/file?path=~/large2m.html&as=html", nil)
 	if rec.Code != 200 || rec.Body.Len() != 2<<20 {
 		t.Fatalf("2 MiB as=html status=%d len=%d, want 200 len=%d", rec.Code, rec.Body.Len(), 2<<20)
 	}
 	rec = get("/api/file?path=~/huge6m.html&as=html", nil)
-	if rec.Code != 200 || rec.Body.Len() != fileHTMLMax {
-		t.Fatalf("6 MiB as=html status=%d len=%d, want 200 len=%d", rec.Code, rec.Body.Len(), fileHTMLMax)
-	}
-	if rec.Header().Get("X-File-Size") != "6291456" {
-		t.Fatalf("X-File-Size = %q, want 6291456", rec.Header().Get("X-File-Size"))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized report status = %d, want 413", rec.Code)
 	}
 
-	// 5. Cross-machine: explicit machine=mac AND implicit hub-404 fallback to online node.
-	for _, q := range []string{
-		"/api/file?path=~/mac-only.html&machine=mac&as=html",
-		"/api/file?path=~/mac-only.html&as=html",
-	} {
-		rec = get(q, nil)
-		if rec.Code != 200 {
-			t.Fatalf("remote %s status = %d: %s", q, rec.Code, rec.Body.String())
+	remote := "/api/file?path=~/mac-only.html&as=html&machine=mac"
+	rec = get(remote, nil)
+	if rec.Code != 200 || rec.Body.String() != nodeHTML {
+		t.Fatalf("explicit remote HTML: %d %q", rec.Code, rec.Body.String())
+	}
+	assertAttachment(rec)
+	rec = get("/api/file?path=~/old-node.html&as=html&machine=mac", nil)
+	if rec.Code != 200 || rec.Body.String() != nodeHTML {
+		t.Fatalf("legacy node HTML: %d %q", rec.Code, rec.Body.String())
+	}
+	assertAttachment(rec)
+	for _, suffix := range []string{"as=html", "as=html&machine=", "download=1&machine="} {
+		rec = get("/api/file?path=~/mac-only.html&"+suffix, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("local-only %s unexpectedly found a remote file: %d", suffix, rec.Code)
 		}
-		if rec.Body.String() != nodeHTML {
-			t.Fatalf("remote %s body = %q, want %q", q, rec.Body.String(), nodeHTML)
-		}
-		if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
-			t.Fatalf("remote %s Content-Type = %q", q, ct)
-		}
-		if csp := rec.Header().Get("Content-Security-Policy"); csp != htmlSandboxCSP {
-			t.Fatalf("remote %s CSP = %q, want %q", q, csp, htmlSandboxCSP)
-		}
-		if cd := rec.Header().Get("Content-Disposition"); cd != "" {
-			t.Fatalf("remote %s unexpected Content-Disposition = %q", q, cd)
-		}
+	}
+	rec = get(remote, map[string]string{"Sec-Fetch-Dest": "document"})
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/#/file?machine=mac&path=~%2Fmac-only.html" {
+		t.Fatalf("legacy HTML link = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	rec = get("/html-viewer.html", nil)
+	if rec.Code != 200 || rec.Header().Get("X-Frame-Options") != "SAMEORIGIN" ||
+		rec.Header().Get("Content-Security-Policy") != "frame-ancestors 'self'" {
+		t.Fatalf("viewer status = %d headers = %v", rec.Code, rec.Header())
+	}
+	if !strings.Contains(rec.Body.String(), `sandbox="allow-scripts"`) ||
+		!strings.Contains(rec.Body.String(), "frame-src 'none'") ||
+		!strings.Contains(rec.Body.String(), "connect-src 'none'") ||
+		strings.Contains(rec.Body.String(), "allow-same-origin") {
+		t.Fatal("viewer must allow report scripts in an opaque frame with no network access")
+	}
+	if got := get("/", nil).Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("main page X-Frame-Options = %q", got)
 	}
 
 	// 6. Sandboxed opaque origin ("Origin: null") gets neither auth nor CORS grant on /api/*.

@@ -47,6 +47,9 @@ func (s *Server) routed(h http.HandlerFunc) http.HandlerFunc {
 		}
 		var body []byte
 		switch {
+		case r.URL.Path == "/api/file" && r.Header.Get("Sec-Fetch-Dest") == "document" && isHTMLFileRequest(r.URL.Query()):
+			h(w, r)
+			return
 		case r.URL.Path == "/api/dirs", r.URL.Path == "/api/file", r.URL.Path == "/api/uploads", r.URL.Path == "/api/transcript", r.URL.Path == "/api/models", r.URL.Path == "/api/commands", r.URL.Path == "/api/trust", r.URL.Path == "/api/update", r.URL.Path == "/api/sysmon", r.URL.Path == "/api/sub-usage", r.URL.Path == "/api/sub-usage/inventory", r.URL.Path == "/api/sub-usage/probe":
 			machine = r.URL.Query().Get("machine")
 			if r.URL.Path == "/api/update" {
@@ -128,8 +131,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, machine, path s
 				resp.Body.Close()
 				resp.Body = io.NopCloser(bytes.NewReader(b))
 			}
-			if r.URL.Path == "/api/file" && r.URL.Query().Get("download") != "1" && r.URL.Query().Get("as") == "html" && resp.StatusCode == http.StatusOK && isHTMLPath(r.URL.Query().Get("path")) {
-				setHTMLSandboxHeaders(resp.Header)
+			if r.URL.Path == "/api/file" && resp.StatusCode == http.StatusOK && isHTMLFileRequest(r.URL.Query()) {
+				// Older nodes can still return a directly renderable document.
+				setFileAttachmentHeaders(resp.Header, "attachment")
 				return nil
 			}
 			if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {

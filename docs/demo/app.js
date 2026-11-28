@@ -130,6 +130,7 @@
   // computer, a Mac mini at home) can all be reached from this browser.
   // Their sessions join this sidebar with every id tagged "!<key>"; any
   // request that names a tagged id goes straight to that hub, with its token.
+  let hubsLoaded;
   let hubs = [];              // [{ key, name, url, token }], kept on this hub
   const remote = new Map();   // key -> { state, ext, hist, online, es }
   const tagged = (v, k) => (v || "") + "!" + k;
@@ -1167,6 +1168,7 @@
       captureViewScroll(prevView, prevId, prevIdx);
     }
     if ($("#app").classList.contains("has-file") && (next === "file" || matchMedia("(max-width: 1000px)").matches)) closeFilePane();
+    if (view === "file" && next !== "file") $("#rv-body > .fv-html-sandbox")?.remove();
     if (view === "ext" && (next !== "ext" || id !== extCur)) { closeExt(); extCur = null; }
     if (view === "pane" && (next !== "pane" || id !== current)) closeStream();
     if (view === "auto" && next !== "auto") clearInterval(autoTimer);
@@ -8554,16 +8556,7 @@
   const IMG_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i;
   const MD_EXT = /\.(md|markdown|mdx)$/i;
   const HTML_EXT = /\.html?$/i;
-  const htmlFileURL = (path, machine = "") => {
-    if (typeof window.__collieDemoHtmlUrl === "function") {
-      const u = window.__collieDemoHtmlUrl(path);
-      if (u) return u;
-    }
-    return `/api/file?path=${encodeURIComponent(path)}${machine ? "&machine=" + encodeURIComponent(machine) : ""}&as=html`;
-  };
-  const fileLinkAttrs = (rawPath, escapedPath, titleText) => HTML_EXT.test(rawPath)
-    ? `class="fpath html-link" href="${esc(htmlFileURL(rawPath))}" target="_blank" rel="noopener" data-path="${escapedPath}" title="${esc("在新标签页打开 " + rawPath)}"`
-    : IMG_EXT.test(rawPath)
+  const fileLinkAttrs = (rawPath, escapedPath, titleText) => IMG_EXT.test(rawPath)
     ? `class="fpath img-link" href="#" data-path="${escapedPath}" title="${esc("查看大图 " + (rawPath.split("/").pop() || rawPath))}"`
     : `class="fpath" href="#" data-path="${escapedPath}" title="${titleText}"`;
   const IMG_TYPE = { svg: "image/svg+xml", jpg: "image/jpeg", jpeg: "image/jpeg", ico: "image/x-icon" };
@@ -8578,24 +8571,38 @@
       return (id.startsWith("h:") ? hist.find((h) => h.id === id.slice(2)) : ext.find((x) => x.id === id))?.machine;
     }
   }
+  const FILE_HTML_MAX = 5 << 20; // fileHTMLMax in files.go
   const FILE_IMG_MAX = 20 << 20; // fileImageMax in files.go
   // thumb: a picture comes shrunk by the computer it is on (X-File-Thumb).
   async function fetchFile(path, machine, { thumb = false, signal } = {}) {
-    const as = IMG_EXT.test(path) ? (thumb ? "&as=thumb" : "&as=image") : "";
+    const isImage = IMG_EXT.test(path), isHTML = HTML_EXT.test(path);
+    const as = isImage ? (thumb ? "&as=thumb" : "&as=image") : isHTML ? "&as=html" : "";
     const q = `/api/file?path=${encodeURIComponent(path)}${as}`;
     // Shrinking only saves the network: from this computer the original is quicker.
-    let res = as ? await directFile(machine, q.replace("&as=thumb", "&as=image"), signal) : null;
+    let res = isImage ? await directFile(machine, q.replace("&as=thumb", "&as=image"), signal) : null;
     if (!res) {
-      const r = routeReq(q + (machine ? "&machine=" + encodeURIComponent(machine) : ""));
+      const hub = isHTML && hubOf(machine || "");
+      if (isHTML && machine?.includes("!") && !hub) throw new Error("找不到文件所在的 Collie");
+      const r = routeReq(q + (machine ? "&machine=" + encodeURIComponent(machine) : ""), undefined, isHTML ? hub || false : undefined);
       res = await fetch(r.url, { headers: r.hub ? { Authorization: "Bearer " + r.hub.token } : {}, credentials: r.hub ? "omit" : "same-origin", signal });
     }
     if (res.status === 404) return null;
     if (!res.ok) { let e = {}; try { e = await res.json(); } catch {} throw new Error(e.error || "打不开这个文件"); }
     const kind = res.headers.get("X-File-Kind"), size = +res.headers.get("X-File-Size") || 0;
     // A computer on an older Collie doesn't know as=thumb: ask it for the original.
-    if (thumb && as && kind !== "image" && size <= FILE_IMG_MAX) { res.body?.cancel(); return fetchFile(path, machine, { signal }); }
+    if (thumb && isImage && kind !== "image" && size <= FILE_IMG_MAX) { res.body?.cancel(); return fetchFile(path, machine, { signal }); }
+    if (isHTML && size > FILE_HTML_MAX) {
+      await res.body?.cancel();
+      throw new Error("HTML 文件超过 5 MB，无法预览");
+    }
+    if (isHTML && kind !== "html") {
+      await res.body?.cancel();
+      throw new Error("文件所在的电脑暂不支持 HTML 预览");
+    }
+    const blob = await res.blob();
+    if (isHTML && (blob.size !== size || blob.size > FILE_HTML_MAX)) throw new Error("HTML 文件读取不完整");
     return { kind, size, thumb: res.headers.get("X-File-Thumb") === "1",
-      path: decodeURIComponent(res.headers.get("X-File-Path") || path), blob: await res.blob(), machine };
+      path: decodeURIComponent(res.headers.get("X-File-Path") || path), blob, machine };
   }
   // A picture on the computer this browser runs on comes from its node's
   // local port (direct.go), not round the hub, once findFile has found out
@@ -8658,9 +8665,9 @@
   let fileUrl = "", wideFileUrl = "", fileSeq = 0, wideSeq = 0;
   let fvCur = null, rvCur = null;
   const FILE_DL_MAX = 100 * (1 << 20), FILE_COPY_MAX = 20 * (1 << 20);
-  const wideFileHash = (path, machine = "") => {
+  const wideFileHash = (path, machine) => {
     const q = new URLSearchParams({ path });
-    if (machine) q.set("machine", machine);
+    if (machine || (machine === "" && HTML_EXT.test(path))) q.set("machine", machine);
     return "#/file?" + q.toString();
   };
   const baseFileName = (raw) => {
@@ -8687,12 +8694,12 @@
     }
     const fileName = baseFileName(cur.path || cur.reqPath);
     const machine = cur.machine || "";
-    const q = `/api/file?path=${encodeURIComponent(cur.reqPath)}${machine ? "&machine=" + encodeURIComponent(machine) : ""}&download=1`;
+    const q = `/api/file?path=${encodeURIComponent(cur.reqPath)}${machine || cur.kind === "html" ? "&machine=" + encodeURIComponent(machine) : ""}&download=1`;
     if (window.__collieDemo && !cur.truncated && cur.blob) {
       triggerBlobDownload(cur.blob, fileName);
       return;
     }
-    const r = routeReq(q);
+    const r = routeReq(q, undefined, cur.kind === "html" ? hubOf(machine) || false : undefined);
     if (window.__collieDemo || r.hub) {
       try {
         const res = await fetch(r.url, {
@@ -8735,7 +8742,7 @@
     cur.truncated = false;
     return full;
   }
-  function syncFileBar(prefix, { langLabel = "", copyable = false, copyTitle = "复制全文", downloadable = false, wideHref = "" }) {
+  function syncFileBar(prefix, { langLabel = "", copyable = false, copyTitle = "复制全文", downloadable = false, wideHref = "", wideTitle = "新标签宽屏阅读" }) {
     const lEl = $("#" + prefix + "-lang"), cWrap = $("#" + prefix + "-copy-wrap"), cBtn = $("#" + prefix + "-copy");
     const dlBtn = $("#" + prefix + "-dl"), wideBtn = prefix === "fv" ? $("#fv-wide") : null;
     if (lEl) { lEl.hidden = !langLabel; lEl.textContent = langLabel; }
@@ -8750,7 +8757,11 @@
     }
     if (wideBtn) {
       wideBtn.hidden = !wideHref;
-      if (wideHref) wideBtn.href = wideHref;
+      if (wideHref) {
+        wideBtn.href = wideHref;
+        wideBtn.title = wideTitle;
+        wideBtn.setAttribute("aria-label", wideTitle);
+      }
     }
   }
   function renderCodeBody(body, path, text, cut, srcId, wrapCard = false) {
@@ -8775,30 +8786,56 @@
     body.innerHTML = wrapCard ? `<div class="rv-code-card">${inner}</div>${cut}` : `${inner}${cut}`;
     return lang;
   }
+  function renderHTMLFile(body, text) {
+    // The trusted, same-origin shell applies its CSP to the opaque srcdoc.
+    // Keep the report out of the application document and out of URL strings.
+    const frame = document.createElement("iframe");
+    frame.className = "fv-html-sandbox";
+    frame.title = "HTML 报告";
+    frame.addEventListener("load", () => {
+      const report = frame.contentDocument?.querySelector('iframe[sandbox="allow-scripts"]');
+      if (report) report.srcdoc = text;
+      else body.innerHTML = '<p class="fv-note">无法加载 HTML 阅读器</p>';
+    }, { once: true });
+    frame.src = "html-viewer.html";
+    body.replaceChildren(frame);
+  }
   async function openFile(path, fromHistory = false) {
     if (IMG_EXT.test(path)) { openLightbox([{ path }], 0); return; }
     const body = $("#fv-body"), seq = ++fileSeq;
     fvCur = null;
     body.classList.remove("is-code");
-    const initMachine = fileContextMachine() || "";
-    syncFileBar("fv", { wideHref: HTML_EXT.test(path) ? "" : wideFileHash(path, initMachine) });
+    const isHTML = HTML_EXT.test(path), initMachine = fileContextMachine();
+    syncFileBar("fv", { wideHref: isHTML ? "" : wideFileHash(path, initMachine) });
     $("#fv-name").textContent = path.split("/").pop();
     $("#fv-path").textContent = path;
     body.innerHTML = `<p class="fv-note muted">读取中…</p>`;
     showFilePane(path, fromHistory);
-    const tries = fileTries();
+    const tries = isHTML && initMachine != null ? [initMachine] : fileTries();
     let f = null;
     try {
       f = await findFile(path, tries);
-    } catch (e) { syncFileBar("fv", {}); body.innerHTML = `<p class="fv-note">${esc(e.message)}</p>`; return; }
+    } catch (e) {
+      if (seq !== fileSeq) return;
+      syncFileBar("fv", {});
+      body.innerHTML = `<p class="fv-note">${esc(e.message)}</p>`;
+      return;
+    }
     if (seq !== fileSeq) return;
     if (!f) { syncFileBar("fv", {}); body.innerHTML = `<p class="fv-note">在${tries.length > 1 ? "各台电脑" : "这台电脑"}上都没找到这个文件。</p>`; return; }
     const where = (state.machines || []).length > 1 || f.machine ? machineName(f.machine) + " · " : "";
     $("#fv-path").textContent = where + f.path + " · " + fmtSize(f.size);
     if (fileUrl) URL.revokeObjectURL(fileUrl), fileUrl = "";
     const canDl = f.size <= FILE_DL_MAX;
-    const wHref = HTML_EXT.test(path) ? "" : wideFileHash(path, f.machine || "");
+    const wHref = wideFileHash(path, f.machine || "");
     fvCur = { reqPath: path, path: f.path, machine: f.machine || "", kind: f.kind, size: f.size, blob: f.blob, rawText: "", truncated: false };
+    if (isHTML) {
+      const text = await f.blob.text();
+      if (seq !== fileSeq) return;
+      syncFileBar("fv", { langLabel: "HTML", downloadable: canDl, wideHref: wHref, wideTitle: "在浏览器中打开" });
+      renderHTMLFile(body, text);
+      return;
+    }
     if (f.kind === "image") {
       syncFileBar("fv", { downloadable: canDl, wideHref: wHref });
       const ext = path.split(".").pop().toLowerCase();
@@ -8830,7 +8867,7 @@
   async function openWideFile(rawQuery, restore = null) {
     const q = new URLSearchParams(String(rawQuery || "").replace(/^\?/, ""));
     const path = (q.get("path") || "").trim();
-    const machineHint = (q.get("machine") || "").trim();
+    const machineHint = (q.get("machine") || "").trim(), isHTML = HTML_EXT.test(path);
     const body = $("#rv-body"), sc = $("#rv-scroller"), seq = ++wideSeq;
     rvCur = null;
     body.classList.remove("is-code");
@@ -8847,11 +8884,16 @@
     $("#rv-path").textContent = (machineHint ? machineName(machineHint) + " · " : "") + path;
     document.title = `${name} · Collie`;
     body.innerHTML = `<p class="fv-note muted">读取中…</p>`;
-    const tries = [...new Set([machineHint, ...fileTries()])];
+    const tries = isHTML && q.has("machine") ? [machineHint] : [...new Set([machineHint, ...fileTries()])];
     let f = null;
     try {
+      if (isHTML && machineHint.includes("!")) await hubsLoaded;
+      if (seq !== wideSeq || view !== "file") return;
       f = await findFile(path, tries);
-    } catch (e) { body.innerHTML = `<p class="fv-note">${esc(e.message)}</p>`; return; }
+    } catch (e) {
+      if (seq === wideSeq && view === "file") body.innerHTML = `<p class="fv-note">${esc(e.message)}</p>`;
+      return;
+    }
     if (seq !== wideSeq || view !== "file") return;
     if (!f) { body.innerHTML = `<p class="fv-note">在${tries.length > 1 ? "各台电脑" : "这台电脑"}上都没找到这个文件。</p>`; return; }
     const where = (state.machines || []).length > 1 || f.machine ? machineName(f.machine) + " · " : "";
@@ -8859,6 +8901,13 @@
     if (wideFileUrl) URL.revokeObjectURL(wideFileUrl), wideFileUrl = "";
     const canDl = f.size <= FILE_DL_MAX;
     rvCur = { reqPath: path, path: f.path, machine: f.machine || "", kind: f.kind, size: f.size, blob: f.blob, rawText: "", truncated: false };
+    if (isHTML) {
+      const text = await f.blob.text();
+      if (seq !== wideSeq || view !== "file") return;
+      syncFileBar("rv", { langLabel: "HTML", downloadable: canDl });
+      renderHTMLFile(body, text);
+      return;
+    }
     if (f.kind === "image") {
       syncFileBar("rv", { downloadable: canDl });
       const ext = path.split(".").pop().toLowerCase();
@@ -9636,43 +9685,6 @@
     lbStage.addEventListener("pointercancel", (ev) => endPtr(ev, true));
   }
 
-  async function openSandboxedHtmlRemote(path, win) {
-    try {
-      const tries = fileTries();
-      let htmlText = null;
-      for (const m of tries) {
-        const q = `/api/file?path=${encodeURIComponent(path)}${m ? "&machine=" + encodeURIComponent(m) : ""}&as=html`;
-        const r = routeReq(q);
-        const res = await fetch(r.url, { headers: r.hub ? { Authorization: "Bearer " + r.hub.token } : {}, credentials: r.hub ? "omit" : "same-origin" });
-        if (res.status === 404) continue;
-        if (!res.ok) { let d = {}; try { d = await res.json(); } catch {} throw new Error(d.error || "打不开这个文件"); }
-        htmlText = await res.text();
-        break;
-      }
-      if (htmlText === null) throw new Error("没找到这个 HTML 文件");
-      const sb = "allow-scripts allow-forms allow-popups allow-modals allow-downloads";
-      if (win && !win.closed) {
-        const doc = win.document;
-        doc.open();
-        doc.write(`<!doctype html><meta charset="utf-8"><title>${esc(path.split("/").pop())}</title><style>html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}</style><iframe sandbox="${sb}"></iframe>`);
-        doc.close();
-        const frame = doc.querySelector("iframe");
-        if (frame) frame.srcdoc = htmlText;
-        return;
-      }
-      syncFileBar("fv", { langLabel: "HTML" });
-      $("#fv-name").textContent = path.split("/").pop();
-      $("#fv-path").textContent = path;
-      const body = $("#fv-body");
-      body.classList.remove("is-code");
-      body.innerHTML = `<iframe class="fv-html-sandbox" sandbox="${sb}"></iframe>`;
-      body.querySelector("iframe").srcdoc = htmlText;
-      showFilePane(path);
-    } catch (err) {
-      if (win && !win.closed) try { win.close(); } catch {}
-      toast(err.message, "attn");
-    }
-  }
   document.addEventListener("click", (e) => {
     const copy = e.target.closest(".md-code-copy");
     if (copy) {
@@ -9697,21 +9709,6 @@
     const a = e.target.closest("a.fpath");
     if (a) {
       const path = a.dataset.path || "";
-      if (HTML_EXT.test(path)) {
-        const ctxMachine = (view === "file" ? rvCur?.machine : fileContextMachine()) || "";
-        const hub = hubOf(ctxMachine);
-        if (!hub && (!window.__collieDemo || window.__collieDemoHtmlUrl?.(path))) {
-          a.href = htmlFileURL(path, ctxMachine);
-          a.target = "_blank";
-          a.rel = "noopener";
-          return;
-        }
-        e.preventDefault();
-        const win = window.open("", "_blank");
-        if (win) { try { win.opener = null; } catch {} }
-        openSandboxedHtmlRemote(path, win);
-        return;
-      }
       e.preventDefault();
       if (IMG_EXT.test(path)) {
         const { items, index } = collectGallery(a, { path });
@@ -9719,7 +9716,7 @@
         return;
       }
       if (view === "file") {
-        location.hash = wideFileHash(path, rvCur?.machine || "");
+        location.hash = wideFileHash(path, rvCur?.machine);
         return;
       }
       openFile(path);
@@ -9765,6 +9762,7 @@
   function closeFilePane() {
     $("#app").classList.remove("has-file");
     fileSeq++;
+    $("#fv-body > .fv-html-sandbox")?.remove();
     clearTimeout(paneTimer);
     paneTimer = setTimeout(() => {
       pane.hidden = true;
@@ -9785,7 +9783,7 @@
     if (f && navCur === fileShut) { history.replaceState({ ...history.state, file: undefined }, ""); f = ""; }
     const open = $("#app").classList.contains("has-file");
     if (!f) { if (open && navCur < fileIdx) closeFilePane(); return; }
-    if (!open && !HTML_EXT.test(f)) { fileIdx = navCur; openFile(f, true); }
+    if (!open) { fileIdx = navCur; openFile(f, true); }
   }
   pane.addEventListener("click", (e) => { if (e.target.closest("[data-fv-close]")) dismissFile(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pane.hidden && !document.querySelector("dialog[open]")) dismissFile(); });
@@ -10839,8 +10837,8 @@
       history.replaceState(history.state, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
     }
     const fromSnap = !t && !code && loadSnap();
+    hubsLoaded = loadHubs();
     if (fromSnap) showApp();
-    const hubsLoaded = loadHubs();
     const [ses, su, st] = await Promise.allSettled([api("/api/session"), api("/api/super"), api("/api/state")]);
     // Turned away (the login form is up), or no hub and nothing to show yet.
     if (ses.status === "rejected" && (ses.reason?.message === "unauthorized" || !fromSnap)) return;
