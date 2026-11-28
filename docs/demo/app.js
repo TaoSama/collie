@@ -1948,7 +1948,7 @@
     return `<div class="tp-followup">${esc(line.join(" · "))}</div>
       <div class="tp-actions">
         ${f.decision ? `<button type="button" class="btn small" data-task-decision="${esc(f.decision)}">打开原问题</button>` : ""}
-        <button type="button" class="btn small" data-task-remind>改提醒时间</button>
+        <button type="button" class="chip tp-chip" data-task-remind>改提醒时间</button>
       </div>`;
   }
   // A worker on a task by the name the file uses, its session title after.
