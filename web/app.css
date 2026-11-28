@@ -521,10 +521,11 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .tp-chip { gap: 6px; max-width: 100%; padding: 2px 10px 2px 8px; font-size: var(--fs-small); color: var(--t-secondary); }
 .tp-chip .k { min-width: 0; max-width: 12em; overflow: hidden; text-overflow: ellipsis; font-family: inherit; }
 .tp-chip:is([href], button):hover { color: var(--fg); background: var(--bg); }
+.tp-chip:focus-visible { outline: 2px solid var(--fg-3); outline-offset: 2px; }
 a.tp-chip:not([href]) { cursor: default; opacity: .7; }
 .tp-followup { color: var(--t-secondary); font-size: var(--fs-meta); overflow-wrap: anywhere; }
-.tp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.tp-actions .tp-chip { align-self: flex-start; }
+.tp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tp-actions .tp-chip { padding: 2px 10px; }
 .tp-empty { padding: 14px 16px 16px; font-size: var(--fs-meta); color: var(--t-empty); }
 .tp-empty span { display: block; margin-top: 4px; font-size: var(--fs-small); color: var(--t-meta); }
 .tp-more { display: block; width: calc(100% - 16px); margin: 4px 8px 2px; padding: 8px; border: 0; border-top: var(--bw) solid var(--line); border-radius: 0; background: none; text-align: left; font-size: var(--fs-small); color: var(--t-meta); cursor: pointer; }
@@ -538,8 +539,12 @@ a.tp-chip:not([href]) { cursor: default; opacity: .7; }
   .tp-item { padding: 12px 8px; font-size: var(--fs-body); }
   .tp-item:hover { background: none; }
   .tp-sum { font-size: var(--fs-meta); }
+  /* Leave room for the touch target when the reminder is the only action. */
+  .tp-actions { min-height: 44px; }
   .tp-actions .btn.small { min-height: 44px; }
   .tp-chip { min-height: 32px; padding: 0 12px 0 10px; font-size: var(--fs-meta); }
+  .tp-actions .tp-chip { position: relative; }
+  .tp-actions .tp-chip::after { content: ""; position: absolute; inset: 50% 0 auto; height: 44px; transform: translateY(-50%); }
   .tp-more { padding: 12px 8px; font-size: var(--fs-meta); }
 }
 @media (prefers-reduced-motion: reduce) { .task-panel { animation: none; } }
