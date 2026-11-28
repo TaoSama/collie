@@ -34,7 +34,7 @@ class MessageViewTest(unittest.TestCase):
 
     def test_card_v2_history_requests_supported_command_version(self):
         with patch("requests.post") as post:
-            for cmd in (8, 43, 8108, 5):
+            for cmd in (8, 43, 8108, 8109, 8111, 5):
                 with self.subTest(cmd=cmd):
                     headers = {"x-command": str(cmd), "x-command-version": "5.7.0", "x-web-version": "3.9.32"}
                     U.client.requests.post("https://example.com/im/gateway/", headers=headers, timeout=15)
