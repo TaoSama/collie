@@ -78,6 +78,9 @@ func deathReason(screen string) string {
 }
 
 func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
+	if !blocked && w.background != nil && sp.workerWaiting(ctx, w) {
+		return
+	}
 	// The human chose to bypass permissions in settings, so a worker's
 	// "trust this folder?" (the folder Collie started it in) isn't theirs to
 	// click. Anything else still goes to them.
@@ -138,6 +141,46 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		fmt.Sprintf("worker %s finished a turn.%s Last message:\n%s", w.Name, resumedNote(w.Resumed), summary), "", "", w.Name)
 	w.clearResume()
 	sp.addEntryLocked("event", w.Thread, w.Name+" 完成了一轮", w.Name, "done")
+}
+
+const (
+	workerReportGrace     = 90 * time.Second
+	backgroundFooterGrace = 5 * time.Second // the input hint can cover the footer after a turn
+	backgroundStall       = 20 * time.Minute
+)
+
+// workerWaiting rechecks a pending completion. Read the live footer here so
+// a stale UI cache can't let a just-finished turn through.
+func (sp *Super) workerWaiting(ctx context.Context, w *Worker) bool {
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	r, err := sp.s.herdr.Read(readCtx, w.PaneID, "detection", "text", 0)
+	if err != nil {
+		return true // the next tick can still check this completion
+	}
+	footer := backgroundFooter(r.Text)
+	now := time.Now()
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if w.Ended {
+		return true
+	}
+	m := w.background
+	if footer == "" {
+		if m.hash == "" && now.Sub(m.since) < backgroundFooterGrace {
+			return true
+		}
+		w.background = nil
+		return now.Sub(w.ReportAt) <= workerReportGrace
+	}
+	if h := progressHash(r.Text); h != m.hash {
+		m.hash, m.since = h, now
+	} else if !m.flag && now.Sub(m.since) > backgroundStall {
+		m.flag = true
+		sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf(
+			"worker %s has been waiting for background work with no visible progress for %d minutes. Its terminal shows:\n%s", w.Name, int(backgroundStall.Minutes()), footer), "", "", w.Name)
+	}
+	return true
 }
 
 // workerAgentError reads the bottom of a worker's terminal after a turn:

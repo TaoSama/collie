@@ -56,6 +56,13 @@ func TestAgentErrRe(t *testing.T) {
 
 func TestHasBackground(t *testing.T) {
 	for screen, want := range map[string]bool{
+		// Detection snapshots from devbox, with each agent's live footer.
+		"  Sonnet 5.5 │ 44k/1000k │ claude\n  +0/-0\n  Claude Code 78% · 80% │ Codex 64% · 61% (0m ago)\n  ⏵⏵ bypass permissions on · 1 shell":                                             true,
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n  ● main\n  ◯ general-purpose  Running sleep 95 command                                                  1m 5s · ↓ 30.9k tokens": true,
+		"  ● [12:21:13] 1m 30s timer running\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n? for shortcuts                                                         auto · Gemini 4 Neon · low · 1 task(s) · /tasks":     true,
+		"  1 background terminal running · /ps to view · /stop to close\n› Ask Codex to do anything\n  GPT-6.2 Astra low fast · Context 4% used · 23.1K used · 258K window\n  ← for agents · ? for shortcuts                                                             ⚠ 4 warnings · f2 to view": true,
+		"⏵⏵ bypass permissions on · 2 subagent(s)": true,
+		"⏵⏵ bypass permissions on · 0 subagents":   false,
 		" How's the CLI experience so far?\n [1] Good  [2] Fine\n? for shortcuts      auto · Gemini 4 Neon · xhigh · 1 task(s) · /tasks\n": true,
 		"❯ \n  ⏵⏵ bypass permissions on · 1 background task · ↓ to manage":                                                                 true,
 		"❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)":                                                                              false,

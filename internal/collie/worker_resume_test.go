@@ -199,6 +199,8 @@ func TestTickResumesWorkerOnce(t *testing.T) {
 	ctx := context.Background()
 	sp.tick(ctx) // working → idle, on the error
 	w := sp.st.Workers["worker-1"]
+	w.background.since = time.Now().Add(-backgroundFooterGrace)
+	sp.tick(ctx) // confirm the footer before settling the turn
 	sp.mu.Lock()
 	planned := !w.ResumeAt.IsZero()
 	sp.mu.Unlock()
@@ -221,6 +223,8 @@ func TestTickResumesWorkerOnce(t *testing.T) {
 		t.Fatalf("told twice: %q", p.said)
 	}
 	p.status = "" // its turn ends, no error after the carry-on
+	sp.tick(ctx)
+	w.background.since = time.Now().Add(-backgroundFooterGrace)
 	sp.tick(ctx)
 	sp.mu.Lock()
 	defer sp.mu.Unlock()

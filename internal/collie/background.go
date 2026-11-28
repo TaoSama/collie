@@ -9,27 +9,37 @@ import (
 )
 
 // An agent that has stopped may still have work going: Antigravity sets a
-// timer and ends its turn, Claude leaves a shell running in the background.
-// herdr calls that done or idle; the agent's footer says "1 task(s)" or
-// "1 background task". Such an agent shows as waiting.
+// timer and ends its turn, Claude and Codex leave shells running. herdr can
+// call that done or idle while the agent's footer still shows work.
 
-var bgFooter = regexp.MustCompile(`(?i)\b[1-9]\d*\s+(background\s+(task|shell|job)s?\b|task\(s\)|shells?\s+running\b)`)
+var bgFooter = regexp.MustCompile(`(?i)\b[1-9]\d*\s+(` +
+	`background\s+(tasks?|shells?|jobs?|agents?|terminals?)\b|task\(s\)|sub-?agents?\b|shells?(\s+(still\s+)?running\b|$))` +
+	`|^◯\s+\S.*\s{2,}\d+[hms]\b` +
+	`|^● \[\d{2}:\d{2}:\d{2}\].*\btimer running$`)
 
-// hasBackground looks at the bottom few lines of a screen, where the footer is.
 func hasBackground(screen string) bool {
+	return backgroundFooter(screen) != ""
+}
+
+// backgroundFooter returns the active work shown at the bottom of a screen.
+func backgroundFooter(screen string) string {
 	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
+	var footer string
 	seen := 0
-	for i := len(lines) - 1; i >= 0 && seen < 3; i-- {
+	for i := len(lines) - 1; i >= 0 && seen < 4; i-- {
 		l := strings.TrimSpace(lines[i])
 		if l == "" {
 			continue
 		}
 		seen++
 		if bgFooter.MatchString(l) {
-			return true
+			if footer != "" {
+				l += "\n" + footer
+			}
+			footer = l
 		}
 	}
-	return false
+	return footer
 }
 
 var bgSeen = struct {

@@ -88,6 +88,8 @@ type Worker struct {
 	// on an error that passes (worker_resume.go); Resumed counts those in a row.
 	ResumeAt time.Time `json:"resume_at,omitempty"`
 	Resumed  int       `json:"resumed,omitempty"`
+
+	background *screenMark // a turn whose completion is waiting on background work
 }
 
 // Entry is one line of the human-facing super-agent conversation.
