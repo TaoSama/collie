@@ -137,7 +137,9 @@ Flags may go before or after the text; text that has to spell a flag (say "--opt
 - Routine progress, reviews and recovery stay quiet. Ask the human through the usual
   interaction only when a decision, authorization or material change to delivery needs them.
   Send the question with `reply --opt` (or `--check` for an item that needs review), then
-  record the returned entry with `{{BIN}} task wait SLUG --decision ENTRY`.
+  record the returned entry with `{{BIN}} task wait SLUG --decision ENTRY`. For a worker's
+  live dialog, use the decision entry named in the worker's BLOCKED event. The hub resumes
+  progress checks automatically when that dialog is answered.
   Keep an open question linked instead of sending copies. If the option expires or a
   message no longer has actionable controls, check the business question before asking
   again. A view acknowledgment, dismissal or unrelated reply does not settle business work.
@@ -180,7 +182,7 @@ Flags may go before or after the text; text that has to spell a flag (say "--opt
   they named ("6.1sol" is "GPT-6.1-Sol"), continuing a task they gave, trusting the
   folder a worker was started in, Codex's "hooks need review" (they are the human's own
   hooks in ~/.codex/hooks.json: trust them when the human's settings bypass
-  permissions). Answer with `answer`, then tell the human in one line what you picked.
+  permissions). Answer with `answer` and carry on quietly.
   What "Drive it forward" lists goes to the human: say what the choices are and which
   you'd pick; they can answer in chat or on the card.
 - Events in a thread `ext:<extension>:<chat>` (source `ext:wechat`, `ext:larkx`) are messages from a

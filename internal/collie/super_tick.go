@@ -108,11 +108,8 @@ func (sp *Super) tick(parent context.Context) {
 	if !ok {
 		// The follow-up clock and the daily batch do not need a live pane.
 		now := time.Now()
-		if sp.s.herdr != nil {
-			sp.awayMachines(nil, now)
-		}
 		sp.mu.Lock()
-		sp.tickTaskFollowupsLocked(now, map[string]bool{})
+		sp.tickTaskFollowupsLocked(now, nil)
 		sp.remindPendingLocked(now)
 		sp.mu.Unlock()
 		return

@@ -40,16 +40,16 @@ type TaskFollowup struct {
 	Detail         string    `json:"detail,omitempty"`
 	LastProgressAt time.Time `json:"last_progress_at,omitempty"`
 	Evidence       string    `json:"evidence,omitempty"`
-	NextAt         time.Time `json:"next_at"`
+	NextAt         time.Time `json:"next_at,omitzero"`
 	Manual         bool      `json:"manual,omitempty"`
 	ClosedAt       time.Time `json:"closed_at,omitempty"`
 	Version        uint64    `json:"version"`
 	OfflineAt      time.Time `json:"offline_at,omitempty"`
-	Issue          string    `json:"worker_issue,omitempty"`
 	Missed         int       `json:"missed_reviews,omitempty"`
 	Review         string    `json:"review,omitempty"`
 	ReviewKind     string    `json:"review_kind,omitempty"`
 	ReviewAt       time.Time `json:"review_at,omitempty"`
+	ReviewRetried  bool      `json:"review_retried,omitempty"`
 }
 
 type TaskUpdate struct {
@@ -90,7 +90,19 @@ func (task *TaskFollowup) schedule(now, at time.Time, previous *TaskFollowup) {
 }
 
 func (task *TaskFollowup) clearReview() {
-	task.Review, task.ReviewKind, task.ReviewAt = "", "", time.Time{}
+	task.Review, task.ReviewKind, task.ReviewAt, task.ReviewRetried = "", "", time.Time{}, false
+}
+
+// A terminal dialog is finished when Herdr has recorded that it went
+// away. Chat options and check acknowledgements require a business outcome.
+func (task *TaskFollowup) resumeAfterDialog(entry *Entry, now time.Time) bool {
+	if entry == nil || entry.Ask == nil || entry.Ask.Done == nil {
+		return false
+	}
+	task.Waiting, task.Manual, task.Missed = false, false, 0
+	task.clearReview()
+	task.NextAt = now.Add(task.interval())
+	return true
 }
 
 func dailyTaskTime(after time.Time) time.Time {
@@ -117,8 +129,10 @@ func (sp *Super) taskDecisionLocked(id string, now time.Time) *Entry {
 	if entry.Ask != nil {
 		worker := sp.st.Workers[entry.Ref]
 		if entry.Ask.Done == nil && worker != nil && !worker.Ended &&
-			worker.Status == "blocked" && worker.PaneID == entry.Ask.Pane && sp.unanswered[worker.Machine].IsZero() {
-			return entry
+			worker.Status == "blocked" && worker.PaneID == entry.Ask.Pane {
+			if since := sp.unanswered[worker.Machine]; since.IsZero() || now.Sub(since) < awayGrace {
+				return entry
+			}
 		}
 		return nil
 	}
@@ -161,9 +175,14 @@ func (sp *Super) taskViewLocked(task *TaskFollowup, now time.Time) TaskFollowup 
 			}
 		} else {
 			view.Decision = task.Decision
-			if !sp.st.RemindedAt.IsZero() && !view.NextAt.After(sp.st.RemindedAt) {
-				view.NextAt = dailyTaskTime(sp.st.RemindedAt).AddDate(0, 0, 1)
-			} else if morning := dailyTaskTime(view.NextAt); morning.After(view.NextAt) {
+			today := dailyTaskTime(now)
+			if view.NextAt.Before(today) {
+				view.NextAt = today
+			}
+			morning := dailyTaskTime(view.NextAt)
+			if !sp.st.RemindedAt.Before(today) && !morning.After(today) {
+				view.NextAt = today.AddDate(0, 0, 1)
+			} else if morning.After(view.NextAt) {
 				view.NextAt = morning
 			}
 		}
@@ -171,11 +190,11 @@ func (sp *Super) taskViewLocked(task *TaskFollowup, now time.Time) TaskFollowup 
 		view.Owner, view.Status, view.NextAt = "", "offline", task.OfflineAt
 	case task.Missed >= 2:
 		view.Owner, view.Status = "", "stalled"
-	case task.Review != "" || task.Issue != "":
+	case task.Review != "":
 		view.Owner, view.Status = "", "review"
 	}
 	if task.Review != "" && view.Decision == "" {
-		view.NextAt = task.ReviewAt.Add(taskReviewRetry)
+		view.NextAt = time.Time{}
 	}
 	if !view.NextAt.IsZero() {
 		view.NextAt = view.NextAt.In(time.Local)
@@ -217,6 +236,9 @@ func (sp *Super) updateTaskAt(update TaskUpdate, now time.Time) (*TaskFollowup, 
 		}
 		current = &TaskFollowup{Path: update.Path}
 	} else if !current.ClosedAt.IsZero() {
+		if update.Action == "start" {
+			return nil, fmt.Errorf("%w: this task is closed; choose a new slug", errTaskConflict)
+		}
 		return nil, errTaskMissing
 	}
 	if (update.Version != 0 || update.Action == "remind") && current.Version != update.Version {
@@ -230,7 +252,7 @@ func (sp *Super) updateTaskAt(update TaskUpdate, now time.Time) (*TaskFollowup, 
 		}
 		if !worker.CreatedAt.Equal(next.WorkerCreated) || next.Worker != worker.Name {
 			next.Worker, next.WorkerCreated = worker.Name, worker.CreatedAt
-			next.OfflineAt, next.Issue, next.Missed = time.Time{}, "", 0
+			next.OfflineAt, next.Missed = time.Time{}, 0
 		}
 	}
 
@@ -270,7 +292,7 @@ func (sp *Super) updateTaskAt(update TaskUpdate, now time.Time) (*TaskFollowup, 
 		}
 		if !next.OfflineAt.IsZero() && current.Review != "" &&
 			(!current.Manual || !current.OfflineAt.After(now)) {
-			next.OfflineAt = now.Add(taskOfflineReview)
+			next.OfflineAt = now.Add(next.interval())
 			if !update.At.IsZero() {
 				next.OfflineAt = update.At
 			}
@@ -285,7 +307,7 @@ func (sp *Super) updateTaskAt(update TaskUpdate, now time.Time) (*TaskFollowup, 
 				return nil, taskInvalid("decision already belongs to another task")
 			}
 		}
-		if slices.Contains(next.PastDecisions, decision.ID) || !next.Waiting && next.Decision == decision.ID {
+		if slices.Contains(next.PastDecisions, decision.ID) || !next.Waiting && next.Decision == decision.ID && decision.Ask == nil {
 			return nil, taskInvalid("decision already settled for this task")
 		}
 		if next.Decision != decision.ID && next.Decision != "" {

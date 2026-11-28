@@ -134,7 +134,7 @@ func (sp *Super) lastAskLocked(pane string) *Entry {
 // addAskLocked announces the dialog w stopped on (a nil a: it couldn't be
 // read) and notifies you, once per decision: the same dialog showing again
 // reopens the one already announced, without a second line or notification.
-func (sp *Super) addAskLocked(w *Worker, a *Approval) {
+func (sp *Super) addAskLocked(w *Worker, a *Approval) string {
 	ask := &DialogAsk{Pane: w.PaneID}
 	if a != nil {
 		ask.Choices, ask.Sig = choiceLabels(*a), askSig(*a)
@@ -144,10 +144,10 @@ func (sp *Super) addAskLocked(w *Worker, a *Approval) {
 		(last.Ask.Done == nil || (last.Ask.Done.By == "" && time.Since(last.Ask.Done.At) < askRepeatWindow)) {
 		last.Ask.Done = nil
 		sp.changed()
-		return
+		return last.ID
 	}
-	sp.appendEntryLocked(&Entry{ID: sp.st.nextID("e"), Role: "event", Thread: w.Thread, Text: w.Name + " 等你确认",
-		At: time.Now(), Ref: w.Name, Tone: "blocked", Ask: ask})
+	return sp.appendEntryLocked(&Entry{ID: sp.st.nextID("e"), Role: "event", Thread: w.Thread, Text: w.Name + " 等你确认",
+		At: time.Now(), Ref: w.Name, Tone: "blocked", Ask: ask}).ID
 }
 
 // pickedFor: how long a page's word about the choice it clicked waits for

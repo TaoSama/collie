@@ -95,7 +95,8 @@ func TestTaskFollowupOfflineAndRecovery(t *testing.T) {
 	sp.changed()
 	sp.flush()
 	changeTask(t, sp, now, TaskUpdate{Action: "start", Worker: w.Name})
-	off := taskTick(sp, now.Add(time.Minute), map[string]bool{"": true})
+	sp.unanswered = map[string]time.Time{w.Machine: now.Add(time.Minute)}
+	off := taskTick(sp, now.Add(time.Minute+awayGrace), map[string]bool{"": true})
 	if off.Status != "offline" || !off.NextAt.Equal(now.Add(16*time.Minute)) || off.Review != "" {
 		t.Fatalf("offline task = %+v", off)
 	}
@@ -289,6 +290,10 @@ func TestTaskFollowupCloseHidesTaskBeforeArchive(t *testing.T) {
 	if sp.taskTriggerCurrentLocked(sp.st.trigger(check.Review)) {
 		t.Fatal("closed task's queued review can still be delivered")
 	}
+	reused := call("POST", "/api/super/task", TaskUpdate{Action: "start", Path: task.Path})
+	if reused.Code != http.StatusConflict || !strings.Contains(reused.Body.String(), "choose a new slug") {
+		t.Fatalf("closed slug reuse = %d %s", reused.Code, reused.Body)
+	}
 }
 
 func restoreTasks(t *testing.T, db *sql.DB) *State {
@@ -313,8 +318,16 @@ func TestTaskFollowupDeliveryFailureStaysPrivate(t *testing.T) {
 		t.Fatalf("internal delivery failure became public: status=%s entries=%v notices=%v", event.Status, sp.st.Entries, sp.notifyBuf)
 	}
 	retry := taskTick(sp, start.NextAt.Add(taskReviewRetry), nil)
-	if retry.Review == event.ID || retry.ReviewKind != "due" {
-		t.Fatalf("unconfirmed internal review was not retried: %+v", retry)
+	if retry.Review == event.ID || retry.ReviewKind != "due" || retry.Version != check.Version {
+		t.Fatalf("unconfirmed internal review was not retried on its original version: %+v", retry)
+	}
+	sp.mu.Lock()
+	sp.finishDeliveryLocked(routerName, []*Trigger{sp.st.trigger(retry.Review)}, false, "test: also unconfirmed")
+	sp.mu.Unlock()
+	sp.st = restoreTasks(t, sp.db)
+	after := taskTick(sp, start.NextAt.Add(2*taskReviewRetry), nil)
+	if after.Review != retry.Review || after.Version != retry.Version {
+		t.Fatalf("review retried a second time: %+v", after)
 	}
 }
 
@@ -333,7 +346,7 @@ func TestTaskFollowupOfflineDialogGetsReviewedInFifteenMinutes(t *testing.T) {
 	changeTask(t, sp, now, TaskUpdate{Action: "wait", Decision: ask.ID})
 
 	sp.unanswered = map[string]time.Time{w.Machine: now.Add(time.Minute)}
-	offline := taskTick(sp, now.Add(time.Minute), map[string]bool{"": true})
+	offline := taskTick(sp, now.Add(time.Minute+awayGrace), map[string]bool{"": true})
 	if offline.Status != "offline" || offline.Decision != "" || !offline.NextAt.Equal(now.Add(16*time.Minute)) {
 		t.Fatalf("disconnect left a worker dialog available or hid its next check: %+v", offline)
 	}

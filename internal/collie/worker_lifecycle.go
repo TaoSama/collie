@@ -126,9 +126,9 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if blocked {
+		decision := sp.addAskLocked(w, dialog)
 		sp.ingestLocked("worker", w.Thread, w.Name,
-			fmt.Sprintf("worker %s is BLOCKED on a dialog in its terminal (the human also sees it as a card in chat). Screen:\n%s%s\nIf the answer follows from what the human asked, or is routine, answer it yourself: `collie answer %s <choice>`. Leave it to the human only when it is theirs to decide (see ROUTER.md).", w.Name, summary, choicesText(dialog), w.Name), "", "", w.Name)
-		sp.addAskLocked(w, dialog)
+			fmt.Sprintf("worker %s is BLOCKED on a dialog in its terminal (decision entry %s; the human also sees it as a card in chat). Screen:\n%s%s\nIf the answer follows from what the human asked, or is routine, answer it yourself: `collie answer %s <choice>`. Leave it to the human only when it is theirs to decide (see ROUTER.md).", w.Name, decision, summary, choicesText(dialog), w.Name), "", "", w.Name)
 		return
 	}
 	if w.Ended {
