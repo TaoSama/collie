@@ -10,6 +10,7 @@ import time
 
 import inbox_example
 import lark
+import peer
 import richtext
 
 ME = "u_me"
@@ -154,6 +155,9 @@ class Fake:
                 if target == TOPICS:
                     sent.update(thread_id=sent["id"], root_id=sent["id"], subscribed=False)
                 self.inbox.append(sent)
+                if target == "c_self":
+                    # The write arrived but its acknowledgement did not.
+                    raise peer.Error("uncertain", "飞书未确认转发结果")
             else:
                 raise lark.NotSent("未知的飞书操作")
             return {}

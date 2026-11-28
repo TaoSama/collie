@@ -115,4 +115,23 @@ func testLarkInboxActions(t *testing.T, s *Server) {
 	}
 	action(`{"id":"larkx:c_topics","action":"forward","thread_id":"9101","message_id":"9101","target":"larkx:c_group"}`, 200)
 	action(`{"id":"larkx:c_group","action":"forward","message_id":"9001","target":"larkx:c_topics"}`, 200)
+	uncertain := action(`{"id":"larkx:c_group","action":"forward","message_id":"9001","target":"larkx:c_self"}`, 502)
+	var failed struct{ Code, Error string }
+	if err := json.Unmarshal(uncertain.Body.Bytes(), &failed); err != nil ||
+		failed.Code != extproto.ErrUncertain || failed.Error != larkForwardUncertain {
+		t.Fatalf("ambiguous forward lost its status: %s (%v)", uncertain.Body, err)
+	}
+}
+
+func TestValidLarkEmojiKey(t *testing.T) {
+	for _, key := range []string{"THUMBSUP", "tenant.custom:表情", strings.Repeat("喜", 256)} {
+		if !validLarkEmojiKey(key) {
+			t.Errorf("rejected valid emoji key %q", key)
+		}
+	}
+	for _, key := range []string{"", "with space", "line\nbreak", "invalid\xff", strings.Repeat("a", 257)} {
+		if validLarkEmojiKey(key) {
+			t.Errorf("accepted invalid emoji key %q", key)
+		}
+	}
 }

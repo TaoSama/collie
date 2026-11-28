@@ -10,9 +10,9 @@
   };
   let esc;
   const rawID = (m) => m.source_id || m.id;
-  const availableMessage = (m) => m?.id && !["system", "recalled"].includes(m.view?.kind);
+  const availableMessage = (m) => m?.id && (!m.id.startsWith("out:") || m.source_id) && !["system", "recalled"].includes(m.view?.kind);
   const summary = (m) => collieInboxMessage.legacyPreview(m?.text).replace(/\s+/g, " ").trim();
-  const title = (m) => m?.view?.title || summary(m).slice(0, 48) || "话题";
+  const title = (m) => m?.view?.title || [...summary(m)].slice(0, 48).join("") || "话题";
   const catalog = (lark) => new Map((lark?.emoji || []).map((e) => [e.key, e]));
   const emojiLabel = (e, key) => e?.label || EMOJI_FALLBACK[key] || key;
   const emojiIcon = (e, key) => {
@@ -20,10 +20,10 @@
     const url = e?.url || "";
     return `<span class="lark-inbox-emoji" aria-hidden="true">${url.startsWith("/api/inbox/avatar?") ? `<img src="${esc(url)}" alt=""><span>${text}</span>` : text}</span>`;
   };
-  function reactions(m, lark) {
-    if (!m.reactions?.length) return "";
+  function reactions(m, lark, entries = m.reactions) {
+    if (!entries?.length) return "";
     const emojis = catalog(lark);
-    return `<div class="lark-inbox-reactions">${m.reactions.map((r) => {
+    return `<div class="lark-inbox-reactions">${entries.map((r) => {
       const names = (r.names || []).filter(Boolean);
       const count = Math.max(r.count || 0, names.length);
       const label = names.length === count && count > 0 && count <= 2 ? names.join("、") : `${count} 人`;
@@ -44,7 +44,7 @@
   const isRoot = (m) => availableMessage(m) && m.thread_id && (!m.root_id || m.root_id === rawID(m));
   const commentsIn = (msgs, root) => msgs.filter((m) => rawID(m) !== rawID(root) && (m.thread_id === root.thread_id || m.root_id === rawID(root)));
 
-  function topicCard(m, c, lark, clock, detail = false) {
+  function topicCard(m, c, lark, clock, detail = false, unreadAnchor = false) {
     const like = m.reactions?.find((r) => r.key === LIKE);
     const heading = title(m);
     let body = "";
@@ -56,13 +56,13 @@
       const preview = text === heading ? "" : text.startsWith(heading) ? text.slice(heading.length).trim() : text;
       body = esc(preview.length > 240 ? preview.slice(0, 240).trimEnd() + "…" : preview);
     }
-    return `<li class="lark-topic-card" data-msg-id="${esc(m.id)}">
+    return `<li class="lark-topic-card" data-msg-id="${esc(m.id)}"${unreadAnchor ? " data-unread-anchor" : ""}>
       <div class="lark-topic-body${detail ? " im-rich" : ""}"${messageAttrs(m, lark)}>
         <div class="lark-topic-meta"><span class="conv-ava" aria-hidden="true">${esc((m.sender_name || "?").slice(0, 1))}${m.avatar ? `<img class="inbox-pic" src="${esc(m.avatar)}" alt="" loading="lazy" decoding="async">` : ""}</span>
           <b>${esc(m.mine ? "你" : m.sender_name || "")}</b><time>${esc(clock(m.at))}</time></div>
         ${detail ? `<h3>${esc(heading)}</h3>` : `<h3><button type="button" data-lark-open-topic>${esc(heading)}</button></h3>`}
         ${body ? `<div class="lark-topic-content">${body}</div>` : ""}
-        ${reactions(m, lark)}
+        ${reactions(m, lark, m.reactions?.filter((r) => r.key !== LIKE))}
       </div>
       <div class="lark-topic-acts">
         ${button("data-lark-like", "thumbs-up", `${like?.mine ? "已赞" : "点赞"}${like?.count ? ` ${like.count}` : ""}`, `aria-pressed="${!!like?.mine}"`)}
@@ -83,10 +83,9 @@
       `<button type="button" data-lark-filter="${key}" aria-pressed="${filter === key}">${text}</button>`).join("");
     const unread = msgs.find((m) => m.id === unreadID);
     const cards = [...records].reverse().map((m, i, list) => {
-      if (!isRoot(m)) return renderMessage(m, i, list);
-      const anchor = unread && unreadCount > 0 && (m === unread || m.thread_id === unread.thread_id || rawID(m) === unread.root_id)
-        ? `<li class="conv-unread-line" data-unread-anchor><span>以下是 ${unreadCount} 条未读消息</span></li>` : "";
-      return anchor + topicCard(m, c, lark, clock);
+      const anchor = unread && unreadCount > 0 && (m === unread ||
+        (isRoot(m) && (m.thread_id === unread.thread_id || rawID(m) === unread.root_id)));
+      return isRoot(m) ? topicCard(m, c, lark, clock, false, anchor) : renderMessage(m, i, list, anchor);
     }).join("");
     return `<div class="lark-topic-tabs" aria-label="筛选话题">${tabs}</div>
       <ul class="conv-msgs lark-topic-list" aria-label="话题列表">${cards || `<li class="empty-row">${filter === "subscribed" ? "暂无订阅的话题" : "暂无话题"}</li>`}</ul>`;
@@ -114,7 +113,7 @@
     dialog.setAttribute("aria-label", "消息操作");
     document.body.append(dialog);
 
-    let convID = "", target = null, trigger = null, down = null, ignoreClick = 0;
+    let convID = "", target = null, trigger = null, down = null, heldTouch = false, ignoreClick = 0;
     let topic = null, filter = "all", reply = null, publish = false, topicRequest = null;
     const pending = new Set();
     const getDetail = () => hooks.detail();
@@ -154,15 +153,21 @@
       const pick = (key) => `<button type="button" data-lark-emoji="${esc(key)}" aria-label="${esc(emojiLabel(emojis.get(key), key))}"
         title="${esc(emojiLabel(emojis.get(key), key))}" aria-pressed="${!!target.reactions?.some((r) => r.key === key && r.mine)}">${emojiIcon(emojis.get(key), key)}</button>`;
       const heading = (text) => `<div class="lark-menu-head"><b>${text}</b><button type="button" class="icon-btn" data-lark-menu-close aria-label="关闭">${ico("x")}</button></div>`;
+      const forwardTitle = target.forwardThread ? "转发话题" : "转发消息";
       dialog.classList.toggle("forward", kind === "forward");
+      dialog.setAttribute("aria-label", kind === "menu" ? "消息操作" : kind === "emoji" ? "表情回应" : forwardTitle);
       if (kind === "menu") {
+        const topicHome = d.lark.topic_mode && !topic;
         const actions = [
           ["quote", "message-square-reply", "回复"],
           ["forward", "forward", "转发"],
           ["create_topic", "file-text", "创建话题"],
           ["copy", "copy", "复制"],
-        ].map(([action, icon, text]) => button(`data-lark-menu-action="${action}"`, icon, text,
-          action === "create_topic" && (d.conv.kind !== "group" || d.lark.topic_mode || target.thread_id) ? "disabled" : "")).join("");
+        ].map(([action, icon, text]) => {
+          const disabled = (action === "create_topic" && (d.conv.kind !== "group" || d.lark.topic_mode || target.thread_id)) ||
+            (action === "quote" && topicHome && !isRoot(target));
+          return button(`data-lark-menu-action="${action}"`, icon, text, disabled ? "disabled" : "");
+        }).join("");
         dialog.innerHTML = `<div class="lark-menu-quick">${quick.map(pick).join("")}
           <button type="button" data-lark-more aria-label="更多表情" title="更多表情">${ico("ellipsis")}</button></div>
           <div class="lark-menu-actions">${actions}</div>`;
@@ -172,7 +177,7 @@
           ${emojis.size ? "" : '<p class="muted">暂时无法读取表情</p>'}`;
       } else {
         const items = hooks.convs().filter((c) => c.ext === "larkx" && c.kind !== "doc" && c.send_as !== "none");
-        dialog.innerHTML = `${heading(target.forwardThread ? "转发话题" : "转发消息")}
+        dialog.innerHTML = `${heading(forwardTitle)}
           <label for="lark-forward-target">转发到</label>
           <select id="lark-forward-target" data-lark-forward-target><option value="">选择飞书会话</option>
           ${items.map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.chat)}</option>`).join("")}</select>
@@ -190,6 +195,12 @@
       if (!availableMessage(msg) || !getDetail()?.lark) return;
       target = msg;
       show("menu", el);
+      return dialog.open;
+    }
+    function openHeldMessage(el) {
+      if (!openMessage(el)) return;
+      heldTouch = true;
+      ignoreClick = performance.now() + 350;
     }
     function findBubble(e) {
       if (!e.target.closest || !getDetail()?.lark ||
@@ -200,7 +211,12 @@
       const el = findBubble(e);
       if (!el) return;
       e.preventDefault();
-      if (!dialog.open) { clearHold(); openMessage(el); }
+      if (!dialog.open) {
+        const isTouch = !!down;
+        clearHold();
+        if (isTouch) openHeldMessage(el);
+        else if (openMessage(el) && e.pointerType === "touch") ignoreClick = performance.now() + 350;
+      }
     });
     root.addEventListener("keydown", (e) => {
       if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey) && e.key !== "Enter") return;
@@ -214,20 +230,29 @@
       const el = findBubble(e);
       if (!el) return;
       clearHold();
+      heldTouch = false;
       down = { x: e.clientX, y: e.clientY, timer: setTimeout(() => {
-        if (!el.isConnected) return;
-        openMessage(el);
-        ignoreClick = performance.now() + 350;
+        if (el.isConnected) openHeldMessage(el);
       }, HOLD_MS) };
     }, { passive: true });
     root.addEventListener("pointermove", (e) => {
       if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > HOLD_SLOP) clearHold();
     }, { passive: true });
+    root.addEventListener("scroll", clearHold, { capture: true, passive: true });
     for (const type of ["pointerup", "pointercancel"]) document.addEventListener(type, clearHold, { passive: true });
+    document.addEventListener("touchend", (e) => {
+      if (!heldTouch) return;
+      e.preventDefault();
+      heldTouch = false;
+      ignoreClick = performance.now() + 350;
+    }, { capture: true, passive: false });
+    document.addEventListener("touchcancel", () => { heldTouch = false; }, { capture: true, passive: true });
+    dialog.addEventListener("pointerdown", () => { if (!heldTouch) ignoreClick = 0; });
     dialog.addEventListener("click", (e) => {
-      if (e.target === dialog) { if (performance.now() >= ignoreClick) close(); return; }
+      if (heldTouch || performance.now() < ignoreClick) { e.preventDefault(); return; }
+      if (e.target === dialog) { close(); return; }
       const b = e.target.closest("button");
-      if (!b) return;
+      if (!b || b.disabled) return;
       if (b.hasAttribute("data-lark-menu-close")) { close(); return; }
       if (b.hasAttribute("data-lark-more")) { show("emoji"); return; }
       if (b.dataset.larkEmoji) { react(b, target, b.dataset.larkEmoji); return; }
@@ -260,6 +285,8 @@
         if (!text) { hooks.toast("没有可以复制的文字", "attn"); return; }
         const ok = await hooks.copy(text);
         hooks.toast(ok ? "已复制" : "复制失败", ok ? "" : "attn");
+      } else if (action === "quote" && getDetail()?.lark?.topic_mode && !topic) {
+        if (isRoot(msg)) await openTopic(msg, true);
       } else {
         reply = { message: msg, mode: action === "quote" && topic ? "comment" : action };
         publish = false;
@@ -307,8 +334,10 @@
       pending.add(key);
       const inMenu = dialog.open && dialog.contains(b);
       hooks.busy(b);
+      let sent = false;
       try {
         await hooks.action({ id, message_id: msg.id, ...body });
+        sent = true;
         if (body.action === "forward") hooks.toast("已转发");
         if (convID === id && isCurrent()) {
           if (inMenu && dialog.contains(b)) close();
@@ -316,8 +345,10 @@
           await hooks.reload();
         }
       } catch (err) {
-        if (inMenu && dialog.contains(b) && body.action === "forward" && /可能已/.test(err.message)) close();
-        hooks.toast(err.message, "attn");
+        const transportFailure = err instanceof TypeError && err.status == null;
+        const uncertain = !sent && body.action === "forward" && (err.code === "uncertain" || transportFailure);
+        if (uncertain && inMenu && dialog.contains(b)) close();
+        hooks.toast(uncertain && transportFailure ? "没有收到转发回执，消息可能已经转发，请到飞书确认" : err.message, "attn");
       } finally {
         pending.delete(key);
         hooks.busy(b, false);
@@ -391,5 +422,5 @@
     return { reset, close, refreshTopic, click, sendOpts, sent, opts, syncTopic, interacting: () => dialog.open };
   }
 
-  window.collieInboxLark = { init: (escape) => { esc = escape; }, bind, reactions, messageAttrs, openButton, topicFeed, topicDetail, quoteHTML, title, subscribeButton };
+  window.collieInboxLark = { init: (escape) => { esc = escape; }, bind, reactions, messageAttrs, openButton, isRoot, topicFeed, topicDetail, quoteHTML, title, subscribeButton };
 })();

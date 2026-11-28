@@ -2,16 +2,23 @@ package collie
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/TaoSama/collie/internal/extproto"
 )
 
-const capLarkInbox = "lark_inbox"
+const (
+	capLarkInbox         = "lark_inbox"
+	larkEmojiKeyMax      = 256
+	larkForwardUncertain = "没有收到转发回执，消息可能已经转发，请到飞书确认"
+)
 
 var larkInboxID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
@@ -105,11 +112,15 @@ func (s *Server) inboxLarkAction(w http.ResponseWriter, r *http.Request) {
 	// Native action IDs are checked against the actual chat by the connector.
 	if err := run.call(ctx, extproto.MInboxLarkAction, req, &res); err != nil {
 		log.Printf("ext %s: inbox %s: %v", c.Ext, req.Action, err)
-		message := err.Error()
-		if req.Action == "forward" && (extproto.IsCode(err, extproto.ErrTimeout) || extproto.IsCode(err, extproto.ErrClosed)) {
-			message = "没有收到转发回执，消息可能已经转发，请到飞书确认"
+		var connectorErr *extproto.Error
+		code, message := "", "飞书操作失败"
+		if errors.As(err, &connectorErr) {
+			code, message = connectorErr.Code, connectorErr.Message
 		}
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": message})
+		if req.Action == "forward" && (code == extproto.ErrTimeout || code == extproto.ErrClosed || code == extproto.ErrUncertain) {
+			code, message = extproto.ErrUncertain, larkForwardUncertain
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": message, "code": code})
 		return
 	}
 	if req.Action == "topic" {
@@ -130,7 +141,7 @@ func validLarkInboxAction(req extproto.InboxLarkActionRequest) bool {
 	}
 	switch req.Action {
 	case "reaction":
-		return req.MessageID != "" && req.Active != nil && larkInboxID.MatchString(req.Key) && req.Target == ""
+		return req.MessageID != "" && req.Active != nil && validLarkEmojiKey(req.Key) && req.Target == ""
 	case "topic":
 		return req.ThreadID != "" && req.Target == ""
 	case "subscribe":
@@ -140,4 +151,9 @@ func validLarkInboxAction(req extproto.InboxLarkActionRequest) bool {
 	default:
 		return false
 	}
+}
+
+func validLarkEmojiKey(key string) bool {
+	return key != "" && utf8.ValidString(key) && utf8.RuneCountInString(key) <= larkEmojiKeyMax &&
+		strings.IndexFunc(key, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) == -1
 }

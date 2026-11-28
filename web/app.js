@@ -174,7 +174,7 @@
       if (r.hub) throw new Error(`${r.hub.name} 不认这个浏览器了，在「设备」里重新添加它`);
       showLogin(); throw new Error("unauthorized");
     }
-    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
+    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, code: data.code });
     return r.hub ? tagIds(data, r.hub.key) : data;
   }
   async function readTranscriptFrames(body, progress) {
@@ -3670,7 +3670,7 @@
     drawAuto(autoData.inbox);
     loadConv().then(() => {
       if (inboxCur === id && inboxDetail?.msgs?.length && inboxUnread?.conv === id && !inboxUnread.anchorId) {
-        const ms = inboxDetail.msgs;
+        const ms = inboxDetail.lark?.topic_mode ? inboxDetail.msgs.filter(collieInboxLark.isRoot) : inboxDetail.msgs;
         const idx = Math.max(0, ms.length - inboxUnread.count);
         inboxUnread.anchorId = ms[idx]?.id || "";
         inboxUnread.count = ms.length - idx;
@@ -4728,7 +4728,7 @@
     const id = inboxCur, conv = inboxDetail?.conv;
     if (inboxReplies.has(id)) return;
     const draft = inboxDraft, input = inboxInput, seq = inboxDraftSeq, topicContext = inboxTopicContext;
-    const larkReply = confirmDraft ? null : inboxLark.sendOpts();
+    const larkReply = inboxLark.sendOpts();
     const ta = $(confirmDraft ? "#inbox-detail [data-conv-draft-text]" : "#inbox-detail [data-conv-input]");
     const raw = ta?.value ?? (confirmDraft ? draft?.text || "" : input);
     const text = raw.trim();
@@ -4939,7 +4939,7 @@
       if (msgs && anchor) {
         const targetTop = Math.max(0, anchor.offsetTop - msgs.offsetTop - 12);
         msgs.scrollTo({ top: targetTop, behavior: "smooth" });
-        const firstMsg = anchor.nextElementSibling;
+        const firstMsg = anchor.matches("[data-msg-id]") ? anchor : anchor.nextElementSibling;
         if (firstMsg) { firstMsg.classList.add("flash"); setTimeout(() => firstMsg.classList.remove("flash"), 1600); }
         setTimeout(syncConvJumps, 360);
       }

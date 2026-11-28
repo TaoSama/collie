@@ -480,13 +480,13 @@
     const outAlert = badOuts.length ? `<div class="conv-banner warn">${outLine(badOuts[badOuts.length - 1])}</div>` : "";
     const sentBanner = opts.sentBanner ? `<div class="conv-banner info"><span>${esc(opts.sentBanner)}</span><a href="#/collie">查看对话 →</a><button type="button" class="icon-btn" data-conv-banner-close aria-label="关闭提示">${ico("x")}</button></div>` : "";
 
-    const msg = (m, i, list) => {
+    const msg = (m, i, list, topicUnreadAnchor = false) => {
       const o = m.ref ? outs[m.ref] : null;
       const rich = m.view && !m.ref;
       const text = c.ext === "larkx" ? collieInboxMessage.legacyPreview(m.text) : m.text;
       const day = dayLabel(m.at), prev = list[i - 1];
       const dayEl = !prev || dayLabel(prev.at) !== day ? `<li class="conv-day"><span>${esc(day)}</span></li>` : "";
-      const unreadEl = unreadAnchor && m.id === unreadAnchor && unreadCount > 0
+      const unreadEl = !topicFeed && unreadAnchor && m.id === unreadAnchor && unreadCount > 0
         ? `<li class="conv-unread-line" data-unread-anchor><span>以下是 ${unreadCount} 条未读消息</span></li>` : "";
       if (m.view?.kind === "system") return `${dayEl}${unreadEl}<li class="conv-sys">${collieInboxMessage.render(m.view)}</li>`;
       const ai = who(m) === "ai", mine = ai ? !c.owner : m.mine;
@@ -497,7 +497,7 @@
       const onlyLinkCards = rich && m.view.kind === "post" && !m.view.title && Array.isArray(m.view.nodes) && m.view.nodes.length > 0 && m.view.nodes.every((n) => n && n.kind === "link-card");
       const card = rich && (m.view.kind === "card" || m.view.kind === "calendar" || m.view.kind === "media" || onlyLinkCards);
       const body = rich ? collieInboxMessage.render(m.view, { convId: c.id, msgId: m.id }) : (m.ref && !m.human) ? md(m.text) : esc(text);
-      return `${dayEl}${unreadEl}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}" data-msg-id="${esc(m.id || "")}">
+      return `${dayEl}${unreadEl}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}" data-msg-id="${esc(m.id || "")}"${topicUnreadAnchor ? " data-unread-anchor" : ""}>
         ${mine ? "" : `<span class="conv-ava${SQUARE.has(c.ext) ? " sq" : ""}" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${pic ? `<img class="inbox-pic" src="${esc(pic)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}
         <div class="conv-body">${head ? `<div class="meta">${name ? `<b>${esc(name)}</b>` : ""}${ai ? `<span class="conv-ai">${ico("bot")}AI 代答</span>` : ""}<time title="${esc(when(m.at))}">${esc(clock(m.at))}</time></div>` : ""}
           <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : (m.ref && !m.human) ? "assistant" : ""}"${lark ? collieInboxLark.messageAttrs(m, lark) : ""}>${body}</div>
@@ -513,7 +513,10 @@
     const replyTabLabel = botSend ? "机器人发送" : "我直接回复";
     const sendBtnLabel = botSend ? "以机器人发送" : topicRoot ? "发表评论" : topicFeed || larkReply?.mode === "create_topic" ? "发布话题" : `发送到${chName}`;
     const inputHint = botSend ? `以机器人身份发到你的${chName}…` : topicRoot ? "写评论…" : topicFeed || larkReply?.mode === "create_topic" ? "写下话题内容…" : `回复「${c.name || c.chat}」…`;
-    const confirmBtnLabel = `确认发送到${chName}`;
+    const draftTarget = topicRoot ? `确认后在「${collieInboxLark.title(topicRoot)}」下发表评论`
+      : topicFeed || larkReply?.mode === "create_topic" ? `确认后在「${c.name || c.chat}」发布话题` : `确认后发往${chName}`;
+    const confirmBtnLabel = topicRoot ? "确认发表评论"
+      : topicFeed || larkReply?.mode === "create_topic" ? "确认发布话题" : `确认发送到${chName}`;
     const attachBtn = `<button type="button" class="icon-btn attach" title="添加图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
 
     const draftProgress = (label) => `<span class="conv-draft-title"><span class="spinner small" aria-hidden="true"></span><b data-draft-stage role="status">${label}</b><span class="muted conv-draft-elapsed" data-draft-elapsed></span></span>`;
@@ -555,7 +558,7 @@
               <span class="conv-draft-status">${draft.loading
                 ? draftProgress("改写中…")
                 : `<span class="conv-draft-title">${ico("sparkles")}<b>AI 草稿</b></span>`}
-                <span class="muted conv-draft-context">确认后发往${esc(chName)}，尚未发出</span></span>
+                <span class="muted conv-draft-context">${esc(draftTarget)}，尚未发出</span></span>
               <div class="conv-draft-tools">
                 <button type="button" class="conv-chip-btn" data-conv-draft-refine="shorter" ${draft.loading ? "disabled" : ""}>${draft.loading ? "改写中…" : "更简短"}</button>
                 <button type="button" class="conv-chip-btn" data-conv-draft-refine="formal" ${draft.loading ? "disabled" : ""}>更正式</button>

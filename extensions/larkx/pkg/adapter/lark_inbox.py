@@ -1,16 +1,23 @@
 """Native inbox operations on the logged-in Feishu Web Gateway."""
 
+from collections import OrderedDict
 import logging
 import threading
 import time
+import unicodedata
+
+import peer
 
 log = logging.getLogger("larkx")
 
 RECENT_EMOJI_TTL = 60
 REACTION_NAMES_MAX = 2
 REACTION_BATCH = 50
+INBOX_READ_TTL = 10
+INBOX_READ_MAX = 64
 TOPIC_WINDOW = 50
-UNCERTAIN_FORWARD = "飞书未确认转发结果，请先到目标会话查看"
+UNCERTAIN_FORWARD = "没有收到转发回执，消息可能已经转发，请到飞书确认"
+EMOJI_KEY_MAX = 256
 
 
 def raw_id(value):
@@ -25,32 +32,42 @@ def _count(value):
         return 0
 
 
-def _request(adapter, method, data, uncertain="飞书网关没有确认操作"):
+def require_client(adapter):
+    client = adapter.client
+    if client is None:
+        raise peer.Error("not_signed_in", "飞书尚未登录，请在接入页检查连接状态")
+    return client
+
+
+def _request(adapter, method, data, forwarding=False):
     """Decode the status before the payload so a gateway refusal can't look like success."""
     import requests
     from google.protobuf.message import DecodeError
+    client = require_client(adapter)
     U = adapter.U
     gateway = U.gateway
     cmd, req, response = gateway.resolve_cmd(method)
     pkt = gateway.build_packet(cmd, U.ids.generate_long_request_id(), req_msg=gateway.request_from_dict(req, data))
+    uncertain = (peer.Error("uncertain", UNCERTAIN_FORWARD) if forwarding
+                 else ValueError("飞书网关没有确认操作"))
     try:
-        raw = adapter.client._gateway_post(pkt)
+        raw = client._gateway_post(pkt)
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else 0
         if 400 <= status < 500:
             raise ValueError("飞书拒绝操作（HTTP %s）" % status) from e
-        raise ValueError(uncertain) from e
+        raise uncertain from e
     except requests.exceptions.RequestException as e:
-        raise ValueError(uncertain) from e
+        raise uncertain from e
     if not raw:
-        raise ValueError(uncertain)
+        raise uncertain
     try:
         reply = U.P.Packet.FromString(raw)
         if reply.status:
             raise ValueError("飞书拒绝操作（状态 %s）" % reply.status)
         return gateway.response_to_dict(response, reply.payload) if reply.payload else {}
     except DecodeError as e:
-        raise ValueError(uncertain) from e
+        raise uncertain from e
 
 
 def _matches_chat(raw, chat):
@@ -63,9 +80,36 @@ class Inbox:
         self.adapter = adapter
         self.lock = threading.Lock()
         self.mru = (0, [])
+        self.reads = OrderedDict()
+        self.read_generation = 0
+
+    def invalidate(self, chat):
+        with self.lock:
+            self.read_generation += 1
+            for key in list(self.reads):
+                if key[1] == chat:
+                    del self.reads[key]
+
+    def _cached(self, key, read):
+        with self.lock:
+            hit = self.reads.get(key)
+            if hit and hit[0] > time.monotonic():
+                self.reads.move_to_end(key)
+                return hit[1]
+            generation = self.read_generation
+        found = read()
+        with self.lock:
+            # A write that occurred during this read may have already invalidated it.
+            if generation == self.read_generation:
+                self.reads[key] = (time.monotonic() + INBOX_READ_TTL, found)
+                self.reads.move_to_end(key)
+                while len(self.reads) > INBOX_READ_MAX:
+                    self.reads.popitem(last=False)
+        return found
 
     def recent(self, chat):
         adapter = self.adapter
+        require_client(adapter)
         messages = adapter.history.recent(chat)
         result = {"messages": messages}
         if not raw_id(chat):
@@ -85,8 +129,10 @@ class Inbox:
             if expires > time.monotonic():
                 return list(previous)
         try:
-            out = self.adapter.client.api("reactions.PullUserMRUReactionsRequest", {}) or {}
+            out = require_client(self.adapter).api("reactions.PullUserMRUReactionsRequest", {}) or {}
             keys = list(dict.fromkeys(key for key in out.get("userMruReactions", []) if key))
+        except peer.Error:
+            raise
         except Exception as e:
             log.warning("recent emoji: %s", e)
             keys = previous
@@ -97,16 +143,21 @@ class Inbox:
     def enrich_reactions(self, chat, messages):
         by_id = {row["id"]: row for row in messages if raw_id(row["id"])
                  and (row.get("view") or {}).get("kind") not in ("system", "recalled")}
-        ids = list(by_id)
+        ids = sorted(by_id)
         for i in range(0, len(ids), REACTION_BATCH):
+            batch = ids[i:i + REACTION_BATCH]
             try:
-                self._reactions(chat, by_id, ids[i:i + REACTION_BATCH])
+                rows = self._cached(("reactions", chat, tuple(batch)), lambda: self._reactions(chat, batch))
+                for mid, reactions in rows.items():
+                    by_id[mid]["reactions"] = reactions
+            except peer.Error:
+                raise
             except Exception as e:
                 log.warning("reactions in %s: %s", chat, e)
 
-    def _reactions(self, chat, by_id, ids):
+    def _reactions(self, chat, ids):
         adapter = self.adapter
-        response = adapter.client.api("reactions.PullReactionsRequest", {
+        response = require_client(adapter).api("reactions.PullReactionsRequest", {
             "messageIds": ids, "fetchUsers": True, "fetchChatters": True,
         }) or {}
         if response.get("status"):
@@ -118,11 +169,11 @@ class Inbox:
                 stamp = _count(item.get("nanoUpdateTime"))
                 if identity not in own or stamp >= own[identity][0]:
                     own[identity] = (stamp, not item.get("isCancelled", False))
-        for mid in ids:
-            by_id[mid]["reactions"] = []
+        reactions = {mid: [] for mid in ids}
+        with_names = []
         for entry in response.get("messageReactions") or []:
             mid = str(entry.get("messageId"))
-            if mid not in ids:
+            if mid not in reactions:
                 continue
             for item in entry.get("reactions") or []:
                 key, count = item.get("type"), _count(item.get("count"))
@@ -136,15 +187,41 @@ class Inbox:
                     ids_seen = [uid for uid in ids_seen if uid != adapter.me]
                 row = {"key": key, "count": count, "mine": mine}
                 if count <= REACTION_NAMES_MAX and len(ids_seen) == count:
-                    names = [("你" if uid == adapter.me else adapter.user_name(uid, chat)) for uid in ids_seen]
-                    if all(names):
-                        row["names"] = names
-                by_id[mid]["reactions"].append(row)
+                    with_names.append((row, ids_seen))
+                reactions[mid].append(row)
+        names = self._reaction_names(chat, {uid for _, uids in with_names for uid in uids})
+        for row, ids_seen in with_names:
+            display = [names.get(uid, "") for uid in ids_seen]
+            if all(display):
+                row["names"] = display
+        return reactions
+
+    def _reaction_names(self, chat, users):
+        adapter = self.adapter
+        names = {uid: ("你" if uid == adapter.me else adapter.names.peek("user:" + uid)) for uid in users}
+        want = sorted(uid for uid, name in names.items() if not name and raw_id(uid))
+        for i in range(0, len(want), REACTION_BATCH):
+            batch = want[i:i + REACTION_BATCH]
+            try:
+                response = require_client(adapter).api("chats.PullChatChattersByIDsRequest", {
+                    "chatId": chat, "chatterIds": [int(uid) for uid in batch], "needChatters": True,
+                }) or {}
+            except peer.Error:
+                raise
+            except Exception as e:
+                log.warning("reaction names in %s: %s", chat, e)
+                continue
+            for uid, person in (response.get("chatters") or {}).items():
+                uid = str(uid)
+                name = person.get("localizedName") or person.get("name")
+                if uid in batch and name:
+                    names[uid] = adapter.names.get("user:" + uid, lambda: name)
+        return names
 
     def message(self, chat, mid):
         if not raw_id(chat) or not raw_id(mid):
             raise ValueError("无效的飞书消息")
-        reply = self.adapter.client.api("messages.PullMessagesByIdsRequest", {"messageIds": [mid]}) or {}
+        reply = require_client(self.adapter).api("messages.PullMessagesByIdsRequest", {"messageIds": [mid]}) or {}
         raw = (reply.get("messages") or {}).get(mid)
         M = self.adapter.U.L.entities.Message
         if (not raw or str(raw.get("id") or "") != mid or not _matches_chat(raw, chat)
@@ -155,7 +232,7 @@ class Inbox:
     def topic(self, chat, tid, mid=""):
         if not raw_id(chat) or not raw_id(tid):
             raise ValueError("无效的飞书话题")
-        reply = self.adapter.client.api("thread.PullThreadsByIDsRequest", {
+        reply = require_client(self.adapter).api("thread.PullThreadsByIDsRequest", {
             "threadIds": [tid], "lastMessageCount": 0,
         }) or {}
         topic = (reply.get("threads") or {}).get(tid)
@@ -174,7 +251,7 @@ class Inbox:
         last = _count(topic.get("lastVisibleMessagePosition", topic.get("lastMessagePosition")))
         positions = list(range(max(start, last - TOPIC_WINDOW + 1), last + 1))
         if positions and (_count(topic.get("replyCount")) or last > start):
-            response = self.adapter.client.api("thread.PullThreadMessagesByPositionsRequest", {
+            response = require_client(self.adapter).api("thread.PullThreadMessagesByPositionsRequest", {
                 "threadId": tid, "positions": positions, "channelId": chat, "channelType": 1,
                 "onlyVisibleMessages": True,
             }) or {}
@@ -195,20 +272,24 @@ class Inbox:
         return messages
 
     def action(self, params):
+        require_client(self.adapter)
         chat, mid, tid = (params.get(key) or "" for key in ("chat_id", "message_id", "thread_id"))
         action = params.get("action")
         if action == "topic":
-            return {"messages": self.comments(chat, tid, mid)}
+            return {"messages": self._cached(("comments", chat, tid, mid), lambda: self.comments(chat, tid, mid))}
         if action == "reaction":
             self.message(chat, mid)
-            # Reactions are enriched from Feishu separately on every history read.
-            self.reaction(mid, params.get("key"), params.get("active"))
+            try:
+                self.reaction(mid, params.get("key"), params.get("active"))
+            finally:
+                self.invalidate(chat)
         elif action == "subscribe":
             self.topic(chat, tid, mid)
             try:
                 self.subscribe(tid, params.get("active"))
             finally:
                 self.adapter.history.invalidate(chat)
+                self.invalidate(chat)
         elif action == "forward":
             target = params.get("target") or ""
             if not raw_id(target):
@@ -222,6 +303,7 @@ class Inbox:
                     self.forward_message(chat, mid, raw, target)
             finally:
                 self.adapter.history.invalidate(target)
+                self.invalidate(target)
         else:
             raise ValueError("未知的飞书收件箱操作")
         return {}
@@ -239,7 +321,7 @@ class Inbox:
         if mode not in ("quote", "create_topic", "comment"):
             raise ValueError("无效的飞书回复方式")
         raw = self.message(chat, mid)
-        topic_mode = adapter.client.is_thread_chat(chat)
+        topic_mode = require_client(adapter).is_thread_chat(chat)
         root = raw_id(raw.get("rootId"))
         if mode == "create_topic":
             M = adapter.U.L.entities.Message
@@ -254,7 +336,8 @@ class Inbox:
             req.isReplyInThread = mode != "quote"
 
     def reaction(self, mid, key, active):
-        if not isinstance(key, str) or not key or len(key) > 256 or not isinstance(active, bool):
+        if (not isinstance(key, str) or not 1 <= len(key) <= EMOJI_KEY_MAX or not isinstance(active, bool)
+                or any(c.isspace() or unicodedata.category(c) in ("Cc", "Cs") for c in key)):
             raise ValueError("无效的表情回应")
         method = "reactions.PutReactionRequest" if active else "reactions.DeleteReactionRequest"
         _request(self.adapter, method, {"messageId": mid, "reactionType": key})
@@ -270,7 +353,7 @@ class Inbox:
     def forward_topic(self, chat, tid, target):
         reply = _request(self.adapter, "thread.PutThreadShareRequest", {
             "channelId": chat, "threadId": tid, "targets": [{"toChat": {"chatId": target}}],
-        }, UNCERTAIN_FORWARD)
+        }, forwarding=True)
         self._forward_receipt(reply, target)
 
     def forward_message(self, chat, mid, raw, target):
@@ -280,7 +363,7 @@ class Inbox:
         reply = _request(adapter, "messages.PutTransmitMessageRequest", {
             "messageId": mid, "chatIds": [target], "cids": {target: cid},
             "immutableMessage": {"messageId": mid, "chatId": chat, "messageType": raw["type"]},
-        }, UNCERTAIN_FORWARD)
+        }, forwarding=True)
         self._forward_receipt(reply, target)
 
     @staticmethod
@@ -288,6 +371,15 @@ class Inbox:
         denied = reply.get("filePermCheck") or {}
         if denied:
             raise ValueError(denied.get("toast") or "飞书限制了这条消息的转发")
-        if not any(raw_id(raw.get("id")) and (str(key) == target or _matches_chat(raw, target))
-                   for key, raw in (reply.get("messages") or {}).items()):
-            raise ValueError(UNCERTAIN_FORWARD)
+        for key, raw in (reply.get("messages") or {}).items():
+            if raw_id(raw.get("id")) and (str(key) == target or _matches_chat(raw, target)):
+                return
+        for info in (reply.get("threadMessages") or {}).values():
+            raw = info.get("message") or {}
+            if str(info.get("chatId") or "") != target and not _matches_chat(raw, target):
+                continue
+            if info.get("failed"):
+                raise ValueError("飞书拒绝了向这个会话转发消息")
+            if raw_id(raw.get("id")):
+                return
+        raise peer.Error("uncertain", UNCERTAIN_FORWARD)

@@ -306,8 +306,9 @@
 .lark-topic-list { padding-block: 12px 18px; }
 .lark-topic-card {
   margin-bottom: 10px; border: var(--bw) solid var(--line); border-radius: calc(13px * var(--round));
-  background: var(--bg); min-width: 0;
+  background: var(--bg); min-width: 0; transition: background .35s;
 }
+.lark-topic-card.flash { background: color-mix(in srgb, var(--info) 12%, var(--bg)); }
 .lark-topic-body { padding: 12px 14px; min-width: 0; overflow-wrap: anywhere; }
 .lark-topic-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; font-size: var(--fs-small); color: var(--t-meta); }
 .lark-topic-meta .conv-ava { background: var(--bg-3); flex: none; }

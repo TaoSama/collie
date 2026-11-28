@@ -86,6 +86,8 @@ class Extension:
         if method == "connector.inbox.lark_action":
             try:
                 return self._backend().inbox_lark_action(params)
+            except peer.Error:
+                raise
             except Exception as e:
                 raise peer.Error("internal", str(e))
         if method == "connector.inbox.media":

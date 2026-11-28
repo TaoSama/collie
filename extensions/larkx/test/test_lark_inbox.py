@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "pkg", "adapter"))
@@ -12,6 +13,9 @@ if not UPSTREAM:
     raise unittest.SkipTest("LARKX_UPSTREAM not set")
 
 import lark  # noqa: E402
+import lark_inbox  # noqa: E402
+import main  # noqa: E402
+import peer  # noqa: E402
 
 
 class NativeInbox(unittest.TestCase):
@@ -29,6 +33,7 @@ class NativeInbox(unittest.TestCase):
         self.calls = []
         self.posts = []
         self.status = 0
+        self.forward_receipt = None
 
     def api(self, method, params):
         self.calls.append((method, params))
@@ -51,11 +56,14 @@ class NativeInbox(unittest.TestCase):
             }}
         if method == "reactions.PullUserMRUReactionsRequest":
             return {"userMruReactions": ["THUMBSUP"]}
+        if method == "chats.PullChatChattersByIDsRequest":
+            return {"chatters": {str(uid): {"localizedName": "成员 " + str(uid)} for uid in params["chatterIds"]}}
         if method == "reactions.PullReactionsRequest":
             return {"messageReactions": [
                 {"messageId": "90", "reactions": [
                     {"type": "THUMBSUP", "count": 2, "userIds": ["12"], "chatterIds": ["12", "19"]},
                     {"type": "HEART", "count": 5, "chatterIds": ["19"]},
+                    {"type": "SMILE", "count": 2, "chatterIds": ["19", "20"]},
                 ]},
                 {"messageId": "92", "reactions": [{"type": "HEART", "count": 6}]},
             ], "selfReactionStatus": [
@@ -74,6 +82,8 @@ class NativeInbox(unittest.TestCase):
             8125: ("thread.PutThreadShareRequest", dict(messages={"32": dict(id="95", chatId="32")})),
         }
         method, body = calls[pkt.cmd]
+        if pkt.cmd == 51 and self.forward_receipt is not None:
+            body = self.forward_receipt
         _, req_type, resp_type = self.U.gateway.resolve_cmd(method)
         self.posts.append(req_type.FromString(pkt.payload))
         resp = self.U.gateway.request_from_dict(resp_type, body)
@@ -101,9 +111,32 @@ class NativeInbox(unittest.TestCase):
         self.assertEqual(messages[0]["reactions"], [
             {"key": "THUMBSUP", "count": 2, "mine": False},
             {"key": "HEART", "count": 5, "mine": True},
+            {"key": "SMILE", "count": 2, "mine": False, "names": ["成员 19", "成员 20"]},
         ])
         self.assertNotIn("reactions", messages[1])
         self.assertEqual(self.calls[0][1]["messageIds"], ["90"])
+        self.assertEqual(self.calls[1][0], "chats.PullChatChattersByIDsRequest")
+        self.assertEqual(self.calls[1][1]["chatterIds"], [19, 20])
+
+    def test_inbox_reads_expire_and_writes_invalidate(self):
+        def calls(method):
+            return sum(name == method for name, _ in self.calls)
+
+        reactions = "reactions.PullReactionsRequest"
+        comments = "thread.PullThreadMessagesByPositionsRequest"
+        with patch.object(lark_inbox.time, "monotonic", return_value=100) as clock:
+            for _ in range(2):
+                self.inbox.enrich_reactions("31", [{"id": "90"}])
+                self.action("topic", thread_id="92")
+            self.assertEqual((calls(reactions), calls(comments)), (2, 1))
+            self.action("reaction", key="THUMBSUP", active=True)
+            self.inbox.enrich_reactions("31", [{"id": "90"}])
+            self.action("topic", thread_id="92")
+            self.assertEqual((calls(reactions), calls(comments)), (4, 2))
+            clock.return_value += lark_inbox.INBOX_READ_TTL
+            self.inbox.enrich_reactions("31", [{"id": "90"}])
+            self.action("topic", thread_id="92")
+            self.assertEqual((calls(reactions), calls(comments)), (6, 3))
 
     def test_reaction_success_and_refused_gateway_packet(self):
         self.action("reaction", key="THUMBSUP", active=True)
@@ -128,6 +161,62 @@ class NativeInbox(unittest.TestCase):
         self.assertTrue(follow.setting.isFollowV2)
         self.assertFalse(unfollow.setting.isFollowV2)
         self.assertTrue(unfollow.setting.HasField("isFollowV2"))
+
+    def test_forward_uncertainty_reaches_extension_caller(self):
+        from requests.exceptions import ReadTimeout
+
+        extension = main.Extension()
+        extension.backend, extension.account = self.adapter, "用户"
+        params = {"chat_id": "31", "action": "forward", "message_id": "90", "target": "32"}
+        method = "connector.inbox.lark_action"
+        for error in (None, ReadTimeout()):
+            with self.subTest(error=error), patch.object(self, "_gateway_post", return_value=b"", side_effect=error):
+                with self.assertRaises(peer.Error) as result:
+                    extension.handle(method, params)
+                self.assertEqual(result.exception.code, "uncertain")
+                self.assertEqual(str(result.exception), "没有收到转发回执，消息可能已经转发，请到飞书确认")
+
+        self.status = 403
+        with self.assertRaises(peer.Error) as result:
+            extension.handle(method, params)
+        self.assertNotEqual(result.exception.code, "uncertain")
+        self.assertIn("403", str(result.exception))
+
+    def test_forward_receipt_in_topic_group(self):
+        info = {"chatId": "32", "message": {"id": "95", "chatId": "32"}}
+        self.forward_receipt = {"threadMessages": {"32": info}}
+        self.assertEqual(self.action("forward", target="32"), {})
+        info["failed"] = True
+        with self.assertRaisesRegex(ValueError, "拒绝"):
+            self.action("forward", target="32")
+
+        self.forward_receipt = {}
+        with self.assertRaises(peer.Error) as result:
+            self.action("forward", target="32")
+        self.assertEqual(result.exception.code, "uncertain")
+
+    def test_offline_inbox_returns_sign_in_error(self):
+        extension = main.Extension()
+        extension.backend, extension.account = self.adapter, "用户"
+        self.adapter.client = None
+        calls = [
+            lambda: extension.handle("connector.inbox.recent", {"chat_id": "31"}),
+            lambda: extension.handle("connector.inbox.lark_action", {"chat_id": "31", "action": "topic"}),
+            lambda: self.inbox.reaction("90", "THUMBSUP", True),
+        ]
+        for call in calls:
+            with self.assertRaises(peer.Error) as result:
+                call()
+            self.assertEqual(result.exception.code, "not_signed_in")
+            self.assertIn("飞书尚未登录", str(result.exception))
+
+    def test_emoji_key_accepts_tenant_keys_without_whitespace(self):
+        self.action("reaction", key="tenant.custom-😀", active=True)
+        self.assertEqual(self.posts[0].reactionType, "tenant.custom-😀")
+        for key in ("", "a" * 257, "a b", "a\x80b", "a\u00a0b", "a\ud800"):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "表情"):
+                self.action("reaction", key=key, active=True)
+        self.assertEqual(len(self.posts), 1)
 
     def test_foreign_message_and_topic_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "不属于"):

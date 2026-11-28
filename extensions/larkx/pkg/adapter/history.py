@@ -5,6 +5,7 @@ import threading
 import time
 
 import actions
+from lark_inbox import require_client
 import message_view
 
 RECENT_COUNT = 12
@@ -164,7 +165,7 @@ class History:
         return rows
 
     def _pull_raw(self, chat, info, topic_mode):
-        client = self.adapter.client
+        client = require_client(self.adapter)
         if topic_mode:
             last = info.get("lastVisibleThreadPosition")
             if last is None:

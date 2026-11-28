@@ -463,7 +463,7 @@ class Feishu:
         out = {}
         ids = [c for c in chats if str(c).isdigit()]
         for i in range(0, len(ids), READ_BATCH):
-            r = self.client.api("chats.PullChatsByIdsRequest", {"chatIds": ids[i:i + READ_BATCH]}) or {}
+            r = lark_inbox.require_client(self).api("chats.PullChatsByIdsRequest", {"chatIds": ids[i:i + READ_BATCH]}) or {}
             out.update(r.get("chats") or {})
         return out
 
@@ -684,6 +684,7 @@ class Feishu:
         finally:
             if reply_mode:
                 self.history.invalidate(chat)
+                self.native_inbox.invalidate(chat)
 
     def _record_own_cid(self, cid):
         with self._mu:
