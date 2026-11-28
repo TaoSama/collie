@@ -95,19 +95,10 @@ ps -eo pid,lstart,args | grep -E '([[:space:]]|/)agy([[:space:]]|$)|language_ser
 - `step_count = 0` 且 `last_modified_time` 是 `0001-01-01` 的是**空壳**：新建失败留下的，`/resume` 不显示，F4 也删不了，走第 3 步。其余正常会话优先走第 2 步，已删过但摘要仍回填或原始 `.db` 已缺失的直接走第 3 步。
 - 把上面的输出整理成「要删的清单」报告出来，再动手。多个会话一起删时，逐个列。
 
-**备份**：动手前把两个数据目录里涉及的文件拷到临时目录，删错了能还原。
+正常会话走 F4 时，先用技能随附的脚本备份。令 `CLEANUP_DIR` 指向 `cleanup` 技能目录。命令成功后记下输出的备份路径，再执行 F4。手动清理会在停写后用同一份文件清单先备份再删除。
 
 ```bash
-BAK=$(mktemp -d /tmp/agy-cleanup.XXXXXX)
-for ROOT in ~/.gemini/antigravity ~/.gemini/antigravity-cli; do
-  [ -d "$ROOT" ] || continue
-  d="$BAK/$(basename "$ROOT")"; mkdir -p "$d"
-  cp -p "$ROOT"/conversation_summaries.db* "$ROOT/jetbox_summaries_proto.pb" \
-        "$ROOT/cache/conversation_metadata.json" "$ROOT/cache/last_conversations.json" \
-        "$ROOT/annotations/$ID.pbtxt" "$d/" 2>/dev/null || true
-  cp -p "$ROOT/conversations/$ID.db"* "$d/" 2>/dev/null || true
-done
-echo "$BAK"
+python3 "$CLEANUP_DIR/scripts/agy_sessions.py" backup --id "${ID:-}"
 ```
 
 ## 2. 正常会话：F4 删除
@@ -124,106 +115,10 @@ echo "$BAK"
 - 要清 `~/.gemini/antigravity`（桌面目录）：退出 Antigravity 桌面应用，并确认没有残留的 `language_server` 进程在跑。
 - 要清 `~/.gemini/antigravity-cli`（CLI 目录）：停掉**所有在 `$ID` 创建之后启动的 `agy` 进程**（清理旧会话或不确定各进程启动先后时，停掉该机上全部 `agy` 进程；严格早于 `$ID` 创建前就已启动的 `agy` 进程内存里没有 `$ID`，不会写回它）。
 
-**第 2 步：按两个数据目录一次清干净**（哪个目录没有就跳过）：
+**第 2 步：备份并清理两个数据目录。** 先完成所有现存目标的备份，再清理文件和摘要。必须显式传入会话 ID。首行输出备份目录，保留到第 4 步复查通过。
 
 ```bash
-python3 - "$ID" <<'PY'
-import glob, json, os, shutil, sqlite3, sys, tempfile
-
-tid = sys.argv[1]
-tb = tid.encode()
-
-def read_varint(buf, i):
-    val, shift = 0, 0
-    while True:
-        b = buf[i]; i += 1
-        val |= (b & 0x7f) << shift
-        if not (b & 0x80): return val, i
-        shift += 7
-
-def strip_pb(path):
-    if not os.path.isfile(path): return
-    buf = open(path, "rb").read()
-    out, i, dropped = bytearray(), 0, 0
-    while i < len(buf):
-        start = i
-        tag, i = read_varint(buf, i)
-        fn, wt = tag >> 3, tag & 7
-        if wt == 2:
-            ln, i = read_varint(buf, i)
-            val = buf[i:i+ln]; i += ln
-            drop = False
-            if fn in (1, 2) and len(val) > 2 and val[0] == 0x0a:
-                klen, ki = read_varint(val, 1)
-                if val[ki:ki+klen] == tb:
-                    drop = True
-            if drop:
-                dropped += 1
-            else:
-                out.extend(buf[start:i])
-        elif wt == 0: _, i = read_varint(buf, i); out.extend(buf[start:i])
-        elif wt == 1: i += 8; out.extend(buf[start:i])
-        elif wt == 5: i += 4; out.extend(buf[start:i])
-        else: out.extend(buf[start:]); break
-    if dropped:
-        mode = os.stat(path).st_mode & 0o777
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".jetbox.")
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(out)
-            os.chmod(tmp, mode)
-            os.replace(tmp, path)
-        except Exception:
-            os.unlink(tmp); raise
-        print(f"  stripped {dropped} entry(s) from {path}")
-
-def atomic_json(path, fn):
-    if not os.path.isfile(path): return
-    d = json.load(open(path))
-    if not fn(d): return
-    mode = os.stat(path).st_mode & 0o777
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".cache.")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(d, f, indent=2, ensure_ascii=False)
-        os.chmod(tmp, mode)
-        os.replace(tmp, path)
-    except Exception:
-        os.unlink(tmp); raise
-    print(f"  updated {path}")
-
-for name in ("antigravity", "antigravity-cli"):
-    root = os.path.expanduser(f"~/.gemini/{name}")
-    if not os.path.isdir(root): continue
-    print(f"== cleaning {root}")
-    for pat in (f"conversations/{tid}.*", f"annotations/{tid}.pbtxt", f"presence/{tid}.lock"):
-        for p in glob.glob(os.path.join(root, pat)):
-            os.remove(p); print("  removed", p)
-    brain = os.path.join(root, "brain", tid)
-    if os.path.isdir(brain):
-        shutil.rmtree(brain); print("  removed", brain)
-    db = os.path.join(root, "conversation_summaries.db")
-    if os.path.isfile(db):
-        c = sqlite3.connect(db, timeout=5)
-        c.execute("DELETE FROM conversation_summaries WHERE conversation_id = ?", (tid,))
-        for tbl, q in (("conversations_fts", "DELETE FROM conversations_fts WHERE conversation_id = ?"),
-                       ("conversation_parents", "DELETE FROM conversation_parents WHERE conversation_id = ? OR parent_id = ?")):
-            if c.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (tbl,)).fetchone():
-                args = (tid,) if tbl == "conversations_fts" else (tid, tid)
-                c.execute(q, args)
-        c.commit()
-        c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        c.close()
-        print(f"  cleaned {db}")
-    strip_pb(os.path.join(root, "jetbox_summaries_proto.pb"))
-    atomic_json(os.path.join(root, "cache/conversation_metadata.json"), lambda d: bool(
-        (d.pop(tid, None) is not None) |
-        (isinstance(d.get("conversations"), dict) and d["conversations"].pop(tid, None) is not None)
-    ))
-    atomic_json(os.path.join(root, "cache/last_conversations.json"), lambda d: bool(
-        [d.pop(k) for k in [k for k, v in d.items() if v == tid]]
-    ))
-PY
+python3 "$CLEANUP_DIR/scripts/agy_sessions.py" clean --id "${ID:-}"
 ```
 
 - `jetbox_summaries_proto.pb` 的清理只按精确 ID 去掉 field 1（`summaries`）和 field 2（`file_mod_times`）里匹配的条目，原样保留其余条目的原始字节，不要直接删整份文件。
@@ -234,6 +129,6 @@ PY
 - 删完立刻跑一遍第 1 步的盘点，两个目录都应该什么都查不到。
 - **防回填复查**：启动一次新的 `agy`（或重开桌面应用），触发启动对账（`store_client` + `reconcile_summaries`）后再等几分钟（或等仍在运行的其它进程刷盘后），再跑一遍第 1 步的盘点。如果 `jetbox_summaries_proto.pb` 或 `conversation_summaries.db` 里又出现目标 ID，说明仍有旧的 `agy` 或 `language_server` 进程在内存里留着它——用 `ps` 找出并停掉后重跑第 3 步。
 - `/resume` 列表、桌面应用列表和 Collie 页面（`/api/state`、`/api/external`、`/api/history`）都不再出现。
-- 确认无误后删掉备份目录 `$BAK`。核对不通过就用备份还原，再查原因。
+- 确认无误后删掉备份目录。备份保留原数据根名称和文件相对路径。核对不通过就用备份还原，再查原因。
 
 报告写：删了哪些会话（ID、标题、正常还是空壳），停过哪些进程、每个数据目录各删了哪些文件和行，以及复查结果。

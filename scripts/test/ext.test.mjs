@@ -216,3 +216,32 @@ test("convHTML renders chronological order, unread anchor + jump controls, human
   assert.match(wxFallback, /data-mode="reply"/);
   assert.doesNotMatch(wxFallback, /AI 帮回/);
 });
+
+test("inbox search keeps a tagged link in the query on the current hub", async () => {
+  const app = readFileSync(new URL("../../web/app.js", import.meta.url), "utf8");
+  const query = "搜索 #/p/test!other-hub";
+  const requests = [];
+  const context = vm.createContext({
+    AbortController,
+    inboxQuery: query,
+    inboxSearchRequest: null,
+    inboxSearchMatches: new Set(),
+    noteBuild() {},
+    fetch: async (url, opts) => {
+      requests.push([url, opts]);
+      return new Response(JSON.stringify({ matches: [] }));
+    },
+  });
+  vm.runInContext(app.slice(app.indexOf("  let hubs ="), app.indexOf("  async function readTranscriptFrames")), context);
+  vm.runInContext(app.slice(app.indexOf("  async function refreshInboxSearch("), app.indexOf("  function setInboxQuery(")), context);
+  await vm.runInContext(`
+    hubs = [{ key: "other-hub", url: "https://other.invalid", token: "test-token" }];
+    refreshInboxSearch();
+  `, context);
+  assert.equal(requests.length, 1);
+  const [url, opts] = requests[0];
+  assert.equal(url, "/api/inbox/search?q=" + encodeURIComponent(query));
+  assert.equal(opts.credentials, "same-origin");
+  assert.equal(opts.headers.Authorization, undefined);
+  assert.equal(vm.runInContext('routeReq("/api/panes/test%21other-hub").url', context), "https://other.invalid/api/panes/test");
+});

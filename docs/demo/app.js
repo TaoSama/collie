@@ -138,7 +138,8 @@
   const untag = (text, h) => hubMarks(h).reduce((t, m) => t.split(m).join(""), text);
   function routeReq(path, body, hub) {
     const b = body === undefined ? undefined : JSON.stringify(body);
-    const h = hub || hubOf(path + (b || ""));
+    // An explicit false keeps free-text requests on this hub.
+    const h = hub === false ? null : hub || hubOf(path + (b || ""));
     if (!h) return { url: path, body: b, hub: null };
     return { url: h.url + untag(path, h), body: b && untag(b, h), hub: h };
   }
@@ -4977,7 +4978,7 @@
     if (!query) return;
     const request = inboxSearchRequest = new AbortController();
     try {
-      const r = await api("/api/inbox/search?q=" + encodeURIComponent(query), { signal: request.signal });
+      const r = await api("/api/inbox/search?q=" + encodeURIComponent(query), { hub: false, signal: request.signal });
       if (request.signal.aborted) return;
       const matches = new Set(r.matches);
       if (matches.size === inboxSearchMatches.size && r.matches.every((id) => inboxSearchMatches.has(id))) return;

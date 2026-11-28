@@ -15,10 +15,10 @@ from pathlib import Path
 
 import actions
 import history
-import link_preview
 import message_view
 import richtext
 from lark_ws import PushStream
+from link_preview_fetch import LinkPreviews
 
 log = logging.getLogger("larkx")
 
@@ -193,19 +193,18 @@ class Feishu:
         self.U = U
         self.region = region
         self.on_save = on_save
-        self.client = None
+        self._link_previews = None
         self.me = ""
         self.self_chat = ""
         self.qr = None
         self.qr_status = QR_WAITING
-        self.names = _Names()
         self.recent = collections.OrderedDict()  # message id -> (root id, text)
         self.pending_docs = set()  # comments being handed to the hub
         self.own_cids = collections.OrderedDict()  # what this adapter sent: its echo is not news
         self._mu = threading.Lock()
-        self.history = history.History(self)
+        self._set_client(None)
         self._pushes = PushStream(U, self._mu, lambda: self.client, self._deliver, self._deliver_doc_comments,
-                                  self.signed_out, on_calendar_change=self.history.invalidate_calendars)
+                                  self.signed_out, on_calendar_change=lambda: self.history.invalidate_calendars())
         self._react_pool = ThreadPoolExecutor(max_workers=2)  # reactions never wait behind a push
         self.trigger = ""  # Collie's trigger word (channel.settings): your own request is marked at once
         self.self_mention = True  # @自己唤起: @-mentioning yourself is a request
@@ -218,15 +217,25 @@ class Feishu:
 
     # Signing in.
 
+    def _set_client(self, client):
+        with self._mu:
+            if self._link_previews is not None:
+                self._link_previews.close()
+            self.client = client
+            self.names = _Names()
+            self._link_previews = LinkPreviews(self, client)
+            self.history = history.History(self, self._link_previews)
+
     def restore(self, saved):
         """Signs in with kept credentials; the account's name. Raises Expired, or OSError for the network."""
         auth = make_auth(self.U, self.region, saved, self.on_save)
         try:
-            self.client = self.U.client.LarkClient(auth)  # checks the session first
+            client = self.U.client.LarkClient(auth)  # checks the session first
         except self.U.auth.AuthExpired as e:
             if not network_failure(str(e)) and self.signed_out(auth):
                 raise Expired(str(e))
             raise Unreachable(short_reason(str(e)))
+        self._set_client(client)
         self.me = str(auth.user_id)
         try:
             self.self_chat = str(self.client.create_chat(self.me) or "")
@@ -265,7 +274,8 @@ class Feishu:
 
     def logout(self):
         self.stop()
-        self.client, self.me, self.self_chat, self._emojis, self._primary_cal = None, "", "", None, None
+        self._set_client(None)
+        self.me, self.self_chat, self._emojis, self._primary_cal = "", "", None, None
 
     # Receiving.
 
@@ -331,7 +341,9 @@ class Feishu:
         mtype = msg.get("msg_type")
         if not mid or not chat:
             return None
-        self.history.invalidate(chat)
+        with self._mu:
+            inbox = self.history
+        inbox.invalidate(chat)
         if mtype == MSG_SYSTEM:
             return None  # system notices appear in history without increasing the unread count
         with self._mu:
@@ -368,8 +380,6 @@ class Feishu:
         else:
             text = preview
         out["text"] = text
-        if mtype in (richtext.MSG_POST, MSG_TEXT):
-            link_preview.enrich_links(self, [(msg, out)])
         with self._mu:
             quoted = self.recent.get(str(msg.get("parent_id") or ""))
         if quoted:
@@ -405,8 +415,16 @@ class Feishu:
             out["folded"] = folded
         if at := history.message_at(msg):
             out["at"] = at
+        link_msg = msg if mtype in (richtext.MSG_POST, MSG_TEXT) else None
         if (msg.get("position") or 0) < 0:
-            self.history.saw_topic_reply(chat, {k: out[k] for k in HISTORY_FIELDS if k in out})
+            entry = {k: out[k] for k in HISTORY_FIELDS if k in out}
+            inbox.saw_topic_reply(chat, link_msg, entry)
+        if link_msg is not None:
+            if out.get("view") is not None:
+                out["view"] = dict(out["view"])
+            inbox.previews.enrich([(link_msg, out)])
+            if inbox is not self.history:
+                return None
         return out
 
     def _remember(self, mid, root, text, again=False):

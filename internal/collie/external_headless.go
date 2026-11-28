@@ -300,10 +300,24 @@ func (s *Server) runHeadlessTurn(ctx context.Context, req headlessReq) error {
 		return err
 	}
 	pid := cmd.Process.Pid
+	exited, killed := make(chan struct{}), make(chan struct{})
+	// A descendant can keep stdout open after the CLI exits. Escalate a
+	// stop even when the stream reader cannot yet reach Wait.
+	stopKill := context.AfterFunc(ctx, func() {
+		defer close(killed)
+		select {
+		case <-exited:
+		case <-time.After(cmd.WaitDelay):
+		}
+		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			log.Printf("headless %s %s: stop process group: %v", req.kind, req.session, err)
+		}
+	})
 	streamErr := readHeadlessStream(req.kind, stdout)
 	waitErr := cmd.Wait()
-	if ctx.Err() != nil && pid > 0 {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	close(exited)
+	if ctx.Err() != nil || !stopKill() {
+		<-killed
 		return ctx.Err()
 	}
 	if streamErr != "" {

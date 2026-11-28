@@ -570,8 +570,11 @@ class MessageViewTest(unittest.TestCase):
                 return {}
 
         f = lark.Feishu(U, "feishu", lambda _: None)
-        f.client = Client()
+        f._set_client(Client())
+        self.addCleanup(f.logout)
         f.user_name = lambda uid, chat: "甲"
+        f.history.recent("123")
+        f.history.previews._pool.submit(lambda: None).result(timeout=3)
         rows = f.history.recent("123")
 
         # Embedded doc skipped docs.PullDocByURLsRequest

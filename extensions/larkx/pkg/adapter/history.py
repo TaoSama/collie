@@ -5,7 +5,6 @@ import threading
 import time
 
 import actions
-import link_preview
 import message_view
 
 RECENT_COUNT = 12
@@ -34,8 +33,9 @@ def _raw_time_key(raw):
 class History:
     message_at = staticmethod(message_at)
 
-    def __init__(self, adapter):
+    def __init__(self, adapter, previews):
         self.adapter = adapter
+        self.previews = previews
         self.lock = threading.Lock()
         self.cache = collections.OrderedDict()
         self.active = {}
@@ -43,9 +43,9 @@ class History:
         # own positions: the ones pushed since this run, by chat, newest last.
         self.topic_replies = {}
 
-    def saw_topic_reply(self, chat, message):
+    def saw_topic_reply(self, chat, raw, entry):
         with self.lock:
-            self.topic_replies.setdefault(chat, collections.deque(maxlen=RECENT_COUNT)).append(message)
+            self.topic_replies.setdefault(chat, collections.deque(maxlen=RECENT_COUNT)).append((raw, entry))
 
     def invalidate(self, chat):
         with self.lock:
@@ -56,7 +56,7 @@ class History:
         with self.lock:
             for chat in list(self.cache):
                 msgs = self.cache[chat][1]
-                if any((m.get("view") or {}).get("kind") == "calendar" for m in msgs):
+                if any((m.get("view") or {}).get("kind") == "calendar" for _, m in msgs):
                     self.cache.pop(chat, None)
                     self.active.pop(chat, None)
 
@@ -65,25 +65,37 @@ class History:
             return []
         with self.lock:
             cached = self.cache.get(chat)
-            if cached and cached[0] > time.monotonic():
-                return cached[1]
-            # A poll or second browser can reuse the last window while one request refreshes it.
-            if chat in self.active:
-                return cached[1] if cached else []
-            fetch = self.active[chat] = object()
-        try:
-            messages = self._read(chat)
-            with self.lock:
-                if self.active.get(chat) is fetch:
-                    self.cache[chat] = (time.monotonic() + RECENT_TTL, messages)
-                    self.cache.move_to_end(chat)
-                    while len(self.cache) > RECENT_CHATS:
-                        self.cache.popitem(last=False)
-            return messages
-        finally:
-            with self.lock:
-                if self.active.get(chat) is fetch:
-                    del self.active[chat]
+            if (cached and cached[0] > time.monotonic()) or chat in self.active:
+                # A poll or second browser can reuse the last window while one request refreshes it.
+                window = cached[1] if cached else []
+                fetch = None
+            else:
+                fetch = self.active[chat] = object()
+        if fetch is not None:
+            try:
+                window = self._read(chat)
+                with self.lock:
+                    if self.active.get(chat) is fetch:
+                        self.cache[chat] = (time.monotonic() + RECENT_TTL, window)
+                        self.cache.move_to_end(chat)
+                        while len(self.cache) > RECENT_CHATS:
+                            self.cache.popitem(last=False)
+            finally:
+                with self.lock:
+                    if self.active.get(chat) is fetch:
+                        del self.active[chat]
+
+        # Cache the unadorned window so each poll can pick up newly resolved previews.
+        messages, pairs = [], []
+        for raw, entry in window:
+            if raw is not None:
+                entry = dict(entry)
+                if entry.get("view") is not None:
+                    entry["view"] = dict(entry["view"])
+                pairs.append((raw, entry))
+            messages.append(entry)
+        self.previews.enrich(pairs)
+        return messages if self is self.adapter.history else []
 
     def _pull_raw(self, chat, info):
         client = self.adapter.client
@@ -124,7 +136,6 @@ class History:
         info = adapter.chats_now([chat]).get(chat) or {}
         messages = []
         cal_pairs = []
-        link_pairs = []
         for raw in self._pull_raw(chat, info):
             msg = message_view.decode(adapter.U, raw, chat)
             if not msg["msg_id"] or str(msg["chat_id"]) != chat:
@@ -140,23 +151,20 @@ class History:
                          sender_name="" if is_system else adapter.user_name(sender, chat),
                          owner=not is_system and bool(adapter.me) and sender == adapter.me,
                          at=message_at(msg), view=view)
-            messages.append(entry)
+            link_msg = msg if msg["msg_type"] in (message_view.TEXT, message_view.POST) else None
+            messages.append((link_msg, entry))
             if view and view.get("kind") == "calendar":
                 cal_pairs.append((msg, entry))
-            elif msg["msg_type"] in (message_view.TEXT, message_view.POST):
-                link_pairs.append((msg, entry))
         if cal_pairs:
             actions.enrich_calendars(adapter, cal_pairs)
-        if link_pairs:
-            link_preview.enrich_links(adapter, link_pairs)
         with self.lock:
             replies = list(self.topic_replies.get(chat, ()))
-        ids = {m["id"] for m in messages}
-        messages += [m for m in replies if m["id"] not in ids]
-        messages.sort(key=lambda m: m["at"])
+        ids = {m["id"] for _, m in messages}
+        messages += [(msg, m) for msg, m in replies if m["id"] not in ids]
+        messages.sort(key=lambda item: item[1]["at"])
         messages = messages[-RECENT_COUNT:]
-        pictures = adapter.user_pictures(chat, {m["sender"] for m in messages if m["sender_name"]})
-        for m in messages:
+        pictures = adapter.user_pictures(chat, {m["sender"] for _, m in messages if m["sender_name"]})
+        for _, m in messages:
             if pictures.get(m["sender"]):
                 m["sender_avatar"] = pictures[m["sender"]]
         return messages

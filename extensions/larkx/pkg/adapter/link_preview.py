@@ -650,144 +650,19 @@ def _replace_preview_urls(preview, resolved_map):
     return " ".join(out.split())[:500]
 
 
-def enrich_links(adapter, pairs):
-    """Resolve Feishu cloud doc and Meego links across a batch of (decoded_msg, out_entry) pairs.
-
-    Strictly read-only. Never mutates out["text"] (which agents use); enriches out["view"] and out["preview"].
-    """
-    if not pairs:
-        return
-    cache = getattr(adapter, "_link_cache", None)
-    if cache is None:
-        cache = LinkCache()
-        adapter._link_cache = cache
-
-    # 1. Collect all previewable links across all messages in the batch
-    per_msg = []
-    doc_urls_to_fetch = []
-    doc_url_set = set()
-    pids_to_fetch = {}  # previewId -> (url, base_info)
-    msgs_needing_hp = []  # live push messages with Meego/minutes links missing hang points
-
+def collect_links(U, pairs):
+    """Collect the links and embedded titles shared by rendering and background lookup."""
+    found = []
     for msg, out in pairs:
-        links = _extract_message_links(adapter.U, msg)
-        if not links:
-            continue
-        emb_eid, emb_url = _extract_embedded(msg)
-        per_msg.append((msg, out, links, emb_eid, emb_url))
+        links = _extract_message_links(U, msg)
+        if links:
+            emb_eid, emb_url = _extract_embedded(msg)
+            found.append((msg, out, links, emb_eid, emb_url))
+    return found
 
-        need_hp = False
-        for u, pid, eid, base in links:
-            # Priority 1: if the message itself already embeds the title, skip network fetch.
-            e_hit = emb_eid.get(eid) or emb_url.get(u)
-            if e_hit and e_hit.get("title"):
-                continue
-            ck = _cache_key(u)
-            if cache.get(ck) is not None:
-                continue
-            if base["supports_doc_api"]:
-                if u not in doc_url_set:
-                    doc_url_set.add(u)
-                    doc_urls_to_fetch.append((u, base))
-            if pid:
-                pids_to_fetch.setdefault(pid, (u, base))
-            elif not base["supports_doc_api"]:
-                need_hp = True
-        if need_hp and not msg.get("url_previews") and str(msg.get("msg_id") or "").isdigit():
-            msgs_needing_hp.append(msg)
 
-    if not per_msg:
-        return
-
-    client = getattr(adapter, "client", None)
-
-    # 2. For live pushes missing urlPreviewHangPointMap on Meego/minutes links, fetch raw message once
-    if client is not None and msgs_needing_hp:
-        mids = list(dict.fromkeys(str(m["msg_id"]) for m in msgs_needing_hp))[:20]
-        try:
-            pulled = (client.api("messages.PullMessagesByIdsRequest", {"messageIds": mids}) or {}).get("messages") or {}
-        except Exception as e:
-            log.debug("link preview pull messages: %s", e)
-            pulled = {}
-        for m in msgs_needing_hp:
-            raw_m = message_view.obj(pulled.get(str(m["msg_id"])))
-            hp = message_view.obj(raw_m.get("urlPreviewHangPointMap"))
-            if hp:
-                m["url_previews"] = hp
-        # Refresh pids from newly pulled hang points
-        for idx, (msg, out, links, emb_eid, emb_url) in enumerate(per_msg):
-            if msg in msgs_needing_hp and msg.get("url_previews"):
-                links = _extract_message_links(adapter.U, msg)
-                per_msg[idx] = (msg, out, links, emb_eid, emb_url)
-                for u, pid, eid, base in links:
-                    if pid and cache.get(_cache_key(u)) is None:
-                        pids_to_fetch.setdefault(pid, (u, base))
-
-    # 3. Batch fetch Feishu cloud doc metadata via docs.PullDocByURLsRequest
-    resolved_fresh = {}  # cache_key -> info
-    if client is not None and doc_urls_to_fetch:
-        url_to_base = {u: base for u, base in doc_urls_to_fetch}
-        urls_list = list(url_to_base.keys())
-        for i in range(0, len(urls_list), BATCH_SIZE):
-            chunk = urls_list[i:i + BATCH_SIZE]
-            try:
-                resp = client.api("docs.PullDocByURLsRequest", {"urls": chunk}) or {}
-            except Exception as e:
-                log.warning("docs.PullDocByURLsRequest: %s", e)
-                continue
-            for u, doc_obj in message_view.obj(resp.get("docs")).items():
-                base = url_to_base.get(u) or classify_url(u)
-                if base and isinstance(doc_obj, dict):
-                    info = _parse_doc_entry(doc_obj, base)
-                    ck = _cache_key(u)
-                    resolved_fresh[ck] = info
-                    cache.put(ck, info)
-            for u in list(message_view.seq(resp.get("noPermUrls"))) + list(message_view.seq(resp.get("noPermUrlsV2"))):
-                ck = _cache_key(u)
-                if ck not in resolved_fresh and u in url_to_base:
-                    info = dict(url_to_base[u], no_perm=True)
-                    resolved_fresh[ck] = info
-                    cache.put(ck, info)
-            for u in message_view.seq(resp.get("deletedUrlsV2")):
-                ck = _cache_key(u)
-                if ck not in resolved_fresh and u in url_to_base:
-                    info = dict(url_to_base[u], deleted=True)
-                    resolved_fresh[ck] = info
-                    cache.put(ck, info)
-
-    # 4. Batch fetch Meego & non-doc previews via url_preview.GetPreviewRequest (deduplicated by cache key)
-    seen_preview_cks = set()
-    remaining_pids = {}
-    for pid, (u, base) in pids_to_fetch.items():
-        ck = _cache_key(u)
-        if ck in seen_preview_cks or (resolved_fresh.get(ck) or {}).get("title") or cache.get(ck) is not None:
-            continue
-        seen_preview_cks.add(ck)
-        remaining_pids[pid] = (u, base)
-    if client is not None and remaining_pids:
-        names = getattr(adapter, "names", None)
-        user_peek = (lambda uid: names.peek("user:" + str(uid)) or "") if names is not None else None
-        pid_list = list(remaining_pids.keys())
-        for i in range(0, len(pid_list), BATCH_SIZE):
-            chunk = pid_list[i:i + BATCH_SIZE]
-            try:
-                resp = client.api("url_preview.GetPreviewRequest",
-                                  {"appId": 1, "previewIds": chunk, "locale": "zh_CN"}) or {}
-            except Exception as e:
-                log.warning("url_preview.GetPreviewRequest: %s", e)
-                continue
-            pmap = message_view.obj(resp.get("previewEntityMap"))
-            for pid in chunk:
-                ent = message_view.obj(pmap.get(pid))
-                if not ent:
-                    continue
-                u, base = remaining_pids[pid]
-                info = _parse_preview_entity(ent, base, user_lookup=user_peek)
-                ck = _cache_key(u)
-                resolved_fresh[ck] = info
-                cache.put(ck, info)
-
-    # 5. Apply resolved previews to each message's view and preview string
+def render_links(U, cache, per_msg):
+    """Enrich views and previews without changing the text used by agents."""
     for msg, out, links, emb_eid, emb_url in per_msg:
         resolved_map = {}
         ordered_urls = []
@@ -803,7 +678,7 @@ def enrich_links(adapter, pairs):
                     info["kind"], info["label"], info["short_label"] = DOC_TYPE_INFO[dt_val]
             else:
                 ck = _cache_key(u)
-                info = resolved_fresh.get(ck) or cache.get(ck) or dict(base)
+                info = cache.get(ck) or dict(base)
             info = _fallback_info(u, info)
             resolved_map[u] = info
             ordered_urls.append(u)
@@ -814,7 +689,7 @@ def enrich_links(adapter, pairs):
         # Ensure view exists (TEXT messages without emojis/images start with view=None)
         view = out.get("view")
         if view is None:
-            view, _ = message_view.describe(adapter.U, msg, emojis=adapter.emojis, me=adapter.me, force_post=True)
+            view, _ = message_view.describe(U, msg, force_post=True)
             if view is None:
                 continue
             out["view"] = view
