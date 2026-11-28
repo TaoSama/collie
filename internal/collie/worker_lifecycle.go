@@ -78,7 +78,7 @@ func deathReason(screen string) string {
 }
 
 func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
-	if !blocked && w.background != nil && sp.workerWaiting(ctx, w) {
+	if !blocked && sp.workerWaiting(ctx, w) {
 		return
 	}
 	// The human chose to bypass permissions in settings, so a worker's
@@ -131,6 +131,17 @@ func (sp *Super) workerSettled(ctx context.Context, w *Worker, blocked bool) {
 		sp.addAskLocked(w, dialog)
 		return
 	}
+	if w.Ended {
+		return
+	}
+	if w.Background != nil {
+		// Save the cleared wait with the resulting event or resume plan.
+		w.Background = nil
+		sp.dirty = true
+		if time.Since(w.ReportAt) <= workerReportGrace {
+			return
+		}
+	}
 	if msg := sp.workerAgentError(ctx, w, summary); msg != "" {
 		// Its agent stopped it (out of quota, logged out, the API down):
 		// the turn ended, the work did not.
@@ -152,6 +163,12 @@ const (
 // workerWaiting rechecks a pending completion. Read the live footer here so
 // a stale UI cache can't let a just-finished turn through.
 func (sp *Super) workerWaiting(ctx context.Context, w *Worker) bool {
+	sp.mu.Lock()
+	pending := w.Background != nil
+	sp.mu.Unlock()
+	if !pending {
+		return false
+	}
 	readCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	r, err := sp.s.herdr.Read(readCtx, w.PaneID, "detection", "text", 0)
@@ -162,23 +179,28 @@ func (sp *Super) workerWaiting(ctx context.Context, w *Worker) bool {
 	now := time.Now()
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	if w.Ended {
+	if w.Background == nil {
 		return true
 	}
-	m := w.background
+	m := *w.Background
 	if footer == "" {
-		if m.hash == "" && now.Sub(m.since) < backgroundFooterGrace {
-			return true
+		if m.clearAt.IsZero() {
+			m.clearAt = now
+			w.Background = &m
 		}
-		w.background = nil
-		return now.Sub(w.ReportAt) <= workerReportGrace
+		return now.Sub(m.clearAt) < backgroundFooterGrace
 	}
-	if h := progressHash(r.Text); h != m.hash {
-		m.hash, m.since = h, now
-	} else if !m.flag && now.Sub(m.since) > backgroundStall {
-		m.flag = true
+	m.clearAt = time.Time{}
+	if h := progressHash(r.Text); h != m.Hash {
+		m.Hash, m.Since = h, now
+	} else if !m.Stalled && now.Sub(m.Since) > backgroundStall {
+		m.Stalled = true
 		sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf(
 			"worker %s has been waiting for background work with no visible progress for %d minutes. Its terminal shows:\n%s", w.Name, int(backgroundStall.Minutes()), footer), "", "", w.Name)
+	}
+	if m != *w.Background {
+		w.Background = &m
+		sp.dirty = true
 	}
 	return true
 }

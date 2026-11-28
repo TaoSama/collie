@@ -12,10 +12,11 @@ import (
 // timer and ends its turn, Claude and Codex leave shells running. herdr can
 // call that done or idle while the agent's footer still shows work.
 
-var bgFooter = regexp.MustCompile(`(?i)\b[1-9]\d*\s+(` +
-	`background\s+(tasks?|shells?|jobs?|agents?|terminals?)\b|task\(s\)|sub-?agents?\b|shells?(\s+(still\s+)?running\b|$))` +
-	`|^◯\s+\S.*\s{2,}\d+[hms]\b` +
-	`|^● \[\d{2}:\d{2}:\d{2}\].*\btimer running$`)
+var bgFooter = regexp.MustCompile(`(?i)·\s*[1-9]\d*\s+` +
+	`(?:background\s+(?:tasks?|shells?|jobs?|agents?)|sub-?agents?|local\s+agents?|shells?)(?:\(s\))?(?:\s*·|$)` +
+	`|·\s*[1-9]\d*\s+task\(s\)\s*·\s*/tasks$` +
+	`|^[1-9]\d*\s+background\s+terminals?\s+running\b` +
+	`|^◯\s+\S.*\s{2,}\d+[hms]\b`)
 
 func hasBackground(screen string) bool {
 	return backgroundFooter(screen) != ""

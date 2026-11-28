@@ -171,7 +171,7 @@ func (sp *Super) tick(parent context.Context) {
 		if !alive {
 			if w.Status != "starting" && w.Status != "failed" && settled[w.Name] == w {
 				w.Ended, w.Status = true, "gone"
-				w.background = nil
+				w.Background = nil
 				sp.ingestLocked("worker", w.Thread, w.Name, fmt.Sprintf("worker %s exited (its herdr pane is gone).", w.Name), "", "", w.Name)
 				sp.addEntryLocked("event", w.Thread, w.Name+" 已退出", w.Name, "info")
 			}
@@ -187,7 +187,7 @@ func (sp *Super) tick(parent context.Context) {
 			if now.Sub(since) > 30*time.Second && now.Sub(w.CreatedAt) > 45*time.Second {
 				delete(sp.noAgent, w.Name)
 				w.Ended, w.Status, w.PaneID = true, "failed", a.Pane
-				w.background = nil
+				w.Background = nil
 				for _, t := range sp.st.Triggers {
 					if t.Status == "queued" && len(t.Deliveries) == 0 && len(t.Targets) == 1 && t.Targets[0] == w.Name {
 						t.Status = "ignored"
@@ -220,10 +220,10 @@ func (sp *Super) tick(parent context.Context) {
 			}
 			switch a.Status {
 			case "blocked":
-				w.background = nil
+				w.Background = nil
 				fin = append(fin, finished{w: w, blocked: true})
 			case "working":
-				w.background = nil
+				w.Background = nil
 				w.ResumeAt = time.Time{} // it got going again: a message, the human, or Collie's own nudge
 			}
 		}
@@ -238,12 +238,16 @@ func (sp *Super) tick(parent context.Context) {
 					continue
 				}
 				fin = append(fin, finished{w: w, draft: draft, interrupted: prev == "blocked" && a.CompletionSeq <= prevComp})
-			case draft == "" && w.background != nil:
+			case draft == "" && w.Background != nil:
+				if prevComp > 0 && a.CompletionSeq > prevComp {
+					w.Background = &workerBackgroundWait{Since: now, clearAt: now}
+				}
 				fin = append(fin, finished{w: w})
 			case draft == "" && completed && now.Sub(w.ReportAt) > workerReportGrace:
 				if w.Conv == "" || sp.s.ext == nil {
 					// herdr can report completion before the agent paints its footer.
-					w.background = &screenMark{since: now}
+					w.Background = &workerBackgroundWait{Since: now, clearAt: now}
+					sp.dirty = true
 				} else {
 					fin = append(fin, finished{w: w})
 				}

@@ -61,8 +61,9 @@ func TestHasBackground(t *testing.T) {
 		"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n  ● main\n  ◯ general-purpose  Running sleep 95 command                                                  1m 5s · ↓ 30.9k tokens": true,
 		"  ● [12:21:13] 1m 30s timer running\n───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n? for shortcuts                                                         auto · Gemini 4 Neon · low · 1 task(s) · /tasks":     true,
 		"  1 background terminal running · /ps to view · /stop to close\n› Ask Codex to do anything\n  GPT-6.2 Astra low fast · Context 4% used · 23.1K used · 258K window\n  ← for agents · ? for shortcuts                                                             ⚠ 4 warnings · f2 to view": true,
-		"⏵⏵ bypass permissions on · 2 subagent(s)": true,
-		"⏵⏵ bypass permissions on · 0 subagents":   false,
+		"⏵⏵ bypass permissions on · 2 subagent(s)":         true,
+		"⏵⏵ bypass permissions on · 1 shell · ↓ to manage": true,
+		"⏵⏵ bypass permissions on · 0 subagents":           false,
 		" How's the CLI experience so far?\n [1] Good  [2] Fine\n? for shortcuts      auto · Gemini 4 Neon · xhigh · 1 task(s) · /tasks\n": true,
 		"❯ \n  ⏵⏵ bypass permissions on · 1 background task · ↓ to manage":                                                                 true,
 		"❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)":                                                                              false,
@@ -71,6 +72,18 @@ func TestHasBackground(t *testing.T) {
 	} {
 		if got := hasBackground(screen); got != want {
 			t.Errorf("%q: got %v, want %v", screen, got, want)
+		}
+	}
+	for _, message := range []string{
+		"● Spawned 2 subagents",
+		"● Fixed 2 background tasks",
+		"● Closed 1 shell",
+		"● Closed 1 background terminal",
+		"● [12:21:13] 1m 30s timer running",
+	} {
+		screen := message + "\n❯\n────────────────────\n? for shortcuts · auto"
+		if hasBackground(screen) {
+			t.Errorf("matched an old transcript line: %q", message)
 		}
 	}
 }

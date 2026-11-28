@@ -89,7 +89,15 @@ type Worker struct {
 	ResumeAt time.Time `json:"resume_at,omitempty"`
 	Resumed  int       `json:"resumed,omitempty"`
 
-	background *screenMark // a turn whose completion is waiting on background work
+	Background *workerBackgroundWait `json:"background_wait,omitempty"`
+}
+
+// workerBackgroundWait keeps a pending turn and its stall warning across hub restarts.
+type workerBackgroundWait struct {
+	Hash    string    `json:"hash,omitempty"`
+	Since   time.Time `json:"since"`
+	Stalled bool      `json:"stalled,omitempty"`
+	clearAt time.Time // require a fresh confirmation after a restart
 }
 
 // Entry is one line of the human-facing super-agent conversation.

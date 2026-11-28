@@ -671,6 +671,7 @@ func (s *Server) stopWorker(ctx context.Context, name string) error {
 	}
 	sp.mu.Lock()
 	wk.Ended, wk.Status = true, "gone"
+	wk.Background = nil
 	for _, th := range sp.st.Threads {
 		th.Subscribers = remove(th.Subscribers, wk.Name)
 	}
