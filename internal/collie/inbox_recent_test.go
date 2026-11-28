@@ -109,3 +109,26 @@ func TestInboxListFillsLinkTitleFromConversationHistory(t *testing.T) {
 	readDetail()
 	assertList("最新消息", newer.LastAt, newer.Unread)
 }
+
+func TestInboxHistoryShowsRecalledMessage(t *testing.T) {
+	sp, h, _ := newExtTestHub(t)
+	m := fakeManifest(larkxID, "receive")
+	at := time.Now().Truncate(time.Second)
+	c, _, err := h.fileIncoming(m, incomingMsg{Chat: "123", ID: "1", At: at, Live: true,
+		Text: "原消息", SenderName: "小林"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const recalled = "撤回了一条消息"
+	source := []extproto.Message{{ID: "1", ChatID: c.Chat, At: at.Format(time.RFC3339),
+		Text: recalled, Preview: recalled, SenderName: "小林", View: &extproto.MessageView{Kind: "recalled"}}}
+	sent := []InboxMsg{{ID: "local", Ref: "sent", At: at, Text: "原消息"}}
+	outs := map[string]*OutboxItem{"sent": {MessageID: "1"}}
+	if got := mergeInboxRecent(c, sent, source, outs, ""); len(got) != 1 || got[0].Text != recalled {
+		t.Fatalf("detail messages = %+v", got)
+	}
+	sp.s.repairInboxPreview(&c, source)
+	if got, _ := h.store.conv(c.ID); got.Preview != "小林: "+recalled || got.Unread != c.Unread || !got.LastAt.Equal(at) {
+		t.Fatalf("list preview=%q, at=%v, unread=%d", got.Preview, got.LastAt, got.Unread)
+	}
+}

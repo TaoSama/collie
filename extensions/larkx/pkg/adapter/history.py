@@ -141,17 +141,21 @@ class History:
             if not msg["msg_id"] or str(msg["chat_id"]) != chat:
                 continue
             sender = str(msg["from_id"] or "")
-            view, preview = message_view.describe(adapter.U, msg, emojis=adapter.emojis, me=adapter.me)
-            data = msg["content_data"] or {}
-            text = preview
-            if msg["msg_type"] in (message_view.TEXT, message_view.POST):
-                text = adapter._written(sender, data)[0]
+            recalled = raw.get("status") == adapter.U.L.entities.Message.DELETED
+            if recalled:
+                text = preview = "撤回了一条消息"
+                view = dict(kind="recalled", nodes=[message_view.node("text", text)])
+            else:
+                view, preview = message_view.describe(adapter.U, msg, emojis=adapter.emojis, me=adapter.me)
+                text = preview
+                if msg["msg_type"] in (message_view.TEXT, message_view.POST):
+                    text = adapter._written(sender, msg["content_data"] or {})[0]
             is_system = msg["msg_type"] == message_view.SYSTEM
             entry = dict(id=str(msg["msg_id"]), chat_id=chat, sender=sender, text=text, preview=preview,
                          sender_name="" if is_system else adapter.user_name(sender, chat),
                          owner=not is_system and bool(adapter.me) and sender == adapter.me,
                          at=message_at(msg), view=view)
-            link_msg = msg if msg["msg_type"] in (message_view.TEXT, message_view.POST) else None
+            link_msg = msg if not recalled and msg["msg_type"] in (message_view.TEXT, message_view.POST) else None
             messages.append((link_msg, entry))
             if view and view.get("kind") == "calendar":
                 cal_pairs.append((msg, entry))

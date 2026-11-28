@@ -80,6 +80,32 @@ class MessageViewTest(unittest.TestCase):
         self.assertEqual(len(f.client.calls), 4)
 
 
+    def test_recalled_messages_in_history(self):
+        message = U.L.entities.Message
+        body = U.L.entities.TextContent(text="编辑后的消息").SerializeToString()
+
+        class Client:
+            def api(self, method, params):
+                if method == "chats.PullChatsByIdsRequest":
+                    return {"chats": {"123": {"lastVisibleMessagePosition": 3}}}
+                return {"messages": {
+                    "0": {"id": "1", "type": 4, "status": message.MODIFIED, "content": body, "createTime": 1795700000},
+                    "1": {"id": "2", "type": 4, "status": message.DELETED, "createTime": 1795700001},
+                    "2": {"id": "3", "type": 2, "status": message.DELETED, "createTime": 1795700002},
+                    "3": {"id": "4", "type": 14, "status": message.DELETED, "createTime": 1795700003},
+                }}
+
+        f = lark.Feishu(U, "feishu", lambda _: None)
+        f.client = Client()
+        edited, *recalled = f.history.recent("123")
+        self.assertEqual(edited["text"], "编辑后的消息")
+        self.assertIsNone(edited["view"])
+        for row in recalled:
+            with self.subTest(id=row["id"]):
+                self.assertEqual(row["text"], "撤回了一条消息")
+                self.assertEqual(row["preview"], row["text"])
+                self.assertEqual(row["view"], {"kind": "recalled", "nodes": [{"kind": "text", "text": row["text"]}]})
+
     def test_first_message_is_at_position_0(self):
         """A chat whose only message is a bot's card has it at position 0: the window reads it."""
         class Client:

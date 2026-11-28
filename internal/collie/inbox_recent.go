@@ -71,7 +71,7 @@ func latestLine(msgs []InboxMsg) (time.Time, string) {
 	return last.At, inboxPreview(last.Text, last.SenderName, last.Mine)
 }
 
-// Replace an old placeholder only when the source still has that last message.
+// Refresh a stored preview when history has newer information about that message.
 func (s *Server) repairInboxPreview(c *InboxConv, messages []extproto.Message) {
 	if c.Ext != larkxID {
 		return
@@ -85,9 +85,10 @@ func (s *Server) repairInboxPreview(c *InboxConv, messages []extproto.Message) {
 		}
 		mine := m.Owner != nil && *m.Owner
 		link := latest && m.PreviewFallback != "" && c.Preview == inboxPreview(m.PreviewFallback, m.SenderName, mine)
+		recalled := latest && m.View != nil && m.View.Kind == "recalled"
 		latest = false
 		card := legacy && m.View != nil && (m.View.Kind == "card" || m.View.Kind == "calendar")
-		if m.Preview == "" || (!link && !card) {
+		if m.Preview == "" || (!link && !card && !recalled) {
 			continue
 		}
 		preview := inboxPreview(m.Preview, m.SenderName, mine)
@@ -121,7 +122,7 @@ func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message,
 			continue
 		}
 		if i, ok := ids[m.ID]; ok {
-			if stored[i].Ref == "" && m.View != nil {
+			if m.View != nil && (stored[i].Ref == "" || m.View.Kind == "recalled") {
 				stored[i].View = m.View
 				if m.Text != "" {
 					stored[i].Text = m.Text
