@@ -1100,6 +1100,7 @@
     if (!app.contains("has-run")) delete st.run;
     if (!hdrStatus.openId) delete st.hs;
     if (!(view === "auto" && autoTab === "inbox" && inboxCur)) delete st.inboxConv;
+    if (!st.inboxConv || !inboxLark.opts().topicRoot) delete st.inboxTopic;
     const prev = navHash;
     history.pushState({ ...st, ...add, collieIdx: ++navCur, colliePrev: prev }, "", location.hash);
     navTrail.set(navCur, navHash);
@@ -1171,7 +1172,7 @@
     if (view === "file" && next !== "file") $("#rv-body > .fv-html-sandbox")?.remove();
     if (view === "ext" && (next !== "ext" || id !== extCur)) { closeExt(); extCur = null; }
     if (view === "pane" && (next !== "pane" || id !== current)) closeStream();
-    if (view === "auto" && next !== "auto") clearInterval(autoTimer);
+    if (view === "auto" && next !== "auto") { clearInterval(autoTimer); inboxLark.close(); }
     if (view === "devices" && next !== "devices") clearInterval(devTimer);
     if (view === "wb" && next !== "wb") workbench.close();
     if (next !== "collie") {
@@ -3514,18 +3515,55 @@
   let inboxSearchTimer, inboxSearchRequest, inboxSearchMatches = new Set();
   let inboxMode = "reply", inboxDraft = null, inboxInput = "", inboxSentBanner = "";
   let inboxUnread = null; // { conv, anchorId, count } captured when opening a chat with unread messages
-  let inboxNeedBottom = false;
+  let inboxNeedBottom = false, inboxNeedTop = false, inboxTopicContext = "";
+  const inboxTopicDrafts = new Map();
+  function switchInboxTopic(threadID) {
+    if (threadID === inboxTopicContext) return;
+    const draft = inboxDraft?.loading ? (inboxDraft.text ? { ...inboxDraft, loading: false } : null) : inboxDraft;
+    inboxTopicDrafts.set(inboxTopicContext, { input: inboxInput, draft });
+    inboxDraftSeq++;
+    const next = inboxTopicDrafts.get(threadID);
+    inboxInput = next?.input || "";
+    inboxDraft = next?.draft || null;
+    inboxTopicContext = threadID;
+  }
   // 收件箱's channel (飞书, 微信 …, or 已交给 AI) and each channel's filter, kept.
   let inboxChannel = store.get("inboxChannel", ""), inboxSubs = store.get("inboxSubs", {});
   const inboxFileDrafts = new Map();
   let inboxFileBox = null;
+  collieInboxLark.init(esc);
+  const inboxLark = collieInboxLark.bind($("#auto-body"), {
+    detail: () => view === "auto" && autoTab === "inbox" ? inboxDetail : null,
+    convs: () => autoData.inbox?.convs || [],
+    draw: () => drawAuto(autoData.inbox),
+    action: (body) => api("/api/inbox/lark-action", { body }),
+    reload: async () => {
+      inboxLoading = null;
+      await loadConv();
+      if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
+    },
+    replyMode: () => { inboxMode = "reply"; },
+    topicScroll: () => { inboxNeedTop = true; inboxNeedBottom = false; },
+    topicChanged: (threadID, fromHistory) => {
+      switchInboxTopic(threadID);
+      inboxNeedTop = true;
+      inboxNeedBottom = false;
+      if (threadID && !fromHistory && narrow()) layerStep({ inboxTopic: threadID });
+    },
+    topicBack: (threadID) => {
+      if (!threadID || !narrow() || history.state?.inboxTopic !== threadID || navCur <= 0) return false;
+      history.back();
+      return true;
+    },
+    busy, toast, copy: copyText,
+  });
   function inboxReferenceOnly() {
     return inboxMode === "ai" && inboxDetail?.conv?.send_media === "none";
   }
   function selectInboxFiles() {
     const forCollie = inboxMode === "collie";
     const machine = forCollie ? targetNow().machine : "";
-    const key = `${inboxCur}:${forCollie ? "collie:" + machine : inboxReferenceOnly() ? "reference" : "ext"}`;
+    const key = `${inboxCur}:${inboxTopicContext}:${forCollie ? "collie:" + machine : inboxReferenceOnly() ? "reference" : "ext"}`;
     let d = inboxFileDrafts.get(key);
     if (!d) {
       d = { key, machine, hub: forCollie ? hubOf(machine) : null, files: [] };
@@ -3574,6 +3612,7 @@
       draft: dr && { text: dr.text, loading: dr.loading, footer: dr.footer, via: dr.via },
       inputText: inboxInput,
       sentBanner: inboxSentBanner,
+      ...inboxLark.opts(),
     };
   }
   function syncConvJumps() {
@@ -3582,7 +3621,7 @@
     const down = $("#inbox-detail [data-conv-jump-bottom]");
     if (!msgs) return;
     const distBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight;
-    if (down) down.hidden = distBottom <= 72;
+    if (down) down.hidden = down.classList.contains("lark-topic-latest") ? msgs.scrollTop <= 72 : distBottom <= 72;
     if (up) {
       const anchor = msgs.querySelector("[data-unread-anchor]");
       const hasUnread = inboxUnread && inboxUnread.conv === inboxCur && inboxUnread.count > 0 && anchor;
@@ -3617,6 +3656,10 @@
       inboxInput = "";
       inboxDraft = null;
       inboxUnread = hadUnread > 0 ? { conv: id, anchorId: "", count: hadUnread } : null;
+      inboxLark.reset(id);
+      inboxTopicDrafts.clear();
+      inboxTopicContext = "";
+      inboxNeedTop = false;
       inboxNeedBottom = true;
       if (inboxMode === "ai" && prevConv && (prevConv.owner || prevConv.ext === "wechat" || prevConv.send_as === "bot")) {
         inboxMode = "reply";
@@ -3632,6 +3675,7 @@
         inboxUnread.anchorId = ms[idx]?.id || "";
         inboxUnread.count = ms.length - idx;
       }
+      if (inboxCur === id && narrow() && history.state?.inboxTopic) inboxLark.syncTopic(history.state.inboxTopic);
       drawAuto(autoData.inbox);
     });
     api("/api/inbox/conv", { body: { id, seen: true } }).catch(() => {});
@@ -3644,6 +3688,9 @@
     }
     inboxDraftSeq++;
     inboxCur = ""; inboxDetail = null; inboxCfgOpen = false; inboxSentBanner = ""; inboxDraft = null; inboxInput = "";
+    inboxLark.reset();
+    inboxTopicDrafts.clear();
+    inboxTopicContext = "";
     syncInboxChrome();
     if (view === "auto" && autoTab === "inbox") drawAuto(autoData.inbox);
   }
@@ -3652,6 +3699,7 @@
     const want = history.state?.inboxConv || "";
     if (!want && inboxCur) closeInboxConv(true);
     else if (want && want !== inboxCur) openInboxConv(want, false);
+    else if (want) inboxLark.syncTopic(history.state?.inboxTopic || "");
   }
   let inboxDraftSeq = 0;
   const draftDeliveryLabels = {
@@ -3897,7 +3945,7 @@
       const interactingCard = !!(active?.closest?.(".im-card") || pickOpen?.closest?.(".im-card"));
       const attachInInbox = !!(attachOpen && $("#inbox-detail")?.contains(attachOpen.btn));
       const uploadingInbox = !!(inboxCur && selectInboxFiles().files.some((f) => !f.path && !f.err));
-      const lockDock = typingDock || interactingCard || attachInInbox || uploadingInbox;
+      const lockDock = typingDock || interactingCard || attachInInbox || uploadingInbox || inboxLark.interacting();
       const dOpts = inboxDetailOpts();
       const sig = JSON.stringify([r, inboxCur, inboxChannel, inboxSubs, inboxQuery, inboxHelpOpen]);
       const dsig = JSON.stringify([inboxCur, inboxDetail, r?.trigger, dOpts]);
@@ -3924,7 +3972,10 @@
       } else { if (restore) restoreSimpleScroll(body, restore); return; }
       const m2 = body.querySelector(".conv-msgs");
       if (m2) {
-        if (inboxNeedBottom || (msgs && atBottom)) {
+        if (inboxNeedTop) {
+          inboxNeedTop = false;
+          m2.scrollTop = 0;
+        } else if (inboxNeedBottom || (msgs && atBottom)) {
           inboxNeedBottom = false;
           m2.scrollTop = m2.scrollHeight;
         } else if (msgs) {
@@ -4593,11 +4644,17 @@
     if (inboxLoading?.id === id) return inboxLoading.promise;
     const request = { id };
     inboxLoading = request;
-    request.promise = api("/api/inbox/conv?id=" + encodeURIComponent(id)).then((d) => {
-      if (id === inboxCur && inboxLoading === request) inboxDetail = d;
+    request.promise = api("/api/inbox/conv?id=" + encodeURIComponent(id)).then(async (d) => {
+      if (id !== inboxCur || inboxLoading !== request) return;
+      if (!inboxDetail && d.lark?.topic_mode) {
+        inboxNeedTop = true;
+        inboxNeedBottom = false;
+      }
+      inboxDetail = d;
+      await inboxLark.refreshTopic();
     }).catch((err) => {
       if (id === inboxCur && inboxLoading === request) {
-        inboxCur = ""; inboxDetail = null; toast(err.message, "attn");
+        inboxCur = ""; inboxDetail = null; inboxLark.reset(); toast(err.message, "attn");
       }
     }).finally(() => {
       if (inboxLoading === request) inboxLoading = null;
@@ -4670,7 +4727,8 @@
   async function sendInboxReply(button, confirmDraft) {
     const id = inboxCur, conv = inboxDetail?.conv;
     if (inboxReplies.has(id)) return;
-    const draft = inboxDraft, input = inboxInput, seq = inboxDraftSeq;
+    const draft = inboxDraft, input = inboxInput, seq = inboxDraftSeq, topicContext = inboxTopicContext;
+    const larkReply = confirmDraft ? null : inboxLark.sendOpts();
     const ta = $(confirmDraft ? "#inbox-detail [data-conv-draft-text]" : "#inbox-detail [data-conv-input]");
     const raw = ta?.value ?? (confirmDraft ? draft?.text || "" : input);
     const text = raw.trim();
@@ -4692,7 +4750,7 @@
         if (!text && !sendFiles.length) { toast("回复内容和附件不能都为空", "attn"); return; }
       }
       const upFiles = sendFiles.map((f) => ({ path: f.path, name: f.name, mime: f.file?.type || "" }));
-      const res = await api("/api/inbox/reply", { body: { id, text, ai_footer: withFooter, files: upFiles } });
+      const res = await api("/api/inbox/reply", { body: { id, text, ai_footer: withFooter, files: upFiles, ...larkReply } });
       fileDraft.files = fileDraft.files.filter((f) => {
         if (!files.includes(f)) return true;
         fileBox.release(f);
@@ -4703,7 +4761,16 @@
           if (confirmDraft && inboxDraft === draft && draft?.text === raw) inboxDraft = null;
           if (inboxInput === input && (confirmDraft ? !inboxDraft : inboxMode === "reply")) inboxInput = "";
         }
-        inboxUnread = null; inboxNeedBottom = true;
+        if (topicContext === inboxTopicContext) {
+          inboxLark.sent(larkReply);
+          inboxUnread = null;
+          if (larkReply?.reply_mode === "publish") {
+            inboxNeedTop = true;
+            inboxNeedBottom = false;
+          } else inboxNeedBottom = true;
+        } else if (!confirmDraft && inboxTopicDrafts.get(topicContext)?.input === input) {
+          inboxTopicDrafts.get(topicContext).input = "";
+        }
         inboxLoading = null;
       }
       const label = conv?.label || "原会话";
@@ -4843,7 +4910,7 @@
       // Clear stale detail if the open conversation does not belong to the new channel view (UX-07).
       if (inboxCur) {
         const shownNow = collieExt.inboxShown(autoData.inbox, inboxChannel, inboxSubs[inboxChannel], inboxQuery, inboxSearchMatches);
-        if (!shownNow.some((c) => c.id === inboxCur)) { inboxCur = ""; inboxDetail = null; inboxCfgOpen = false; }
+        if (!shownNow.some((c) => c.id === inboxCur)) { inboxCur = ""; inboxDetail = null; inboxCfgOpen = false; inboxLark.reset(); }
       }
       syncInboxChrome();
       drawAuto(autoData.inbox); return;
@@ -4862,6 +4929,7 @@
       await fetchAuto("inbox").catch(() => {});
       drawAuto(autoData.inbox); return;
     }
+    if (inboxLark.click(b)) return;
     if (b.hasAttribute("data-conv-close")) { closeInboxConv(); return; }
     if (b.hasAttribute("data-conv-cfg")) { inboxCfgOpen = !inboxCfgOpen; drawAuto(autoData.inbox); return; }
     if (b.hasAttribute("data-conv-banner-close")) { inboxSentBanner = ""; drawAuto(autoData.inbox); return; }
@@ -4880,7 +4948,7 @@
     if (b.hasAttribute("data-conv-jump-bottom")) {
       const msgs = $("#inbox-detail .conv-msgs");
       if (msgs) {
-        msgs.scrollTo({ top: msgs.scrollHeight, behavior: "smooth" });
+        msgs.scrollTo({ top: b.classList.contains("lark-topic-latest") ? 0 : msgs.scrollHeight, behavior: "smooth" });
         setTimeout(syncConvJumps, 360);
       }
       return;

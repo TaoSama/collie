@@ -15,6 +15,7 @@ from pathlib import Path
 
 import actions
 import history
+import lark_inbox
 import message_view
 import richtext
 from lark_ws import PushStream
@@ -41,7 +42,8 @@ DOC_CHAT = "doc:"  # a document's comments are a chat of their own
 MEDIA_MOST = 20 << 20
 CHAT_TOPICS = 3  # Chat.ChatMode THREAD_V2: a topic group, whose unread count is new topics
 READ_BATCH = 100
-HISTORY_FIELDS = ("id", "chat_id", "sender", "text", "preview", "sender_name", "owner", "at", "view")  # a history.recent entry  # chats a PullChatsByIdsRequest
+HISTORY_FIELDS = ("id", "chat_id", "sender", "text", "preview", "sender_name", "owner", "at", "view",
+                  "thread_id", "root_id")  # a history.recent entry
 AT_ALL = "all"  # the user id of an @所有人
 # A picture by its key on Feishu's CDN, 180 px: groups give only a key (and a plain-http origin).
 FEISHU_PICTURE = "https://s1-imfile.feishucdn.com/static-resource/v1/%s~?image_size=180x180&cut_type=&quality=&format=image&sticker_format=.webp"
@@ -117,7 +119,7 @@ def load_upstream(root, data_dir, region):
     return types.SimpleNamespace(
         auth=mod("larkx.auth"), client=client, region=mod("larkx.region"), media=mod("larkx.media"),
         builders=mod("larkx.proto.builders"), decoders=mod("larkx.proto.decoders"), ids=mod("larkx.proto.ids"),
-        P=mod("larkx.proto.proto_pb2"), L=mod("larkx.proto.lark_all_pb2"))
+        P=mod("larkx.proto.proto_pb2"), L=mod("larkx.proto.lark_all_pb2"), gateway=mod("larkx.proto.gateway"))
 
 
 def chat_tags(info):
@@ -239,6 +241,7 @@ class Feishu:
             self.names = _Names()
             self._link_previews = LinkPreviews(self, client)
             self.history = history.History(self, self._link_previews)
+            self.native_inbox = lark_inbox.Inbox(self)
 
     def restore(self, saved):
         """Signs in with kept credentials; the account's name. Raises Expired, or OSError for the network."""
@@ -367,6 +370,10 @@ class Feishu:
         root = str(msg.get("root_id") or "")
         root = "" if root == "0" else root
         out = {"id": mid, "chat_id": chat, "sender": sender, "owner": bool(self.me) and sender == self.me}
+        if root:
+            out["root_id"] = root
+            tid = str(msg.get("thread_id") or "")
+            out["thread_id"] = (tid if tid != "0" else "") or root
         created, updated = int(msg.get("create_time") or 0), int(msg.get("update_time") or 0)
         if seen_before or (mtype == message_view.CARD and created and updated > created):
             out["updated"] = True
@@ -645,7 +652,7 @@ class Feishu:
 
     # Sending.
 
-    def post(self, chat, markdown, footer="", reply_to=""):
+    def post(self, chat, markdown, footer="", reply_to="", reply_mode=""):
         """Sends a post; its message id. Raises NotSent or Unsure."""
         if self.client is None:
             raise NotSent("没有登录")
@@ -659,18 +666,36 @@ class Feishu:
         req.isNotified = True
         req.version = 1
         req.content.richText.CopyFrom(richtext.build(U.L, markdown, footer))
-        if reply_to:
+        if reply_mode:
+            try:
+                self.native_inbox.prepare_reply(req, chat, reply_to, reply_mode)
+            except Exception as e:
+                raise NotSent(str(e)) from e
+        elif reply_to:
             with self._mu:
                 root = (self.recent.get(reply_to) or ("",))[0] or reply_to
             req.rootId = req.parentId = root
             # A topic group refuses isReplyInThread; elsewhere a reply without it lands in the main chat.
             if not self.client.is_thread_chat(chat):
                 req.isReplyInThread = True
+        self._record_own_cid(req.cid)
+        try:
+            return self._put(U.builders.wrap_packet(CMD_PUT_MESSAGE, req, U.ids.generate_long_request_id()))
+        finally:
+            if reply_mode:
+                self.history.invalidate(chat)
+
+    def _record_own_cid(self, cid):
         with self._mu:
-            self.own_cids[req.cid] = True
+            self.own_cids[cid] = True
             while len(self.own_cids) > RECENT_MOST:
                 self.own_cids.popitem(last=False)
-        return self._put(U.builders.wrap_packet(CMD_PUT_MESSAGE, req, U.ids.generate_long_request_id()))
+
+    def inbox_recent(self, chat):
+        return self.native_inbox.recent(chat)
+
+    def inbox_lark_action(self, params):
+        return self.native_inbox.action(params)
 
     def _quick(self, msg, got):
         """Your own request is marked before Collie hears of it: nothing to ask, the trigger word is enough."""

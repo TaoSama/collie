@@ -288,7 +288,7 @@ func TestLarkInboxReplyChecksBeforeKeepingFiles(t *testing.T) {
 			sp.mu.Lock()
 			sp.st.Settings.ExtFooter = test.footer
 			sp.mu.Unlock()
-			if _, err := h.sendInboxReply(c, test.text, true, runInfo{}, []sendFile{{Name: test.filename, Data: "aGk="}}); !errors.Is(err, errLarkCredential) {
+			if _, err := h.sendInboxReply(c, test.text, true, runInfo{}, []sendFile{{Name: test.filename, Data: "aGk="}}, "", ""); !errors.Is(err, errLarkCredential) {
 				t.Fatalf("expected credentials error, got %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "ext-outbox")); !errors.Is(err, os.ErrNotExist) {
@@ -317,7 +317,7 @@ func TestLarkInboxReplyChecksBeforeKeepingFiles(t *testing.T) {
 
 	// The shared send path turns the large file into a link before appending
 	// the requested footer, even when the caller supplied no text.
-	out, err := h.sendInboxReply(c, "", true, runInfo{}, []sendFile{{Name: "large.txt", ID: id}})
+	out, err := h.sendInboxReply(c, "", true, runInfo{}, []sendFile{{Name: "large.txt", ID: id}}, "", "")
 	if err != nil || out.State != extproto.DeliverySent || len(out.Files) != 1 {
 		t.Fatalf("the generated link should be sent: %v", err)
 	}

@@ -107,6 +107,7 @@ COLLIE_HOME/ext/<id>/
 | `header_status` | `connector.header_status` | 在会话页顶部标题栏右侧槽位显示结构化状态与明细弹层 |
 | `read` | `connector.read.state`、`connector.read.mark` | 原应用自己的未读数，以及把在 Collie 里读过的会话在原应用里标为已读 |
 | `inbox_recent` | `connector.inbox.recent`、`connector.inbox.media` | 收件箱详情按需读取最近消息和附件 |
+| `lark_inbox` | `connector.inbox.lark_action` | 飞书本人身份的表情回应、转发与话题操作 |
 
 三类扩展：
 
@@ -176,6 +177,10 @@ COLLIE_HOME/ext/<id>/
 `actions` 方式发消息时，`connector.send_action` 指定的动作参数为 `{chat, text, reply_to?}`，`request_id` 就是 Collie 的 `ref`。
 
 带 `inbox_recent` 能力的扩展提供 `connector.inbox.recent({chat_id}) → {messages}` 和 `connector.inbox.media({chat_id, message_id, key}) → {mime, data}`。前者返回最旧到最新的消息，不触发请求或改变已读状态。消息可带 `preview`（一行可读摘要）和 `view`（带类型的正文结构，见 `internal/extproto/types.go`），推送也可带这两项。消息可带 `sender_avatar`（发送人的头像，要求同 `chat_avatar`），hub 签名后经 `/api/inbox/avatar` 代取。附件的 `key` 来自对应消息，hub 生成仅登录用户可访问的签名地址。附件内容沿用 base64，最多 20 MB。
+
+带 `lark_inbox` 能力时，`inbox.recent` 可返回 `lark`（话题群模式、表情资源和常用表情），消息可带表情聚合及话题元数据。Hub 调用 `connector.inbox.lark_action` 时传飞书的 `chat_id` 和动作所需的消息、话题或目标会话 ID。扩展校验消息和话题的归属。`topic` 返回 `{messages}`，`reaction`、`subscribe` 和 `forward` 成功返回 `{}`。表情和订阅用 `active` 指定期望状态。转发答复不明时不自动重发。
+
+此能力也允许 `channel.send` 携带 `reply_mode`。`quote`、`create_topic` 和 `comment` 用 `reply_to` 指定目标消息，`publish` 在话题群发布根帖。没指定模式时沿用原发送行为。
 
 ### 3.4 扩展调用 Collie 的方法和事件
 

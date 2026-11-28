@@ -11,7 +11,6 @@ RECENT_COUNT = 12
 RECENT_TTL = 30
 RECENT_CHATS = 16
 MEDIA_MOST = 20 << 20
-CHAT_TOPICS = 3
 CHANNEL_CHAT = 1
 TOPIC_REPLIES = 3
 
@@ -73,10 +72,10 @@ class History:
                 fetch = self.active[chat] = object()
         if fetch is not None:
             try:
-                window = self._read(chat)
+                window, topic_mode = self._read(chat)
                 with self.lock:
                     if self.active.get(chat) is fetch:
-                        self.cache[chat] = (time.monotonic() + RECENT_TTL, window)
+                        self.cache[chat] = (time.monotonic() + RECENT_TTL, window, topic_mode)
                         self.cache.move_to_end(chat)
                         while len(self.cache) > RECENT_CHATS:
                             self.cache.popitem(last=False)
@@ -85,21 +84,88 @@ class History:
                     if self.active.get(chat) is fetch:
                         del self.active[chat]
 
+        return self._shown(window) if self is self.adapter.history else []
+
+    def topic_mode(self, chat):
+        with self.lock:
+            cached = self.cache.get(chat)
+            return cached[2] if cached else False
+
+    def _shown(self, window):
         # Cache the unadorned window so each poll can pick up newly resolved previews.
         messages, pairs = [], []
         for raw, entry in window:
+            entry = dict(entry)
             if raw is not None:
-                entry = dict(entry)
                 if entry.get("view") is not None:
                     entry["view"] = dict(entry["view"])
                 pairs.append((raw, entry))
             messages.append(entry)
         self.previews.enrich(pairs, include_fallback=True)
-        return messages if self is self.adapter.history else []
+        return messages
 
-    def _pull_raw(self, chat, info):
+    @staticmethod
+    def topic_root(raw, tid, root, topic, setting):
+        return {**raw, "_thread": tid, "_root": root,
+                "_replies": int(topic.get("replyCount", raw.get("replyCount")) or 0),
+                "_subscribed": bool(setting.get("isFollowV2", setting.get("isFollow", False)))}
+
+    @classmethod
+    def thread_rows(cls, chat, result):
+        """Keep each root and its metadata while retaining the recent replies in the same window."""
+        rows, by_root = {}, {}
+        settings = result.get("settings") or {}
+        threads = result.get("threads") or {}
+
+        def put(raw, hint=""):
+            mid = str((raw or {}).get("id") or "")
+            if not mid or str(raw.get("chatId") or raw.get("channelId") or chat) != chat:
+                return
+            root = str(raw.get("rootId") or "")
+            root = root if root != "0" else ""
+            tid = str(raw.get("threadId") or "")
+            rows[mid] = {**raw, "_thread": (tid if tid != "0" else "") or hint, "_root": root}
+
+        for mid, raw in (result.get("rootMessages") or {}).items():
+            put(raw)
+            if (mid := str((raw or {}).get("id") or mid)) in rows:
+                by_root[mid] = rows[mid].get("_thread") or mid
+        for raw in (result.get("lastReplyMessages") or {}).values():
+            put(raw)
+        for tid, bundle in (result.get("threadMessages") or {}).items():
+            if not isinstance(bundle, dict):
+                continue
+            raw = bundle.get("rootMessage")
+            put(raw, str(tid))
+            if (mid := str((raw or {}).get("id") or "")) in rows:
+                by_root[mid] = str(tid)
+            for raw in bundle.get("lastMessages") or []:
+                put(raw, str(tid))
+                mid = str((raw or {}).get("id") or "")
+                if mid and mid in rows and not rows[mid].get("_root"):
+                    original = bundle.get("rootMessage") or {}
+                    rows[mid]["_root"] = str(original.get("id") or "")
+        meta = {}
+        for position, topic in threads.items():
+            tid = str(topic.get("id") or position)
+            mid = str(topic.get("rootMessageId") or "")
+            if mid and str(topic.get("channelId") or chat) == chat:
+                by_root[mid] = tid
+                meta[tid] = topic
+        for mid, tid in by_root.items():
+            if mid in rows:
+                topic = meta.get(tid) or {}
+                setting = settings.get(tid) or {}
+                rows[mid] = cls.topic_root(rows[mid], tid, mid, topic, setting)
+        for mid, raw in rows.items():
+            root = raw.get("_root")
+            if root and root != mid:
+                raw["_thread"] = by_root.get(root) or raw.get("_thread") or root
+        return rows
+
+    def _pull_raw(self, chat, info, topic_mode):
         client = self.adapter.client
-        if info.get("chatMode") == CHAT_TOPICS:
+        if topic_mode:
             last = info.get("lastVisibleThreadPosition")
             if last is None:
                 last = info.get("lastThreadPosition")
@@ -109,22 +175,9 @@ class History:
                 result = client.api("thread.PullThreadsByPositionsRequest", {
                     "channelId": chat, "type": CHANNEL_CHAT, "positions": positions, "lastMessageCount": TOPIC_REPLIES,
                 }) or {}
-                by_id = {}
-                for bucket in ((result.get("rootMessages") or {}).values(),
-                               (result.get("lastReplyMessages") or {}).values()):
-                    for raw in bucket:
-                        mid = str((raw or {}).get("id") or "")
-                        if mid and str(raw.get("chatId") or raw.get("channelId") or chat) == chat:
-                            by_id[mid] = raw
-                for td in (result.get("threadMessages") or {}).values():
-                    if not isinstance(td, dict):
-                        continue
-                    for raw in [td.get("rootMessage")] + list(td.get("lastMessages") or []):
-                        mid = str((raw or {}).get("id") or "")
-                        if mid and str(raw.get("chatId") or raw.get("channelId") or chat) == chat:
-                            by_id[mid] = raw
-                if by_id:
-                    return sorted(by_id.values(), key=_raw_time_key)[-RECENT_COUNT:]
+                rows = self.thread_rows(chat, result)
+                if rows:
+                    return sorted(rows.values(), key=_raw_time_key)
         last = int(info.get("lastVisibleMessagePosition") or info.get("lastMessagePosition") or 0)
         # Positions count from 0: a chat with one message (a bot's card, say) has it at 0.
         positions = list(range(max(0, last - RECENT_COUNT + 1), last + 1))
@@ -134,9 +187,25 @@ class History:
     def _read(self, chat):
         adapter = self.adapter
         info = adapter.chats_now([chat]).get(chat) or {}
+        topic_mode = adapter.U.decoders.is_thread_chat(info)
+        window = self._render(chat, self._pull_raw(chat, info, topic_mode))
+        if topic_mode:
+            return window, True
+        with self.lock:
+            replies = list(self.topic_replies.get(chat, ()))
+        ids = {m["id"] for _, m in window}
+        window += [(msg, m) for msg, m in replies if m["id"] not in ids]
+        window.sort(key=lambda item: item[1]["at"])
+        return window[-RECENT_COUNT:], False
+
+    def render_rows(self, chat, raws):
+        return self._shown(self._render(chat, sorted(raws, key=_raw_time_key)))
+
+    def _render(self, chat, raws):
+        adapter = self.adapter
         messages = []
         cal_pairs = []
-        for raw in self._pull_raw(chat, info):
+        for raw in raws:
             msg = message_view.decode(adapter.U, raw, chat)
             if not msg["msg_id"] or str(msg["chat_id"]) != chat:
                 continue
@@ -155,18 +224,27 @@ class History:
                          sender_name="" if is_system else adapter.user_name(sender, chat),
                          owner=not is_system and bool(adapter.me) and sender == adapter.me,
                          at=message_at(msg), view=view)
+            root = str(raw.get("_root") or raw.get("rootId") or "")
+            thread = raw.get("_thread") or (str(raw.get("threadId") or "") if root and root != "0" else "")
+            is_thread_root = raw.get("threadMessageType") == adapter.U.L.entities.Message.THREAD_ROOT_MESSAGE
+            if is_thread_root and root in ("", "0"):
+                root = entry["id"]
+                thread = str(raw.get("threadId") or "")
+                thread = thread if thread and thread != "0" else root
+                entry["reply_count"] = int(raw.get("replyCount") or 0)
+            if root and root != "0":
+                entry["root_id"] = root
+            if thread and thread != "0":
+                entry["thread_id"] = thread
+            if "_replies" in raw:
+                entry["reply_count"] = raw["_replies"]
+                entry["subscribed"] = raw["_subscribed"]
             link_msg = msg if not recalled and msg["msg_type"] in (message_view.TEXT, message_view.POST) else None
             messages.append((link_msg, entry))
             if view and view.get("kind") == "calendar":
                 cal_pairs.append((msg, entry))
         if cal_pairs:
             actions.enrich_calendars(adapter, cal_pairs)
-        with self.lock:
-            replies = list(self.topic_replies.get(chat, ()))
-        ids = {m["id"] for _, m in messages}
-        messages += [(msg, m) for msg, m in replies if m["id"] not in ids]
-        messages.sort(key=lambda item: item[1]["at"])
-        messages = messages[-RECENT_COUNT:]
         pictures = adapter.user_pictures(chat, {m["sender"] for _, m in messages if m["sender_name"]})
         for _, m in messages:
             if pictures.get(m["sender"]):

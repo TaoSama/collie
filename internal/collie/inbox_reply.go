@@ -198,7 +198,7 @@ func (h *extHost) completeDraft(id, text, errMsg string) bool {
 // sendInboxReply sends a human-authored or human-confirmed message (and optional
 // uploaded files/images) from the inbox UI through the extension's normal outbox
 // & idempotent ref pipeline.
-func (h *extHost) sendInboxReply(c InboxConv, text string, aiFooter bool, ri runInfo, files []sendFile) (*OutboxItem, error) {
+func (h *extHost) sendInboxReply(c InboxConv, text string, aiFooter bool, ri runInfo, files []sendFile, replyTo, replyMode string) (*OutboxItem, error) {
 	r := h.run(c.Ext)
 	if r == nil || !r.running() {
 		return nil, fmt.Errorf("扩展没在运行，无法发送")
@@ -207,7 +207,7 @@ func (h *extHost) sendInboxReply(c InboxConv, text string, aiFooter bool, ri run
 	if err != nil {
 		return nil, err
 	}
-	o := &OutboxItem{Ref: ref, Conv: c.ID, Kind: extproto.KindAnswer, State: outPending, At: time.Now()}
+	o := &OutboxItem{Ref: ref, Conv: c.ID, Kind: extproto.KindAnswer, State: outPending, At: time.Now(), ReplyTo: replyTo, ReplyMode: replyMode}
 	footer := ""
 	if aiFooter {
 		if m := h.manifest(c.Ext); m == nil || !m.Contributes.Channel.NoFooter {
@@ -320,10 +320,12 @@ func inboxFilesSummary(files []sendFile) string {
 // inboxReply handles POST /api/inbox/reply: direct human reply or confirmed AI draft.
 func (s *Server) inboxReply(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID       string           `json:"id"`
-		Text     string           `json:"text"`
-		AIFooter bool             `json:"ai_footer"`
-		Files    []inboxReplyFile `json:"files"`
+		ID        string           `json:"id"`
+		Text      string           `json:"text"`
+		AIFooter  bool             `json:"ai_footer"`
+		ReplyTo   string           `json:"reply_to"`
+		ReplyMode string           `json:"reply_mode"`
+		Files     []inboxReplyFile `json:"files"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -348,12 +350,21 @@ func (s *Server) inboxReply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": label + "扩展目前只发文字，暂不支持直接发送图片或文件"})
 		return
 	}
+	replyTo := body.ReplyTo
+	if body.ReplyMode != "" || replyTo != "" {
+		var err error
+		replyTo, err = s.larkReplyTarget(c, replyTo, body.ReplyMode)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error()})
+			return
+		}
+	}
 	files, err := loadInboxUploadFiles(body.Files)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
-	o, err := s.ext.sendInboxReply(c, text, body.AIFooter && !noFooter, s.sup.routerRunInfo(), files)
+	o, err := s.ext.sendInboxReply(c, text, body.AIFooter && !noFooter, s.sup.routerRunInfo(), files, replyTo, body.ReplyMode)
 	if err != nil {
 		status := http.StatusConflict
 		if errors.Is(err, errLarkCredential) {
@@ -407,7 +418,7 @@ func (s *Server) inboxDraftStart(w http.ResponseWriter, r *http.Request) {
 	if !c.On {
 		msgs = nil
 	}
-	msgs, _ = s.inboxRecent(r.Context(), &c, msgs, outs)
+	msgs, _, _ = s.inboxRecent(r.Context(), &c, msgs, outs)
 
 	// Prefer a live, non-blocked dedicated conversation worker; otherwise Collie Router.
 	target, via := routerName, "Collie"

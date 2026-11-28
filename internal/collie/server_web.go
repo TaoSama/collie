@@ -31,7 +31,7 @@ var shellFiles = []string{
 	"/vendor/xterm.js", "/vendor/katex/katex.min.js",
 	"/imgedit.js", "/icons.js", "/threads.js", "/tasks.js", "/machines.js", "/ext.js",
 	"/header_status.js", "/wheel.js", "/screencache.js", "/workbench.js", "/markdown.js",
-	"/inbox-message.js", "/highlight.js", "/app.js",
+	"/inbox-message.js", "/inbox-lark.js", "/highlight.js", "/app.js",
 }
 
 // webBuild fingerprints the web app's files, the service worker's included.

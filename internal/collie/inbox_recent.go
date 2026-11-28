@@ -26,20 +26,20 @@ const (
 	inboxMediaMost  = 20 << 20
 )
 
-func (s *Server) inboxRecent(ctx context.Context, c *InboxConv, stored []InboxMsg, outs map[string]*OutboxItem) ([]InboxMsg, bool) {
+func (s *Server) inboxRecent(ctx context.Context, c *InboxConv, stored []InboxMsg, outs map[string]*OutboxItem) ([]InboxMsg, bool, *extproto.LarkInbox) {
 	if m := s.ext.manifest(c.Ext); m == nil || !m.has(capInboxRecent) || c.Kind == "doc" {
-		return stored, false
+		return stored, false, nil
 	}
 	run := s.ext.run(c.Ext)
 	if run == nil || !run.running() {
-		return stored, true
+		return stored, true, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, inboxRecentWait)
 	defer cancel()
 	var recent extproto.InboxRecentResult
 	if err := run.call(ctx, extproto.MInboxRecent, extproto.InboxRecentRequest{ChatID: c.Chat}, &recent); err != nil {
 		log.Printf("ext %s: inbox history: %v", c.Ext, err)
-		return stored, true
+		return stored, true, nil
 	}
 	s.repairInboxPreview(c, recent.Messages)
 	merged := mergeInboxRecent(*c, stored, recent.Messages, outs, s.ext.footer())
@@ -51,7 +51,18 @@ func (s *Server) inboxRecent(ctx context.Context, c *InboxConv, stored []InboxMs
 			c.LastAt, c.Preview = cur.LastAt, cur.Preview
 		}
 	}
-	return merged, false
+	if c.Ext == larkxID && recent.Lark != nil && run.man.has(capLarkInbox) {
+		for i := range recent.Lark.Emoji {
+			e := &recent.Lark.Emoji[i]
+			if strings.HasPrefix(e.URL, "https://") {
+				e.URL = s.senderAvatarPath(c.ID, e.URL)
+			} else {
+				e.URL = ""
+			}
+		}
+		return merged, false, recent.Lark
+	}
+	return merged, false, nil
 }
 
 // latestLine is the newest message as the list shows it: who sent it (AI
@@ -129,6 +140,10 @@ func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message,
 				}
 			}
 			stored[i].Avatar = m.SenderAvatar
+			stored[i].LarkMessage = m.LarkMessage
+			if c.Ext == larkxID && stored[i].ID != m.ID {
+				stored[i].SourceID = m.ID
+			}
 			continue
 		}
 		at := parseAt(m.At)
@@ -138,7 +153,7 @@ func mergeInboxRecent(c InboxConv, stored []InboxMsg, recent []extproto.Message,
 		ids[m.ID] = len(stored)
 		mine := m.Owner != nil && *m.Owner
 		stored = append(stored, InboxMsg{ID: m.ID, Conv: c.ID, At: at, Sender: m.Sender, SenderName: m.SenderName,
-			Avatar: m.SenderAvatar, Mine: mine, Bot: mine && endsInFooter(m.Text, footer), Text: m.Text, View: m.View})
+			Avatar: m.SenderAvatar, Mine: mine, Bot: mine && endsInFooter(m.Text, footer), Text: m.Text, View: m.View, LarkMessage: m.LarkMessage})
 	}
 	slices.SortStableFunc(stored, func(a, b InboxMsg) int { return a.At.Compare(b.At) })
 	if len(stored) > inboxKeepMsgs {

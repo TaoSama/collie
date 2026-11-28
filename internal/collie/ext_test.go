@@ -594,6 +594,8 @@ func TestLarkxFake(t *testing.T) {
 		t.Fatalf("direct reply with a code reference = %d, want 200", reply.Code)
 	}
 
+	testLarkInboxActions(t, sp.s)
+
 	// An outbox row saved before the guard was installed must not reach the
 	// fake Feishu on retry. Its rejection reason contains no original text.
 	pending := &OutboxItem{Ref: "oold", Conv: "larkx:c_dm", Text: "token=synthetic_07062_secret",

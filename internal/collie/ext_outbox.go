@@ -247,8 +247,12 @@ func (h *extHost) trySend(r *extRun, o *OutboxItem) bool {
 	var err error
 	var res extproto.SendResult
 	o.Tries++
+	if o.ReplyMode != "" && !r.man.has(capLarkInbox) {
+		o.State, o.Reason, o.DoneAt = extproto.DeliveryFailed, "飞书扩展版本不支持这个回复方式", time.Now()
+		return h.store.putOutIf(o, outPending) == nil
+	}
 	if r.man.has(capSend) {
-		send := extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref, Chat: conv.Chat, Text: o.Text, Footer: o.Footer, Kind: o.Kind, ReplyTo: o.ReplyTo}
+		send := extproto.Send{Contribution: r.man.Contributes.Connector.ID, Ref: o.Ref, Chat: conv.Chat, Text: o.Text, Footer: o.Footer, Kind: o.Kind, ReplyTo: o.ReplyTo, ReplyMode: o.ReplyMode}
 		var links []string
 		for _, f := range o.Files {
 			if f.Link != "" { // too big: its link is in the text, or the result's

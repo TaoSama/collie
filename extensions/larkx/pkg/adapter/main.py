@@ -82,7 +82,12 @@ class Extension:
         if method == "channel.working":
             return self.working(params)
         if method == "connector.inbox.recent":
-            return {"messages": self._backend().history.recent(params.get("chat_id") or "")}
+            return self._backend().inbox_recent(params.get("chat_id") or "")
+        if method == "connector.inbox.lark_action":
+            try:
+                return self._backend().inbox_lark_action(params)
+            except Exception as e:
+                raise peer.Error("internal", str(e))
         if method == "connector.inbox.media":
             return self._backend().history.media(params.get("chat_id") or "", params.get("message_id") or "",
                                                  params.get("key") or "")
@@ -213,7 +218,8 @@ class Extension:
             text = text.rstrip()[:-len(footer)].rstrip()
         lark = self.lark
         try:
-            mid = backend.post(chat, text, footer, p.get("reply_to") or "")
+            args = (chat, text, footer, p.get("reply_to") or "")
+            mid = backend.post(*args, p["reply_mode"]) if p.get("reply_mode") else backend.post(*args)
         except lark.NotSent as e:
             self._mark(ref, None)
             raise peer.Error("cannot_send", str(e))

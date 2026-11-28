@@ -50,6 +50,7 @@ func (s *Server) extRoutes(mux *http.ServeMux) {
 	api("GET /api/inbox/search", s.inboxSearch)
 	api("GET /api/inbox/conv", s.inboxConv)
 	api("GET /api/inbox/lark-thread", s.inboxLarkThread)
+	api("POST /api/inbox/lark-action", s.inboxLarkAction)
 	api("GET /api/inbox/media", s.inboxMedia)
 	api("POST /api/inbox/action", s.inboxAction)
 	api("POST /api/inbox/conv", s.inboxSetConv)
@@ -317,12 +318,16 @@ func (s *Server) inboxConv(w http.ResponseWriter, r *http.Request) {
 		}
 		msgs = sent
 	}
-	msgs, unavailable := s.inboxRecent(r.Context(), &c, msgs, outs)
+	msgs, unavailable, lark := s.inboxRecent(r.Context(), &c, msgs, outs)
 	for i := range msgs {
 		s.inboxMediaURLs(c.ID, &msgs[i])
 		msgs[i].Avatar = s.senderAvatarPath(c.ID, msgs[i].Avatar)
 	}
-	writeJSON(w, 200, map[string]any{"conv": s.convView(c), "msgs": msgs, "outbox": outs, "history_unavailable": unavailable})
+	out := map[string]any{"conv": s.convView(c), "msgs": msgs, "outbox": outs, "history_unavailable": unavailable}
+	if lark != nil {
+		out["lark"] = lark
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) inboxSetConv(w http.ResponseWriter, r *http.Request) {

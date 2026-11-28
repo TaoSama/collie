@@ -46,7 +46,8 @@
         "send",
         "working",
         "read",
-        "inbox_recent"
+        "inbox_recent",
+        "lark_inbox"
       ]
     },
     "channel": {

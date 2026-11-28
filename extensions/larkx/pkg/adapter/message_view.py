@@ -617,7 +617,7 @@ def decode(U, raw, chat=""):
             log.debug("could not decode the extended fields of message %s", raw.get("id"))
     return dict(msg_id=raw.get("id"), msg_type=kind, chat_type=D.enum_to_int(raw.get("chatType", 0)),
                 from_id=raw.get("fromId"), chat_id=raw.get("chatId") or raw.get("channelId") or chat,
-                root_id=raw.get("rootId"), parent_id=raw.get("parentId"), cid=raw.get("cid"),
+                root_id=raw.get("rootId"), parent_id=raw.get("parentId"), thread_id=raw.get("threadId"), cid=raw.get("cid"),
                 create_time=raw.get("createTime"), update_time=raw.get("updateTime"),
                 content=summary, content_data=data,
                 url_previews=raw.get("urlPreviewHangPointMap") or {})

@@ -455,7 +455,10 @@
     if (!d) return `<div class="card conv-card"><div class="empty-row">正在读取…</div></div>`;
     const c = d.conv, msgs = d.msgs || [], outs = d.outbox || {};
     const chName = c.label || (c.ext === "wechat" ? "微信" : "飞书");
-    const kindName = kindLabel(c);
+    const lark = c.ext === "larkx" ? d.lark : null;
+    const { topicRoot, topicMsgs, topicFilter = "all", larkReply, larkPublish } = opts;
+    const topicFeed = !!lark?.topic_mode && !topicRoot;
+    const kindName = topicRoot ? `${c.name || c.chat} · 话题` : topicFeed ? "话题群" : kindLabel(c);
     const seg = (name, val, optsList) => `<div class="seg">${optsList.map(([v, l]) => `<button type="button" data-conv-set="${name}" data-v="${v}" class="${String(val) === String(v) ? "on" : ""}">${l}</button>`).join("")}</div>`;
     const href = c.worker ? workerHref(c.worker) : "";
     const worker = c.worker ? (href ? `<a href="${esc(href)}">${esc(c.worker)} →</a>` : esc(c.worker)) : "";
@@ -463,7 +466,7 @@
 
     const RUN_GAP = 5 * 60e3;
     const who = (m) => (!m.human && (m.ref || m.bot)) ? "ai" : m.mine ? "me" : m.sender || m.sender_name || "";
-    const unreadAnchor = opts.unreadAnchor || "";
+    const unreadAnchor = topicRoot ? "" : opts.unreadAnchor || "";
     const unreadCount = opts.unreadCount || 0;
     const sendAs = c.send_as || (c.owner ? "bot" : "self");
     const canSend = sendAs !== "none";
@@ -497,7 +500,8 @@
       return `${dayEl}${unreadEl}<li class="conv-msg ${mine ? "me" : "them"}${head ? " head" : ""}" data-msg-id="${esc(m.id || "")}">
         ${mine ? "" : `<span class="conv-ava${SQUARE.has(c.ext) ? " sq" : ""}" aria-hidden="true">${head ? `${ai ? ico("bot") : esc((name || "?").slice(0, 1))}${pic ? `<img class="inbox-pic" src="${esc(pic)}" alt="" loading="lazy" decoding="async">` : ""}` : ""}</span>`}
         <div class="conv-body">${head ? `<div class="meta">${name ? `<b>${esc(name)}</b>` : ""}${ai ? `<span class="conv-ai">${ico("bot")}AI 代答</span>` : ""}<time title="${esc(when(m.at))}">${esc(clock(m.at))}</time></div>` : ""}
-          <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : (m.ref && !m.human) ? "assistant" : ""}">${body}</div>${o ? outLine(o) : ""}</div></li>`;
+          <div class="msg conv-bubble${card ? " bare" : ""} ${rich ? "im-rich" : (m.ref && !m.human) ? "assistant" : ""}"${lark ? collieInboxLark.messageAttrs(m, lark) : ""}>${body}</div>
+          ${lark ? collieInboxLark.reactions(m, lark) + (!topicRoot && !topicFeed ? collieInboxLark.openButton(m) : "") : ""}${o ? outLine(o) : ""}</div></li>`;
     };
 
     let mode = canSend ? (opts.composerMode || "reply") : "collie";
@@ -507,13 +511,16 @@
     const showUnreadBtn = !!unreadAnchor && unreadCount > 0;
     const ctxN = Math.min(msgs.length, 20);
     const replyTabLabel = botSend ? "机器人发送" : "我直接回复";
-    const sendBtnLabel = botSend ? "以机器人发送" : `发送到${chName}`;
+    const sendBtnLabel = botSend ? "以机器人发送" : topicRoot ? "发表评论" : topicFeed || larkReply?.mode === "create_topic" ? "发布话题" : `发送到${chName}`;
+    const inputHint = botSend ? `以机器人身份发到你的${chName}…` : topicRoot ? "写评论…" : topicFeed || larkReply?.mode === "create_topic" ? "写下话题内容…" : `回复「${c.name || c.chat}」…`;
     const confirmBtnLabel = `确认发送到${chName}`;
     const attachBtn = `<button type="button" class="icon-btn attach" title="添加图片或文件" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>`;
 
     const draftProgress = (label) => `<span class="conv-draft-title"><span class="spinner small" aria-hidden="true"></span><b data-draft-stage role="status">${label}</b><span class="muted conv-draft-elapsed" data-draft-elapsed></span></span>`;
     let dockBody = "";
-    if (mode === "reply") {
+    if (mode === "reply" && topicFeed && !larkPublish) {
+      dockBody = `<div class="lark-publish-row"><button type="button" class="btn primary" data-lark-publish>${ico("plus")}发布话题</button></div>`;
+    } else if (mode === "reply") {
       const replyHint = botSend
         ? `${esc(chName)}仅支持以机器人「${esc(c.name || chName)}」身份发到你的${esc(chName)}（不能以你本人身份发送，支持文字/图片/文件）`
         : `以你本人身份直接发送到${esc(chName)}，不带 AI 尾标`;
@@ -521,10 +528,12 @@
         <div class="cbox conv-cbox" data-send-media="${esc(sendMedia)}">
           <div class="files" hidden></div>
           <div class="conv-media-warn" data-conv-media-warn hidden></div>
-          <textarea class="conv-input" rows="1" data-conv-input placeholder="${botSend ? `以机器人身份发到你的${esc(chName)}…` : `回复「${esc(c.name || c.chat)}」…`}">${esc(inputText)}</textarea>
+          ${larkReply ? collieInboxLark.quoteHTML(larkReply) : ""}
+          <textarea class="conv-input" rows="1" data-conv-input placeholder="${esc(inputHint)}">${esc(inputText)}</textarea>
           <div class="cbar conv-cbar">
             ${attachBtn}
             <span class="spacer"></span>
+            ${topicFeed && larkPublish ? '<button type="button" class="btn small ghost" data-lark-cancel-reply>取消</button>' : ""}
             <button type="button" class="btn primary small conv-act-btn" data-conv-send-reply>${ico("send")}<span>${esc(sendBtnLabel)}</span></button>
           </div>
           <input type="file" multiple hidden>
@@ -607,17 +616,19 @@
         </div>`;
     }
 
-    return `<div class="card conv-card">
-      <div class="card-h conv-head">
-        <button type="button" class="icon-btn conv-back" data-conv-close aria-label="返回会话列表" title="返回会话列表">${ico("chevron-left")}</button>
+    return `<div class="card conv-card${topicRoot ? " lark-topic-conv" : ""}">
+      <div class="card-h conv-head${topicRoot ? " lark-topic-head" : ""}">
+        ${topicRoot ? `<button type="button" class="icon-btn conv-back lark-topic-back" data-lark-back aria-label="返回会话" title="返回会话">${ico("chevron-left")}</button>`
+          : `<button type="button" class="icon-btn conv-back" data-conv-close aria-label="返回会话列表" title="返回会话列表">${ico("chevron-left")}</button>`}
         <div class="conv-title">
           ${avatar(c)}
           <div class="conv-title-meta">
-            <div class="conv-title-name"${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(c.name || c.chat)}</div>
+            <div class="conv-title-name"${c.name && c.name !== c.chat ? ` title="${esc(c.chat)}"` : ""}>${esc(topicRoot ? collieInboxLark.title(topicRoot) : c.name || c.chat)}</div>
             <div class="conv-title-sub">${esc(subParts.join(" · "))}</div>
           </div>
         </div>
         <div class="conv-head-acts">
+          ${topicRoot ? collieInboxLark.subscribeButton(topicRoot, true) : ""}
           <div class="conv-ai-pill" title="处理这个会话：打开后自动响应 ${esc(trigger || "/ai")}">
             <span class="conv-ai-lab">AI</span>
             <button type="button" class="switch" role="switch" aria-checked="${!!c.on}" aria-label="处理这个会话" data-conv-on></button>
@@ -636,13 +647,15 @@
       </div>` : ""}
       ${outAlert}${sentBanner}
       <div class="conv-stage">
-        ${msgs.length ? `<ul class="conv-msgs" aria-label="最近消息">${msgs.map(msg).join("")}</ul>`
+        ${topicRoot ? collieInboxLark.topicDetail(topicRoot, topicMsgs || msgs, c, lark, clock, msg)
+          : topicFeed ? collieInboxLark.topicFeed(msgs, c, lark, clock, msg, topicFilter, unreadAnchor, unreadCount)
+          : msgs.length ? `<ul class="conv-msgs" aria-label="最近消息">${msgs.map(msg).join("")}</ul>`
           : `<div class="conv-msgs conv-msgs-empty"><div class="empty-row">${esc(c.ext === "larkx" ? collieInboxMessage.legacyPreview(c.preview) : c.preview || "")
             || (c.on ? "打开以后的消息会出现在这里" : "暂无消息")}</div></div>`}
         ${d.history_unavailable ? `<div class="conv-banner warn">暂时无法从飞书读取最近消息</div>` : ""}
         <div class="conv-jumps" aria-label="消息快速跳转">
           <button type="button" class="conv-jump conv-jump-unread" data-conv-jump-unread title="跳转到第一条未读消息"${showUnreadBtn ? "" : " hidden"}>${ico("arrow-up")}<span>${unreadCount} 条未读</span></button>
-          <button type="button" class="conv-jump conv-jump-bottom" data-conv-jump-bottom aria-label="跳到最新消息" title="跳到最新消息" hidden>${ico("arrow-down")}</button>
+          <button type="button" class="conv-jump conv-jump-bottom${topicFeed ? " lark-topic-latest" : ""}" data-conv-jump-bottom aria-label="跳到最新消息" title="跳到最新消息" hidden>${ico(topicFeed ? "arrow-up" : "arrow-down")}</button>
         </div>
       </div>
       <div class="conv-dock" data-mode="${esc(mode)}">

@@ -163,6 +163,8 @@ func (c *InboxConv) setAsk(topic string, change func(*ConvAsk)) {
 
 // InboxMsg is one message of an open conversation.
 type InboxMsg struct {
+	extproto.LarkMessage
+	SourceID   string    `json:"source_id,omitempty"` // real ID when a recent message matches a local outbox item
 	ID         string    `json:"id"`
 	Conv       string    `json:"conv"`
 	At         time.Time `json:"at"`
@@ -171,9 +173,9 @@ type InboxMsg struct {
 	Avatar     string    `json:"avatar,omitempty"` // the sender's picture: the source's address, the hub's on the page
 	Mine       bool      `json:"mine,omitempty"`
 	// Human: sent directly by the signed-in human from Collie's inbox (no AI badge).
-	Human      bool      `json:"human,omitempty"`
-	Text       string    `json:"text"`
-	Ref        string    `json:"ref,omitempty"` // a send of Collie's: its outbox ref
+	Human bool   `json:"human,omitempty"`
+	Text  string `json:"text"`
+	Ref   string `json:"ref,omitempty"` // a send of Collie's: its outbox ref
 	// Bot: Collie's answer, sent from your account (it ends in the footer).
 	Bot  bool                  `json:"bot,omitempty"`
 	View *extproto.MessageView `json:"view,omitempty"`
@@ -187,6 +189,7 @@ type OutboxItem struct {
 	Text      string    `json:"text"`
 	Footer    string    `json:"footer,omitempty"` // the end of Text
 	ReplyTo   string    `json:"reply_to,omitempty"`
+	ReplyMode string    `json:"reply_mode,omitempty"`
 	Trigger   string    `json:"trigger,omitempty"`
 	State     string    `json:"state"` // pending | sent | deferred | uncertain | failed | expired
 	MessageID string    `json:"message_id,omitempty"`

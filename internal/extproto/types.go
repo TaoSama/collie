@@ -223,6 +223,7 @@ type Message struct {
 
 	// PreviewFallback is the cold link summary that Preview can replace in the inbox list.
 	PreviewFallback string `json:"preview_fallback,omitempty"`
+	LarkMessage
 }
 
 // MessageView carries readable content independently of the text used for requests.
@@ -273,7 +274,8 @@ type InboxRecentRequest struct {
 }
 
 type InboxRecentResult struct {
-	Messages []Message `json:"messages"`
+	Messages []Message  `json:"messages"`
+	Lark     *LarkInbox `json:"lark,omitempty"`
 }
 
 type InboxMediaRequest struct {
@@ -318,11 +320,12 @@ type Send struct {
 	Text         string `json:"text"`
 	// Footer is the footer Text ends with, for a channel that sets it apart
 	// (larkx shows it as a quote); a plain channel just sends Text.
-	Footer  string `json:"footer,omitempty"`
-	Kind    string `json:"kind"`
-	ReplyTo string `json:"reply_to,omitempty"`
-	Images  []Blob `json:"images,omitempty"`
-	Files   []Blob `json:"files,omitempty"`
+	Footer    string `json:"footer,omitempty"`
+	Kind      string `json:"kind"`
+	ReplyTo   string `json:"reply_to,omitempty"`
+	ReplyMode string `json:"reply_mode,omitempty"`
+	Images    []Blob `json:"images,omitempty"`
+	Files     []Blob `json:"files,omitempty"`
 	// Link is a download address for a file too big to send (result kind).
 	Link string `json:"link,omitempty"`
 }
