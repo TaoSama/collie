@@ -35,7 +35,8 @@ func readMemFile(path string) *memFile {
 func (s *Server) superMemory(w http.ResponseWriter, r *http.Request) {
 	sp := s.sup
 	if r.URL.Query().Get("area") == "tasks" {
-		writeJSON(w, 200, map[string]any{"files": sp.taskMemFiles()})
+		files, followup := sp.taskPanel()
+		writeJSON(w, 200, map[string]any{"files": files, "followup": followup, "timezone": time.Local.String()})
 		return
 	}
 	dir := sp.routerDir()

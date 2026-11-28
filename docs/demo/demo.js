@@ -296,6 +296,11 @@
       memFile("messages.md", "# What Collie recently told the human (written by the hub, oldest first)\n\n- 11-19 09:45 [chat:main] 好，分两路并行：fix-flaky-test 查分页测试，release-notes 写发布说明。\n- 11-19 09:53 [chat:main] shop-api/migrations 整理完了（41 → 33 个文件），那 3 个旧回滚脚本怎么处理？\n- 11-19 09:54 [chat:main] 发布说明写好了：6 条改动，要我直接开 PR 吗？", 5, 2867),
     ],
   };
+  const taskDecision = entries.find((e) => e.options?.includes("直接开 PR"));
+  const taskFollowup = {
+    "tasks/v1.4-release.md": { status: "waiting", detail: "确认是否直接开 PR", next_at: later(60 * 18), version: 1 },
+    "tasks/e2e-linux.md": { status: "review", detail: "核对 3 条截图差异", next_at: later(30), version: 1 },
+  };
   const settings = {
     bin: "collie", hook_key: "demo-key", router_dir: "~/.collie/router",
     policies: [{ source: "chat", action: "respond" }, { source: "github", action: "candidate" }, { source: "timer", action: "respond" }],
@@ -797,8 +802,25 @@ func List(ctx context.Context, db *sql.DB, userID int64, page, size int) ([]Orde
       if (method === "POST") timers.push({ id: "tm" + (++seq), spec: body.spec, text: body.text, target: body.target, enabled: true, next_run: later(60), owner: "you" });
       return json({ timers });
     }
+    if (p === "/api/super/decision" && q.get("id") === taskDecision.id) {
+      const open = computePending().some((e) => e.id === taskDecision.id);
+      return json({ id: taskDecision.id, kind: "options", status: open ? "open" : "done", options: taskDecision.options });
+    }
+    if (p === "/api/super/task/remind" && method === "POST") {
+      const f = taskFollowup[body.path];
+      if (!f || f.version !== body.version) return json({ error: "提醒时间已有更新" }, 409);
+      const at = Date.parse(body.local_at ? body.local_at + "Z" : body.at);
+      if (!Number.isFinite(at) || at <= Date.now()) return json({ error: "请选择未来的时间" }, 400);
+      f.next_at = new Date(at).toISOString();
+      f.version++;
+      return json({ ok: true });
+    }
     if (p === "/api/super/memory") {
-      if (method === "GET" && q.get("area") === "tasks") return json({ files: memory.files.filter((f) => /^tasks\/[^/]+\.md$/.test(f.name)) });
+      if (method === "GET" && q.get("area") === "tasks") {
+        const release = taskFollowup["tasks/v1.4-release.md"];
+        release.decision = computePending().some((e) => e.id === taskDecision.id) ? taskDecision.id : "";
+        return json({ files: memory.files.filter((f) => /^tasks\/[^/]+\.md$/.test(f.name)), followup: taskFollowup, timezone: "UTC" });
+      }
       if (method === "POST" && body.path) {
         const f = memory.files.find((x) => x.name === body.path);
         if (f) { f.text = body.text; f.size = new Blob([body.text]).size; f.mod = new Date().toISOString(); }

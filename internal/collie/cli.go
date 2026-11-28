@@ -15,12 +15,12 @@ import (
 )
 
 // The same binary doubles as the tool surface for router and worker sessions:
-// `collie reply|spawn|send|report|show|list|timer|…` talk to the local server.
+// `collie reply|spawn|send|report|show|list|task|timer|…` talk to the local server.
 
 var cliCommands = map[string]func([]string) error{
 	"reply": cliReply, "spawn": cliSpawn, "send": cliSend, "report": cliReport,
 	"subscribe": cliSubscribe, "stop": cliStop, "answer": cliAnswer, "show": cliShow, "list": cliList,
-	"timer": cliTimer, "say": cliSay, "hook": cliHook, "pair": cliPair, "wb": cliWB,
+	"task": cliTask, "timer": cliTimer, "say": cliSay, "hook": cliHook, "pair": cliPair, "wb": cliWB,
 }
 
 func collieDir() string {

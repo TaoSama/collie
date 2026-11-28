@@ -522,6 +522,8 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
 .tp-chip .k { min-width: 0; max-width: 12em; overflow: hidden; text-overflow: ellipsis; font-family: inherit; }
 .tp-chip[href]:hover { color: var(--fg); background: var(--bg); }
 .tp-chip:not([href]) { cursor: default; opacity: .7; }
+.tp-followup { color: var(--t-secondary); font-size: var(--fs-meta); overflow-wrap: anywhere; }
+.tp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .tp-empty { padding: 14px 16px 16px; font-size: var(--fs-meta); color: var(--t-empty); }
 .tp-empty span { display: block; margin-top: 4px; font-size: var(--fs-small); color: var(--t-meta); }
 .tp-more { display: block; width: calc(100% - 16px); margin: 4px 8px 2px; padding: 8px; border: 0; border-top: var(--bw) solid var(--line); border-radius: 0; background: none; text-align: left; font-size: var(--fs-small); color: var(--t-meta); cursor: pointer; }
@@ -535,6 +537,7 @@ input[type=time]:hover::-webkit-calendar-picker-indicator, input[type=datetime-l
   .tp-item { padding: 12px 8px; font-size: var(--fs-body); }
   .tp-item:hover { background: none; }
   .tp-sum { font-size: var(--fs-meta); }
+  .tp-actions .btn.small { min-height: 44px; }
   .tp-chip { min-height: 32px; padding: 0 12px 0 10px; font-size: var(--fs-meta); }
   .tp-more { padding: 12px 8px; font-size: var(--fs-meta); }
 }

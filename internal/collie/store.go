@@ -222,13 +222,14 @@ func normalizeWorkerTitle(v string) string {
 }
 
 type State struct {
-	Seq       int                `json:"seq"`
-	Triggers  []*Trigger         `json:"triggers"`
-	Threads   map[string]*Thread `json:"threads"`
-	Workers   map[string]*Worker `json:"workers"`
-	Entries   []*Entry           `json:"entries"`
-	Dismissed map[string]bool    `json:"dismissed,omitempty"`
-	Pinned    []string           `json:"pinned,omitempty"`
+	TaskFollowups map[string]*TaskFollowup `json:"-"`
+	Seq           int                      `json:"seq"`
+	Triggers      []*Trigger               `json:"triggers"`
+	Threads       map[string]*Thread       `json:"threads"`
+	Workers       map[string]*Worker       `json:"workers"`
+	Entries       []*Entry                 `json:"entries"`
+	Dismissed     map[string]bool          `json:"dismissed,omitempty"`
+	Pinned        []string                 `json:"pinned,omitempty"`
 	// Held: --opt/--check messages still waiting on the human that fell out
 	// of Entries (pending_hold.go). RemindedAt: the last daily reminder.
 	Held       []string  `json:"held,omitempty"`
@@ -321,7 +322,7 @@ func (st *State) trigger(id string) *Trigger {
 }
 
 func (st *State) policyFor(source string) Policy {
-	if source == "chat" || source == "worker" || source == "timer" || source == "system" || source == "router" {
+	if source == "chat" || source == "worker" || source == "timer" || source == "system" || source == "router" || source == taskFollowupSource {
 		return Policy{Source: source, Action: "respond"}
 	}
 	var wildcard *Policy

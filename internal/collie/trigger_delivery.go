@@ -54,16 +54,22 @@ func (sp *Super) finishDeliveryLocked(target string, list []*Trigger, retry bool
 	}
 	var notice *Entry
 	if failure != "" {
-		ids := make([]string, len(list))
-		for i, t := range list {
-			ids[i] = "#" + t.ID
+		var ids []string
+		for _, t := range list {
+			if t.Source != taskFollowupSource {
+				ids = append(ids, "#"+t.ID)
+			}
 		}
-		who := target
-		if target == routerName {
-			who = "Collie"
+		if len(ids) == 0 {
+			log.Printf("task follow-up delivery %s: %s", list[0].ID, failure)
+		} else {
+			who := target
+			if target == routerName {
+				who = "Collie"
+			}
+			notice = &Entry{ID: sp.st.nextID("e"), Role: "event", Thread: list[0].Thread, At: time.Now(), Ref: target, Tone: "error",
+				Text: fmt.Sprintf("没能把消息送进 %s 的终端（%s）：%s", who, strings.Join(ids, " "), failure)}
 		}
-		notice = &Entry{ID: sp.st.nextID("e"), Role: "event", Thread: list[0].Thread, At: time.Now(), Ref: target, Tone: "error",
-			Text: fmt.Sprintf("没能把消息送进 %s 的终端（%s）：%s", who, strings.Join(ids, " "), failure)}
 	}
 	var worker *Worker
 	if w := sp.st.Workers[target]; retry && w != nil && w.DraftTrigger == list[0].ID {

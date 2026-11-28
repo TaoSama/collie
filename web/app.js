@@ -1903,8 +1903,9 @@
   // memory/tasks/*.md, with the workers on each, floating beside the chat.
   // TASK_REFRESH_MS: how stale the task files may get while the panel is open.
   const TASK_REFRESH_MS = 10e3;
-  let taskFiles = null, taskAt = 0, taskErr = "";
-  const taskBtn = $("#task-btn"), taskPanel = $("#task-panel");
+  let taskFiles = null, taskAt = 0, taskErr = "", taskLoadSeq = 0;
+  let taskFollowup = {}, taskTimezone = "", taskReminderEdit = null;
+  const taskBtn = $("#task-btn"), taskPanel = $("#task-panel"), taskReminder = $("#task-reminder");
   // Where a task stands, its workers first (they are live), then what the
   // file's newest entry says; listed in this order. A task with nothing to go
   // on shows no state.
@@ -1925,13 +1926,27 @@
       return `<div class="tp-item" data-task="${esc(f.name)}">
         <div class="tp-top"><button type="button" class="tp-name" title="在记忆里打开 ${esc(f.name)}">${esc(t.title)}</button>${st ? `<span class="tp-st ${state}"><span class="dot ${st[1]}"></span>${st[0]}</span>` : ""}</div>
         ${sum ? `<div class="tp-sum"><span class="tp-k">${sum[0]}</span>${esc(sum[1])}</div>` : ""}
-        ${meta || ws.length ? `<div class="tp-foot">${meta}${ws.map(taskChipHTML).join("")}</div>` : ""}</div>`;
+        ${meta || ws.length ? `<div class="tp-foot">${meta}${ws.map(taskChipHTML).join("")}</div>` : ""}
+        ${taskFollowupHTML(taskFollowup[f.name])}</div>`;
     };
     const tally = TASK_ORDER.filter((k) => TASK_STATE[k] && k !== "idle").map((k) => [k, tasks.filter((x) => x.state === k).length]).filter(([, n]) => n);
     return `<div class="tp-h">进行中的任务${taskFiles ? `<span class="count">${tasks.length}</span>` : ""}${tally.length ? `<span class="tp-tally">${tally.map(([k, n]) => `<span class="${k}">${n} ${TASK_STATE[k][0]}</span>`).join(" · ")}</span>` : ""}</div>
       ${!taskFiles ? `<div class="tp-empty">${taskErr ? "读取失败：" + esc(taskErr) : "加载中…"}</div>`
         : tasks.length ? tasks.map(row).join("") : `<div class="tp-empty">没有进行中的任务<span>Collie 接下的活会列在这里，一件事一条。</span></div>`}
       ${taskFiles ? `<button type="button" class="tp-more" data-task="">在「记忆」里查看全部，包括已完成的</button>` : ""}`;
+  }
+  function taskFollowupHTML(f) {
+    if (!f) return `<div class="tp-followup">待补跟进</div>`;
+    const owner = f.owner || "Collie";
+    const state = { review: `${owner} 核查中`, stalled: `${owner} 核查中 · 疑似卡住`, offline: `${owner} 跟进 · 离线待核`, waiting: "等你处理" };
+    // The server encodes the time with the Hub's offset. Keep its wall time.
+    const when = f.next_at?.slice(0, 16).replace("T", " ");
+    const line = [state[f.status] || `${owner} 跟进`, when && `${when} ${f.status === "waiting" && f.decision ? "再提醒" : "再查"}`, f.detail].filter(Boolean);
+    return `<div class="tp-followup">${esc(line.join(" · "))}</div>
+      <div class="tp-actions">
+        ${f.decision ? `<button type="button" class="btn small" data-task-decision="${esc(f.decision)}">打开原问题</button>` : ""}
+        <button type="button" class="btn small" data-task-remind>改提醒时间</button>
+      </div>`;
   }
   // A worker on a task by the name the file uses, its session title after.
   function taskChipHTML(w) {
@@ -1962,14 +1977,69 @@
     if (taskPanel.hidden) return;
     const html = taskPanelHTML();
     if (taskPanel._html !== html) taskPanel.innerHTML = taskPanel._html = html;
-    if (Date.now() - taskAt > TASK_REFRESH_MS) loadTasks();
+    if (Date.now() - taskAt >= TASK_REFRESH_MS) loadTasks();
   }
+  setInterval(renderTaskPanel, TASK_REFRESH_MS);
   async function loadTasks() {
     taskAt = Date.now();
-    try { taskFiles = (await api("/api/super/memory?area=tasks")).files || []; taskErr = ""; }
-    catch (err) { taskErr = err.message; } // shown in the panel until a retry works
+    const seq = ++taskLoadSeq;
+    try {
+      const data = await api("/api/super/memory?area=tasks");
+      if (seq !== taskLoadSeq) return;
+      taskFiles = data.files || [];
+      taskFollowup = data.followup || {};
+      taskTimezone = data.timezone || "";
+      taskErr = "";
+    } catch (err) {
+      if (seq !== taskLoadSeq) return;
+      taskErr = err.message;
+    }
     renderTaskPanel();
   }
+  function editTaskReminder(path) {
+    const f = taskFollowup[path];
+    if (!f) return;
+    taskReminderEdit = { path, version: f.version };
+    const offset = f.next_at?.match(/(Z|[+-][0-9]{2}:[0-9]{2})$/)?.[0];
+    const zone = taskTimezone && taskTimezone !== "Local" ? taskTimezone : offset && `UTC${offset === "Z" ? "" : offset}`;
+    $("#task-reminder-zone").textContent = zone ? `Hub 时间 · ${zone}` : "Hub 时间";
+    $("#task-reminder-at").value = f.next_at?.slice(0, 16) || "";
+    $("#task-reminder-error").hidden = true;
+    taskReminder.showModal();
+  }
+  taskReminder.querySelector("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const submit = $("#task-reminder-save"), error = $("#task-reminder-error"), edit = taskReminderEdit;
+    if (!edit || submit.disabled) return;
+    const local_at = $("#task-reminder-at").value;
+    submit.disabled = true;
+    error.hidden = true;
+    busy(submit);
+    try {
+      await api("/api/super/task/remind", { hub: false, body: { ...edit, local_at } });
+      await loadTasks();
+      if (taskReminderEdit === edit) taskReminder.close();
+    } catch (err) {
+      if (err.status === 409) {
+        await loadTasks();
+        if (taskReminderEdit === edit) taskReminder.close();
+        toast("提醒时间已有更新，请按最新时间再改", "attn");
+      } else if (taskReminderEdit === edit && taskReminder.open) {
+        error.textContent = err.message;
+        error.hidden = false;
+      } else toast(err.message, "attn");
+    } finally {
+      submit.disabled = false;
+      busy(submit, false);
+    }
+  });
+  taskReminder.querySelector("[data-task-remind-cancel]").addEventListener("click", () => taskReminder.close());
+  taskReminder.addEventListener("close", () => {
+    if (taskReminder.open || !taskReminderEdit) return;
+    const { path } = taskReminderEdit;
+    taskReminderEdit = null;
+    if (!taskPanel.hidden) taskPanel.querySelector(`[data-task="${CSS.escape(path)}"] [data-task-remind]`)?.focus({ preventScroll: true });
+  });
   function toggleTaskPanel(open) {
     taskPanel.hidden = !open;
     taskBtn.setAttribute("aria-expanded", String(open));
@@ -1978,15 +2048,23 @@
   }
   taskBtn.addEventListener("click", () => toggleTaskPanel(taskPanel.hidden));
   taskPanel.addEventListener("click", (e) => {
+    const decision = e.target.closest("[data-task-decision]");
+    if (decision) {
+      toggleTaskPanel(false);
+      location.hash = "#/d/" + encodeURIComponent(decision.dataset.taskDecision);
+      return;
+    }
     const item = !e.target.closest("a") && e.target.closest("[data-task]");
-    if (item) openTaskFile(item.dataset.task);
+    if (!item) return;
+    if (e.target.closest("[data-task-remind]")) editTaskReminder(item.dataset.task);
+    else if (!e.target.closest(".tp-actions")) openTaskFile(item.dataset.task);
   });
   document.addEventListener("click", (e) => {
     // Outside it, or a worker in it opened.
     if (!taskPanel.hidden && (!e.target.closest(".task-wrap") || e.target.closest("#task-panel a[href]"))) toggleTaskPanel(false);
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !taskPanel.hidden && !composing(e)) toggleTaskPanel(false);
+    if (e.key === "Escape" && !taskPanel.hidden && !taskReminder.open && !composing(e)) toggleTaskPanel(false);
   });
 
   // ───────────────────────────── generic header status slots (extensions)

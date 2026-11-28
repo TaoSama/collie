@@ -262,6 +262,7 @@ func workerBrief(bin string, w *Worker) string {
 
 How this works:
 - Collie relays between you and the human, through %s report "…".
+- On multi-stage work, report verified milestones with evidence, the next step, and its expected checkpoint. If the run itself records progress, keep it running for Collie to inspect.
 - When the task is done, report the outcome: what you found or changed, and where the details are.
 - When you need what only the human can give (a decision, access), or the same failure keeps coming back after a few different approaches, report "BLOCKED: <what you need> · tried: <what you tried> · I'd pick: <your choice>". Collie decides or asks them, and tells you.
 - Follow-ups for your thread arrive as messages starting with [collie].`, w.Name, w.Thread, strings.TrimSpace(w.Task), bin)

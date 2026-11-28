@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS threads  (id TEXT PRIMARY KEY, last_at INTEGER NOT NU
 CREATE TABLE IF NOT EXISTS workers  (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS entries  (id TEXT PRIMARY KEY, n INTEGER NOT NULL, at INTEGER NOT NULL, thread TEXT NOT NULL, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS entries_thread ON entries(thread, n);
+CREATE TABLE IF NOT EXISTS task_followups (path TEXT PRIMARY KEY, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS timers   (id TEXT PRIMARY KEY, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, device TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ext_convs  (id TEXT PRIMARY KEY, ext TEXT NOT NULL, last_at INTEGER NOT NULL, data TEXT NOT NULL);
@@ -153,6 +154,12 @@ func loadState(db *sql.DB) (*State, error) {
 	}
 	loadRows(db, `SELECT data FROM workers`, func(w *Worker) { st.Workers[w.Name] = w })
 	loadRows(db, `SELECT data FROM timers`, func(t *Timer) { st.Timers = append(st.Timers, t) })
+	st.TaskFollowups = map[string]*TaskFollowup{}
+	if err := loadRows(db, `SELECT data FROM task_followups`, func(task *TaskFollowup) {
+		st.TaskFollowups[task.Path] = task
+	}); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 

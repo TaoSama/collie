@@ -60,7 +60,7 @@ func serve() {
 	publicURL := flag.String("url", os.Getenv("COLLIE_URL"), "address phones and computers should use, e.g. http://10.0.0.5:7788 (default: detected LAN addresses)")
 	wbDomain := flag.String("wb-domain", os.Getenv("COLLIE_WB_DOMAIN"), "workbench modules kept by the hub open at <proxy host>.<this domain>, e.g. wb.example.com (same site as Collie; default: off)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: collie [serve] [flags]          run the hub\n       collie node --hub <addr> --code <c>   join this computer to a hub\n       collie pair [--computer]              new pairing code\n       collie reply|say|spawn|send|report|subscribe|stop|show|list|timer|hook|wb …\n\n")
+		fmt.Fprintf(os.Stderr, "usage: collie [serve] [flags]          run the hub\n       collie node --hub <addr> --code <c>   join this computer to a hub\n       collie pair [--computer]              new pairing code\n       collie reply|say|spawn|send|report|subscribe|stop|show|list|task|timer|hook|wb …\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

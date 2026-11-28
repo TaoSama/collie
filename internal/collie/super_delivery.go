@@ -130,6 +130,11 @@ func (sp *Super) deliveryPrompt(target string, list []*Trigger, lark larkDeliver
 func (sp *Super) prepareDelivery(target, pane string, list []*Trigger) (larkDelivery, bool, int, bool) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
+	for _, t := range list {
+		if !sp.taskTriggerCurrentLocked(t) {
+			return larkDelivery{}, false, 0, false
+		}
+	}
 	lark, ok := sp.larkDeliveryLocked(list[0]) // a Feishu batch contains only its own event
 	if !ok {
 		sp.cancelLarkDeliveryLocked(list[0])

@@ -2,6 +2,7 @@ package collie
 
 import (
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 	"time"
@@ -121,25 +122,26 @@ func (sp *Super) remindPendingLocked(now time.Time) {
 		return
 	}
 	sp.remindLookAt = now.Add(remindLookEvery) // nothing old enough yet: not every tick
-	var old []PendingItem
-	for _, p := range sp.pendingLocked(now) {
-		if now.Sub(p.At) >= remindAge {
-			old = append(old, p)
-		}
-	}
+	old, includesRecent := sp.reminderItemsLocked(now)
 	if len(old) == 0 {
 		return
 	}
-	sp.st.RemindedAt = now
 	var sums []string
 	for _, p := range old[:min(len(old), remindList)] {
 		sums = append(sums, clip(p.Summary, 40))
 	}
-	text := fmt.Sprintf("有 %d 件事等你超过一天：%s", len(old), strings.Join(sums, "；"))
+	prefix := "等你超过一天"
+	if includesRecent {
+		prefix = "等你处理"
+	}
+	text := fmt.Sprintf("有 %d 件事%s：%s", len(old), prefix, strings.Join(sums, "；"))
 	if len(old) > remindList {
 		text += fmt.Sprintf(" 等 %d 件", len(old))
 	}
-	sp.appendEntryLocked(&Entry{ID: sp.st.nextID("e"), Role: "event", Thread: mainThread, Text: text, At: now, Ref: old[0].ID, Tone: toneRemind})
+	entry := &Entry{ID: sp.st.nextID("e"), Role: "event", Thread: mainThread, Text: text, At: now, Ref: old[0].ID, Tone: toneRemind}
+	if err := sp.commitReminderLocked(entry); err != nil {
+		log.Printf("save daily reminder: %v", err)
+	}
 }
 
 // toneRemind marks the daily reminder; Ref is the oldest thing it lists.

@@ -106,7 +106,16 @@ func (sp *Super) tick(parent context.Context) {
 	list, answered, ok := sp.agentsListed(listCtx)
 	cancelList()
 	if !ok {
-		return // herdr unavailable; keep everything queued
+		// The follow-up clock and the daily batch do not need a live pane.
+		now := time.Now()
+		if sp.s.herdr != nil {
+			sp.awayMachines(nil, now)
+		}
+		sp.mu.Lock()
+		sp.tickTaskFollowupsLocked(now, map[string]bool{})
+		sp.remindPendingLocked(now)
+		sp.mu.Unlock()
+		return
 	}
 	sp.push.watch(list)
 	live := sp.byName(list)
@@ -165,7 +174,7 @@ func (sp *Super) tick(parent context.Context) {
 			continue
 		}
 		a, alive := live[w.Name]
-		if !alive && away[w.Machine] {
+		if !alive && (away[w.Machine] || sp.taskWorkerOfflineLocked(w, answered)) {
 			continue // its computer didn't answer: it may well be running
 		}
 		if !alive {
@@ -259,9 +268,15 @@ func (sp *Super) tick(parent context.Context) {
 			sp.changed()
 		}
 	}
+	sp.tickTaskFollowupsLocked(now, answered)
 	// 3. Route queued triggers to sessions: subscribed workers first (fast path), router otherwise.
 	for _, t := range sp.st.Triggers {
 		if t.Status != "queued" {
+			continue
+		}
+		if !sp.taskTriggerCurrentLocked(t) {
+			t.Status = "ignored"
+			sp.changed()
 			continue
 		}
 		if _, ok := sp.larkDeliveryLocked(t); !ok {
