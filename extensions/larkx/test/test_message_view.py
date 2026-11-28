@@ -1,6 +1,7 @@
 """Rich inbox behavior with anonymized card/calendar JSON and real message protobufs."""
 import json
 import unittest
+from unittest.mock import patch
 
 from test_adapter import E, U, lark, protobuf_to_dict, richtext
 import inbox_example
@@ -30,6 +31,49 @@ class MessageViewTest(unittest.TestCase):
         self.assertIn("请假审批", preview)
         self.assertNotIn("**", preview)
         self.assertEqual(view["nodes"][1], {"kind": "image", "key": "img_v3_example", "text": "附件截图"})
+
+    def test_card_v2_history_requests_supported_command_version(self):
+        with patch("requests.post") as post:
+            for cmd in (8, 43, 8108, 5):
+                with self.subTest(cmd=cmd):
+                    headers = {"x-command": str(cmd), "x-command-version": "5.7.0", "x-web-version": "3.9.32"}
+                    U.client.requests.post("https://example.com/im/gateway/", headers=headers, timeout=15)
+                    self.assertEqual(post.call_args.kwargs["headers"], {
+                        **headers, "x-command-version": "5.7.0" if cmd == 5 else "7.20.0",
+                    })
+
+    def test_packed_card_v2_uses_new_body(self):
+        def packed(tag, **props):
+            return {"tag": tag, "property": props}
+
+        card = {
+            "schema": "2.0",
+            "header": packed("card_header", title=packed("plain_text", content="巡检")),
+            "body": {"elements": [
+                packed("img", imageID="24"),
+                packed("markdown", elements=[
+                    packed("plain_text", content="Upgrade to the latest app version to view the content"),
+                ]),
+            ]},
+            "newBody": packed("body", elements=[
+                packed("column_set", columns=[packed("column", elements=[
+                    packed("markdown", elements=[
+                        packed("plain_text", content="检查结果", textStyle={"attributes": ["bold"]}),
+                        packed("br"),
+                        packed("plain_text", content="任务已完成"),
+                    ]),
+                ])]),
+            ]),
+        }
+        wire = U.L.entities.CardContent(jsonCard=json.dumps(card)).SerializeToString()
+        view, preview = message_view.describe(U, message_view.decode(U, {"type": 14, "content": wire}))
+        self.assertEqual(preview, "[卡片] 巡检")
+        self.assertEqual(view["nodes"], [message_view.node("columns", children=[
+            message_view.node("group", children=[
+                message_view.node("paragraph", children=[message_view.node("text", "检查结果", tone="bold")]),
+                message_view.node("paragraph", children=[message_view.node("text", "任务已完成")]),
+            ]),
+        ])])
 
     def test_rich_text_marks_links_and_media(self):
         rt = richtext.build(U.L, "**处理结果**\n[记录](https://example.com/ticket)")

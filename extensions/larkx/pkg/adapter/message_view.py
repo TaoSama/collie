@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import logging
 import re
+from itertools import groupby
 
 import richtext
 
@@ -33,7 +34,7 @@ def content(value):
         if isinstance(value, str):
             return value.strip()[:TEXT_MOST]
         data = obj(value)
-        value = (data.get("content") or data.get("innerText") or data.get("inner_text") or data.get("text")
+        value = (data.get("content") or data.get("innerText") or data.get("inner_text") or data.get("text") or data.get("property")
                  or data.get("zh_cn") or data.get("zh-CN") or data.get("en_us") or data.get("en-US"))
         if value is None:
             break
@@ -155,8 +156,17 @@ class Tree:
             self.left -= 1
             n = obj(value)
             tag = n.get("tag")
+            n = obj(n.get("property")) or n
             text_obj = n.get("text")
             text = content(n.get("content") or text_obj)
+            if tag == "markdown" and n.get("elements"):
+                # Packed markdown contains inline elements, with br separating lines.
+                for is_break, line in groupby(seq(n["elements"]), key=lambda elem: obj(elem).get("tag") == "br"):
+                    if not is_break:
+                        children = self.card(list(line), depth + 1)
+                        if children:
+                            out.append(node("paragraph", children=children))
+                continue
             children = self.card(n.get("elements") or n.get("columns") or n.get("actions"), depth + 1)
             if tag == "markdown" or tag == "lark_md":
                 out.extend(self.markdown(text))
@@ -235,7 +245,9 @@ class Tree:
                 out.extend(children)
             else:
                 if text:
-                    out.append(node("text", self.take(text)))
+                    marks = seq(obj(n.get("textStyle")).get("attributes"))
+                    tone = " ".join(mark for mark in marks if mark in ("bold", "italic", "underline", "strike"))
+                    out.append(node("text", self.take(text), tone=tone))
                 out.extend(children)
         return out
 
@@ -533,10 +545,13 @@ def describe(U, msg, emojis=None, me="", force_post=False):
     if kind == CARD:
         card = localized_card(data)
         header, old_header = obj(card.get("header")), obj(data.get("cardHeader"))
+        header = obj(header.get("property")) or header
         title = content(header.get("title") or old_header.get("mainTitle") or old_header.get("title"))
         subtitle = content(header.get("subtitle") or old_header.get("subtitle"))
         i18n = obj(card.get("i18n_elements"))
-        elements = obj(card.get("body")).get("elements") or card.get("elements") or i18n.get("zh_cn") or i18n.get("en_us")
+        new_body = obj(obj(card.get("newBody")).get("property"))
+        elements = (new_body.get("elements") or obj(card.get("body")).get("elements") or card.get("elements")
+                    or i18n.get("zh_cn") or i18n.get("en_us"))
         nodes = tree.card(elements) or tree.rich(obj(data.get("richtext") or data.get("richText")))
         summary = content(data.get("cardDesc")) or content(obj(card.get("summary")).get("content"))
         title = title or content(card.get("title"))

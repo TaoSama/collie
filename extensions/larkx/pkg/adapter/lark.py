@@ -30,6 +30,8 @@ CHAT_P2P = 1
 CHATTER_BOT = 2  # Chatter.type: a bot or app, not a person
 TAG_BOT = "bot"  # chat_tags of a direct chat with a bot
 CMD_PUT_MESSAGE = 5
+CARD_HISTORY_COMMANDS = {"8", "43", "8108"}  # PullMessagesByIds, PullMessagesByPositions, PullThreadsByPositions
+CARD_HISTORY_VERSION = "7.20.0"
 SIGNED_OUT_RECHECK = 2  # seconds before asking Feishu again whether a session is really gone
 REQUEST_FRESH = 600  # seconds: an older message is history to Collie, never a request
 WORKING_REACTION = "OnIt"  # the reaction a request gets when Collie takes it: 「在做了」
@@ -92,6 +94,15 @@ class Unsure(Exception):
     """The send may have gone out: never sent again."""
 
 
+def gateway_post(url, *, headers, **kwargs):
+    import requests
+
+    # Older command versions receive the upgrade placeholder instead of Card JSON 2.0.
+    if headers["x-command"] in CARD_HISTORY_COMMANDS:
+        headers = {**headers, "x-command-version": CARD_HISTORY_VERSION}
+    return requests.post(url, headers=headers, **kwargs)
+
+
 def load_upstream(root, data_dir, region):
     """LarkAgentX's modules, without its package __init__ (which pulls in its agent and database)."""
     os.environ["LARKX_HOME"] = data_dir
@@ -100,8 +111,11 @@ def load_upstream(root, data_dir, region):
     pkg.__path__ = [os.path.join(root, "larkx")]
     sys.modules["larkx"] = pkg
     mod = importlib.import_module
+    client = mod("larkx.client")
+    # Replace only the pinned client's HTTP transport, keeping its request and protobuf handling.
+    client.requests = types.SimpleNamespace(post=gateway_post)
     return types.SimpleNamespace(
-        auth=mod("larkx.auth"), client=mod("larkx.client"), region=mod("larkx.region"), media=mod("larkx.media"),
+        auth=mod("larkx.auth"), client=client, region=mod("larkx.region"), media=mod("larkx.media"),
         builders=mod("larkx.proto.builders"), decoders=mod("larkx.proto.decoders"), ids=mod("larkx.proto.ids"),
         P=mod("larkx.proto.proto_pb2"), L=mod("larkx.proto.lark_all_pb2"))
 
