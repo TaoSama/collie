@@ -2,9 +2,11 @@
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from test_adapter import U, lark, richtext
+import link_preview
 import message_view
 
 URL = "https://example.feishu.cn/docx/sample"
@@ -129,3 +131,37 @@ class LinkPreviewTest(unittest.TestCase):
         self.assertEqual(client.lookups, [URL, OTHER])
         self.assertIn("补齐的标题", self.feishu.history.recent(CHAT)[0]["preview"])
         self.assertIn(OTHER, self.feishu.history.recent(CHAT)[0]["text"])
+
+    def test_preview_misses_cool_down_across_history_polls(self):
+        for response in ({}, OSError("gateway unavailable")):
+            with self.subTest(response=response):
+                client = Client("补齐的标题", wire_message(URL, "200"))
+                api = client.api
+                lookups = []
+
+                def preview_api(method, params):
+                    if method == "docs.PullDocByURLsRequest":
+                        lookups.extend(params["urls"])
+                        if len(lookups) == 1:
+                            if isinstance(response, Exception):
+                                raise response
+                            return response
+                    return api(method, params)
+
+                client.api = preview_api
+                sign_in(self.feishu, client, "1")
+                inbox = self.feishu.history
+                now = 0
+                with patch.object(link_preview, "time", SimpleNamespace(monotonic=lambda: now)):
+                    first = inbox.recent(CHAT)
+                    wait_for_previews(inbox)
+                    for now in (4, 8, 12):
+                        self.assertEqual(inbox.recent(CHAT), first)
+                        wait_for_previews(inbox)
+                        self.assertEqual(lookups, [URL])
+
+                    now = 31
+                    inbox.recent(CHAT)
+                    wait_for_previews(inbox)
+                    self.assertEqual(lookups, [URL, URL])
+                    self.assertIn("补齐的标题", inbox.recent(CHAT)[0]["preview"])

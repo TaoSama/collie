@@ -194,10 +194,10 @@ class LinkCache:
             self._items.move_to_end(key)
             return dict(hit[1])
 
-    def put(self, key, value):
-        now = time.monotonic()
+    def put(self, key, value, *, ttl=None):
+        expires = time.monotonic() + (self._ttl if ttl is None else ttl)
         with self._mu:
-            self._items[key] = (now + self._ttl, dict(value))
+            self._items[key] = (expires, dict(value))
             self._items.move_to_end(key)
             while len(self._items) > self._limit:
                 self._items.popitem(last=False)

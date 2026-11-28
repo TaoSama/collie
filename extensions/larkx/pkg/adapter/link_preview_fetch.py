@@ -11,6 +11,8 @@ from link_preview import (
 
 log = logging.getLogger("larkx")
 
+MISS_TTL = 30  # give empty or failed lookups a break from inbox polling
+
 
 class LinkPreviews:
     """One login's preview cache and bounded lookup queue."""
@@ -70,6 +72,9 @@ class LinkPreviews:
             log.exception("resolving link previews")
         finally:
             with self._lock:
+                for key in keys:
+                    if self.cache.get(key) is None:
+                        self.cache.put(key, {}, ttl=MISS_TTL)
                 self._pending.difference_update(keys)
 
 
