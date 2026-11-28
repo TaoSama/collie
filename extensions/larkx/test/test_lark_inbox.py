@@ -81,10 +81,10 @@ class NativeInbox(unittest.TestCase):
             26: ("reactions.DeleteReactionRequest", dict(count=1)),
             51: ("messages.PutTransmitMessageRequest", dict(messages={"32": dict(id="95", chatId="32")})),
             91: ("thread.PatchThreadSettingRequest", {}),
-            8125: ("thread.PutThreadShareRequest", dict(messages={"32": dict(id="95", chatId="32")})),
+            8125: ("thread.PutThreadShareRequest", dict(messages={"33": dict(id="95", chatId="33")})),
         }
         method, body = calls[pkt.cmd]
-        if pkt.cmd == 51 and self.forward_receipt is not None:
+        if pkt.cmd in (51, 8125) and self.forward_receipt is not None:
             body = self.forward_receipt
         _, req_type, resp_type = self.U.gateway.resolve_cmd(method)
         self.posts.append(req_type.FromString(pkt.payload))
@@ -151,13 +151,13 @@ class NativeInbox(unittest.TestCase):
 
     def test_native_forward_and_follow(self):
         self.action("forward", target="32")
-        self.action("forward", thread_id="92", target="32")
+        self.action("forward", thread_id="92", target="33")
         self.action("subscribe", thread_id="92", active=True)
         self.action("subscribe", thread_id="92", active=False)
         send, share, follow, unfollow = self.posts
         self.assertEqual((send.messageId, list(send.chatIds), send.immutableMessage.chatId), ("90", ["32"], 31))
         self.assertIn(send.cids["32"], self.adapter.own_cids)
-        self.assertEqual((share.channelId, share.threadId, share.targets[0].toChat.chatId), ("31", "92", "32"))
+        self.assertEqual((share.channelId, share.threadId, share.targets[0].toChat.chatId), ("31", "92", "33"))
         self.assertEqual(list(follow.updateFields), [follow.UPDATE_FIELD_IS_FOLLOW])
         self.assertEqual(follow.setting.threadId, "92")
         self.assertTrue(follow.setting.isFollowV2)
@@ -196,6 +196,22 @@ class NativeInbox(unittest.TestCase):
         with self.assertRaises(peer.Error) as result:
             self.action("forward", target="32")
         self.assertEqual(result.exception.code, "uncertain")
+
+    def test_thread_share_receipt_requires_target_and_both_ids(self):
+        thread = {"channelId": "33", "id": "95", "rootMessageId": "96"}
+        self.forward_receipt = {"threads": {"33": thread}}
+        self.assertEqual(self.action("forward", thread_id="92", target="33"), {})
+        for field, value in {"channelId": "31", "id": "0", "rootMessageId": "0"}.items():
+            with self.subTest(field=field):
+                self.forward_receipt["threads"]["33"] = {**thread, field: value}
+                with self.assertRaises(peer.Error) as result:
+                    self.action("forward", thread_id="92", target="33")
+                self.assertEqual(result.exception.code, "uncertain")
+
+    def test_ordinary_group_topic_share_to_topic_group_is_blocked(self):
+        with self.assertRaisesRegex(ValueError, "普通群的话题暂时无法转发到话题群"):
+            self.action("forward", thread_id="92", target="32")
+        self.assertEqual(self.posts, [])
 
     def test_offline_inbox_returns_sign_in_error(self):
         extension = main.Extension()

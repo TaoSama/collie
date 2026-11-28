@@ -56,6 +56,8 @@ def _request(adapter, method, data, forwarding=False):
     except requests.exceptions.HTTPError as e:
         status = e.response.status_code if e.response is not None else 0
         if 400 <= status < 500:
+            if forwarding and status == 403:
+                raise ValueError("飞书拒绝转发，请检查这条消息和目标会话的转发权限（HTTP 403）") from e
             raise ValueError("飞书拒绝操作（HTTP %s）" % status) from e
         raise uncertain from e
     except requests.exceptions.RequestException as e:
@@ -65,6 +67,8 @@ def _request(adapter, method, data, forwarding=False):
     try:
         reply = U.P.Packet.FromString(raw)
         if reply.status:
+            if forwarding and reply.status == 403:
+                raise ValueError("飞书拒绝转发，请检查这条消息和目标会话的转发权限（状态 403）")
             raise ValueError("飞书拒绝操作（状态 %s）" % reply.status)
         return gateway.response_to_dict(response, reply.payload) if reply.payload else {}
     except DecodeError as e:
@@ -351,6 +355,13 @@ class Inbox:
         })
 
     def forward_topic(self, chat, tid, target):
+        adapter = self.adapter
+        chats = adapter.chats_now([chat, target])
+        if chat not in chats or target not in chats:
+            raise ValueError("飞书无法读取原会话或目标会话，请检查会话权限")
+        is_topic_group = adapter.U.decoders.is_thread_chat
+        if not is_topic_group(chats[chat]) and is_topic_group(chats[target]):
+            raise ValueError("普通群的话题暂时无法转发到话题群，请选择普通群或私聊")
         reply = _request(self.adapter, "thread.PutThreadShareRequest", {
             "channelId": chat, "threadId": tid, "targets": [{"toChat": {"chatId": target}}],
         }, forwarding=True)
@@ -360,11 +371,16 @@ class Inbox:
         adapter = self.adapter
         cid = adapter.U.ids.generate_request_cid()
         adapter._record_own_cid(cid)
-        reply = _request(adapter, "messages.PutTransmitMessageRequest", {
-            "messageId": mid, "chatIds": [target], "cids": {target: cid},
-            "immutableMessage": {"messageId": mid, "chatId": chat, "messageType": raw["type"]},
-        }, forwarding=True)
-        self._forward_receipt(reply, target)
+        try:
+            reply = _request(adapter, "messages.PutTransmitMessageRequest", {
+                "messageId": mid, "chatIds": [target], "cids": {target: cid},
+                "immutableMessage": {"messageId": mid, "chatId": chat, "messageType": raw["type"]},
+            }, forwarding=True)
+            self._forward_receipt(reply, target)
+        except ValueError as e:
+            if raw["type"] == adapter.U.L.entities.Message.IMAGE:
+                raise ValueError("图片转发失败。%s" % e) from e
+            raise
 
     @staticmethod
     def _forward_receipt(reply, target):
@@ -381,5 +397,9 @@ class Inbox:
             if info.get("failed"):
                 raise ValueError("飞书拒绝了向这个会话转发消息")
             if raw_id(raw.get("id")):
+                return
+        for thread in (reply.get("threads") or {}).values():
+            if (str(thread.get("channelId") or "") == target
+                    and raw_id(thread.get("id")) and raw_id(thread.get("rootMessageId"))):
                 return
         raise peer.Error("uncertain", UNCERTAIN_FORWARD)

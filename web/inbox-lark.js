@@ -181,6 +181,7 @@
           <label for="lark-forward-target">转发到</label>
           <select id="lark-forward-target" data-lark-forward-target><option value="">选择飞书会话</option>
           ${items.map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.chat)}</option>`).join("")}</select>
+          <p class="form-error" role="alert" data-lark-forward-error></p>
           <div class="lark-forward-acts"><button type="button" class="btn ghost" data-lark-menu-close>取消</button>
           <button type="button" class="btn primary" data-lark-forward-confirm disabled>确认转发</button></div>`;
       }
@@ -264,7 +265,10 @@
       dispatchMenu(b.dataset.larkMenuAction);
     });
     dialog.addEventListener("change", (e) => {
-      if (e.target.hasAttribute("data-lark-forward-target")) dialog.querySelector("[data-lark-forward-confirm]").disabled = !e.target.value;
+      if (e.target.hasAttribute("data-lark-forward-target")) {
+        dialog.querySelector("[data-lark-forward-confirm]").disabled = !e.target.value;
+        dialog.querySelector("[data-lark-forward-error]").textContent = "";
+      }
     });
     dialog.addEventListener("close", () => {
       if (dialog.open || !isCurrent()) return;
@@ -333,6 +337,8 @@
       if (pending.has(key)) return;
       pending.add(key);
       const inMenu = dialog.open && dialog.contains(b);
+      const forwardError = inMenu && body.action === "forward" ? dialog.querySelector("[data-lark-forward-error]") : null;
+      if (forwardError) forwardError.textContent = "";
       hooks.busy(b);
       let sent = false;
       try {
@@ -347,8 +353,14 @@
       } catch (err) {
         const transportFailure = err instanceof TypeError && err.status == null;
         const uncertain = !sent && body.action === "forward" && (err.code === "uncertain" || transportFailure);
-        if (uncertain && inMenu && dialog.contains(b)) close();
-        hooks.toast(uncertain && transportFailure ? "没有收到转发回执，消息可能已经转发，请到飞书确认" : err.message, "attn");
+        if (uncertain && dialog.open && dialog.contains(b)) close();
+        const message = uncertain && transportFailure ? "没有收到转发回执，消息可能已经转发，请到飞书确认" : err.message;
+        if (!sent && !uncertain && forwardError && dialog.open && dialog.contains(b)) {
+          forwardError.textContent = message;
+          if (trigger?.isConnected) fixed(dialog, trigger.getBoundingClientRect());
+        } else {
+          hooks.toast(message, "attn");
+        }
       } finally {
         pending.delete(key);
         hooks.busy(b, false);

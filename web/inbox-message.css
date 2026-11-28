@@ -298,6 +298,8 @@
 .lark-inbox-menu p { margin: 8px 0; }
 .lark-inbox-menu label { display: block; margin: 7px 0 4px; color: var(--t-secondary); font-size: var(--fs-small); }
 .lark-inbox-menu select { width: 100%; min-height: var(--input-h); }
+.lark-inbox-menu .form-error { margin: 0; padding: 0; min-height: 0; overflow-wrap: anywhere; }
+.lark-inbox-menu .form-error:not(:empty) { margin-top: 8px; }
 .lark-forward-acts { display: flex; justify-content: end; gap: 8px; margin-top: 12px; }
 :is(.lark-inbox-reaction, .lark-topic-acts button, .lark-menu-grid button, .lark-menu-quick button)[aria-busy="true"] { opacity: .55; cursor: wait; }
 .lark-topic-tabs { display: flex; gap: 18px; flex: none; padding: 0 14px; border-bottom: var(--bw) solid var(--line); }
