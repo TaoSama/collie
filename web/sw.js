@@ -97,7 +97,7 @@ async function notificationClicked(d, action) {
 
 async function openPage(url) {
   const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  const w = wins.find((c) => new URL(c.url).origin === location.origin);
+  const w = wins.find((c) => c.frameType === "top-level" && new URL(c.url).origin === location.origin);
   if (w) {
     w.postMessage({ type: "open", url });
     await w.focus();

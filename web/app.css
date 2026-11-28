@@ -1266,7 +1266,7 @@ a.event:hover { background: var(--bg-2); color: var(--fg); }
 .msg.user .att span, .msg.user .att a { font-size: calc(var(--fs-small) + 0.5px); padding: 2px 8px; border-radius: calc(8px * var(--round)); background: color-mix(in srgb, var(--user-fg) 14%, transparent); text-decoration: none; }
 .msg.user .att a:hover { background: color-mix(in srgb, var(--user-fg) 22%, transparent); }
 .fv-html-sandbox { display: block; width: 100%; height: 100%; border: 0; }
-.fv-body:has(> .fv-html-sandbox) { overflow: hidden; }
+.fv-body:has(> .fv-html-sandbox) { overflow: hidden; padding: 0; }
 .send { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; border: 0; background: var(--accent); color: var(--on-accent); transition: transform .1s, opacity .15s; }
 .send svg { width: 17px; height: 17px; }
 .send:active { transform: scale(.94); }
@@ -1446,6 +1446,7 @@ body.dragging .app { transition: none; }
   .fv-head h3 { font-size: calc(var(--fs-lead) - 0.5px); }
   #fv-path { padding: 0 16px 10px; }
   .fv-body { padding: 4px 16px calc(32px + env(safe-area-inset-bottom)); }
+  .fv-body:has(> .fv-html-sandbox) { padding-bottom: env(safe-area-inset-bottom); }
   .fv-body.is-code { padding: 0; }
   .fv-ln { padding: 12px 9px 28px 10px; font-size: var(--fs-small); }
   .fv-code .fv-pre { padding: 12px 16px 28px 12px; font-size: var(--fs-small); }

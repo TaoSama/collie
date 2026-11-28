@@ -187,17 +187,30 @@ func TestReadFileAsHTMLLimitsAndNodeForwarding(t *testing.T) {
 		t.Fatalf("legacy HTML link = %d %q", rec.Code, rec.Header().Get("Location"))
 	}
 
+	offline := "/api/file?path=~/offline.html&as=html&machine=offline"
+	rec = get(offline, map[string]string{"Sec-Fetch-Dest": "document"})
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/#/file?machine=offline&path=~%2Foffline.html" {
+		t.Fatalf("offline HTML link = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
 	rec = get("/html-viewer.html", nil)
-	if rec.Code != 200 || rec.Header().Get("X-Frame-Options") != "SAMEORIGIN" ||
-		rec.Header().Get("Content-Security-Policy") != "frame-ancestors 'self'" {
+	if rec.Code != 200 || rec.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
 		t.Fatalf("viewer status = %d headers = %v", rec.Code, rec.Header())
 	}
-	if !strings.Contains(rec.Body.String(), `sandbox="allow-scripts"`) ||
-		!strings.Contains(rec.Body.String(), "frame-src 'none'") ||
-		!strings.Contains(rec.Body.String(), "connect-src 'none'") ||
-		strings.Contains(rec.Body.String(), "allow-same-origin") {
-		t.Fatal("viewer must allow report scripts in an opaque frame with no network access")
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, directive := range []string{"frame-ancestors 'self'", "frame-src 'none'", "connect-src 'none'"} {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("viewer CSP %q is missing %q", csp, directive)
+		}
 	}
+	metaCSP := strings.TrimSuffix(csp, "; frame-ancestors 'self'")
+	if !strings.Contains(rec.Body.String(), `http-equiv="Content-Security-Policy" content="`+metaCSP+`"`) {
+		t.Error("static viewer meta CSP must match the HTTP policy for the report")
+	}
+	if !strings.Contains(rec.Body.String(), `sandbox="allow-scripts"`) || strings.Contains(rec.Body.String(), "allow-same-origin") {
+		t.Error("viewer must allow report scripts only in an opaque frame")
+	}
+
 	if got := get("/", nil).Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Fatalf("main page X-Frame-Options = %q", got)
 	}

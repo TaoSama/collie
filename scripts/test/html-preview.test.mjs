@@ -89,6 +89,11 @@ test("HTML reports use the Collie reader and isolate their scripts", { skip: !en
         await link(htmlPath).click();
         const embedded = reportFrame(page, "#fv-body");
         await reportControls(embedded);
+        const padding = await page.locator("#fv-body").evaluate((body) => {
+          const style = getComputedStyle(body);
+          return [style.paddingTop, style.paddingLeft, style.paddingRight];
+        });
+        assert.deepEqual(padding, ["0px", "0px", "0px"]);
         assert.equal(await page.locator("#fv-copy-wrap").isVisible(), false);
         assert.equal(await page.locator("#fv-dl").isVisible(), true);
         if (screenshots) {
@@ -108,8 +113,10 @@ test("HTML reports use the Collie reader and isolate their scripts", { skip: !en
         const hash = "#/file?" + new URLSearchParams({ path: htmlPath, machine: "" });
         for (const selector of ["#external", "#same-origin"]) {
           const probe = await context.newPage();
+          await probe.addInitScript((origin) => {
+            if (window === window.top && location.origin === origin) localStorage.setItem("test-marker", "test-storage");
+          }, origin);
           await probe.goto(home + hash);
-          await probe.evaluate(() => localStorage.setItem("test-marker", "test-storage"));
           const frame = reportFrame(probe, "#rv-body");
           await frame.locator("#result").filter({hasText: "imageBlocked"}).waitFor();
           assert.deepEqual(JSON.parse(await frame.locator("#result").textContent()), {

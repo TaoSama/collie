@@ -59,6 +59,20 @@ test("choices that don't all fit open the page instead", async () => {
   assert.equal(sw.shown[0].data.answer, null);
 });
 
+test("notification links use the top-level Collie client, even with a viewer iframe", async () => {
+  const events = [];
+  const viewer = { url: "https://c.example/html-viewer.html", frameType: "nested",
+    postMessage: () => assert.fail("the viewer iframe must not receive notification messages") };
+  const app = { url: "https://c.example/", frameType: "top-level",
+    postMessage: (message) => events.push(message.url), focus: async () => events.push("focused") };
+  const sw = loadSW({ windows: [viewer, app] });
+  await sw.ctx.openPage("/#/d/e7");
+  assert.deepEqual(events, ["/#/d/e7", "focused"]);
+  const onlyViewer = loadSW({ windows: [viewer] });
+  await onlyViewer.ctx.openPage("/#/d/e7");
+  assert.deepEqual(onlyViewer.opened, ["/#/d/e7"]);
+});
+
 test("a page in front of you already shows it", async () => {
   const sw = loadSW({ windows: [{ visibilityState: "visible", focused: true }] });
   await sw.push(dialog);

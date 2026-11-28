@@ -8565,11 +8565,13 @@
     return IMG_TYPE[ext] || "image/" + ext;
   };
   function fileContextMachine() {
-    if (view === "pane") return find(current)?.machine;
+    let v;
+    if (view === "pane") v = find(current);
     if (view === "ext") {
       const id = extCur || "";
-      return (id.startsWith("h:") ? hist.find((h) => h.id === id.slice(2)) : ext.find((x) => x.id === id))?.machine;
+      v = id.startsWith("h:") ? hist.find((h) => h.id === id.slice(2)) : ext.find((x) => x.id === id);
     }
+    if (v) return v.machine || (v.hub ? "!" + v.hub : "");
   }
   const FILE_HTML_MAX = 5 << 20; // fileHTMLMax in files.go
   const FILE_IMG_MAX = 20 << 20; // fileImageMax in files.go
@@ -8793,6 +8795,7 @@
     frame.className = "fv-html-sandbox";
     frame.title = "HTML 报告";
     frame.addEventListener("load", () => {
+      if (frame.parentNode !== body) return;
       const report = frame.contentDocument?.querySelector('iframe[sandbox="allow-scripts"]');
       if (report) report.srcdoc = text;
       else body.innerHTML = '<p class="fv-note">无法加载 HTML 阅读器</p>';

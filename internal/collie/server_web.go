@@ -12,6 +12,11 @@ import (
 	"sync"
 )
 
+// Keep the policy for the embedded report aligned with the static demo's meta CSP.
+const htmlViewerCSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+	"img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; worker-src 'none'; " +
+	"object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+
 var webBuildOnce struct {
 	sync.Once
 	v string
@@ -79,7 +84,7 @@ func (s *Server) static() http.Handler {
 		}
 		if p == "html-viewer.html" {
 			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-			w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+			w.Header().Set("Content-Security-Policy", htmlViewerCSP)
 		}
 		if tag := etag(p); tag != "" {
 			w.Header().Set("ETag", tag)
